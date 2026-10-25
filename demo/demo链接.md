@@ -100,8 +100,8 @@ demo/button/main.js      19 个方案的 DOM + 八个需要 JS 的行为（长�
 对照表是白盒，这个是长在真行上的 —— 直接渲染 `src/App`，同一份组件、同一份数据、同一份 CSS，
 动作按钮靠运行时挂到左列每一行（**一行 src 都不用改**）。
 
-- **http://152.53.165.119:4784/demo/button%20on%20tree%20map/index.html**
-- 内网：http://100.106.43.81:4784/demo/button%20on%20tree%20map/index.html
+- **http://152.53.165.119:4784/demo/button-on-tree-map/index.html**
+- 内网：http://100.106.43.81:4784/demo/button-on-tree-map/index.html
 
 它和 4783 那盘读的是同一个 content 目录，所以你在 demo 里加块、改名，4783 那盘跟着变
 （反过来也一样）。注入的四个按钮是空操作，不会写盘。
