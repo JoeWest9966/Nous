@@ -88,6 +88,8 @@ export function App() {
   const here = (path.length ? findNode(root, path[path.length - 1]!) : root) ?? root;
 
   const play = (next: Node) => {
+    // 空操作不入账：撤销栈里不该塞「我点了一下但什么都没变」。
+    if (next === root) return;
     setPast((p) => [...p.slice(-199), root]);
     setRoot(next);
   };

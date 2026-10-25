@@ -5,8 +5,7 @@
  * - **leaf**（叶子块）—— 有值，能点，面积就是它的值
  * - **section**（分区）—— 没有值，值是子节点之和，负责把一块地方圈起来
  *
- * 三条规则：
- * - 点 leaf：值翻倍
+ * 两条规则（点一下 = 让那一片所在的组结算一次）：
  * - 同一 section 里两个**叶子**值相等：自动合并成一块
  * - 值涨到 `EXPAND_AT`：这个 leaf 升格成 section，自己裂成 `PER_EXPANSION` 个叶子
  */
@@ -115,24 +114,19 @@ function expand(node: Node): Node {
 }
 
 /**
- * 点一下：值翻倍 → 同组合并 → 升格。
+ * 点一下：同组合并 → 升格。值不会因为被点而变 —— 只有合并才让它长大。
  * 只处理被点的那一个 parent，且升格后不再往下合并 —— 否则「裂开→并回去→再裂开」会死循环。
+ * 什么都没发生时原树不动（返回同一个引用），免得白占一格撤销。
  */
 export function bump(root: Node, id: string): Node {
   const node = findNode(root, id);
   const parent = findParent(root, id);
   if (!node || !parent || isSection(node)) return root;
 
-  const doubled: Node = { ...node, value: valueOf(node) * 2 };
-  const withDoubled: Node = {
-    ...parent,
-    children: parent.children!.map((c) => (c.id === id ? doubled : c)),
-  };
-  const merged = mergeEqual(withDoubled);
-  return replaceNode(root, parent.id, {
-    ...merged,
-    children: merged.children!.map(expand),
-  });
+  const merged = mergeEqual(parent);
+  const settled: Node = { ...merged, children: merged.children!.map(expand) };
+  const same = JSON.stringify(settled.children) === JSON.stringify(parent.children);
+  return same ? root : replaceNode(root, parent.id, settled);
 }
 
 function replaceNode(root: Node, id: string, next: Node): Node {
@@ -152,7 +146,7 @@ export function addLeaf(root: Node, sectionId: string): Node {
   });
 }
 
-/** 往某个 section 里再加一个 section（两个值为 1 的叶子）。名字按希腊字母往后排。 */
+/** 往某个 section 里再加一个 section（默认只有一个值为 1 的叶子）。名字按希腊字母往后排。 */
 export function addSection(root: Node, parentId: string): Node {
   const parent = findNode(root, parentId);
   if (!parent || !parent.children) return root;
@@ -160,7 +154,7 @@ export function addSection(root: Node, parentId: string): Node {
     NAMES.find((n) => !parent.children!.some((c) => c.name === n)) ?? `s${parent.children.length + 1}`;
   return replaceNode(root, parentId, {
     ...parent,
-    children: [...parent.children, makeSection(name, [makeLeaf(`${name}.1`, 1), makeLeaf(`${name}.2`, 1)])],
+    children: [...parent.children, makeSection(name, [makeLeaf(`${name}.1`, 1)])],
   });
 }
 
