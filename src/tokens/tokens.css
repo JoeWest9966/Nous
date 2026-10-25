@@ -16,9 +16,9 @@
   --n-color-on-accent: #100f0f;
   --n-color-danger: #d14d41;
 
-  /* 内容区底板 = pele treemap 里「Category A」那种组的颜色：
-     series-1 `#d14d41` 以 12% 压在 `--panel` `#1c1b1a` 上 = `#32211f`。 */
-  --n-color-board: #32211f;
+  /* 内容区底板 = pele 那个 treemap 的底：卡片背景 `--panel` `#1c1b1a`（组框把色压在上面，不是反过来）。
+     和顶栏上的按钮同一个色 —— 不是纯黑，也不是组颜色的红。 */
+  --n-color-board: #1c1b1a;
 
   /* 图的颜色 ≠ 界面的颜色。`--n-color-border` 是发丝线（1.4:1），拿它画箭头等于没画；
      下面这组按 pele 自己的对比度比例定：边线尽量高、边框 ≈3.4:1、节点填充 ≈1.1:1。
@@ -64,8 +64,8 @@
   --n-color-on-accent: #ffffff;
   --n-color-danger: #b3261e;
 
-  /* pele 浅色主题下 series-1 `#af3029` 12% 压在 `#f2f0e5` 上。 */
-  --n-color-board: #ead9ce;
+  /* pele 浅色主题下 treemap 的卡片底 `--pele-surface`。 */
+  --n-color-board: #f2f0e5;
 
   --n-color-diagram-line: var(--n-color-muted);
   --n-color-diagram-border: #7e8899;
