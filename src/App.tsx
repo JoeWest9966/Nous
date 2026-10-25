@@ -5,7 +5,6 @@ import {
   type Node,
   addLeaf,
   addSection,
-  bump,
   findNode,
   initialState,
   isSection,
@@ -260,7 +259,6 @@ export function App() {
                 piece={p}
                 origin={{ x: 0, y: 0 }}
                 isSection={isSection}
-                onBump={(id) => play(bump(root, id))}
                 onEnter={(id) => setPath([...path, id])}
                 onRemove={(id) => play(removeNode(root, id))}
               />
@@ -288,14 +286,12 @@ function Piece({
   piece,
   origin,
   isSection,
-  onBump,
   onEnter,
   onRemove,
 }: {
   piece: Placed;
   origin: { x: number; y: number };
   isSection: (n: Node) => boolean;
-  onBump: (id: string) => void;
   onEnter: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
@@ -350,7 +346,6 @@ function Piece({
             piece={k}
             origin={box}
             isSection={isSection}
-            onBump={onBump}
             onEnter={onEnter}
             onRemove={onRemove}
           />
@@ -370,12 +365,11 @@ function Piece({
       className={`group/leaf absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
       style={{ ...place, background: color, color: "#0a0c10" }}
     >
-      <button
-        type="button"
-        onClick={() => onBump(node.id)}
+      <div
+        tabIndex={0}
         aria-label={`${node.name} ${value}`}
         data-node-id={node.id}
-        className="flex h-full w-full flex-col items-center justify-center gap-1 transition-[filter] duration-150 hover:brightness-110 active:brightness-125"
+        className="flex h-full w-full flex-col items-center justify-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black/40"
       >
         {showName && (
           <span className="pointer-events-none max-w-full truncate px-1.5 text-[10px] leading-none opacity-65">
@@ -390,7 +384,7 @@ function Piece({
             {value}
           </span>
         )}
-      </button>
+      </div>
       {roomForDelete && (
         <button
           type="button"

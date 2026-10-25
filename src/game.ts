@@ -1,13 +1,9 @@
 /**
- * 一盘棋：节点树 + 两条规则。
+ * 一盘棋：一棵节点树。**没有规则** —— 盘面不会自己变，只因为你加 / 删而动。
  *
  * 两种节点，只有两种（中文只说这两个词：**块** 和 **组**）：
  * - **块**（代码里叫 leaf）—— 有值，面积就是它的值
  * - **组**（代码里叫 section）—— 没有值，值是子节点之和，负责把自己那片地方圈起来
- *
- * 两条规则（点一下 = 让这组结算一次）：
- * - 同一组里两个**块**值相等：合并成一块，值相加
- * - 值涨到 `EXPAND_AT`：这块升格成组，自己裂成 `PER_EXPANSION` 块
  */
 export type Node = {
   id: string;
@@ -17,9 +13,6 @@ export type Node = {
   /** 只有组有 children。 */
   children?: Node[];
 };
-
-export const EXPAND_AT = 8;
-export const PER_EXPANSION = 4;
 
 export const valueOf = (n: Node): number =>
   n.children ? n.children.reduce((s, c) => s + valueOf(c), 0) : (n.value ?? 0);
@@ -54,16 +47,6 @@ const NAMES = [
   "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi",
 ];
 
-function findParent(root: Node, id: string): Node | undefined {
-  if (!root.children) return undefined;
-  if (root.children.some((c) => c.id === id)) return root;
-  for (const c of root.children) {
-    const hit = findParent(c, id);
-    if (hit) return hit;
-  }
-  return undefined;
-}
-
 export const findNode = (root: Node, id: string): Node | undefined => {
   if (root.id === id) return root;
   for (const c of root.children ?? []) {
@@ -72,62 +55,6 @@ export const findNode = (root: Node, id: string): Node | undefined => {
   }
   return undefined;
 };
-
-/**
- * 同值合并：把第一对相等的**块**并成一块，合出来的可能又相等，继续。
- * 只合并块 —— 组和块撞上同一个值不该互相吃掉，那是两种东西。
- */
-function mergeEqual(parent: Node): Node {
-  const kids = [...(parent.children ?? [])];
-  for (;;) {
-    const i = kids.findIndex((a, i2) =>
-      !isSection(a) &&
-      kids.some((b, j) => j > i2 && !isSection(b) && valueOf(a) === valueOf(b)),
-    );
-    if (i < 0) break;
-    const j = kids.findIndex(
-      (b, k) => k > i && !isSection(b) && valueOf(b) === valueOf(kids[i]!),
-    );
-    if (j < 0) break;
-    const merged: Node = {
-      id: kids[j]!.id,
-      name: kids[i]!.name,
-      value: valueOf(kids[i]!) + valueOf(kids[j]!),
-    };
-    kids.splice(j, 1);
-    kids.splice(i, 1, merged);
-  }
-  return { ...parent, children: kids };
-}
-
-/** 够大就升格：一块裂成一个组，里面 `PER_EXPANSION` 块各拿 1/4。 */
-function expand(node: Node): Node {
-  if (isSection(node) || valueOf(node) < EXPAND_AT) return node;
-  const each = valueOf(node) / PER_EXPANSION;
-  return {
-    id: node.id,
-    name: node.name,
-    children: Array.from({ length: PER_EXPANSION }, (_, i) =>
-      makeLeaf(`${node.name}.${i + 1}`, each),
-    ),
-  };
-}
-
-/**
- * 点一下：同组合并 → 升格。值不会因为被点而变 —— 只有合并才让它长大。
- * 只处理被点的那一个 parent，且升格后不再往下合并 —— 否则「裂开→并回去→再裂开」会死循环。
- * 什么都没发生时原树不动（返回同一个引用），免得白占一格撤销。
- */
-export function bump(root: Node, id: string): Node {
-  const node = findNode(root, id);
-  const parent = findParent(root, id);
-  if (!node || !parent || isSection(node)) return root;
-
-  const merged = mergeEqual(parent);
-  const settled: Node = { ...merged, children: merged.children!.map(expand) };
-  const same = JSON.stringify(settled.children) === JSON.stringify(parent.children);
-  return same ? root : replaceNode(root, parent.id, settled);
-}
 
 function replaceNode(root: Node, id: string, next: Node): Node {
   if (root.id === id) return next;
