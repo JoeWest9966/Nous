@@ -41,6 +41,23 @@ export function seedIds(root: Node): void {
 export const childIds = (root: Node, parentId: string): string[] =>
   findNode(root, parentId)?.children?.map((c) => c.id) ?? [];
 
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * 新子块的名字。取「已用过的最大序号 + 1」，不是 `children.length + 1` ——
+ * 后者在删掉中间一块之后会重号：删掉 `src.3`，再加一块还是叫 `src.3`。
+ * 重名会让同一个名字路径指向两块，所以这里必须堵住。
+ */
+const nextChildName = (parent: Node): string => {
+  const re = new RegExp(`^${escapeRe(parent.name)}\\.(\\d+)$`);
+  let max = 0;
+  for (const c of parent.children ?? []) {
+    const hit = re.exec(c.name);
+    if (hit) max = Math.max(max, Number(hit[1]));
+  }
+  return `${parent.name}.${max + 1}`;
+};
+
 export const makeLeaf = (name: string, value: number): Node => ({
   id: nextId(),
   name,
@@ -87,10 +104,9 @@ function replaceNode(root: Node, id: string, next: Node): Node {
 export function addLeaf(root: Node, sectionId: string): Node {
   const section = findNode(root, sectionId);
   if (!section || !section.children) return root;
-  const n = section.children.length + 1;
   return replaceNode(root, sectionId, {
     ...section,
-    children: [...section.children, makeLeaf(`${section.name}.${n}`, 1)],
+    children: [...section.children, makeLeaf(nextChildName(section), 1)],
   });
 }
 

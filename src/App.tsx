@@ -27,7 +27,8 @@ import {
 } from "./store";
 
 const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
-const SIDE_KEY = "n-sidebar";
+/** 左栏默认是收起的。只有你手动展开过才记一个 1 —— 没记录就是关着。 */
+const SIDE_KEY = "n-sidebar-open";
 /** 上次开着的是哪个项目。这个存在浏览器里无所谓 —— 丢了只是回到默认那一盘。 */
 const PROJECT_KEY = "n-project";
 /** 下拉里「新建项目」那一项的值。JSX 属性不认 \u 转义，别拿 NUL 当哨兵。 */
@@ -105,7 +106,7 @@ export function App() {
   /** 正在改名的那个节点，以及它是在哪儿被戳开的。
    *  一个节点同时在左列和盘面上画着 —— 不记来源，两边会各挂一个输入框，互相抢焦点。 */
   const [editing, setEditing] = useState<{ id: string; where: "tree" | "board" } | null>(null);
-  const [side, setSide] = useState<boolean>(() => localStorage.getItem(SIDE_KEY) !== "0");
+  const [side, setSide] = useState<boolean>(() => localStorage.getItem(SIDE_KEY) === "1");
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 819px)").matches);
   const board = useRef<HTMLDivElement | null>(null);
@@ -121,7 +122,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(SIDE_KEY, side ? "1" : "0");
+    if (side) localStorage.setItem(SIDE_KEY, "1");
+    else localStorage.removeItem(SIDE_KEY);
   }, [side]);
 
   /* —— 项目列表。挂载时扫一次 content/ 目录。 —— */
