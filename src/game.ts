@@ -1,20 +1,20 @@
 /**
- * 一盘棋：节点树 + 三条规则。
+ * 一盘棋：节点树 + 两条规则。
  *
- * 两种节点，只有两种：
- * - **leaf**（叶子块）—— 有值，能点，面积就是它的值
- * - **section**（分区）—— 没有值，值是子节点之和，负责把一块地方圈起来
+ * 两种节点，只有两种（中文只说这两个词：**块** 和 **组**）：
+ * - **块**（代码里叫 leaf）—— 有值，面积就是它的值
+ * - **组**（代码里叫 section）—— 没有值，值是子节点之和，负责把自己那片地方圈起来
  *
- * 两条规则（点一下 = 让那一片所在的组结算一次）：
- * - 同一 section 里两个**叶子**值相等：自动合并成一块
- * - 值涨到 `EXPAND_AT`：这个 leaf 升格成 section，自己裂成 `PER_EXPANSION` 个叶子
+ * 两条规则（点一下 = 让这组结算一次）：
+ * - 同一组里两个**块**值相等：合并成一块，值相加
+ * - 值涨到 `EXPAND_AT`：这块升格成组，自己裂成 `PER_EXPANSION` 块
  */
 export type Node = {
   id: string;
   name: string;
-  /** 只有 leaf 有值。section 靠子节点算。 */
+  /** 只有块有值。组靠子节点算。 */
   value?: number;
-  /** 只有 section 有 children。 */
+  /** 只有组有 children。 */
   children?: Node[];
 };
 
@@ -41,7 +41,7 @@ export const makeSection = (name: string, children: Node[]): Node => ({
   children,
 });
 
-/** 开局：N 底下**一个 section + 一个 leaf** —— 两种节点各一个，一眼看清。 */
+/** 开局：N 底下**一个组 + 一块** —— 两种节点各一个，一眼看清。 */
 export function initialState(): Node {
   return makeSection("N", [
     makeSection("alpha", [makeLeaf("alpha.1", 1), makeLeaf("alpha.2", 1)]),
@@ -74,8 +74,8 @@ export const findNode = (root: Node, id: string): Node | undefined => {
 };
 
 /**
- * 同值合并：把第一对相等的**叶子**并成一块，合出来的可能又相等，继续。
- * 只合并叶子 —— section 和 leaf 撞上同一个值不该互相吃掉，那是两种东西。
+ * 同值合并：把第一对相等的**块**并成一块，合出来的可能又相等，继续。
+ * 只合并块 —— 组和块撞上同一个值不该互相吃掉，那是两种东西。
  */
 function mergeEqual(parent: Node): Node {
   const kids = [...(parent.children ?? [])];
@@ -100,7 +100,7 @@ function mergeEqual(parent: Node): Node {
   return { ...parent, children: kids };
 }
 
-/** 够大就升格：叶子裂成一个 section，里面 `PER_EXPANSION` 个叶子各拿 1/4。 */
+/** 够大就升格：一块裂成一个组，里面 `PER_EXPANSION` 块各拿 1/4。 */
 function expand(node: Node): Node {
   if (isSection(node) || valueOf(node) < EXPAND_AT) return node;
   const each = valueOf(node) / PER_EXPANSION;
@@ -135,7 +135,7 @@ function replaceNode(root: Node, id: string, next: Node): Node {
   return { ...root, children: root.children.map((c) => replaceNode(c, id, next)) };
 }
 
-/** 往某个 section 里塞一个叶子（值 1）。 */
+/** 往某个组里塞一块（值 1）。 */
 export function addLeaf(root: Node, sectionId: string): Node {
   const section = findNode(root, sectionId);
   if (!section || !section.children) return root;
@@ -146,7 +146,7 @@ export function addLeaf(root: Node, sectionId: string): Node {
   });
 }
 
-/** 往某个 section 里再加一个 section（默认只有一个值为 1 的叶子）。名字按希腊字母往后排。 */
+/** 往某个组里再加一个组（默认只有一块，值 1）。名字按希腊字母往后排。 */
 export function addSection(root: Node, parentId: string): Node {
   const parent = findNode(root, parentId);
   if (!parent || !parent.children) return root;
@@ -159,7 +159,7 @@ export function addSection(root: Node, parentId: string): Node {
 }
 
 /**
- * 删掉一个节点（连同它的子树），并把因此空掉的分区一路收掉。
+ * 删掉一个节点（连同它的子树），并把因此空掉的组一路收掉。
  * 根不删 —— 空盘也还叫 N，只是底下什么都没有。
  */
 export function removeNode(root: Node, id: string): Node {
@@ -237,7 +237,7 @@ export function squarify(values: number[], into: Box): Box[] {
   return out;
 }
 
-/** 一个节点（section）的子节点在这个矩形里怎么摆。 */
+/** 一个组（section）的子节点在这个矩形里怎么摆。 */
 export function layout(node: Node, box: Box, depth = 0): { node: Node; box: Box; depth: number }[] {
   const kids = node.children;
   if (!kids?.length) return [];

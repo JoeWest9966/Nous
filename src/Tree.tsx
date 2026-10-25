@@ -134,7 +134,7 @@ export function Tree({
 export const pathNames = (root: Node, path: string[]): string[] =>
   path.map((id) => findNode(root, id)?.name ?? "?");
 
-/** section 是按钮（点了钻进去），leaf 只是行 —— 点一片叶子没有任何事可做，就别假装能点。 */
+/** 组是按钮（点了钻进去），块只是行 —— 块自己没事情可做，就别假装能点。 */
 function Row({
   section,
   title,

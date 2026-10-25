@@ -114,7 +114,7 @@ export function App() {
         undo();
         return;
       }
-      // 焦点在某片叶子上时，Delete / Backspace 删掉它 —— 悬停才出现的 × 不该是唯一入口。
+      // 焦点在某一块上时，Delete / Backspace 删掉它 —— 悬停才出现的 × 不该是唯一入口。
       if (e.key === "Delete" || e.key === "Backspace") {
         const el = document.activeElement as HTMLElement | null;
         const id = el?.dataset.nodeId;
