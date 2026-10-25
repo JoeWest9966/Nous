@@ -64,6 +64,19 @@
     {
       "t": "remove",
       "id": "n9"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n1",
+      "id": "n18"
+    },
+    {
+      "t": "remove",
+      "id": "n8"
+    },
+    {
+      "t": "remove",
+      "id": "n18"
     }
   ]
 }
