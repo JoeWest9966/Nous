@@ -7,9 +7,7 @@
 
 ## 打开
 
-**http://152.53.165.119:4784/demo/button/index.html**
-
-局域网 / Tailscale 用：**http://100.106.43.81:4784/demo/button/index.html**
+**http://100.106.43.81:4784/demo/button/index.html**
 
 服务没起的话，在 `/opt/TreeMap` 跑：
 
@@ -19,8 +17,12 @@ npm run demo          # = vite --port 4784，带热更新
 
 （端口被占就是已经起着了，直接用地址。）
 
-端口说明：`4783` 是 `vite preview`，只认 `dist/` 里的构建产物，**看不到这个 demo**；
-demo 在 `4784`。`src/` 一行没动，demo 是独立的三个文件。
+**地址怎么来的**：`vite.config.ts` 里的 host 取 `.env` 的 `N_HOST`，默认 `127.0.0.1`（只听本机）。
+现在 `.env` 里是 Tailscale 那张网卡，所以只能从 `100.106.43.81` 进 —— 换成公网 IP 一律拒绝连接。
+要让局域网别的机器也能开，改 `.env` 的 `N_HOST`（`0.0.0.0` = 全开）。
+
+**端口**：`4783` 是 `vite preview`，只认 `dist/` 里的构建产物，**看不到这个 demo**（它只会把
+未知路径 fallback 到根页面，看着像"打开了但什么都没有"）。demo 在 `4784`。`src/` 一行没动。
 
 ## 页面上的开关
 
@@ -100,7 +102,7 @@ demo/button/main.js      19 个方案的 DOM + 八个需要 JS 的行为（长�
 对照表是白盒，这个是长在真行上的 —— 直接渲染 `src/App`，同一份组件、同一份数据、同一份 CSS，
 动作按钮靠运行时挂到左列每一行（**一行 src 都不用改**）。
 
-- **http://152.53.165.119:4784/demo/button-on-tree-map/index.html**
+- **http://100.106.43.81:4784/demo/button-on-tree-map/index.html**
 - 内网：http://100.106.43.81:4784/demo/button-on-tree-map/index.html
 
 它和 4783 那盘读的是同一个 content 目录，所以你在 demo 里加块、改名，4783 那盘跟着变
