@@ -70,7 +70,7 @@ export function Tree({
           <li key={node.id} role="treeitem" aria-expanded={section ? open.has(node.id) : undefined}>
             <div
               className={`group flex h-8 items-center rounded-md pr-1.5 transition-colors duration-150 ${
-                here ? "bg-accent/15 text-accent" : "text-text/85 hover:bg-white/[0.045]"
+                here ? "bg-accent/15 text-accent" : "text-text/85 hover:bg-surface"
               }`}
               style={{ paddingLeft: depth * 13 + 4 }}
             >
@@ -78,7 +78,7 @@ export function Tree({
               {depth > 0 && (
                 <span
                   aria-hidden="true"
-                  className="mr-1 h-8 w-px shrink-0 bg-white/[0.07]"
+                  className="mr-1 h-8 w-px shrink-0 bg-border"
                   style={{ marginLeft: -7 }}
                 />
               )}

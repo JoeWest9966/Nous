@@ -4,29 +4,36 @@
 :root[data-theme="default"] {
   color-scheme: dark;
 
-  --n-color-canvas: #0b0d11;
-  --n-color-surface: #12151b;
-  --n-color-raised: #191d25;
-  --n-color-border: #262c37;
-  --n-color-text: #e6e9ef;
-  --n-color-muted: #99a3b3;
-  --n-color-accent: #6ea8fe;
-  --n-color-on-accent: #06121f;
-  --n-color-danger: #ff6b6b;
+  /* pele.run 自己的深色值（Flexoki 那一套）。侧栏 / 顶栏就用它的背景色，
+     不自己调灰 —— 和 pele 的 treemap 摆在一起才是一张图。 */
+  --n-color-canvas: #100f0f;
+  --n-color-surface: #1c1b1a;
+  --n-color-raised: #343331;
+  --n-color-border: #282726;
+  --n-color-text: #cecdc3;
+  --n-color-muted: #878580;
+  --n-color-accent: #4385be;
+  --n-color-on-accent: #100f0f;
+  --n-color-danger: #d14d41;
+
+  /* 内容区底板 = pele treemap 里「Category A」那种组的颜色：
+     series-1 `#d14d41` 以 12% 压在 `--panel` `#1c1b1a` 上 = `#32211f`。 */
+  --n-color-board: #32211f;
 
   /* 图的颜色 ≠ 界面的颜色。`--n-color-border` 是发丝线（1.4:1），拿它画箭头等于没画；
      下面这组按 pele 自己的对比度比例定：边线尽量高、边框 ≈3.4:1、节点填充 ≈1.1:1。
      它们仍然只是 token —— 换主题改这里，图跟着变。 */
   --n-color-diagram-line: var(--n-color-muted);
-  --n-color-diagram-border: #5c6676;
-  --n-color-diagram-node: var(--n-color-raised);
+  --n-color-diagram-border: #575653;
+  --n-color-diagram-node: var(--n-color-surface);
 
   --n-space-unit: 0.25rem;
   --n-space-gutter: 1.5rem;
   --n-space-panel: 1rem;
   --n-space-indent: 1rem;
 
-  --n-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --n-font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+    sans-serif;
   --n-font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
 
   --n-text-xs: 0.75rem;
@@ -56,6 +63,9 @@
   --n-color-accent: #1d5fd6;
   --n-color-on-accent: #ffffff;
   --n-color-danger: #b3261e;
+
+  /* pele 浅色主题下 series-1 `#af3029` 12% 压在 `#f2f0e5` 上。 */
+  --n-color-board: #ead9ce;
 
   --n-color-diagram-line: var(--n-color-muted);
   --n-color-diagram-border: #7e8899;

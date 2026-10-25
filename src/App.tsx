@@ -16,19 +16,17 @@ import {
 const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
 const SIDE_KEY = "n-sidebar";
 
-/**
- * pele 的 series 色板（`--pele-series-1..8`）。用它而不是自己调 HSL：
- * 这八个色是成对验算过对比度的，随机生成的花色一眼就假。
- */
+/** pele 自己的 series 色板（`--pele-series-1..8`，深色主题那一套）。
+ *  不用浅色主题的 `#4c78a8` 那组 —— 那是白底用的，放到 `#100f0f` 上全发灰。 */
 const SERIES = [
-  "#4c78a8",
-  "#f58518",
-  "#54a24b",
-  "#e45756",
-  "#72b7b2",
-  "#eeca3b",
-  "#b279a2",
-  "#9d755d",
+  "#d14d41",
+  "#da702c",
+  "#d0a215",
+  "#879a39",
+  "#3aa99f",
+  "#4385be",
+  "#8b7ec8",
+  "#ce5d97",
 ] as const;
 
 /** pele treemap 的几何：块间 4px 缝（每边内缩 2）、子块左右各缩 6、底部缩 6、顶部让出标题带。 */
@@ -161,10 +159,10 @@ export function App() {
   return (
     <main className="relative flex h-dvh w-full overflow-hidden bg-canvas text-text antialiased">
       <aside
-        className={`shrink-0 overflow-hidden border-r border-white/[0.06] bg-canvas transition-[width] duration-300 ${EASE} ${
+        className={`shrink-0 overflow-hidden border-r border-border bg-canvas transition-[width] duration-300 ${EASE} ${
           narrow
             ? `absolute bottom-0 left-0 top-[52px] z-20 shadow-[0_0_60px_rgba(0,0,0,0.6)] ${side ? "w-[248px]" : "w-0 border-r-0"}`
-            : `relative bg-white/[0.015] ${side ? "w-[248px]" : "w-0 border-r-0"}`
+            : `relative ${side ? "w-[248px]" : "w-0 border-r-0"}`
         }`}
         aria-hidden={!side}
       >
@@ -185,7 +183,7 @@ export function App() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-white/[0.06] px-3">
+        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-3">
           <IconButton
             label={side ? "收起左列" : "展开左列"}
             onClick={() => setSide(!side)}
@@ -245,7 +243,7 @@ export function App() {
           </div>
         </header>
 
-        <div ref={board} className="relative min-h-0 flex-1 p-2" aria-label="盘面">
+        <div ref={board} className="relative min-h-0 flex-1 bg-board p-2" aria-label="盘面">
           {placed.length === 0 && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[13px] text-muted">
               <span>盘上什么都没有了</span>
@@ -308,19 +306,21 @@ function Piece({
         style={{
           ...place,
           background: tint(color, 0.12),
-          // pele 的描边用的是 series 原色；深色底上降到 55% 才不刺眼。
-          boxShadow: `inset 0 0 0 1px ${tint(color, 0.55)}`,
+          // pele 的组框描边就是 series 原色，1px，不降透明度。
+          boxShadow: `inset 0 0 0 1px ${color}`,
         }}
       >
         {strip > 0 && (
           <div
             className="absolute inset-x-0 top-0 flex items-center gap-1.5 px-2 text-[11px]"
-            style={{ height: strip, color: tint(color, 0.92) }}
+            style={{ height: strip, color: "var(--n-color-text)" }}
           >
             <span className="truncate" style={{ letterSpacing: "0.01em" }}>
               {node.name}
             </span>
-            {strip >= 24 && <span className="shrink-0 opacity-45">{node.children!.length} 块</span>}
+            {strip >= 24 && (
+              <span className="shrink-0 text-muted">{node.children!.length} 块</span>
+            )}
             <button
               type="button"
               onClick={() => onEnter(node.id)}
@@ -363,7 +363,7 @@ function Piece({
   return (
     <div
       className={`group/leaf absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
-      style={{ ...place, background: color, color: "#0a0c10" }}
+      style={{ ...place, background: color, color: "var(--n-color-canvas)" }}
     >
       <div
         tabIndex={0}
@@ -421,8 +421,8 @@ function Pill({
       title={title}
       className={`h-7 rounded-lg px-2.5 text-[12px] transition-colors duration-150 disabled:opacity-25 ${
         muted
-          ? "text-muted hover:bg-white/[0.06] hover:text-text"
-          : "bg-white/[0.07] text-text/90 hover:bg-white/[0.11]"
+          ? "text-muted hover:bg-surface hover:text-text"
+          : "bg-surface text-text/90 hover:bg-raised"
       }`}
     >
       {children}
@@ -447,7 +447,7 @@ function IconButton({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors duration-150 hover:bg-white/[0.07] hover:text-text ${className}`}
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors duration-150 hover:bg-surface hover:text-text ${className}`}
     >
       {children}
     </button>

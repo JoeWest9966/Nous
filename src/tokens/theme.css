@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./fonts.css";
 @import "./tokens.css";
 
 /* The utility names are the API a component is allowed to use, and every one of them points at a
@@ -7,6 +8,7 @@
   --color-canvas: var(--n-color-canvas);
   --color-surface: var(--n-color-surface);
   --color-raised: var(--n-color-raised);
+  --color-board: var(--n-color-board);
   --color-border: var(--n-color-border);
   --color-text: var(--n-color-text);
   --color-muted: var(--n-color-muted);
