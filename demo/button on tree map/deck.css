@@ -1,0 +1,189 @@
+/* 13 号方案 · 层叠卡片 —— 装在真盘上的那一版。
+ *
+ * 和 demo/button 里那版的分工：
+ *   那边是十九个方案的对照表，这边只有一个，但是长在真的行上（真的缩进、真的数值、真的图标）。
+ *
+ * 只动 transform / translate / scale / rotate / opacity。
+ * 退场 140ms 无过冲；进场 420ms 弹簧，回弹 3.2%。
+ * 材质从 token 里 mix 出来，换调色板不用回来改这里。
+ */
+
+:root {
+  /* 阻尼振子采样出来的弹簧：spring(k=420, c=30)，418ms，回弹 3.2% */
+  --deck-spring: linear(
+    0.0004, 0.0386 3.3%, 0.1287 6.7%, 0.2465 10%, 0.3742 13.3%, 0.4999 16.7%,
+    0.6158 20%, 0.7174 23.3%, 0.7973 26.7%, 0.8675 30%, 0.9223 33.3%, 0.9633 36.7%,
+    0.9926 40%, 1.0122 43.3%, 1.0242 46.7%, 1.0304 50%, 1.0323 53.3%, 1.0315 56.7%,
+    1.0287 60%, 1.025 63.3%, 1.0209 66.7%, 1.0168 70%, 1.013 73.3%, 1.0099 76.7%,
+    1.007 80%, 1.0046 83.3%, 1.0028 86.7%, 1.0014 90%, 1.0004 93.3%, 0.9997 96.7%,
+    0.9993 100%
+  );
+  --deck-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --deck-glass: color-mix(in oklab, var(--n-color-raised) 84%, transparent);
+  --deck-edge: color-mix(in oklab, var(--n-color-text) 11%, transparent);
+  --deck-lift: inset 0 1px 0 color-mix(in oklab, var(--n-color-text) 13%, transparent);
+  --deck-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.3), 0 2px 8px -4px rgba(0, 0, 0, 0.45),
+    0 10px 26px -12px rgba(0, 0, 0, 0.7);
+  --deck-hover: color-mix(in oklab, var(--n-color-text) 9%, transparent);
+}
+
+:root[data-theme="light"] {
+  --deck-shadow:
+    0 1px 1px rgba(16, 20, 26, 0.05), 0 2px 6px -3px rgba(16, 20, 26, 0.1),
+    0 10px 24px -12px rgba(16, 20, 26, 0.28);
+}
+
+/* 行本身不设定位：定位点在 li 上，这样按钮插在 li 里也不会动了 React 管的那个 div */
+.deck-host {
+  position: relative;
+}
+
+/* 光标停在按钮上时，行 div 自己的 :hover 会丢 —— 用 li 的 hover 补回同一块底色，肉眼看不出接缝 */
+.deck-host:is(:hover, :focus-within) > div {
+  background-color: color-mix(in oklab, var(--n-color-text) 5%, transparent);
+}
+
+/* 原来那个 × 让位给层叠卡片，不然同一行有两个删除 */
+.deck-host > div[data-node-id] > button[aria-label^="删除"] {
+  display: none;
+}
+
+/* 值淡掉，别让数字从玻璃后面透出来 */
+.deck-host :is(span.ml-auto) {
+  transition: opacity 160ms ease;
+}
+
+.deck-host:is(:hover, :focus-within) :is(span.ml-auto) {
+  opacity: 0.15;
+}
+
+/* ── 那一摞牌 ──────────────────────────────────────────────────────────────── */
+.deck-acts {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  translate: 0 -50%;
+  z-index: 20;
+  pointer-events: none; /* 收起来的时候彻底让开鼠标 */
+}
+
+.deck-host:is(:hover, :focus-within) .deck-acts {
+  pointer-events: auto;
+}
+
+.deck-act {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--deck-edge);
+  border-radius: 50%;
+  background: var(--deck-glass);
+  color: var(--n-color-text);
+  box-shadow: var(--deck-shadow), var(--deck-lift);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  cursor: pointer;
+  font: inherit;
+  /* 收起：四张叠在一起，每张偏 4°、错 1px —— 一眼能数出有几张 */
+  opacity: 0;
+  scale: 0.92;
+  translate: calc(var(--i) * -1px) -50%;
+  rotate: calc(var(--i) * 4deg);
+  transition-property: opacity, translate, scale, rotate, background, color;
+  transition-duration: 140ms, 140ms, 140ms, 140ms, 130ms, 130ms;
+  transition-timing-function: var(--deck-exit), var(--deck-exit), var(--deck-exit),
+    var(--deck-exit), ease, ease;
+}
+
+.deck-host:is(:hover, :focus-within) .deck-act {
+  opacity: 1;
+  scale: 1;
+  translate: calc(var(--i) * -29px) -50%;
+  rotate: 0deg;
+  transition-duration: 420ms, 420ms, 420ms, 420ms, 130ms, 130ms;
+  transition-timing-function: var(--deck-spring), var(--deck-spring), var(--deck-spring),
+    var(--deck-spring), ease, ease;
+  transition-delay: calc(var(--i) * 25ms);
+}
+
+.deck-act svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.deck-act:hover {
+  background: var(--deck-hover);
+}
+
+.deck-act:active {
+  transform: scale(0.9);
+}
+
+.deck-act:focus-visible {
+  outline: 1.5px solid var(--n-color-accent);
+  outline-offset: 1px;
+}
+
+.deck-act.deck-danger:hover {
+  color: var(--n-color-danger);
+  background: color-mix(in oklab, var(--n-color-danger) 14%, transparent);
+}
+
+/* 层叠状态下最上面那张是第 0 张（最靠右，不动）—— 让顺序看着是从右往左摊开 */
+.deck-act:nth-child(1) {
+  z-index: 4;
+}
+.deck-act:nth-child(2) {
+  z-index: 3;
+}
+.deck-act:nth-child(3) {
+  z-index: 2;
+}
+.deck-act:nth-child(4) {
+  z-index: 1;
+}
+
+/* 底部的说明条：这是 demo 的壳，不属于盘子 */
+.deck-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  translate: -50% 0;
+  z-index: 100;
+  appearance: none;
+  border: 1px solid var(--deck-edge);
+  border-radius: 999px;
+  background: var(--deck-glass);
+  color: var(--n-color-muted);
+  box-shadow: var(--deck-shadow);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 11.5px;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+
+.deck-hint:hover {
+  color: var(--n-color-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deck-act {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}

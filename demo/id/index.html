@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="default">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>块 / 组 · 唯一 id —— 十二个方案</title>
+    <link rel="stylesheet" href="/src/tokens/tokens.css" />
+    <link rel="stylesheet" href="/demo/id/demo.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <h1>块 / 组 · 唯一 id —— 十二个方案</h1>
+          <p class="lede">
+            同一棵树，同一串操作，十二种给节点起 id 的办法。每一格里是这个 id
+            <b>现在</b>长什么样；按下面的按钮压它，看谁的 id 还认得出人。
+          </p>
+          <p class="legend">
+            <span><i class="dot" data-k="ok"></i>没动</span>
+            <span><i class="dot" data-k="changed"></i>变了 —— 老 id 已经找不到这一块</span>
+            <span><i class="dot" data-k="wrong"></i>指错人 —— 老 id 现在指向另一块</span>
+          </p>
+        </div>
+        <div class="tools">
+          <button class="btn" id="theme">浅色</button>
+        </div>
+      </header>
+
+      <section class="lab" aria-label="压力测试">
+        <div class="lab-ops" role="group" aria-label="对这个盘做一件事">
+          <button class="op" data-op="insert">＋ 插一块（最前面）</button>
+          <button class="op" data-op="delete">删中间那块</button>
+          <button class="op" data-op="rename">改组名</button>
+          <button class="op" data-op="move">搬走一支</button>
+          <button class="op danger" data-op="reset">重开（计数器归零）</button>
+        </div>
+        <div class="lab-log" id="log" aria-live="polite"></div>
+        <div class="lab-find">
+          <label for="find">粘一个 id 回去</label>
+          <input
+            id="find"
+            type="text"
+            placeholder="k2fq/9xm4/tkd8 · alpha.1 · 1.2.1"
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <span class="hint">每格会告诉你认不认得</span>
+        </div>
+      </section>
+
+      <nav class="tabs" aria-label="方案"><!-- 由 main.js 填 --></nav>
+      <main class="deck" id="deck"></main>
+
+      <section class="notes">
+        <h3>只有三条判据</h3>
+        <ol>
+          <li>
+            <b>稳定</b> —— 改完结构（插、删、改名、搬家、重开），同一个 id
+            还能找回同一块吗？变了是麻烦，<b>指错人是灾难</b>：它不报错，它静静地让你改了另一块。
+          </li>
+          <li>
+            <b>套娃</b> —— 从 id 能不能看出谁是谁的爹？能的话 <code>startsWith</code>
+            一行代码就等于「我这一整支」，整支复制 / 整支统计 / 整支删除都白送。
+          </li>
+          <li>
+            <b>可念</b> —— 人能不能在群里把这个 id 打出来、在电话里念出来。
+          </li>
+        </ol>
+
+        <h3>压力测试在测什么</h3>
+        <ul>
+          <li><b>插一块</b> —— 序号派（1.2.1）会把后面所有兄弟重新编号，而且新号正是旧号。</li>
+          <li><b>删中间</b> —— 同上，位置派集体前移，名字派无动于衷。</li>
+          <li><b>改组名</b> —— 名字派一整支全换号；随机派一个都不动。</li>
+          <li><b>搬走一支</b> —— 含地址的方案整支变号（地址变了，本来就该变，代价是所有旧引用一起废）；只带自己名字的（名字@段、双标识）纹丝不动 —— 它是稳的，但它从此不再告诉你这块在哪。</li>
+          <li><b>重开</b> —— 模拟刷新：计数器归零，第 1 块又变成 <code>n1</code>，而上辈子的 <code>n1</code> 是另一块。严格说重开是一盘新棋，这里只测一件事：<b>把 A 盘的 id 贴到 B 盘上，会不会安静地打开另一块</b>。</li>
+        </ul>
+
+        <h3>结论</h3>
+        <p>
+          没有一张卡全绿，这不是我偷懒 —— <b>id 只有两个字段可用：身份和地址</b>。要关系就得把地址编进去，
+          要稳就不能让地址参与身份。十二个方案全都在这个取舍上选了一边，除了最后一个：
+        </p>
+        <p>
+          顺带一提，压到「重开」那一步会发现一件反直觉的事：<b>指错人的不止序号派</b> —— 名字路径、序号路径、内容 hash
+          一样会。因为它们的 id 是确定性的：两盘结构一样的棋会算出同一串 id，于是 A 盘的链接在 B 盘上安静地打开另一块。
+          而随机派、段路径、名字@段、双标识全身而退 —— 它们跟「第几个」「叫什么」都没关系。
+        </p>
+        <p class="verdict">
+          <b>段路径</b>（每段是那个节点自己的不可变短 id，父子靠前缀相连）是唯一一个两边都占一点的 ——
+          关系真的在 id 里，而每一段永不改变。它的代价是长，和「搬家就换地址」。
+        </p>
+        <p>
+          我的落地建议是三个字段各管一件事：<b>segPath 给人看和寻址</b>　+　
+          <b>一条不可见的 uid 兜底</b>（搬家、误删后还能找回原对象）　+　
+          <b>name 只做显示</b>（随便改，不进 id）。
+        </p>
+      </section>
+    </div>
+    <script type="module" src="/demo/id/main.js"></script>
+  </body>
+</html>

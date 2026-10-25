@@ -1,0 +1,650 @@
+/* 块 / 组 · 唯一 id —— 十二个方案。
+   每一格是同一棵树、同一串 id 规则下的结果。颜色全部走 src/tokens，
+   只有「状态」三类自己定义（没动 / 变了 / 指错人）。 */
+
+:root {
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --row-hover: rgba(255, 255, 255, 0.045);
+
+  /* 三类状态。变了用 accent（蓝，还不致命），指错用 danger（红，静默出错）。 */
+  --st-ok: var(--n-color-muted);
+  --st-changed: var(--n-color-accent);
+  --st-wrong: var(--n-color-danger);
+
+  /* id 这一列用 px 而不是 ch：表头 10.5px、行里 11px，同一个 ch 会算出两个宽度，
+     表头的「id」标签就会和下面的列错开 8px。一个变量，两处共用。 */
+  --id-col: 146px;
+  --val-col: 20px;
+}
+
+:root[data-theme="light"] {
+  --row-hover: rgba(16, 20, 26, 0.045);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--n-font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  background: var(--n-color-canvas);
+  color: var(--n-color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 40px 24px 96px;
+}
+
+/* ── 头部 ──────────────────────────────────────────────────────────────────── */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 0;
+  max-width: 640px;
+  color: var(--n-color-muted);
+  font-size: 13px;
+}
+
+.lede b {
+  color: var(--n-color-text);
+  font-weight: 500;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--n-color-muted);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--st-ok);
+}
+
+.dot[data-k="ok"] {
+  background: var(--st-ok);
+}
+.dot[data-k="changed"] {
+  background: var(--st-changed);
+}
+.dot[data-k="wrong"] {
+  background: var(--st-wrong);
+}
+
+.tools {
+  display: flex;
+  gap: 8px;
+}
+
+.btn,
+.op {
+  appearance: none;
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-surface);
+  color: var(--n-color-text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.btn:hover,
+.op:hover {
+  background: var(--n-color-raised);
+}
+
+.op:active {
+  transform: translateY(0.5px);
+}
+
+.op.danger {
+  color: var(--n-color-danger);
+  border-color: color-mix(in oklab, var(--n-color-danger) 35%, var(--n-color-border));
+}
+
+.op.danger:hover {
+  background: color-mix(in oklab, var(--n-color-danger) 12%, transparent);
+}
+
+.btn[aria-pressed="true"] {
+  border-color: var(--n-color-accent);
+  color: var(--n-color-accent);
+}
+
+/* ── 压力测试条 ────────────────────────────────────────────────────────────── */
+.lab {
+  border: 1px solid var(--n-color-border);
+  border-radius: 12px;
+  background: var(--n-color-surface);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lab-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lab-log {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-height: 18px;
+  font-size: 12px;
+  color: var(--n-color-muted);
+}
+
+.lab-log .step {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 8px 1px 0;
+}
+
+.lab-log .no {
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  color: var(--n-color-accent);
+  letter-spacing: 0.04em;
+}
+
+.lab-log .step.latest {
+  color: var(--n-color-text);
+}
+
+.lab-find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--n-color-border);
+}
+
+.lab-find label {
+  font-size: 12px;
+  color: var(--n-color-muted);
+  white-space: nowrap;
+}
+
+.lab-find input {
+  flex: 1 1 260px;
+  min-width: 0;
+  appearance: none;
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-canvas);
+  color: var(--n-color-text);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-family: var(--n-font-mono);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 140ms ease;
+}
+
+.lab-find input:focus {
+  border-color: var(--n-color-accent);
+}
+
+.lab-find .hint {
+  font-size: 11.5px;
+  color: var(--n-color-muted);
+}
+
+/* ── 方案切换 ──────────────────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 18px 0 12px;
+  margin-bottom: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in oklab, var(--n-color-canvas) 88%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.chip {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--n-color-muted);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.chip:hover {
+  color: var(--n-color-text);
+  background: var(--row-hover);
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--n-color-raised);
+  border-color: var(--n-color-border);
+  color: var(--n-color-text);
+}
+
+/* ── 卡片 ──────────────────────────────────────────────────────────────────── */
+.deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr));
+  gap: 20px;
+  margin-top: 12px;
+  align-items: start;
+}
+
+.card {
+  border: 1px solid var(--n-color-border);
+  border-radius: 14px;
+  background: var(--n-color-surface);
+  overflow: hidden;
+}
+
+.card[hidden] {
+  display: none;
+}
+
+.card-head {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px 12px;
+}
+
+.num {
+  flex: none;
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  color: var(--n-color-accent);
+  padding-top: 2px;
+  letter-spacing: 0.04em;
+}
+
+.card-head h2 {
+  margin: 0 0 3px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tag {
+  font-family: var(--n-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-color-muted);
+  border: 1px solid var(--n-color-border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-weight: 400;
+}
+
+.tag.pick {
+  color: var(--n-color-accent);
+  border-color: color-mix(in oklab, var(--n-color-accent) 45%, transparent);
+}
+
+.card-head p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--n-color-muted);
+  max-width: 62ch;
+}
+
+.specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 8px 0 0;
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  color: var(--n-color-muted);
+}
+
+.specs span {
+  white-space: nowrap;
+}
+
+.specs b {
+  color: var(--n-color-text);
+  font-weight: 500;
+}
+
+.specs b.no {
+  color: var(--st-wrong);
+}
+
+.plate {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--n-color-border);
+  background: color-mix(in oklab, var(--n-color-canvas) 62%, var(--n-color-surface));
+}
+
+.panel {
+  border: 1px solid var(--n-color-border);
+  border-radius: 10px;
+  background: var(--n-color-surface);
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-color-muted);
+  border-bottom: 1px solid var(--n-color-border);
+}
+
+.panel-head .grow {
+  flex: 1;
+}
+
+/* 表头和行共用同一套右侧宽度：值 3ch、id 22ch。不然「值 / id」两个标签会和下面的列错开。 */
+.panel-head .hval {
+  width: var(--val-col);
+  text-align: right;
+}
+
+.panel-head .hid {
+  width: var(--id-col);
+  padding-left: 6px;
+}
+
+.rows {
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* 一行：缩进 + 箭头 + 名字 + 值 + id。id 靠右，等宽，像一列编号。 */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding-right: 6px;
+  padding-left: calc(6px + var(--d) * 13px);
+  border-radius: 6px;
+  transition: background 150ms ease;
+}
+
+.row:hover {
+  background: var(--row-hover);
+}
+
+.chev {
+  flex: none;
+  width: 12px;
+  font-size: 9px;
+  color: var(--n-color-muted);
+  text-align: center;
+}
+
+.nm {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+}
+
+.nm.leaf {
+  color: color-mix(in oklab, var(--n-color-text) 72%, transparent);
+}
+
+.count {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--n-color-muted);
+  opacity: 0.75;
+}
+
+.val {
+  flex: none;
+  width: var(--val-col);
+  margin-left: auto;
+  text-align: right;
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-color-muted);
+  opacity: 0.8;
+}
+
+/* id —— 这一格的展品。点一下复制。 */
+.id {
+  appearance: none;
+  flex: none;
+  width: var(--id-col);
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--st-ok);
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.id:hover {
+  background: var(--n-color-raised);
+  border-color: var(--n-color-border);
+}
+
+.id.st-changed {
+  color: var(--st-changed);
+}
+
+.id.st-wrong {
+  color: var(--st-wrong);
+  background: color-mix(in oklab, var(--st-wrong) 12%, transparent);
+  border-color: color-mix(in oklab, var(--st-wrong) 30%, transparent);
+}
+
+.id.copied {
+  color: var(--n-color-text);
+  background: color-mix(in oklab, var(--n-color-accent) 24%, transparent);
+  border-color: color-mix(in oklab, var(--n-color-accent) 55%, transparent);
+}
+
+/* ── 每格的成绩 ────────────────────────────────────────────────────────────── */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--n-color-muted);
+}
+
+.stats .s {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.stats b {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-color-text);
+}
+
+.stats .s.changed b {
+  color: var(--st-changed);
+}
+
+.stats .s.wrong b {
+  color: var(--st-wrong);
+}
+
+.stats .cum {
+  margin-left: auto;
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  opacity: 0.85;
+}
+
+.find-line {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--n-color-muted);
+  min-height: 18px;
+}
+
+.find-line .ok {
+  color: var(--n-color-text);
+}
+
+.find-line .bad {
+  color: var(--st-wrong);
+}
+
+.find-line code {
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+}
+
+/* ── 底部说明 ──────────────────────────────────────────────────────────────── */
+.notes {
+  margin-top: 56px;
+  padding-top: 28px;
+  border-top: 1px solid var(--n-color-border);
+  max-width: 760px;
+}
+
+.notes h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--n-color-text);
+}
+
+.notes h3:not(:first-child) {
+  margin-top: 28px;
+}
+
+.notes p,
+.notes li {
+  font-size: 13px;
+  color: var(--n-color-muted);
+}
+
+.notes p {
+  margin: 0 0 10px;
+}
+
+.notes ol,
+.notes ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.notes li {
+  margin-bottom: 6px;
+}
+
+.notes b {
+  color: var(--n-color-text);
+  font-weight: 500;
+}
+
+.notes code {
+  font-family: var(--n-font-mono);
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--n-color-surface);
+  border: 1px solid var(--n-color-border);
+}
+
+.verdict {
+  padding: 12px 14px;
+  border-left: 2px solid var(--n-color-accent);
+  background: color-mix(in oklab, var(--n-color-accent) 7%, transparent);
+  border-radius: 0 8px 8px 0;
+  color: var(--n-color-text) !important;
+}
+
+/* 手机上 id 这一列是主角，先让值和块数退场，别把名字挤成一个字。 */
+@media (max-width: 560px) {
+  .row .count,
+  .row .val,
+  .panel-head .hval {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 1ms !important;
+  }
+}
