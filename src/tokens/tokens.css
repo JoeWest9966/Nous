@@ -1,0 +1,63 @@
+/* The default theme. Every colour, space, size and radius in this panel is one of these names.
+   A different theme is a different set of values in this file — components do not change. */
+:root,
+:root[data-theme="default"] {
+  color-scheme: dark;
+
+  --n-color-canvas: #0b0d11;
+  --n-color-surface: #12151b;
+  --n-color-raised: #191d25;
+  --n-color-border: #262c37;
+  --n-color-text: #e6e9ef;
+  --n-color-muted: #99a3b3;
+  --n-color-accent: #6ea8fe;
+  --n-color-on-accent: #06121f;
+  --n-color-danger: #ff6b6b;
+
+  /* 图的颜色 ≠ 界面的颜色。`--n-color-border` 是发丝线（1.4:1），拿它画箭头等于没画；
+     下面这组按 pele 自己的对比度比例定：边线尽量高、边框 ≈3.4:1、节点填充 ≈1.1:1。
+     它们仍然只是 token —— 换主题改这里，图跟着变。 */
+  --n-color-diagram-line: var(--n-color-muted);
+  --n-color-diagram-border: #5c6676;
+  --n-color-diagram-node: var(--n-color-raised);
+
+  --n-space-unit: 0.25rem;
+  --n-space-gutter: 1.5rem;
+  --n-space-panel: 1rem;
+  --n-space-indent: 1rem;
+
+  --n-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --n-font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", monospace;
+
+  --n-text-xs: 0.75rem;
+  --n-text-sm: 0.875rem;
+  --n-text-base: 1rem;
+  --n-text-lg: 1.125rem;
+  --n-text-xl: 1.375rem;
+
+  --n-leading-tight: 1.25;
+  --n-leading-normal: 1.55;
+
+  --n-radius-sm: 0.25rem;
+  --n-radius-md: 0.5rem;
+  --n-radius-lg: 0.75rem;
+  --n-radius-full: 9999px;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --n-color-canvas: #f7f8fa;
+  --n-color-surface: #ffffff;
+  --n-color-raised: #f1f3f7;
+  --n-color-border: #d8dde6;
+  --n-color-text: #14171c;
+  --n-color-muted: #5c6676;
+  --n-color-accent: #1d5fd6;
+  --n-color-on-accent: #ffffff;
+  --n-color-danger: #b3261e;
+
+  --n-color-diagram-line: var(--n-color-muted);
+  --n-color-diagram-border: #7e8899;
+  --n-color-diagram-node: var(--n-color-raised);
+}

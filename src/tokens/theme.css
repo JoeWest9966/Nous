@@ -1,0 +1,51 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* The utility names are the API a component is allowed to use, and every one of them points at a
+   token. There is no second way to write a colour, a space, a size or a radius. */
+@theme inline {
+  --color-canvas: var(--n-color-canvas);
+  --color-surface: var(--n-color-surface);
+  --color-raised: var(--n-color-raised);
+  --color-border: var(--n-color-border);
+  --color-text: var(--n-color-text);
+  --color-muted: var(--n-color-muted);
+  --color-accent: var(--n-color-accent);
+  --color-on-accent: var(--n-color-on-accent);
+  --color-danger: var(--n-color-danger);
+
+  /* `p-4` is four token units, not four hard-coded quarters of a rem. */
+  --spacing: var(--n-space-unit);
+  --spacing-gutter: var(--n-space-gutter);
+  --spacing-panel: var(--n-space-panel);
+  --spacing-indent: var(--n-space-indent);
+
+  --font-sans: var(--n-font-sans);
+  --font-mono: var(--n-font-mono);
+
+  --text-xs: var(--n-text-xs);
+  --text-xs--line-height: var(--n-leading-normal);
+  --text-sm: var(--n-text-sm);
+  --text-sm--line-height: var(--n-leading-normal);
+  --text-base: var(--n-text-base);
+  --text-base--line-height: var(--n-leading-normal);
+  --text-lg: var(--n-text-lg);
+  --text-lg--line-height: var(--n-leading-tight);
+  --text-xl: var(--n-text-xl);
+  --text-xl--line-height: var(--n-leading-tight);
+
+  --radius-sm: var(--n-radius-sm);
+  --radius-md: var(--n-radius-md);
+  --radius-lg: var(--n-radius-lg);
+  --radius-full: var(--n-radius-full);
+}
+
+@layer base {
+  body {
+    background-color: var(--n-color-canvas);
+    color: var(--n-color-text);
+    font-family: var(--n-font-sans);
+    font-size: var(--n-text-base);
+    line-height: var(--n-leading-normal);
+  }
+}
