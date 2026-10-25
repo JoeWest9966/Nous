@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="default">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>块的悬浮操作 · 十九个方案</title>
+    <link rel="stylesheet" href="/demo/button/demo.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <h1>块 · 悬浮操作 —— 十九个方案</h1>
+          <p class="lede">
+            不动鼠标什么都没有。光标进块，按钮浮出来；离开，收回去。按钮不占布局、不推文字、只动
+            transform / opacity。键盘 <kbd>Tab</kbd> 进块也照样浮出来。点下去什么都不发生 —— 这一轮只有动效。
+          </p>
+        </div>
+        <div class="tools">
+          <button class="btn" id="theme" aria-pressed="false">浅色</button>
+          <button class="btn" id="pin" aria-pressed="false">全部展开</button>
+          <button class="btn" id="debug" aria-pressed="false">显示热区</button>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="方案">
+        <button class="chip" data-id="all" aria-pressed="true">全部</button>
+        <button class="chip" data-id="v1" aria-pressed="false">01 胶囊</button>
+        <button class="chip" data-id="v2" aria-pressed="false">02 气泡</button>
+        <button class="chip" data-id="v3" aria-pressed="false">03 扇开</button>
+        <button class="chip" data-id="v4" aria-pressed="false">04 替换</button>
+        <button class="chip" data-id="v5" aria-pressed="false">05 升华</button>
+        <button class="chip" data-id="v6" aria-pressed="false">06 ···</button>
+        <button class="chip" data-id="v7" aria-pressed="false">07 菜单</button>
+        <button class="chip" data-id="v8" aria-pressed="false">08 光标</button>
+        <button class="chip" data-id="v9" aria-pressed="false">09 长按</button>
+        <button class="chip" data-id="v10" aria-pressed="false">10 慢悬停</button>
+        <button class="chip" data-id="v11" aria-pressed="false">11 磁吸</button>
+        <button class="chip" data-id="v12" aria-pressed="false">12 径向</button>
+        <button class="chip" data-id="v13" aria-pressed="false">13 层叠</button>
+        <button class="chip" data-id="v14" aria-pressed="false">14 点击</button>
+        <button class="chip" data-id="v15" aria-pressed="false">15 贴名</button>
+        <button class="chip" data-id="v16" aria-pressed="false">16 跟随</button>
+        <button class="chip" data-id="v17" aria-pressed="false">17 抽屉</button>
+        <button class="chip" data-id="v18" aria-pressed="false">18 融合</button>
+        <button class="chip" data-id="v19" aria-pressed="false">19 让位</button>
+      </nav>
+
+      <main class="deck" id="deck"></main>
+
+      <section class="notes">
+        <h3>看的时候重点看这四件事</h3>
+        <ul>
+          <li>光标在行里横着扫一遍：<b>名字、数值一个字都不能跳</b>。跳了就是布局被动到了。</li>
+          <li>光标移到按钮上再移回行里：<b>不能闪，不能重播</b>。热区连成一片才对。</li>
+          <li>进出各来二十次：<b>进场慢、退场快</b>。退场跟进场一样慢会显得迟钝，退场带过冲会显得犹豫。</li>
+          <li>点「显示热区」：蓝色是行，红色是浮层的真实边界。红色不该在蓝色外面。</li>
+        </ul>
+      </section>
+    </div>
+    <script type="module" src="/demo/button/main.js"></script>
+  </body>
+</html>

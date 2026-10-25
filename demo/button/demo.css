@@ -1,0 +1,1469 @@
+/* 块 · 悬浮操作 —— 十九个动效方案。
+   全部只用 transform / opacity / translate / scale，退场一律 140ms 无过冲。
+   颜色全部走 src/tokens，浅色主题自动跟着变。 */
+
+/* ── 弹簧曲线 ────────────────────────────────────────────────────────────────
+   真弹簧（阻尼比不同），不是 cubic-bezier 硬凑的过冲。
+   下面两条由阻尼振子采样而来：
+     spring(k=420, c=30) → 418ms，回弹 3.2%   快、脆、克制
+     spring(k=220, c=26) → 514ms，回弹 0.3%   慢、软、几乎不回弹
+   退场用 app 里已有的 EASE(cubic-bezier(.32,.72,0,1))，只走 140ms。 */
+:root {
+  --ease-spring: linear(
+    0.0004, 0.0386 3.3%, 0.1287 6.7%, 0.2465 10%, 0.3742 13.3%, 0.4999 16.7%,
+    0.6158 20%, 0.7174 23.3%, 0.7973 26.7%, 0.8675 30%, 0.9223 33.3%, 0.9633 36.7%,
+    0.9926 40%, 1.0122 43.3%, 1.0242 46.7%, 1.0304 50%, 1.0323 53.3%, 1.0315 56.7%,
+    1.0287 60%, 1.025 63.3%, 1.0209 66.7%, 1.0168 70%, 1.013 73.3%, 1.0099 76.7%,
+    1.007 80%, 1.0046 83.3%, 1.0028 86.7%, 1.0014 90%, 1.0004 93.3%, 0.9997 96.7%,
+    0.9993 100%
+  );
+  --ease-soft: linear(
+    0.0002, 0.0293 3.3%, 0.0981 6.7%, 0.1887 10%, 0.2944 13.3%, 0.3948 16.7%,
+    0.4902 20%, 0.5774 23.3%, 0.6551 26.7%, 0.7225 30%, 0.7799 33.3%, 0.8279 36.7%,
+    0.8696 40%, 0.9013 43.3%, 0.9267 46.7%, 0.9467 50%, 0.9623 53.3%, 0.9741 56.7%,
+    0.9831 60%, 0.99 63.3%, 0.9946 66.7%, 0.9978 70%, 1.0000 73.3%, 1.0014 76.7%,
+    1.0022 80%, 1.0027 83.3%, 1.0028 86.7%, 1.0027 90%, 1.0025 93.3%, 1.0023 96.7%,
+    1.0020 100%
+  );
+  --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --d-in: 420ms;
+  --d-out: 140ms;
+
+  /* 玻璃材质：不写死颜色，全部从 token 里 mix 出来 —— 换主题（哪怕整个调色板换掉）
+     玻璃跟着变，不用回来改这里。深色下是「压暗的磨砂」，浅色下自动变「提亮的磨砂」。 */
+  --glass-bg: color-mix(in oklab, var(--n-color-raised) 84%, transparent);
+  --glass-brd: color-mix(in oklab, var(--n-color-text) 11%, transparent);
+  --glass-hi: inset 0 1px 0 color-mix(in oklab, var(--n-color-text) 13%, transparent);
+  --glass-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.3), 0 2px 8px -4px rgba(0, 0, 0, 0.45),
+    0 10px 26px -12px rgba(0, 0, 0, 0.7);
+  --glass-hover: color-mix(in oklab, var(--n-color-text) 9%, transparent);
+  --glass-blur: blur(22px) saturate(180%);
+
+  /* hover 一条行的底色：比 --n-color-raised 再亮一点点，刚刚好能看出「这一行被指着」 */
+  --row-hover: color-mix(in oklab, var(--n-color-text) 5%, transparent);
+  --row-hairline: color-mix(in oklab, var(--n-color-text) 7%, transparent);
+}
+
+:root[data-theme="light"] {
+  /* 只改影子：浅色底上阴影要更轻、更窄，别的全跟着 token 走 */
+  --glass-shadow:
+    0 1px 1px rgba(16, 20, 26, 0.05), 0 2px 6px -3px rgba(16, 20, 26, 0.1),
+    0 10px 24px -12px rgba(16, 20, 26, 0.28);
+}
+
+/* ── 页面骨架 ──────────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--n-font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  background: var(--n-color-canvas);
+  color: var(--n-color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px 24px 96px;
+}
+
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  margin: 0;
+  max-width: 620px;
+  color: var(--n-color-muted);
+  font-size: 13px;
+}
+
+.tools {
+  display: flex;
+  gap: 8px;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-surface);
+  color: var(--n-color-text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.btn:hover {
+  background: var(--n-color-raised);
+}
+
+.btn[aria-pressed="true"] {
+  border-color: var(--n-color-accent);
+  color: var(--n-color-accent);
+}
+
+/* 方案切换 */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 20px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--n-color-border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in oklab, var(--n-color-canvas) 88%, transparent);
+  backdrop-filter: blur(14px);
+}
+
+.chip {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--n-color-muted);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.chip:hover {
+  color: var(--n-color-text);
+  background: var(--row-hover);
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--n-color-raised);
+  border-color: var(--n-color-border);
+  color: var(--n-color-text);
+}
+
+/* ── 卡片 ──────────────────────────────────────────────────────────────────── */
+.deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(430px, 100%), 1fr));
+  gap: 20px;
+  margin-top: 24px;
+}
+
+.card {
+  border: 1px solid var(--n-color-border);
+  border-radius: 14px;
+  background: var(--n-color-surface);
+  overflow: hidden;
+}
+
+.card[hidden] {
+  display: none;
+}
+
+.card-head {
+  display: flex;
+  gap: 12px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--n-color-border);
+}
+
+.num {
+  flex: none;
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  color: var(--n-color-accent);
+  padding-top: 2px;
+  letter-spacing: 0.04em;
+}
+
+.card-head h2 {
+  margin: 0 0 3px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.card-head p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--n-color-muted);
+}
+
+.specs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 8px 0 0;
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  color: var(--n-color-muted);
+}
+
+.specs span {
+  white-space: nowrap;
+}
+
+.specs b {
+  color: var(--n-color-text);
+  font-weight: 500;
+}
+
+.plate {
+  padding: 16px;
+  background: color-mix(in oklab, var(--n-color-canvas) 70%, var(--n-color-surface));
+}
+
+.panel {
+  border: 1px solid var(--n-color-border);
+  border-radius: 10px;
+  background: var(--n-color-surface);
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-color-muted);
+  border-bottom: 1px solid var(--n-color-border);
+}
+
+.list {
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ── 行：hover 的容器永远是整行；浮层在行内绝对定位，所以光标移进按钮不会「离开行」 */
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: color-mix(in oklab, var(--n-color-text) 85%, transparent);
+  outline: none;
+  transition: background 150ms ease;
+}
+
+.row:is(:hover,:focus-within,.pin),
+.row:focus-within {
+  background: var(--row-hover);
+  color: var(--n-color-text);
+}
+
+.row:focus-visible {
+  box-shadow: 0 0 0 1.5px var(--n-color-accent);
+}
+
+/* 热区调试：一眼看出「按钮到底占不占地方」「光标有没有断档」 */
+body.debug .row {
+  outline: 1px dashed color-mix(in oklab, var(--n-color-accent) 45%, transparent);
+}
+
+body.debug .acts::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border: 1px dashed color-mix(in oklab, var(--n-color-danger) 70%, transparent);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.chev {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--n-color-muted);
+}
+
+.chev svg {
+  transition: transform 200ms var(--ease-out);
+}
+
+.row:is(:hover,:focus-within,.pin) .chev svg {
+  transform: rotate(90deg);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.value {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--n-color-muted);
+  transition:
+    opacity 160ms ease,
+    translate 200ms var(--ease-out);
+}
+
+/* ── 浮层公共件 ────────────────────────────────────────────────────────────── */
+.acts {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  translate: 0 -50%;
+  display: flex;
+  align-items: center;
+  z-index: 2;
+  /* 藏起来的时候必须让开鼠标，不然「移进去→又触发 hover→又显示」会闪 */
+  pointer-events: none;
+  /* 退场：短、无过冲、不拖泥带水。进场时各自覆盖这三条。 */
+  transition:
+    opacity var(--d-out) var(--ease-exit),
+    translate var(--d-out) var(--ease-exit),
+    scale var(--d-out) var(--ease-exit),
+    filter var(--d-out) var(--ease-exit),
+    width var(--d-out) var(--ease-exit),
+    transform var(--d-out) var(--ease-exit);
+}
+
+.row:is(:hover,:focus-within,.pin) .acts,
+.row:focus-within .acts {
+  pointer-events: auto;
+}
+
+/* 按钮自己也会动（02/03/05/07 是四个独立元素各自入场），所以入场参数做成变量：
+   --m-d 时长、--m-e 曲线、--m-x 延迟（stagger）。默认值 = 退场：短、无过冲。
+   按下用 transform 而不是 scale —— scale 归入场管，两个状态别抢同一个属性。 */
+.act {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--n-color-text);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  font: inherit;
+  transition-property: background, color, transform, opacity, translate, scale, filter, rotate;
+  transition-duration:
+    130ms, 130ms, 140ms, var(--m-d, var(--d-out)), var(--m-d, var(--d-out)),
+    var(--m-d, 180ms), var(--m-d, var(--d-out)), var(--m-d, var(--d-out));
+  transition-timing-function:
+    ease, ease, var(--ease-out), var(--m-e, var(--ease-exit)), var(--m-e, var(--ease-exit)),
+    var(--m-e, var(--ease-out)), var(--m-e, var(--ease-exit)), var(--m-e, var(--ease-exit));
+  transition-delay:
+    0ms, 0ms, 0ms, var(--m-x, 0ms), var(--m-x, 0ms), var(--m-x, 0ms), var(--m-x, 0ms),
+    var(--m-x, 0ms);
+}
+
+.act:hover {
+  background: var(--glass-hover);
+}
+
+.act:active {
+  transform: scale(0.9);
+}
+
+.act:focus-visible {
+  outline: 1.5px solid var(--n-color-accent);
+  outline-offset: 1px;
+}
+
+.act.danger:hover {
+  color: var(--n-color-danger);
+  background: color-mix(in oklab, var(--n-color-danger) 14%, transparent);
+}
+
+.act svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.hair {
+  width: 1px;
+  height: 14px;
+  flex: none;
+  margin: 0 3px;
+  background: var(--n-color-border);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   01 玻璃胶囊 —— 一整条弹进来
+   形状：999px 的胶囊，里面 3 个动作 + 一条发丝线 + 1 个删除。
+   差异点：只动一个元素，所以便宜、稳、绝不会抖。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v1 .acts {
+  gap: 0;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+
+  opacity: 0;
+  /* 从右侧「挤」出来，锚点在右边缘：往右收的时候不会往左抽一下 */
+  transform-origin: 100% 50%;
+  translate: 6px -50%;
+  scale: 0.88;
+}
+
+.v1 .row:is(:hover,:focus-within,.pin) .acts,
+.v1 .row:focus-within .acts {
+  opacity: 1;
+  translate: 0 -50%;
+  scale: 1;
+  transition-duration: var(--d-in);
+  transition-timing-function: var(--ease-spring);
+}
+
+.v1 .row:is(:hover,:focus-within,.pin) .value,
+.v1 .row:focus-within .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   02 独立气泡 —— 四个按钮错开 22ms 依次弹入
+   形状：四颗独立的 26px 圆，各自带玻璃底，彼此不粘连。
+   差异点：有节奏。代价是 4 个 backdrop-filter 元素（还是比 4 个模糊大层便宜）。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v2 .acts {
+  gap: 2px;
+}
+
+.v2 .act {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  translate: 10px 0;
+  scale: 0.6;
+}
+
+.v2 .row:is(:hover,:focus-within,.pin) .act,
+.v2 .row:focus-within .act {
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  --m-d: var(--d-in);
+  --m-e: var(--ease-spring);
+  --m-x: calc(var(--i) * 22ms);
+}
+
+/* 退场不等：要么一起走，要么像骨牌一样倒下去。这里选一起走，快。 */
+.v2 .row:not(:is(:hover,:focus-within,.pin)) .act {
+  --m-x: 0ms;
+}
+
+.v2 .row:is(:hover,:focus-within,.pin) .value,
+.v2 .row:focus-within .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   03 一点扇开 —— 四个按钮从同一个点长出来
+   形状：同上，但入场不是「平移」，是从右边缘一个点向左侧展开 28px 一步。
+   差异点：像材料化开。位移和缩放同时走弹簧，所以有「散开」的错觉。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v3 .acts {
+  right: 6px;
+  width: 26px;
+  height: 26px;
+}
+
+.v3 .act {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  translate: 0 -50%;
+  scale: 0.35;
+}
+
+.v3 .row:is(:hover,:focus-within,.pin) .act,
+.v3 .row:focus-within .act {
+  opacity: 1;
+  translate: calc(var(--i) * -28px) -50%;
+  scale: 1;
+  --m-d: var(--d-in);
+  --m-e: var(--ease-spring);
+  --m-x: calc(var(--i) * 16ms);
+}
+
+.v3 .row:not(:is(:hover,:focus-within,.pin)) .act {
+  --m-x: 0ms;
+}
+
+.v3 .row:is(:hover,:focus-within,.pin) .value,
+.v3 .row:focus-within .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   04 原位替换 —— 数值淡出，按钮占它的位置
+   形状：不是浮层，是「换班」。三个裸图标，无玻璃底，只有 hover 时出现的小圆。
+   差异点：最安静。看不见「多出来一个东西」，只看见这一行的内容变了。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v4 .acts {
+  right: 5px;
+  gap: 1px;
+  opacity: 0;
+  translate: 0 calc(-50% + 3px);
+  scale: 0.96;
+}
+
+.v4 .row:is(:hover,:focus-within,.pin) .acts,
+.v4 .row:focus-within .acts {
+  opacity: 1;
+  translate: 0 -50%;
+  scale: 1;
+  transition-duration: 300ms;
+  transition-timing-function: var(--ease-spring);
+}
+
+.v4 .row:is(:hover,:focus-within,.pin) .value,
+.v4 .row:focus-within .value {
+  opacity: 0;
+  translate: 0 -4px;
+  transition-duration: 120ms;
+  transition-timing-function: var(--ease-out);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   05 材质升华 —— 模糊 + 上浮 + 整行抬起来
+   形状：三颗玻璃圆 + 删除。模糊从 8px 化开，整行同时轻微抬升（内高光 + 外投影）。
+   差异点：最「高级」，也最贵 —— filter: blur 不合成、不便宜，块多的时候别用。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v5 .row {
+  transition:
+    background 220ms var(--ease-out),
+    box-shadow 260ms var(--ease-out);
+}
+
+.v5 .row:is(:hover,:focus-within,.pin),
+.v5 .row:focus-within {
+  background: var(--row-hover);
+  box-shadow:
+    inset 0 1px 0 var(--row-hairline),
+    0 8px 22px -14px rgba(0, 0, 0, 0.8);
+}
+
+.v5 .acts {
+  gap: 3px;
+  opacity: 0;
+  translate: 0 calc(-50% + 7px);
+  scale: 0.94;
+}
+
+.v5 .row:is(:hover,:focus-within,.pin) .acts,
+.v5 .row:focus-within .acts {
+  opacity: 1;
+  translate: 0 -50%;
+  scale: 1;
+  transition-duration: 514ms;
+  transition-timing-function: var(--ease-soft);
+}
+
+/* 模糊只能挂在按钮自己身上：挂在容器上会变成 backdrop root，子元素的 backdrop-filter 就失效了 */
+.v5 .act {
+  width: 26px;
+  height: 26px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  filter: blur(7px);
+}
+
+.v5 .row:is(:hover,:focus-within,.pin) .act,
+.v5 .row:focus-within .act {
+  filter: blur(0);
+  --m-d: 514ms;
+  --m-e: var(--ease-soft);
+  --m-x: calc(var(--i) * 26ms);
+}
+
+.v5 .row:is(:hover,:focus-within,.pin) .value,
+.v5 .row:focus-within .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   06 两段式 —— ••• 先出来，指上去才长成一颗带文字的胶囊
+   形状：26px 圆 → 180ms 后展开成胶囊，文字标签滑进来。
+   差异点：块上只多一个小东西，重量全藏在第二段。iOS 分享/回复那一挂的做法。
+   代价：宽度在动 = 这一小块在重排。总共 26px 的范围，值这个钱。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v6 .acts {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  overflow: hidden;
+  /* flex-end 是关键：胶囊从右边往左长，••• 始终钉在最右边，触发物不跟着跑 */
+  justify-content: flex-end;
+  opacity: 0;
+  translate: 6px -50%;
+  scale: 0.88;
+}
+
+.v6 .row:is(:hover,:focus-within,.pin) .acts,
+.v6 .row:focus-within .acts,
+.v6 .acts:hover {
+  opacity: 1;
+  translate: 0 -50%;
+  scale: 1;
+  transition-duration: var(--d-in);
+  transition-timing-function: var(--ease-spring);
+}
+
+/* 第二段：指到胶囊上才展开。宽度 28 → 196。••• 钉在右边不动，标签往左边挤进来。 */
+.v6 .acts:is(:hover,:focus-within,.pin),
+.v6 .acts:focus-within {
+  width: 204px;
+  transition:
+    width 260ms var(--ease-out),
+    opacity 140ms linear;
+}
+
+.v6 .act.more {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  flex: none;
+  color: var(--n-color-text);
+}
+
+.v6 .lbl {
+  flex: none;
+  height: 26px;
+  padding: 0 9px;
+  width: auto;
+  border-radius: 999px;
+  font-size: 12px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  opacity: 0;
+  translate: 4px 0;
+  transition:
+    opacity 120ms linear,
+    translate 160ms var(--ease-out);
+  pointer-events: none;
+}
+
+.v6 .acts:is(:hover,:focus-within,.pin) .lbl,
+.v6 .acts:focus-within .lbl {
+  opacity: 1;
+  translate: 0 0;
+  pointer-events: auto;
+  transition-delay: calc(60ms + var(--i) * 30ms);
+}
+
+.v6 .row:is(:hover,:focus-within,.pin) .value,
+.v6 .row:focus-within .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   07 竖向三点 → 浮层菜单 —— 点开才有的真菜单
+   形状：••• 常驻（hover 才显示），点开是一块 12px 圆角的玻璃菜单，
+        从按钮的右上角 scale 展开，条目 30ms 依次落下。
+   差异点：这是「一堆按钮」的替代品 —— 三个以上就是菜单，不是一排图标。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v7 .acts {
+  gap: 0;
+}
+
+.v7 .act.kebab {
+  width: 26px;
+  height: 26px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  scale: 0.7;
+}
+
+.v7 .row:is(:hover,:focus-within,.pin) .act.kebab,
+.v7 .row:focus-within .act.kebab,
+.v7 .row.menu-open .act.kebab {
+  opacity: 1;
+  scale: 1;
+  --m-d: var(--d-in);
+  --m-e: var(--ease-spring);
+}
+
+.v7 .act.kebab[aria-expanded="true"] {
+  background: var(--glass-hover);
+}
+
+.menu {
+  position: fixed;
+  z-index: 60;
+  width: 188px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  transform-origin: 100% 0;
+  opacity: 0;
+  scale: 0.92;
+  translate: 0 -6px;
+  pointer-events: none;
+  transition:
+    opacity 120ms var(--ease-exit),
+    scale 140ms var(--ease-exit),
+    translate 140ms var(--ease-exit);
+}
+
+.menu[data-open="true"] {
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
+  pointer-events: auto;
+  transition:
+    opacity 160ms linear,
+    scale 320ms var(--ease-spring),
+    translate 320ms var(--ease-spring);
+}
+
+.menu button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--n-color-text);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  text-align: left;
+  opacity: 0;
+  translate: 0 -3px;
+  transition:
+    opacity 100ms linear,
+    translate 120ms var(--ease-exit);
+}
+
+.menu[data-open="true"] button {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity 120ms linear,
+    translate 240ms var(--ease-spring),
+    background 120ms ease;
+  transition-delay: calc(40ms + var(--i) * 30ms);
+}
+
+.menu button:hover {
+  background: var(--glass-hover);
+}
+
+.menu button.danger {
+  color: var(--n-color-danger);
+}
+
+.menu button.danger:hover {
+  background: color-mix(in oklab, var(--n-color-danger) 14%, transparent);
+}
+
+.menu button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  opacity: 0.8;
+}
+
+.menu .sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--n-color-border);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   08 光标起点的胶囊 —— 从你「进来」的那一点长出来
+   形状：和 01 一样的胶囊，但 transform-origin 跟着鼠标进入行的 x 位置走。
+   差异点：方向和位置都是「有原因的」，不是永远从右边滑。最不显眼，最对。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v8 .acts {
+  gap: 0;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  transform-origin: var(--ox, 100%) 50%;
+  opacity: 0;
+  scale: 0.82;
+}
+
+.v8 .row:is(:hover,:focus-within,.pin) .acts,
+.v8 .row:focus-within .acts {
+  opacity: 1;
+  scale: 1;
+  transition-duration: 380ms;
+  transition-timing-function: var(--ease-spring);
+}
+
+.v8 .row:is(:hover,:focus-within,.pin) .value,
+.v8 .row:focus-within .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   09 长按生成 —— 按住 350ms 才有
+   形状：行抬起 + 底下走一条 350ms 的进度发丝线，满了之后三颗玻璃圆从右往左长出来。
+   差异点：唯一为触屏做的。手指没有 hover，长按是它能给的唯一「意图」信号。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v9 .row {
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* 进度发丝线：按住的时候从 0 长到 1，正好走完才弹按钮 */
+.v9 .row::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 1px;
+  height: 1.5px;
+  border-radius: 2px;
+  background: var(--n-color-accent);
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  opacity: 0;
+  transition:
+    transform 100ms var(--ease-exit),
+    opacity 120ms linear;
+}
+
+.v9 .row.holding {
+  background: var(--row-hover);
+}
+
+.v9 .row.holding::after {
+  opacity: 1;
+  transform: scaleX(1);
+  transition:
+    transform 350ms linear,
+    opacity 80ms linear;
+}
+
+/* 满了：线淡掉，按钮接手 */
+.v9 .row.held::after {
+  opacity: 0;
+  transition: opacity 180ms linear;
+}
+
+.v9 .acts {
+  gap: 3px;
+}
+
+.v9 .act {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  translate: 9px 0;
+  scale: 0.55;
+}
+
+.v9 .row:is(.held, .pin) .act {
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  --m-d: var(--d-in);
+  --m-e: var(--ease-spring);
+  --m-x: calc(var(--i) * 30ms);
+}
+
+.v9 .row:is(.held, .pin) .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   10 慢悬停 peek —— 悬停满 440ms 才出
+   形状：和 01 一样的胶囊，只是迟到。
+   差异点：鼠标扫过列表的时候不糊屏。这是我唯一敢在密集列表里默认开的。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v10 .acts {
+  gap: 0;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  transform-origin: 100% 50%;
+  opacity: 0;
+  translate: 4px -50%;
+  scale: 0.94;
+}
+
+.v10 .row:is(:hover, :focus-within, .pin) .acts {
+  opacity: 1;
+  translate: 0 -50%;
+  scale: 1;
+  transition-duration: var(--d-in), var(--d-in), var(--d-in), var(--d-in), var(--d-in), var(--d-in);
+  transition-timing-function: var(--ease-spring);
+  /* 关键就是这一行。进场要等，退场不等（基础样式里没有 delay）。 */
+  transition-delay: 440ms;
+}
+
+.v10 .row:is(:hover, :focus-within, .pin) .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   11 磁性吸附 —— 胶囊朝光标挪 ±7px
+   形状：同 01。
+   差异点：光标离胶囊越远，胶囊越往你这边凑。说不上来哪儿变了，手就是少走一截。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v11 .acts {
+  gap: 0;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  scale: 0.9;
+  translate: var(--mx, 0px) -50%;
+  transition-property: opacity, scale, translate;
+  transition-duration: var(--d-out), var(--d-out), 190ms;
+  transition-timing-function: var(--ease-exit), var(--ease-exit), var(--ease-out);
+}
+
+.v11 .row:is(:hover, :focus-within, .pin) .acts {
+  opacity: 1;
+  scale: 1;
+  transition-duration: 200ms, var(--d-in), 190ms;
+  transition-timing-function: linear, var(--ease-spring), var(--ease-out);
+}
+
+.v11 .row:is(:hover, :focus-within, .pin) .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   12 径向菜单 —— 三个圆沿弧散开
+   形状：从行右缘一点，按 24°/56° 张开。
+   差异点：好看。但在 32px 高的行里它必然压住上一行 —— 留着当反例，
+        别在一张表里用径向。真要用，得是画布那种有大片空白的地方。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v12 .panel {
+  overflow: visible;
+}
+
+/* 给第一行的扇面留出地方 */
+.v12 .list::before {
+  content: "";
+  flex: none;
+  height: 34px;
+}
+
+.v12 .acts {
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  z-index: 5;
+}
+
+.v12 .act {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  translate: 0 -50%;
+  scale: 0.3;
+}
+
+.v12 .row:is(:hover, :focus-within, .pin) .act {
+  opacity: 1;
+  scale: 1;
+  translate: var(--dx) calc(-50% + var(--dy));
+  --m-d: var(--d-in);
+  --m-e: var(--ease-spring);
+  --m-x: calc(var(--i) * 45ms);
+}
+
+.v12 .row:is(:hover, :focus-within, .pin) .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   13 层叠卡片 —— 一摞牌，指上去摊开
+   形状：四张叠在一起，每张偏 4°、错 1px，收起状态下能数出张数。
+   差异点：收起状态本身就带了信息（有几件事），展开只是把它放大。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v13 .acts {
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  z-index: 3;
+}
+
+.v13 .act {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  scale: 0.92;
+  translate: calc(var(--i) * -1px) -50%;
+  rotate: calc(var(--i) * 4deg);
+}
+
+.v13 .row:is(:hover, :focus-within, .pin) .act {
+  opacity: 1;
+  scale: 1;
+  translate: calc(var(--i) * -29px) -50%;
+  rotate: 0deg;
+  --m-d: var(--d-in);
+  --m-e: var(--ease-spring);
+  --m-x: calc(var(--i) * 25ms);
+}
+
+.v13 .row:is(:hover, :focus-within, .pin) .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   14 点击才展开 —— hover 只给一颗圆点
+   形状：20px 圆点（带 +），点一下胀成胶囊，三颗往左依次出现。
+   差异点：hover 只负责「告诉你这里有东西」，不做任何决定。手抖不会误触，
+        触屏和鼠标共用同一套（触屏点一下就有，不需要 hover）。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v14 .acts {
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  overflow: hidden;
+  /* 圆点是触发器，必须待在原地：倒序排，它就钉在右边 */
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+  opacity: 0;
+  translate: 4px -50%;
+  scale: 0.8;
+}
+
+.v14 .row:is(:hover, :focus-within, .pin) .acts {
+  opacity: 1;
+  translate: 0 -50%;
+  scale: 1;
+  transition-duration: var(--d-in);
+  transition-timing-function: var(--ease-spring);
+}
+
+.v14 .row.open .acts {
+  width: 100px;
+  transition:
+    width 280ms var(--ease-spring),
+    opacity 140ms linear,
+    translate 140ms linear,
+    scale 140ms linear;
+}
+
+.v14 .act.dot {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: var(--n-color-muted);
+}
+
+.v14 .row.open .act.dot {
+  color: var(--n-color-text);
+  rotate: 45deg;
+}
+
+.v14 .act.more {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  opacity: 0;
+  scale: 0.6;
+  translate: 6px 0;
+}
+
+.v14 .row.open .act.more {
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
+  --m-d: 280ms;
+  --m-e: var(--ease-spring);
+  --m-x: calc(60ms + var(--i) * 30ms);
+}
+
+.v14 .row:is(:hover, :focus-within, .pin) .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   15 贴名字 —— 按钮跟着文字走
+   形状：胶囊紧贴在名字末尾 4px，完全不去碰数值那一列。
+   差异点：你看的是名字，按钮就长在名字旁边。位置有理由，比「永远靠右」可信。
+   代价：每行得量一次名字宽度（pointerenter 时量一次，很便宜）。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v15 .acts {
+  right: auto;
+  left: var(--ax, 120px);
+  gap: 0;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  transform-origin: 0 50%;
+  opacity: 0;
+  scale: 0.9;
+  translate: -4px -50%;
+}
+
+.v15 .row:is(:hover, :focus-within, .pin) .acts {
+  opacity: 1;
+  scale: 1;
+  translate: 0 -50%;
+  transition-duration: var(--d-in);
+  transition-timing-function: var(--ease-spring);
+}
+
+/* 名字被按钮盖住的那一小截淡掉，别让字从玻璃后面透出来 */
+.v15 .row:is(:hover, :focus-within, .pin) .name {
+  mask-image: linear-gradient(90deg, #000 78%, transparent 100%);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   16 跟随光标 —— 工具条横向跟着鼠标漂
+   形状：一条胶囊，永远贴在光标左边 24px，夹在行内不越界。
+   差异点：macOS 选中文字后浮出来的那条。距离恒定，手感最「贴身」。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v16 .acts {
+  right: auto;
+  left: 0;
+  gap: 0;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  scale: 0.94;
+  translate: var(--fx, 160px) -50%;
+  transition-property: opacity, scale, translate;
+  transition-duration: var(--d-out), var(--d-out), 200ms;
+  transition-timing-function: var(--ease-exit), var(--ease-exit), var(--ease-out);
+}
+
+.v16 .row:is(:hover, :focus-within, .pin) .acts {
+  opacity: 1;
+  scale: 1;
+  transition-duration: 160ms, var(--d-in), 200ms;
+  transition-timing-function: linear, var(--ease-spring), var(--ease-out);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   17 底部抽屉 —— 从行底下抽出来，挂在行下缘
+   形状：一条 24px 高、上圆角的玻璃条，从行背后滑出来挂在下边缘。
+   差异点：完全不遮自己这行的内容。代价是会压住下一行的右上角 —— 行距紧的时候别用。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v17 .panel {
+  overflow: visible;
+}
+
+.v17 .plate {
+  padding-bottom: 30px;
+}
+
+.v17 .acts {
+  top: auto;
+  right: 6px;
+  bottom: -20px;
+  height: 24px;
+  padding: 0 3px;
+  border-radius: 6px 6px 9px 9px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  z-index: 4;
+  transform-origin: 50% 0;
+  opacity: 0;
+  translate: 0 -8px;
+  scale: 0.96;
+}
+
+.v17 .row:is(:hover, :focus-within, .pin) .acts {
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  transition-duration: 340ms;
+  transition-timing-function: var(--ease-spring);
+}
+
+.v17 .act {
+  width: 22px;
+  height: 22px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   18 液体融合 —— SVG goo，三个圆粘成一滴再撕开
+   形状：三个圆重叠成一滴，展开时中间拉出液态的桥，走开再融回去。
+   差异点：形本身在动。背后一层是带滤镜的纯色团块，上层是不带滤镜的图标 ——
+        两层用同一套位移，所以图标永远是清的。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v18 .blobs,
+.v18 .acts {
+  right: 6px;
+  width: 26px;
+  height: 26px;
+}
+
+.v18 .blobs {
+  filter: url(#goo) drop-shadow(0 5px 10px rgba(0, 0, 0, 0.35));
+  opacity: 0;
+  transition: opacity 100ms linear;
+}
+
+.v18 .row:is(:hover, :focus-within, .pin) .blobs {
+  opacity: 1;
+  transition: opacity 160ms linear;
+}
+
+.v18 .blobs i {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--n-color-raised) 62%, var(--n-color-border));
+  translate: 0 -50%;
+  transition:
+    translate var(--d-out) var(--ease-exit),
+    scale var(--d-out) var(--ease-exit);
+}
+
+.v18 .row:is(:hover, :focus-within, .pin) .blobs i {
+  translate: calc(var(--i) * -28px) -50%;
+  transition:
+    translate 480ms var(--ease-spring),
+    scale 480ms var(--ease-spring);
+}
+
+.v18 .act {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  color: var(--n-color-text);
+  opacity: 0;
+  translate: 0 -50%;
+  scale: 0.4;
+}
+
+.v18 .row:is(:hover, :focus-within, .pin) .act {
+  opacity: 1;
+  scale: 1;
+  translate: calc(var(--i) * -28px) -50%;
+  --m-d: 380ms;
+  --m-e: var(--ease-spring);
+  --m-x: 90ms;
+}
+
+.v18 .row:is(:hover, :focus-within, .pin) .value {
+  opacity: 0.15;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   19 数值让位 —— 值自己往左挪，按钮坐进它的位置
+   形状：数值 translateX(-84px) 让出 84px，胶囊正好落进去。
+   差异点：这是真的「内容重排」，但用的是 transform，所以一行都不会重排。
+   代价：名字长到顶住数值的时候会让到名字身上。名字短才行 —— 用之前先看一眼数据。
+   ══════════════════════════════════════════════════════════════════════════ */
+.v19 .value {
+  transition:
+    translate 420ms var(--ease-spring),
+    opacity 160ms ease;
+}
+
+.v19 .row:is(:hover, :focus-within, .pin) .value {
+  translate: -84px 0;
+}
+
+.v19 .acts {
+  gap: 0;
+  padding: 2px 3px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  opacity: 0;
+  scale: 0.88;
+  translate: 8px -50%;
+}
+
+.v19 .row:is(:hover, :focus-within, .pin) .acts {
+  opacity: 1;
+  scale: 1;
+  translate: 0 -50%;
+  transition-duration: var(--d-in);
+  transition-timing-function: var(--ease-spring);
+}
+
+/* ── 页脚备注 ──────────────────────────────────────────────────────────────── */
+.notes {
+  margin-top: 36px;
+  padding-top: 20px;
+  border-top: 1px solid var(--n-color-border);
+  color: var(--n-color-muted);
+  font-size: 12.5px;
+}
+
+.notes h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-color-text);
+}
+
+.notes ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.notes li {
+  margin: 3px 0;
+}
+
+kbd {
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  border: 1px solid var(--n-color-border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--n-color-text);
+}
+
+.notes code {
+  font-family: var(--n-font-mono);
+  font-size: 11.5px;
+  color: var(--n-color-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --d-in: 1ms;
+    --d-out: 1ms;
+  }
+  .acts,
+  .act,
+  .value,
+  .row,
+  .menu,
+  .menu button,
+  .v6 .acts:hover {
+    transition-duration: 1ms !important;
+    filter: none !important;
+  }
+}
