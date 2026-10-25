@@ -1,20 +1,51 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { NameInput } from "./Rename";
 import { Tree } from "./Tree";
 import {
   type Box,
   type Node,
   addLeaf,
   addSection,
+  childIds,
   findNode,
   initialState,
   isSection,
   layout,
   removeNode,
+  renameNode,
+  seedIds,
   valueOf,
 } from "./game";
+import {
+  type BoardSummary,
+  type Move,
+  ConflictError,
+  createBoard,
+  listBoards,
+  loadBoard,
+  saveBoard,
+} from "./store";
 
 const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
 const SIDE_KEY = "n-sidebar";
+/** 上次开着的是哪个项目。这个存在浏览器里无所谓 —— 丢了只是回到默认那一盘。 */
+const PROJECT_KEY = "n-project";
+/** 下拉里「新建项目」那一项的值。JSX 属性不认 \u 转义，别拿 NUL 当哨兵。 */
+const NEW_BOARD = "__new__";
+
+/** 落盘状态。显示在顶栏，因为「我这一手到底存没存」是这功能唯一的 UI。 */
+type Status = "loading" | "saving" | "saved" | "conflict" | "error";
+
+/** 一次写盘的完整快照：语义 + 历史。 */
+type Snapshot = { root: Node; moves: Move[] };
+
+const STATUS_TEXT: Record<Status, string> = {
+  loading: "载入中",
+  saving: "保存中",
+  saved: "已保存",
+  conflict: "冲突",
+  error: "没连上",
+};
 
 /** pele 自己的 series 色板（`--pele-series-1..8`，深色主题那一套）。
  *  不用浅色主题的 `#4c78a8` 那组 —— 那是白底用的，放到 `#100f0f` 上全发灰。 */
@@ -54,8 +85,26 @@ const tint = (hex: string, alpha: number): string => {
 export function App() {
   const [root, setRoot] = useState<Node>(() => initialState());
   const [path, setPath] = useState<string[]>([]);
+
+  /* —— 盘本身，存在 content/<id>/ 的三份 json 里 —— */
+  const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(PROJECT_KEY));
+  const [boards, setBoards] = useState<BoardSummary[]>([]);
+  const [moves, setMoves] = useState<Move[]>([]);
+  const [status, setStatus] = useState<Status>("loading");
+  /** 用 ref 存版本号：放 state 里会让保存 effect 自己触发自己，转成死循环。 */
+  const version = useRef(0);
+  /** 载入完成之前绝不许存 —— 否则拿一首示范盘把用户文件盖了。 */
+  const ready = useRef(false);
+  /** 刚载入的那一下不算「用户落了子」。 */
+  const skipSave = useRef(false);
+  /** 撞了版本就停手，等用户决定。继续自动存等于帮另一个标签页删数据。 */
+  const blocked = useRef(false);
+  const [epoch, setEpoch] = useState(0);
   /** 每一步落子前的一盘棋。撤销就是弹一个出来。 */
   const [past, setPast] = useState<Node[]>([]);
+  /** 正在改名的那个节点，以及它是在哪儿被戳开的。
+   *  一个节点同时在左列和盘面上画着 —— 不记来源，两边会各挂一个输入框，互相抢焦点。 */
+  const [editing, setEditing] = useState<{ id: string; where: "tree" | "board" } | null>(null);
   const [side, setSide] = useState<boolean>(() => localStorage.getItem(SIDE_KEY) !== "0");
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 819px)").matches);
@@ -75,6 +124,137 @@ export function App() {
     localStorage.setItem(SIDE_KEY, side ? "1" : "0");
   }, [side]);
 
+  /* —— 项目列表。挂载时扫一次 content/ 目录。 —— */
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const list = await listBoards();
+        if (!alive) return;
+        setBoards(list);
+        if (!list.length) {
+          setStatus("error");
+          return;
+        }
+        if (!list.some((b) => b.id === projectId)) setProjectId(list[0]!.id);
+      } catch {
+        if (alive) setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // 新建项目走 createBoard 自己维护这份列表，这里不再扫。
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* —— 载入一盘。换项目、或撞了冲突手动重读，都走这里。 —— */
+  useEffect(() => {
+    if (!projectId) return;
+    let alive = true;
+    ready.current = false;
+    blocked.current = false;
+    setStatus("loading");
+    void (async () => {
+      try {
+        const board = await loadBoard(projectId);
+        if (!alive) return;
+        // 不调 seedIds，新 id 就从 n1 重新数，撞上文件里已有的 id。
+        seedIds(board.root);
+        version.current = board.version;
+        skipSave.current = true;
+        const loaded = { root: board.root, moves: board.moves.slice(-200) };
+        // 刚从磁盘读上来的这份就是磁盘上的内容，别再它写回去。
+        lastWritten.current = JSON.stringify(loaded);
+        setRoot(loaded.root);
+        setMoves(loaded.moves);
+        setPast([]);
+        setPath([]);
+        localStorage.setItem(PROJECT_KEY, projectId);
+        ready.current = true;
+        setStatus("saved");
+      } catch {
+        if (alive) setStatus("error");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [projectId, epoch]);
+
+  /* —— 自动保存。 —— */
+  /**
+   * 写盘必须串行，而且只认最后一份快照。
+   * 两个 PUT 同时在飞，旧的那个后到就会把新落的一手盖掉 —— 用户看到的就是「块凭空消失」。
+   * `lastWritten` 是内容指纹：同一份盘不重复写，免得白拗版本号。
+   */
+  const pending = useRef<Snapshot | null>(null);
+  const writing = useRef(false);
+  const lastWritten = useRef("");
+
+  const drain = async (id: string) => {
+    if (writing.current) return;
+    writing.current = true;
+    try {
+      while (pending.current && !blocked.current) {
+        const snap = pending.current;
+        pending.current = null;
+        const key = JSON.stringify(snap);
+        if (key === lastWritten.current) continue;
+        try {
+          const { version: next } = await saveBoard(id, snap.root, snap.moves, version.current);
+          version.current = next;
+          lastWritten.current = key;
+          setStatus("saved");
+        } catch (err) {
+          if (err instanceof ConflictError) {
+            version.current = err.version;
+            blocked.current = true;
+            pending.current = null;
+            setStatus("conflict");
+          } else {
+            // 网络抖一下：快照留着，下一次落子或 flush 再试。
+            pending.current = snap;
+            setStatus("error");
+            break;
+          }
+        }
+      }
+    } finally {
+      writing.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!ready.current || !projectId || blocked.current) return;
+    if (skipSave.current) {
+      skipSave.current = false;
+      return;
+    }
+    pending.current = { root, moves };
+    setStatus("saving");
+    const timer = setTimeout(() => void drain(projectId), 400);
+    return () => clearTimeout(timer);
+  }, [root, moves, projectId]);
+
+  /* —— 关页面 / 切后台时补一刀：beforeunload 在移动端不可靠，pagehide 才是那个能信的。 —— */
+  useEffect(() => {
+    const flush = () => {
+      if (!ready.current || !projectId || blocked.current) return;
+      const snap = { root, moves };
+      if (JSON.stringify(snap) === lastWritten.current) return;
+      void saveBoard(projectId, snap.root, snap.moves, version.current, true).catch(() => {});
+    };
+    const onHide = () => {
+      if (document.hidden) flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [root, moves, projectId]);
+
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 819px)");
     const sync = () => setNarrow(mq.matches);
@@ -84,18 +264,61 @@ export function App() {
 
   const here = (path.length ? findNode(root, path[path.length - 1]!) : root) ?? root;
 
-  const play = (next: Node) => {
+  const play = (next: Node, move: Move) => {
     // 空操作不入账：撤销栈里不该塞「我点了一下但什么都没变」。
     if (next === root) return;
     setPast((p) => [...p.slice(-199), root]);
     setRoot(next);
+    setMoves((m) => [...m.slice(-199), move]);
   };
+
+  const addBlockTo = (parentId: string) => {
+    const next = addLeaf(root, parentId);
+    const id = childIds(next, parentId).at(-1);
+    if (id) play(next, { t: "addLeaf", parent: parentId, id });
+  };
+
+  const addBlock = () => addBlockTo(here.id);
+
+  const addGroup = () => {
+    const next = addSection(root, here.id);
+    const id = childIds(next, here.id).at(-1);
+    if (id) play(next, { t: "addSection", parent: here.id, id });
+  };
+
+  const remove = (id: string) => play(removeNode(root, id), { t: "remove", id });
+
+  /** 开改名的那一刻，是谁被双击的 —— 改完把焦点还给它，别让人跟丢。 */
+  const editAnchor = useRef<HTMLElement | null>(null);
+
+  const beginRename = (id: string, el: HTMLElement | null, where: "tree" | "board") => {
+    editAnchor.current = el;
+    setEditing({ id, where });
+  };
+
+  /** 改名结束（提交或取消）。要不要落盘，看调用方传不传 next。 */
+  const endRename = () => {
+    const el = editAnchor.current;
+    editAnchor.current = null;
+    setEditing(null);
+    // 同步还焦点：拖到下一帧去还，会跟下一场改名撞车（旧的那一帧把新输入框顶掉）。
+    el?.focus();
+  };
+
+  const commitRename = (id: string, name: string) => {
+    endRename();
+    // 名字没变 / 改成空白时 renameNode 会把原树原样递回来，play 的早退会兜住。
+    play(renameNode(root, id, name), { t: "rename", id, name: name.trim() });
+  };
+
+  const cancelRename = () => endRename();
 
   const undo = () => {
     if (!past.length) return;
     const back = past[past.length - 1]!;
     setPast((p) => p.slice(0, -1));
     setRoot(back);
+    setMoves((m) => [...m.slice(-199), { t: "undo" }]);
     setPath((ids) =>
       ids.filter((id) => {
         const n = findNode(back, id);
@@ -104,20 +327,49 @@ export function App() {
     );
   };
 
+  const reset = () => {
+    play(initialState(), { t: "reset" });
+    setPath([]);
+  };
+
+  /** 撞了别人写的版本：只给「重读磁盘」这一条路 —— 自动覆盖等于帮另一个标签页删数据。 */
+  const reload = () => setEpoch((e) => e + 1);
+
+  const newBoard = async () => {
+    const name = window.prompt("新项目叫什么", "new");
+    if (!name?.trim()) return;
+    try {
+      const board = await createBoard(name.trim());
+      setBoards((bs) => [board, ...bs]);
+      setProjectId(board.id);
+    } catch {
+      setStatus("error");
+    }
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // 正在改名时键盘全归输入框：⌘Z 是文本撤销，Backspace 是删字，不是删块。
+      if (editing) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
         return;
       }
-      // 焦点在某一块上时，Delete / Backspace 删掉它 —— 悬停才出现的 × 不该是唯一入口。
-      if (e.key === "Delete" || e.key === "Backspace") {
-        const el = document.activeElement as HTMLElement | null;
-        const id = el?.dataset.nodeId;
-        if (!id) return;
+      // 焦点在哪一格，按键就作用在那一格上 —— 悬停才出现的按钮不该是唯一入口。
+      const anchor = (e.target as HTMLElement | null)?.closest?.("[data-node-id]") as
+        | HTMLElement
+        | undefined;
+      const id = anchor?.dataset.nodeId;
+      if (!anchor || !id) return;
+      if (e.key === "F2") {
         e.preventDefault();
-        play(removeNode(root, id));
+        beginRename(id, anchor, anchor.closest("aside") ? "tree" : "board");
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        play(removeNode(root, id), { t: "remove", id });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -169,7 +421,16 @@ export function App() {
         <div
           className={`h-full w-[248px] overflow-y-auto ${side ? "opacity-100" : "opacity-0"} transition-opacity duration-200`}
         >
-          <Tree root={root} path={path} onEnter={setPath} onRemove={(id) => play(removeNode(root, id))} />
+          <Tree
+            root={root}
+            path={path}
+            editingId={editing?.where === "tree" ? editing.id : null}
+            onEnter={setPath}
+            onRemove={remove}
+            onBeginRename={(id, el) => beginRename(id, el, "tree")}
+            onCommitRename={commitRename}
+            onCancelRename={cancelRename}
+          />
         </div>
       </aside>
 
@@ -195,7 +456,21 @@ export function App() {
             </svg>
           </IconButton>
 
-          <nav className="flex min-w-0 items-center gap-0.5 text-[13px]" aria-label="路径">
+          <nav className="flex min-w-0 items-center gap-0.5 text-[13px]" aria-label="项目与路径">
+            <select
+              value={projectId ?? ""}
+              onChange={(e) => (e.target.value === NEW_BOARD ? void newBoard() : setProjectId(e.target.value))}
+              title="每个目录是一个独立项目"
+              className="mr-1 h-7 max-w-[150px] shrink-0 truncate rounded-lg bg-surface px-1.5 text-[12px] text-text/90 outline-none hover:bg-raised"
+            >
+              {boards.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+              <option value={NEW_BOARD}>＋ 新项目…</option>
+            </select>
+            <span className="text-text/25" aria-hidden="true">/</span>
             <button
               type="button"
               onClick={() => setPath([])}
@@ -220,6 +495,21 @@ export function App() {
           </nav>
 
           <div className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={status === "conflict" ? reload : undefined}
+              disabled={status !== "conflict"}
+              title={
+                status === "conflict"
+                  ? "磁盘上的这一盘被别的窗口改过了。点一下重读磁盘，本地这几手会丢。"
+                  : "每次落子自动写到 content/<id>/tree.json"
+              }
+              className={`mr-1 text-[11px] tabular-nums transition-colors ${
+                status === "conflict" ? "text-danger hover:underline" : "text-muted"
+              }`}
+            >
+              {STATUS_TEXT[status]}
+            </button>
             <div className="mr-1 flex items-baseline gap-1.5">
               <span className="text-[11px] text-muted">总分</span>
               <span className="text-[17px] font-semibold tabular-nums" style={{ letterSpacing: "-0.02em" }}>
@@ -229,15 +519,13 @@ export function App() {
             <Pill onClick={undo} disabled={!past.length} title="⌘Z / Ctrl+Z">
               撤销
             </Pill>
-            <Pill onClick={() => play(addLeaf(root, here.id))}>＋ 块</Pill>
-            <Pill onClick={() => play(addSection(root, here.id))}>＋ 组</Pill>
-            <Pill
-              onClick={() => {
-                play(initialState());
-                setPath([]);
-              }}
-              muted
-            >
+            <Pill onClick={addBlock} disabled={status === "conflict"}>
+              ＋ 块
+            </Pill>
+            <Pill onClick={addGroup} disabled={status === "conflict"}>
+              ＋ 组
+            </Pill>
+            <Pill onClick={reset} muted>
               重开
             </Pill>
           </div>
@@ -247,7 +535,7 @@ export function App() {
           {placed.length === 0 && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[13px] text-muted">
               <span>盘上什么都没有了</span>
-              <Pill onClick={() => play(addLeaf(root, root.id))}>＋ 块</Pill>
+              <Pill onClick={() => addBlockTo(root.id)}>＋ 块</Pill>
             </div>
           )}
           <div className="relative h-full w-full">
@@ -257,8 +545,12 @@ export function App() {
                 piece={p}
                 origin={{ x: 0, y: 0 }}
                 isSection={isSection}
+                editingId={editing?.where === "board" ? editing.id : null}
                 onEnter={(id) => setPath([...path, id])}
-                onRemove={(id) => play(removeNode(root, id))}
+                onRemove={remove}
+                onBeginRename={(id, el) => beginRename(id, el, "board")}
+                onCommitRename={commitRename}
+                onCancelRename={cancelRename}
               />
             ))}
           </div>
@@ -284,24 +576,37 @@ function Piece({
   piece,
   origin,
   isSection,
+  editingId,
   onEnter,
   onRemove,
+  onBeginRename,
+  onCommitRename,
+  onCancelRename,
 }: {
   piece: Placed;
   origin: { x: number; y: number };
   isSection: (n: Node) => boolean;
+  editingId: string | null;
   onEnter: (id: string) => void;
   onRemove: (id: string) => void;
+  onBeginRename: (id: string, el: HTMLElement | null) => void;
+  onCommitRename: (id: string, name: string) => void;
+  onCancelRename: () => void;
 }) {
   const { node, box, depth, color, kids } = piece;
   const place = { left: box.x - origin.x, top: box.y - origin.y, width: box.w, height: box.h };
   const section = isSection(node);
   const value = valueOf(node);
+  const editing = editingId === node.id;
 
+  // 双击改名的规矩：名字画得出来的地方才能双击它。名字没地方站，就回左列去改。
+  const noRename = (e: React.MouseEvent) =>
+    (e.target as HTMLElement).closest("[data-no-rename]") !== null;
   if (section) {
     const strip = hat(box, depth);
     return (
       <div
+        data-node-id={node.id}
         className={`group/sec absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
         style={{
           ...place,
@@ -312,32 +617,50 @@ function Piece({
       >
         {strip > 0 && (
           <div
-            className="absolute inset-x-0 top-0 flex items-center gap-1.5 px-2 text-[11px]"
+            tabIndex={-1}
+            className="absolute inset-x-0 top-0 flex items-center gap-1.5 px-2 text-[11px] outline-none"
             style={{ height: strip, color: "var(--n-color-text)" }}
+            onDoubleClick={(e) => {
+              if (noRename(e)) return;
+              onBeginRename(node.id, e.currentTarget);
+            }}
           >
-            <span className="truncate" style={{ letterSpacing: "0.01em" }}>
-              {node.name}
-            </span>
-            {strip >= 24 && (
-              <span className="shrink-0 text-muted">{node.children!.length} 块</span>
+            {editing ? (
+              <NameInput
+                value={node.name}
+                onCommit={(name) => onCommitRename(node.id, name)}
+                onCancel={onCancelRename}
+                className="flex-1 px-1 text-[11px]"
+              />
+            ) : (
+              <>
+                <span className="truncate" style={{ letterSpacing: "0.01em" }}>
+                  {node.name}
+                </span>
+                {strip >= 24 && (
+                  <span className="shrink-0 text-muted">{node.children!.length} 块</span>
+                )}
+                <button
+                  type="button"
+                  data-no-rename
+                  onClick={() => onEnter(node.id)}
+                  title={`进入 ${node.name}`}
+                  className="ml-auto shrink-0 rounded-[3px] px-1.5 py-0.5 text-[11px] opacity-0 transition-opacity duration-150 hover:bg-white/10 group-hover/sec:opacity-100"
+                >
+                  进入 ›
+                </button>
+                <button
+                  type="button"
+                  data-no-rename
+                  onClick={() => onRemove(node.id)}
+                  aria-label={`删除 ${node.name}`}
+                  title={`删除 ${node.name}（可撤销）`}
+                  className="shrink-0 rounded-[3px] px-1.5 py-0.5 text-[11px] leading-none opacity-0 transition-opacity duration-150 hover:bg-white/15 group-hover/sec:opacity-100"
+                >
+                  ×
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => onEnter(node.id)}
-              title={`进入 ${node.name}`}
-              className="ml-auto shrink-0 rounded-[3px] px-1.5 py-0.5 text-[11px] opacity-0 transition-opacity duration-150 hover:bg-white/10 group-hover/sec:opacity-100"
-            >
-              进入 ›
-            </button>
-            <button
-              type="button"
-              onClick={() => onRemove(node.id)}
-              aria-label={`删除 ${node.name}`}
-              title={`删除 ${node.name}（可撤销）`}
-              className="shrink-0 rounded-[3px] px-1.5 py-0.5 text-[11px] leading-none opacity-0 transition-opacity duration-150 hover:bg-white/15 group-hover/sec:opacity-100"
-            >
-              ×
-            </button>
           </div>
         )}
         {kids.map((k) => (
@@ -346,8 +669,12 @@ function Piece({
             piece={k}
             origin={box}
             isSection={isSection}
+            editingId={editingId}
             onEnter={onEnter}
             onRemove={onRemove}
+            onBeginRename={onBeginRename}
+            onCommitRename={onCommitRename}
+            onCancelRename={onCancelRename}
           />
         ))}
       </div>
@@ -355,7 +682,8 @@ function Piece({
   }
 
   const big = Math.min(box.w, box.h);
-  const showName = box.w > 56 && box.h > 30;
+  // 编辑中先把名字的位置腾出来，再小的块也得看得见自己在打什么。
+  const showName = (box.w > 56 && box.h > 30) || editing;
   const showValue = big > 24;
   const valueSize = Math.max(12, Math.min(40, Math.round(big / 3)));
   const roomForDelete = box.w > 34 && box.h > 26;
@@ -369,12 +697,22 @@ function Piece({
         tabIndex={0}
         aria-label={`${node.name} ${value}`}
         data-node-id={node.id}
+        onDoubleClick={(e) => onBeginRename(node.id, e.currentTarget)}
         className="flex h-full w-full flex-col items-center justify-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black/40"
       >
-        {showName && (
-          <span className="pointer-events-none max-w-full truncate px-1.5 text-[10px] leading-none opacity-65">
-            {node.name}
-          </span>
+        {editing ? (
+          <NameInput
+            value={node.name}
+            onCommit={(name) => onCommitRename(node.id, name)}
+            onCancel={onCancelRename}
+            className="w-full px-1 text-center text-[10px]"
+          />
+        ) : (
+          showName && (
+            <span className="pointer-events-none max-w-full truncate px-1.5 text-[10px] leading-none opacity-65">
+              {node.name}
+            </span>
+          )
         )}
         {showValue && (
           <span
@@ -388,6 +726,7 @@ function Piece({
       {roomForDelete && (
         <button
           type="button"
+          data-no-rename
           onClick={() => onRemove(node.id)}
           aria-label={`删除 ${node.name}`}
           title={`删除 ${node.name}（可撤销）`}

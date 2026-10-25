@@ -1,0 +1,65 @@
+{
+  "v": 1,
+  "name": "new1",
+  "version": 11,
+  "updatedAt": "2026-10-25T16:06:54.992Z",
+  "root": {
+    "id": "n1",
+    "name": "N",
+    "children": [
+      {
+        "id": "n2",
+        "name": "src",
+        "children": [
+          {
+            "id": "n3",
+            "name": "App.tsx",
+            "value": 24
+          },
+          {
+            "id": "n4",
+            "name": "utils.ts",
+            "value": 6
+          },
+          {
+            "id": "n12",
+            "name": "src.3",
+            "value": 1
+          },
+          {
+            "id": "n13",
+            "name": "src.4",
+            "value": 1
+          },
+          {
+            "id": "n15",
+            "name": "alpha",
+            "children": [
+              {
+                "id": "n14",
+                "name": "alpha.1",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "id": "n17",
+            "name": "beta",
+            "children": [
+              {
+                "id": "n16",
+                "name": "beta.1",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "n8",
+        "name": "N.5",
+        "value": 1
+      }
+    ]
+  }
+}

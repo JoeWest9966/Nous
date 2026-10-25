@@ -1,0 +1,181 @@
+/**
+ * 一个目录 = 一个项目。每个项目三份 json，各管一层：
+ *
+ * - `tree.json`   语义：块、组、父子。**唯一真相**，丢了就是真丢。
+ * - `log.json`    最近 200 手：加、删、改名、撤销。丢了只是没历史。
+ * - `layout.json` 坐标和颜色。派生数据，丢了重算一次就有，不进 git。
+ *
+ * 这个文件不 import 任何浏览器代码 —— 它能被 vite 插件用，也能被真后端用。
+ * 它不知道 HTTP 长什么样，HTTP 在 `api.ts` 里。
+ */
+import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import path from "node:path";
+
+export type BoardSummary = {
+  id: string;
+  name: string;
+  version: number;
+  updatedAt: string;
+};
+
+export type StoredTree = {
+  v: 1;
+  name: string;
+  version: number;
+  updatedAt: string;
+  root: unknown;
+};
+
+export type SaveResult =
+  | { status: "ok"; version: number }
+  | { status: "conflict"; version: number }
+  | { status: "missing" };
+
+/** id 同时也是目录名，所以白名单同时防路径穿越和防跨平台怪字符。 */
+const ID_OK = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+const TREE = "tree.json";
+const LOG = "log.json";
+const LAYOUT = "layout.json";
+const LOG_LIMIT = 200;
+
+export const isBoardId = (id: string): boolean => ID_OK.test(id);
+
+/** 原子写：写临时文件再 rename。断电只会留下一个孤儿 tmp，不会留下半截 json。 */
+async function writeJson(file: string, value: unknown): Promise<void> {
+  const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await rename(tmp, file);
+}
+
+const readJson = async (file: string): Promise<unknown | undefined> => {
+  try {
+    return JSON.parse(await readFile(file, "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+};
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+export class BoardStore {
+  /** content/ 的绝对路径由调用方给 —— 这里不许出现硬编码路径。 */
+  constructor(readonly root: string) {}
+
+  private dir(id: string): string {
+    const p = path.resolve(this.root, id);
+    // 双保险：正则已经挡了 `../`，但路径拼接这东西值得再确认一次。
+    if (path.dirname(p) !== path.resolve(this.root)) throw new Error("bad board id");
+    return p;
+  }
+
+  async list(): Promise<BoardSummary[]> {
+    let names: string[] = [];
+    try {
+      names = (await readdir(this.root, { withFileTypes: true }))
+        .filter((e) => e.isDirectory() && isBoardId(e.name))
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+
+    const out: BoardSummary[] = [];
+    for (const id of names) {
+      const tree = await readJson(path.join(this.dir(id), TREE));
+      const t = isRecord(tree) ? tree : {};
+      const updatedAt =
+        typeof t.updatedAt === "string"
+          ? t.updatedAt
+          : (await stat(path.join(this.dir(id), TREE)).catch(() => null))?.mtime.toISOString() ??
+            new Date(0).toISOString();
+      out.push({
+        id,
+        name: typeof t.name === "string" && t.name ? t.name : id,
+        version: typeof t.version === "number" ? t.version : 0,
+        updatedAt,
+      });
+    }
+    // 最近动过的排前面，人找的是「刚才那一盘」。
+    return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async tree(id: string): Promise<StoredTree | undefined> {
+    const raw = await readJson(path.join(this.dir(id), TREE));
+    if (!isRecord(raw) || !("root" in raw)) return undefined;
+    return {
+      v: 1,
+      name: typeof raw.name === "string" ? raw.name : id,
+      version: typeof raw.version === "number" ? raw.version : 0,
+      updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date(0).toISOString(),
+      root: raw.root,
+    };
+  }
+
+  async log(id: string): Promise<unknown[]> {
+    const raw = await readJson(path.join(this.dir(id), LOG));
+    return isRecord(raw) && Array.isArray(raw.moves) ? raw.moves : [];
+  }
+
+  /**
+   * 写之前先比对版本。文件是唯一真相，覆盖等于真丢数据 ——
+   * 两个标签页同时开着的时候，这个检查就是唯一拦住静默损失的东西。
+   */
+  async save(
+    id: string,
+    input: { root: unknown; moves: unknown[]; baseVersion: number },
+  ): Promise<SaveResult> {
+    const current = await this.tree(id);
+    if (!current) return { status: "missing" };
+    if (current.version !== input.baseVersion) {
+      return { status: "conflict", version: current.version };
+    }
+
+    const next: StoredTree = {
+      v: 1,
+      name: current.name,
+      version: current.version + 1,
+      updatedAt: new Date().toISOString(),
+      root: input.root,
+    };
+    // 顺序要紧：先落语义，再落历史。历史落后了只是少一行，语义落后了是丢盘。
+    await writeJson(path.join(this.dir(id), TREE), next);
+    await writeJson(path.join(this.dir(id), LOG), {
+      v: 1,
+      moves: input.moves.slice(-LOG_LIMIT),
+    });
+    return { status: "ok", version: next.version };
+  }
+
+  /** 新项目：三份 json 一次建齐，layout 那个是空壳，等真pinch/拖拽了才写。 */
+  async create(name: string, wantId?: string): Promise<BoardSummary> {
+    await mkdir(this.root, { recursive: true });
+    const slug =
+      name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40);
+    const base = wantId && isBoardId(wantId) ? wantId : slug || `board-${randomBytes(2).toString("hex")}`;
+
+    const taken = new Set((await this.list()).map((b) => b.id));
+    let id = base;
+    for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
+    if (!isBoardId(id)) throw new Error("bad board id");
+
+    const now = new Date().toISOString();
+    await mkdir(this.dir(id), { recursive: true });
+    await writeJson(path.join(this.dir(id), TREE), {
+      v: 1,
+      name: name.trim() || id,
+      version: 0,
+      updatedAt: now,
+      root: { id: "n1", name: name.trim() || id, children: [] },
+    } satisfies StoredTree);
+    await writeJson(path.join(this.dir(id), LOG), { v: 1, moves: [] });
+    await writeJson(path.join(this.dir(id), LAYOUT), { v: 1, boxes: {} });
+
+    return { id, name: name.trim() || id, version: 0, updatedAt: now };
+  }
+}

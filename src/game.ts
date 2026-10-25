@@ -22,6 +22,25 @@ export const isSection = (n: Node): boolean => Array.isArray(n.children);
 let seq = 0;
 const nextId = (): string => `n${++seq}`;
 
+/**
+ * 从载入的树上重新对齐计数器 —— 换项目的时候必须调。
+ * 不调的话新 id 会从 0 重新数，撞上文件里已有的 id：React key 打架、
+ * `findNode` 找错人、log 里的 id 全部指错。
+ */
+export function seedIds(root: Node): void {
+  const walk = (n: Node): void => {
+    const hit = /^n(\d+)$/.exec(n.id);
+    if (hit) seq = Math.max(seq, Number(hit[1]));
+    n.children?.forEach(walk);
+  };
+  seq = 0;
+  walk(root);
+}
+
+/** 某个组底下子节点的 id，按顺序来。落子日志要记「新的是哪个」，就靠它。 */
+export const childIds = (root: Node, parentId: string): string[] =>
+  findNode(root, parentId)?.children?.map((c) => c.id) ?? [];
+
 export const makeLeaf = (name: string, value: number): Node => ({
   id: nextId(),
   name,
@@ -34,11 +53,13 @@ export const makeSection = (name: string, children: Node[]): Node => ({
   children,
 });
 
-/** 开局：N 底下**一个组 + 一块** —— 两种节点各一个，一眼看清。 */
+/** 开局：pele playground 那棵 treeView-beta（iconpack 示例），值取大致的文件大小。 */
 export function initialState(): Node {
   return makeSection("N", [
-    makeSection("alpha", [makeLeaf("alpha.1", 1), makeLeaf("alpha.2", 1)]),
-    makeLeaf("beta", 1),
+    makeSection("src", [makeLeaf("App.tsx", 24), makeLeaf("utils.ts", 6)]),
+    makeLeaf("Dockerfile", 2),
+    makeLeaf("notes.txt", 1),
+    makeLeaf("README.md", 9),
   ]);
 }
 
@@ -102,6 +123,17 @@ export function removeNode(root: Node, id: string): Node {
   };
 
   return prune(root);
+}
+
+/**
+ * 改名。id 不动 —— 路径、焦点、撤销栈全靠 id，名字只是一层皮。
+ * 空名、纯空格、没改，都当没下这一手（返回原树，`play` 的早退会兜住）。
+ */
+export function renameNode(root: Node, id: string, name: string): Node {
+  const node = findNode(root, id);
+  const trimmed = name.trim();
+  if (!node || !trimmed || node.name === trimmed) return root;
+  return replaceNode(root, id, { ...node, name: trimmed });
 }
 
 export type Box = { x: number; y: number; w: number; h: number };

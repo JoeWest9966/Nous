@@ -10,10 +10,10 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["vite/client", "vite-plugin-pwa/client"],
+    "types": ["vite/client", "vite-plugin-pwa/client", "node"],
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "baseUrl": "."
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "server/**/*.ts", "vite.config.ts"]
 }

@@ -8,3 +8,7 @@ dist/
 .idea/
 .vscode/
 *.log
+
+# 布局是派生数据：丢了重排一次就有，别让它污染 git 历史。
+content/*/layout.json
+content/*/*.tmp
