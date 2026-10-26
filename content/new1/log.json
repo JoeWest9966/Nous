@@ -4,79 +4,61 @@
     {
       "t": "addLeaf",
       "parent": "n1",
-      "id": "n8"
-    },
-    {
-      "t": "addLeaf",
-      "parent": "n1",
-      "id": "n9"
-    },
-    {
-      "t": "addLeaf",
-      "parent": "n1",
-      "id": "n10"
-    },
-    {
-      "t": "addLeaf",
-      "parent": "n1",
-      "id": "n11"
-    },
-    {
-      "t": "remove",
-      "id": "n7"
-    },
-    {
-      "t": "remove",
-      "id": "n6"
-    },
-    {
-      "t": "remove",
-      "id": "n5"
-    },
-    {
-      "t": "addLeaf",
-      "parent": "n2",
-      "id": "n12"
-    },
-    {
-      "t": "addLeaf",
-      "parent": "n2",
-      "id": "n13"
+      "id": "n32"
     },
     {
       "t": "addSection",
       "parent": "n2",
-      "id": "n15"
+      "id": "n34"
     },
     {
       "t": "addSection",
       "parent": "n2",
-      "id": "n17"
-    },
-    {
-      "t": "remove",
-      "id": "n11"
-    },
-    {
-      "t": "remove",
-      "id": "n10"
-    },
-    {
-      "t": "remove",
-      "id": "n9"
+      "id": "n36"
     },
     {
       "t": "addLeaf",
-      "parent": "n1",
-      "id": "n18"
+      "parent": "n15",
+      "id": "n37"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n15",
+      "id": "n38"
+    },
+    {
+      "t": "reset"
+    },
+    {
+      "t": "rename",
+      "id": "n43",
+      "name": "renamed"
     },
     {
       "t": "remove",
-      "id": "n8"
+      "id": "n43"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n45",
+      "id": "n46"
+    },
+    {
+      "t": "rename",
+      "id": "n46",
+      "name": "notes.txt"
     },
     {
       "t": "remove",
-      "id": "n18"
+      "id": "n44"
+    },
+    {
+      "t": "remove",
+      "id": "n46"
+    },
+    {
+      "t": "remove",
+      "id": "n42"
     }
   ]
 }

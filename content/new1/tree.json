@@ -1,57 +1,25 @@
 {
   "v": 1,
   "name": "new1",
-  "version": 14,
-  "updatedAt": "2026-10-25T16:32:46.685Z",
+  "version": 41,
+  "updatedAt": "2026-10-26T04:08:17.258Z",
   "root": {
-    "id": "n1",
+    "id": "n45",
     "name": "N",
     "children": [
       {
-        "id": "n2",
+        "id": "n41",
         "name": "src",
         "children": [
           {
-            "id": "n3",
+            "id": "n39",
             "name": "App.tsx",
             "value": 24
           },
           {
-            "id": "n4",
+            "id": "n40",
             "name": "utils.ts",
             "value": 6
-          },
-          {
-            "id": "n12",
-            "name": "src.3",
-            "value": 1
-          },
-          {
-            "id": "n13",
-            "name": "src.4",
-            "value": 1
-          },
-          {
-            "id": "n15",
-            "name": "alpha",
-            "children": [
-              {
-                "id": "n14",
-                "name": "alpha.1",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "id": "n17",
-            "name": "beta",
-            "children": [
-              {
-                "id": "n16",
-                "name": "beta.1",
-                "value": 1
-              }
-            ]
           }
         ]
       }
