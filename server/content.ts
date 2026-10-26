@@ -3,8 +3,10 @@
  *
  * - `tree.json`   语义：块、组、父子。**唯一真相**，丢了就是真丢。
  * - `log.json`    最近 200 手：加、删、改名、撤销。丢了只是没历史。
+ * - `map/<id>/`   每个节点一个文件夹（agent.md）。**派生 + 用户内容**：文件夹跟着树长，
+ *                 里面的东西是自己的，程序不碰。对账在 `map.ts`。
  *
- * 没有第三份。布局（谁在哪、多大）是 `squarify` 从值算出来的派生数据，
+ * 语义没有第三份。布局（谁在哪、多大）是 `squarify` 从值算出来的派生数据，
  * 丢了重算一次就有 —— 写它等于把衍生物存成事实源。等真能手动调尺寸那天再议。
  *
  * 这个文件不 import 任何浏览器代码 —— 它能被 vite 插件用，也能被真后端用。
@@ -13,6 +15,7 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { freshId, syncMap } from "./map.ts";
 
 export type BoardSummary = {
   id: string;
@@ -146,10 +149,23 @@ export class BoardStore {
       v: 1,
       moves: input.moves.slice(-LOG_LIMIT),
     });
+    await this.syncMap(id, input.root);
     return { status: "ok", version: next.version };
   }
 
-  /** 新项目：两份 json 一次建齐。 */
+  /**
+   * 把 `map/` 校准成这棵树。**失败不许影响保存** —— tree.json 已经落盘了，
+   * 让一个笔记目录把这次保存打成 500，等于告诉用户「刚才那手没存上」，那是谎话。
+   */
+  private async syncMap(id: string, root: unknown): Promise<void> {
+    try {
+      await syncMap(this.dir(id), root);
+    } catch (e) {
+      console.warn(`[map] ${id} 对账失败（tree.json 已存好）:`, e);
+    }
+  }
+
+  /** 新项目：两份 json + map/ 一次建齐。 */
   async create(name: string, wantId?: string): Promise<BoardSummary> {
     await mkdir(this.root, { recursive: true });
     const slug =
@@ -167,14 +183,16 @@ export class BoardStore {
 
     const now = new Date().toISOString();
     await mkdir(this.dir(id), { recursive: true });
+    const root = { id: freshId(), name: name.trim() || id, children: [] };
     await writeJson(path.join(this.dir(id), TREE), {
       v: 1,
       name: name.trim() || id,
       version: 0,
       updatedAt: now,
-      root: { id: "n1", name: name.trim() || id, children: [] },
+      root,
     } satisfies StoredTree);
     await writeJson(path.join(this.dir(id), LOG), { v: 1, moves: [] });
+    await this.syncMap(id, root);
 
     return { id, name: name.trim() || id, version: 0, updatedAt: now };
   }
