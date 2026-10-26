@@ -12,6 +12,8 @@ export type Move =
   | { t: "addSection"; parent: string; id: string }
   | { t: "remove"; id: string }
   | { t: "rename"; id: string; name: string }
+  // 只记事实，不记结果：撤销靠 App 的 past 栈（快照），不靠重放，所以没有反向操作。
+  | { t: "move"; id: string; to: string; before?: string }
   | { t: "undo" };
 
 export type BoardSummary = {

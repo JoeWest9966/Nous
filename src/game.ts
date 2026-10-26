@@ -180,6 +180,52 @@ export function addSection(root: Node, parent: string): Node {
   });
 }
 
+/** id 顺序一模一样？用来判「这一手其实没动」。 */
+const sameIds = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
+
+/**
+ * 把 id 从树里摘掉，**不收空组** —— 一次移动不该顺手删掉一个组，那是两个决定。
+ * 裁剪是 `removeNode` 的事，别照搬过来。根摘不动。
+ */
+function detach(root: Node, id: string): Node {
+  if (root.id === id || !root.children) return root;
+  return { ...root, children: root.children.filter((c) => c.id !== id).map((c) => detach(c, id)) };
+}
+
+/** 把 node 插进 to，插在 before 前面；没有 before 就是追加到末尾。 */
+function insertBefore(root: Node, to: string, node: Node, before?: string): Node {
+  if (!root.children) return root;
+  if (root.id === to) {
+    const kids = root.children;
+    const at = before === undefined ? kids.length : kids.findIndex((c) => c.id === before);
+    return { ...root, children: [...kids.slice(0, at), node, ...kids.slice(at)] };
+  }
+  return { ...root, children: root.children.map((c) => insertBefore(c, to, node, before)) };
+}
+
+/**
+ * 把一个块或一个组挪到另一个组的指定位置 —— 「换爹」和「同级排序」是同一件事，
+ * 所以只有这一个函数。`before` 省略 = 追加到末尾。
+ *
+ * 三件不许动的东西：`id`、`name`、`value`。`tree`（路径）是算出来的，它自己会跟着变。
+ * 什么都不成立时返回**原树本身**：`play()` 靠「引用没变」早退，返回新对象会白记一手。
+ */
+export function moveNode(root: Node, id: string, to: string, before?: string): Node {
+  if (id === to) return root;
+  const node = findNode(root, id);
+  const target = findNode(root, to);
+  if (!node || !target || !isSection(target)) return root;
+  // `to` 在被搬的东西自己的子树里 → 会造环。根也在这一条里被挡住（根不搬）。
+  if (findNode(node, to)) return root;
+  // `before` 不在 to 的直接子节点里（包括它等于自己被搬的那块）→ 当没下这一手。
+  if (before !== undefined && !target.children!.some((c) => c.id === before)) return root;
+
+  // 先摘再插 —— 先算下标会差一位，所以下标一定是在摘完之后的树上现算。
+  const next = insertBefore(detach(root, id), to, node, before);
+  return sameIds(childIds(root, to), childIds(next, to)) ? root : next;
+}
+
 /**
  * 删掉一个节点（连同它的子树），并把因此空掉的组一路收掉。
  * 根不删 —— 空盘也还叫 N，只是底下什么都没有。
