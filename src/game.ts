@@ -19,23 +19,39 @@ export const valueOf = (n: Node): number =>
 
 export const isSection = (n: Node): boolean => Array.isArray(n.children);
 
-let seq = 0;
-const nextTree = (): string => `n${++seq}`;
-
 /**
- * 从载入的树上重新对齐计数器 —— 换项目的时候必须调。
- * 不调的话新 tree 会从 0 重新数，撞上文件里已有的 tree：React key 打架、
- * `findNode` 找错人、log 里的 tree 全部指错。
+ * tree 的字母表：32 个，去掉 `i l o u` —— 念得出来、抄得对（`o` 一走，`0` 就没歧义了）。
  */
-export function seedTrees(root: Node): void {
+const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
+
+/** 一颗新树的 tree。6 位 ≈ 10.7 亿种。256 能被 32 整除，所以 `b & 31` 是均匀的。 */
+export const freshTree = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(6));
+  let out = "";
+  for (const b of bytes) out += ALPHABET[b & 31];
+  return out;
+};
+
+/** 整棵树已经用掉的 tree。 */
+export const takenTrees = (root: Node): Set<string> => {
+  const out = new Set<string>();
   const walk = (n: Node): void => {
-    const hit = /^n(\d+)$/.exec(n.tree);
-    if (hit) seq = Math.max(seq, Number(hit[1]));
+    out.add(n.tree);
     n.children?.forEach(walk);
   };
-  seq = 0;
   walk(root);
-}
+  return out;
+};
+
+/**
+ * 发一个这张盘上没人用过的 tree：撞了就重掷。
+ * 6 位在 1000 个节点下才 0.05% 会撞 —— 但「才」不是「不会」，重掷一次永远是 0。
+ */
+const newTree = (taken: Set<string>): string => {
+  let t = freshTree();
+  while (taken.has(t)) t = freshTree();
+  return t;
+};
 
 /** 某个组底下子节点的 tree，按顺序来。落子日志要记「新的是哪个」，就靠它。 */
 export const childTrees = (root: Node, parent: string): string[] =>
@@ -58,14 +74,14 @@ const nextChildName = (parent: Node): string => {
   return `${parent.name}.${max + 1}`;
 };
 
-export const makeLeaf = (name: string, value: number): Node => ({
-  tree: nextTree(),
+export const makeLeaf = (name: string, value: number, tree = freshTree()): Node => ({
+  tree,
   name,
   value,
 });
 
-export const makeSection = (name: string, children: Node[]): Node => ({
-  tree: nextTree(),
+export const makeSection = (name: string, children: Node[], tree = freshTree()): Node => ({
+  tree,
   name,
   children,
 });
@@ -138,24 +154,29 @@ function replaceNode(root: Node, tree: string, next: Node): Node {
 }
 
 /** 往某个组里塞一块（值 1）。 */
-export function addLeaf(root: Node, sectionId: string): Node {
-  const section = findNode(root, sectionId);
-  if (!section || !section.children) return root;
-  return replaceNode(root, sectionId, {
-    ...section,
-    children: [...section.children, makeLeaf(nextChildName(section), 1)],
+export function addLeaf(root: Node, section: string): Node {
+  const node = findNode(root, section);
+  if (!node || !node.children) return root;
+  return replaceNode(root, section, {
+    ...node,
+    children: [...node.children, makeLeaf(nextChildName(node), 1, newTree(takenTrees(root)))],
   });
 }
 
 /** 往某个组里再加一个组（默认只有一块，值 1）。名字按希腊字母往后排。 */
-export function addSection(root: Node, parentId: string): Node {
-  const parent = findNode(root, parentId);
-  if (!parent || !parent.children) return root;
+export function addSection(root: Node, parent: string): Node {
+  const node = findNode(root, parent);
+  if (!node || !node.children) return root;
   const name =
-    NAMES.find((n) => !parent.children!.some((c) => c.name === n)) ?? `s${parent.children.length + 1}`;
-  return replaceNode(root, parentId, {
-    ...parent,
-    children: [...parent.children, makeSection(name, [makeLeaf(`${name}.1`, 1)])],
+    NAMES.find((n) => !node.children!.some((c) => c.name === n)) ?? `s${node.children.length + 1}`;
+  // 新组和它底下那块要两个 tree，一次把两个都发掉，别让它们互相撞。
+  const taken = takenTrees(root);
+  const section = newTree(taken);
+  taken.add(section);
+  const leaf = newTree(taken);
+  return replaceNode(root, parent, {
+    ...node,
+    children: [...node.children, makeSection(name, [makeLeaf(`${name}.1`, 1, leaf)], section)],
   });
 }
 

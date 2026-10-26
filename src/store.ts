@@ -4,7 +4,7 @@
  * 换了引擎（localStorage → 文件 → 后端 → CRDT）只改这个文件，
  * 调用方一行不动 —— 这就是「一劳永逸」该落脚的地方。
  */
-import type { Node } from "./game";
+import { freshTree, type Node } from "./game";
 
 /** 一手棋。log.json 里存的就是这些，人能直接读，git diff 也能看。 */
 export type Move =
@@ -64,7 +64,8 @@ const isDraft = (v: unknown): v is Draft => {
     Array.isArray(d.moves) &&
     typeof d.root === "object" &&
     d.root !== null &&
-    typeof (d.root as Node).tree === "string"
+    // 老草稿的根上还叫 id —— 认它，adoptTrees 会转过来。
+    (typeof (d.root as Node).tree === "string" || typeof (d.root as LegacyNode).id === "string")
   );
 };
 
@@ -116,7 +117,8 @@ async function asJson<T>(res: Response): Promise<T> {
 type LegacyNode = Omit<Node, "tree" | "children"> & { tree?: string; id?: string; children?: LegacyNode[] };
 
 const adoptTrees = (n: LegacyNode): Node => {
-  const out: Node = { tree: n.tree ?? n.id ?? "", name: n.name };
+  // 两个都没有（手改坏了）：发一个，别让空串顺着 findNode 到处走。
+  const out: Node = { tree: n.tree ?? n.id ?? freshTree(), name: n.name };
   if (n.children) out.children = n.children.map(adoptTrees);
   else out.value = n.value ?? 0;
   return out;

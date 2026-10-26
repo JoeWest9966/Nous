@@ -18,7 +18,6 @@ import {
   pathTo,
   removeNode,
   renameNode,
-  seedTrees,
   valueOf,
 } from "./game";
 import {
@@ -213,8 +212,8 @@ export function App() {
       try {
         const board = await loadBoard(projectId);
         if (!alive) return;
-        // 不调 seedTrees，新 tree 就从 n1 重新数，撞上文件里已有的 tree。
-        // 草稿里的 tree 是当时那棵树的（seedTrees 已经把它算进去了），所以先看草稿再定。
+        // 新 tree 是随机发的，跟载入的盘没有先后关系，所以这里没有「对齐」这一步。
+        // 草稿之所以要先看：它上面那几手还没落盘，磁盘那份里没有它们。
         const draft = readDraft(projectId);
         const loaded = { root: board.root, moves: board.moves.slice(-200) };
         // 草稿内容跟磁盘一模一样：说明它只是一道影子（比如 pagehide 那一刀已经发出去了）。
@@ -227,7 +226,6 @@ export function App() {
         // 底不一样：磁盘被别人改过。两边都留着，等人选。
         setOrphan(draft && !stale && !adopt ? draft : null);
 
-        seedTrees(adopt ? adopt.root : board.root);
         version.current = board.version;
         const next = adopt ? { root: adopt.root, moves: adopt.moves } : loaded;
         // 用磁盘那份时它就是磁盘内容，别写回去；用草稿时要存，所以不能跳。
@@ -481,7 +479,6 @@ export function App() {
   const keepDraft = () => {
     const d = orphan;
     if (!d || !projectId) return;
-    seedTrees(d.root);
     // 底用磁盘当前的 version：现在写下去不会撞 409，意向就是「以我为准」。
     lastWritten.current = "";
     skipSave.current = false;
