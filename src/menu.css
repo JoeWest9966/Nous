@@ -265,3 +265,41 @@
     transition-delay: 0ms !important;
   }
 }
+
+/* ── 「移动到…」的目标选择器 ──────────────────────────────────────────────────
+ *
+ * 出现/收回:
+ *  · 进场 220ms 无过冲配合 6px 的升日起 + 12px 的 blur 化 —— 面板是「arriving」，不是凭空出现
+ *  · 退场 140ms 无过冲，同样是“自然人”的取舍：退场是“已经决定了”，不需要再回头
+ *  · Esc 从按钮那儿收回去 —— 空间一致性（Apple §7）
+ */
+@keyframes nm-move-in {
+  from { opacity: 0; transform: translateY(var(--nm-move-lift, -6px)) scale(0.985); filter: blur(6px); }
+  to   { opacity: 1; transform: none; filter: none; }
+}
+@keyframes nm-move-out {
+  from { opacity: 1; transform: none; filter: none; }
+  to   { opacity: 0; transform: translateY(var(--nm-move-lift, -6px)) scale(0.985); filter: blur(4px); }
+}
+@keyframes nm-scrim-in  { from { opacity: 0 } to { opacity: 1 } }
+@keyframes nm-scrim-out { from { opacity: 1 } to { opacity: 0 } }
+
+.nm-move-scrim { animation: nm-scrim-in 140ms linear both; }
+
+.nm-move {
+  animation: nm-move-in 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+/* 往上翻出来的那一版：initial lift 反过来，两条 glass 都是“有實體在 arrive”。 */
+.nm-move[data-flip="up"] { --nm-move-lift: 6px; }
+
+.nm-move[data-leaving="1"] { animation: nm-move-out 140ms cubic-bezier(0.4, 0, 1, 1) both; }
+.nm-move[data-leaving="1"] ~ .nm-move-scrim,
+.nm-move-scrim[data-leaving="1"] { animation: nm-scrim-out 140ms cubic-bezier(0.4, 0, 1, 1) both; }
+
+/* 系统让少动：位移缩短为 0，只留瞬时 opacity —— 位置信息本来也不靠这块行程传达。 */
+@media (prefers-reduced-motion: reduce) {
+  .nm-move,
+  .nm-move-scrim {
+    animation-duration: 1ms !important;
+  }
+}

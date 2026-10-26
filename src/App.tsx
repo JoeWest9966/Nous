@@ -390,6 +390,9 @@ export function App() {
 
   /** 全树 tree。改名、搬家都会变，所以每次从树现算 —— 它不落盘，也不该落盘。 */
   const trees = useMemo(() => treeMap(root), [root]);
+  /** 状态行那句「已移到…」要在定时器里读最新的 tree —— 定时器拿不到那一帧的 props，所以用 ref 透一层。 */
+  const treesRef = useRef(trees);
+  treesRef.current = trees;
   /** ⌘K 的候选。盘面画不下的节点，这里是唯一看得到它们 tree 的地方。 */
   const hits = useMemo<Hit[]>(() => {
     const out: Hit[] = [];

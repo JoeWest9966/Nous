@@ -210,6 +210,24 @@ function insertBefore(root: Node, to: string, node: Node, before?: string): Node
 }
 
 /**
+ * 这一手能不能下。`moveNode` 的判据抽出来给选择器用 —— 目标列表要提前把不成立的落点
+ * 划掉，不能让人点了才发现什么都没发生。两边必须是同一份判据，不然早晚分家。
+ */
+export function canMove(root: Node, id: string, to: string, before?: string): boolean {
+  if (id === to) return false;
+  const node = findNode(root, id);
+  const target = findNode(root, to);
+  if (!node || !target || !isSection(target)) return false;
+  // `to` 在被搬的东西自己的子树里 → 会造环。根也在这条里被挡住（根不搬）。
+  if (findNode(node, to)) return false;
+  // `before` 不在 to 的直接子节点里，或者就是被搬的这块自己 → 当没下这一手。
+  // 后者不是边角：被判移动的那一行本身也是落点（灰在那儿），点它/回车就该什么也不发生。
+  if (before !== undefined && (before === id || !target.children!.some((c) => c.id === before)))
+    return false;
+  return true;
+}
+
+/**
  * 把一个块或一个组挪到另一个组的指定位置 —— 「换爹」和「同级排序」是同一件事，
  * 所以只有这一个函数。`before` 省略 = 追加到末尾。
  *
@@ -217,16 +235,8 @@ function insertBefore(root: Node, to: string, node: Node, before?: string): Node
  * 什么都不成立时返回**原树本身**：`play()` 靠「引用没变」早退，返回新对象会白记一手。
  */
 export function moveNode(root: Node, id: string, to: string, before?: string): Node {
-  if (id === to) return root;
-  const node = findNode(root, id);
-  const target = findNode(root, to);
-  if (!node || !target || !isSection(target)) return root;
-  // `to` 在被搬的东西自己的子树里 → 会造环。根也在这一条里被挡住（根不搬）。
-  if (findNode(node, to)) return root;
-  // `before` 不在 to 的直接子节点里，或者就是被搬的这块自己 → 当没下这一手。
-  // 后者不是边角：被判移动的那一行本身也是落点（灰在那儿），点它/回车就该什么也不发生。
-  if (before !== undefined && (before === id || !target.children!.some((c) => c.id === before)))
-    return root;
+  if (!canMove(root, id, to, before)) return root;
+  const node = findNode(root, id)!;
 
   // 先摘再插 —— 先算下标会差一位，所以下标一定是在摘完之后的树上现算。
   const next = insertBefore(detach(root, id), to, node, before);
