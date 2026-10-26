@@ -474,11 +474,6 @@ export function App() {
     );
   };
 
-  const reset = () => {
-    play(initialState(), { t: "reset" });
-    setPath([]);
-  };
-
   /** 撞了别人写的版本：只给「重读磁盘」这一条路 —— 自动覆盖等于帮另一个标签页删数据。 */
   const reload = () => setEpoch((e) => e + 1);
 
@@ -706,9 +701,6 @@ export function App() {
               </Pill>
               <Pill onClick={addGroup} disabled={status === "conflict"}>
                 ＋ 组
-              </Pill>
-              <Pill onClick={reset} muted>
-                重开
               </Pill>
             </div>
           </header>

@@ -12,7 +12,6 @@ export type Move =
   | { t: "addSection"; parent: string; id: string }
   | { t: "remove"; id: string }
   | { t: "rename"; id: string; name: string }
-  | { t: "reset" }
   | { t: "undo" };
 
 export type BoardSummary = {
