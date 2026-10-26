@@ -8,6 +8,7 @@
  *   GET  /:id                    → { root, moves, version, name }
  *   PUT  /:id                    → { root, moves, baseVersion } → { version } | 409
  *   GET  /:id/nodes/:node/doc    → { text, etag, stub }
+ *   PUT  /:id/nodes/:node/doc    → { text, etag } → { etag } | 409 { etag, text }
  *
  * 路径按段读，不按整串读 —— 块自己的地址是 `/p/<board>/<id>/`，同一套 id 得能挂在
  * board 后面往下走。`/nodes/...` 那一段以后还会有 PUT，以及块进程的转发。
@@ -86,20 +87,43 @@ export function contentApi(root: string) {
             send(res, 400, { error: "bad node id" });
             return;
           }
-          if (req.method !== "GET") {
-            send(res, 405, { error: "method not allowed" });
+          if (req.method === "GET") {
+            const doc = await store.doc(id, nodeId);
+            if (doc.status === "no-board") {
+              send(res, 404, { error: "no such board" });
+              return;
+            }
+            if (doc.status === "no-node") {
+              send(res, 404, { error: "no such node" });
+              return;
+            }
+            send(res, 200, doc);
             return;
           }
-          const doc = await store.doc(id, nodeId);
-          if (doc.status === "no-board") {
-            send(res, 404, { error: "no such board" });
+          if (req.method === "PUT") {
+            const input = await body(req);
+            if (
+              !isRecord(input) ||
+              typeof input.text !== "string" ||
+              typeof input.etag !== "string"
+            ) {
+              send(res, 400, { error: "text and etag required" });
+              return;
+            }
+            const saved = await store.saveDoc(id, nodeId, input.text, input.etag);
+            if (saved.status === "no-board" || saved.status === "no-node") {
+              send(res, 404, { error: saved.status === "no-board" ? "no such board" : "no such node" });
+              return;
+            }
+            if (saved.status === "conflict") {
+              // 409 带上磁盘上那份：调用方要能让人当面选，不能只剩一句「冲突了」。
+              send(res, 409, { error: "etag conflict", etag: saved.etag, text: saved.text });
+              return;
+            }
+            send(res, 200, { etag: saved.etag });
             return;
           }
-          if (doc.status === "no-node") {
-            send(res, 404, { error: "no such node" });
-            return;
-          }
-          send(res, 200, doc);
+          send(res, 405, { error: "method not allowed" });
           return;
         }
         send(res, 404, { error: "no such route" });

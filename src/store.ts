@@ -190,3 +190,85 @@ export async function loadDoc(board: string, node: string): Promise<Doc | null> 
   if (res.status === 404) return null;
   return asJson<Doc>(res);
 }
+
+/** 磁盘上那份被别处改过了。带回来的是磁盘的全文 —— 让人当面选，别默默盖掉。 */
+export class DocConflictError extends Error {
+  constructor(
+    readonly etag: string,
+    readonly text: string,
+  ) {
+    super("doc changed on disk");
+    this.name = "DocConflictError";
+  }
+}
+
+/**
+ * `keepalive` 给关页面那一刀用：普通 fetch 会被浏览器连页面一起掐掉。
+ * 注意它有 64KB 上限 —— 只在真的要离开时用，普通的写走普通 fetch。
+ */
+export async function saveDoc(
+  board: string,
+  node: string,
+  text: string,
+  etag: string,
+  keepalive = false,
+): Promise<{ etag: string }> {
+  const res = await fetch(docUrl(board, node), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text, etag }),
+    keepalive,
+  });
+  // 409 得先自己接：`asJson` 那个 ConflictError 是 board 的，形状不一样。
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => ({}))) as { etag?: string; text?: string };
+    throw new DocConflictError(body.etag ?? "", body.text ?? "");
+  }
+  return asJson<{ etag: string }>(res);
+}
+
+/* —— 正文的本地草稿。和 board 的 Draft 一个道理：滑落的那几个字不该靠重敲才回来。 —— */
+
+export type DocDraft = {
+  text: string;
+  /** 这份草稿是基于磁盘哪个版本写的。跟当前 etag 一样 = 只是没发出去，可以无感补写。 */
+  etag: string;
+  at: string;
+};
+
+const docDraftKey = (board: string, node: string): string => `nous-doc-draft:${board}:${node}`;
+
+export function readDocDraft(board: string, node: string): DocDraft | null {
+  try {
+    const raw = localStorage.getItem(docDraftKey(board, node));
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as DocDraft).text === "string" &&
+      typeof (parsed as DocDraft).etag === "string"
+    ) {
+      return parsed as DocDraft;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeDocDraft(board: string, node: string, text: string, etag: string): void {
+  try {
+    const draft: DocDraft = { text, etag, at: new Date().toISOString() };
+    localStorage.setItem(docDraftKey(board, node), JSON.stringify(draft));
+  } catch {
+    // 存不下就算了：字还在 textarea 里，下一次落键还会再试。
+  }
+}
+
+export function clearDocDraft(board: string, node: string): void {
+  try {
+    localStorage.removeItem(docDraftKey(board, node));
+  } catch {
+    // 同上。
+  }
+}

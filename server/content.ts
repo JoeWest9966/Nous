@@ -55,6 +55,15 @@ export type DocResult =
   | { status: "no-board" }
   | { status: "no-node" };
 
+export type DocSaveResult =
+  | { status: "ok"; etag: string }
+  | { status: "conflict"; etag: string; text: string }
+  | { status: "no-board" }
+  | { status: "no-node" };
+
+/** 文件还不存在时 GET 给的就是这个 etag —— 它得能被写回时认出来，不能是空串的哈希。 */
+const STUB_ETAG = "stub";
+
 /** 内容哈希，取前 16 位就够认人了 —— 比 mtime 可靠，也不依赖时钟。 */
 const etagOf = (text: string): string =>
   createHash("sha1").update(text, "utf8").digest("hex").slice(0, 16);
@@ -63,11 +72,14 @@ const hasNode = (node: Node, id: string): boolean =>
   node.id === id || (node.children?.some((c) => hasNode(c, id)) ?? false);
 
 /** 原子写：写临时文件再 rename。断电只会留下一个孤儿 tmp，不会留下半截 json。 */
-async function writeJson(file: string, value: unknown): Promise<void> {
+async function writeAtomic(file: string, body: string): Promise<void> {
   const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeFile(tmp, body, "utf8");
   await rename(tmp, file);
 }
+
+const writeJson = (file: string, value: unknown): Promise<void> =>
+  writeAtomic(file, `${JSON.stringify(value, null, 2)}\n`);
 
 const readJson = async (file: string): Promise<unknown | undefined> => {
   try {
@@ -160,8 +172,42 @@ export class BoardStore {
       return { status: "ok", text, etag: etagOf(text), stub: false };
     } catch {
       const text = stub(nodeId);
-      return { status: "ok", text, etag: etagOf(text), stub: true };
+      return { status: "ok", text, etag: STUB_ETAG, stub: true };
     }
+  }
+
+  /**
+   * 写一块的正文。**只看自己那份文件的 etag，不看 board 的 version** ——
+   * 删一块不该让一篇文章变 409，反过来也一样。
+   *
+   * 冲突不是失败：把磁盘上那份一起递回去，让人当面选，而不是默默盖掉。
+   */
+  async saveDoc(id: string, nodeId: string, text: string, baseEtag: string): Promise<DocSaveResult> {
+    if (!isNodeId(nodeId)) return { status: "no-node" };
+    const tree = await this.tree(id);
+    if (!tree) return { status: "no-board" };
+    const root = adoptNode(tree.root);
+    // 树里没有的节点不写：`.gone/` 里躺着的不能被一个旧页面写活。
+    if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
+
+    const file = path.join(this.dir(id), MAP, nodeId, DOC);
+    let current = "";
+    let currentEtag = STUB_ETAG;
+    try {
+      current = await readFile(file, "utf8");
+      currentEtag = etagOf(current);
+    } catch {
+      // 文件不在（文件夹被手动删过、或者从来就写）：stub 那把 etag 算匹配。
+    }
+
+    if (currentEtag !== baseEtag) {
+      return { status: "conflict", etag: currentEtag, text: current };
+    }
+    if (current === text) return { status: "ok", etag: currentEtag };
+
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeAtomic(file, text);
+    return { status: "ok", etag: etagOf(text) };
   }
 
   /**

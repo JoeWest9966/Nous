@@ -811,6 +811,7 @@ export function App() {
         {/* 块自己的页面：真实 URL、盖在盘面上面、盘面不卸载。 */}
         {openDoc && projectId && (
           <DocPage
+            key={openDoc}
             board={projectId}
             id={openDoc}
             root={root}
