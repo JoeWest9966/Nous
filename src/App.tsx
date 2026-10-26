@@ -833,7 +833,20 @@ function Piece({
                   <span className="shrink-0 text-muted">{node.children!.length} 块</span>
                 )}
                 {/* handle 只在盘面上露脸：左列保持干净，那是给人看结构的。 */}
-                {strip >= 18 && <Handle value={handle} name={node.name} muted />}
+                {strip >= 18 && (
+                  <Tag
+                    value={handle}
+                    title={`${handle} —— 点一下复制（${node.name} 的 handle）`}
+                    muted
+                  />
+                )}
+                {strip >= 18 && box.w > 110 && (
+                  <Tag
+                    value={node.tree}
+                    title={`${node.tree} —— 点一下复制（${node.name} 的 tree）`}
+                    className="shrink-0 opacity-45 hover:opacity-80"
+                  />
+                )}
                 <button
                   type="button"
                   data-no-rename
@@ -873,6 +886,8 @@ function Piece({
   const showValue = big > 24;
   // handle 比名字还挑地方：它是给人抄走的，画一半还不如不画。
   const showHandle = box.w > 62 && box.h > 48;
+  // tree 是 handle 下面再加一行，所以门槛比 handle 还严一档。
+  const showTree = showHandle && box.h > 62;
   const valueSize = Math.max(12, Math.min(40, Math.round(big / 3)));
   const roomForDelete = box.w > 34 && box.h > 26;
   /** ••• 比原来那颗 × 略小一号，所以 30px 见方的块也容得下 —— 但 30px 以下就真没了。 */
@@ -921,7 +936,20 @@ function Piece({
           </span>
         )}
         {showHandle && !editing && (
-          <Handle value={handle} name={node.name} className="max-w-full opacity-55 hover:opacity-90" />
+          <>
+            <Tag
+              value={handle}
+              title={`${handle} —— 点一下复制（${node.name} 的 handle）`}
+              className="max-w-full opacity-55 hover:opacity-90"
+            />
+            {showTree && (
+              <Tag
+                value={node.tree}
+                title={`${node.tree} —— 点一下复制（${node.name} 的 tree）`}
+                className="max-w-full opacity-40 hover:opacity-80"
+              />
+            )}
+          </>
         )}
       </div>
       {roomForDelete && !editing && <NodeMenuTrigger nodeId={node.tree} kind="block" size={dots} />}
@@ -930,19 +958,18 @@ function Piece({
 }
 
 /**
- * handle —— 人念的那个名字路径。点一下复制。
+ * 盘面上那枚可复制的小标签。handle 和 tree 共用这一套画法 —— 点一下复制，复制完变「已复制」。
  *
- * 它不是 tree：改名、搬家它都会变。变是允许的 —— **tree 负责永不失效，handle 负责念得出来**，
- * 两个字段各管一件事，谁也不用假装自己是对方。
+ * 两个值不一样：handle 是名字路径，会变；tree 是随机六位，永不失效。同一个壳子，两种内容。
  */
-function Handle({
+function Tag({
   value,
-  name,
+  title,
   className = "",
   muted = false,
 }: {
   value: string;
-  name: string;
+  title: string;
   className?: string;
   muted?: boolean;
 }) {
@@ -960,7 +987,7 @@ function Handle({
         e.stopPropagation();
         void copy();
       }}
-      title={`${value} —— 点一下复制（${name} 的 handle）`}
+      title={title}
       className={`min-w-0 truncate rounded-[3px] px-1 font-mono text-[9.5px] leading-[1.4] transition-colors duration-150 hover:bg-white/15 ${
         muted ? "text-muted" : ""
       } ${className}`}
