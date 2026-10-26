@@ -105,8 +105,10 @@ export default defineConfig(({ mode }) => {
           // demo 的 chunk 落在 assets/demo/ 下（入口在 demo/ 下），两处都得挡。
           globIgnores: ["demo/**", "assets/demo/**"],
           navigateFallback: "index.html",
-          // 不然刷新 /demo/xxx/ 会被 SW 塞回主应用那张壳 —— 和 4783 之前的 SPA fallback 一个坑。
-          navigateFallbackDenylist: [/^\/demo\//],
+          // 这两个前缀下的页面**不是壳**，SW 别拿 index.html 去糊：
+          // - /demo/xxx/   demo 自己是一个入口
+          // - /p/…        那是块的进程端出来的页面（可能是一张空白页）
+          navigateFallbackDenylist: [/^\/demo\//, /^\/p\//],
         },
       }),
     ],
