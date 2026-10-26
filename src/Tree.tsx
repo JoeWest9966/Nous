@@ -41,7 +41,7 @@ const Chevron = ({ open }: { open: boolean }) => (
 export function Tree({
   root,
   path,
-  editingId,
+  editingTree,
   onEnter,
   onBeginRename,
   onCommitRename,
@@ -49,42 +49,42 @@ export function Tree({
 }: {
   root: Node;
   path: string[];
-  editingId: string | null;
-  onEnter: (ids: string[]) => void;
-  onBeginRename: (id: string, el: HTMLElement | null) => void;
-  onCommitRename: (id: string, name: string) => void;
+  editingTree: string | null;
+  onEnter: (path: string[]) => void;
+  onBeginRename: (tree: string, el: HTMLElement | null) => void;
+  onCommitRename: (tree: string, name: string) => void;
   onCancelRename: () => void;
 }) {
   // 开局摊开前两层：文件树是要「扫一眼就找到文件」的，不是让人一层层点开找。
   const [open, setOpen] = useState<Set<string>>(
-    () => new Set([root.id, ...(root.children ?? []).map((c) => c.id)]),
+    () => new Set([root.tree, ...(root.children ?? []).map((c) => c.tree)]),
   );
 
   // 钻进去的时候，左列跟着展开到那一层 —— 不能让人在树里找不着自己。
   useEffect(() => {
     setOpen((prev) => {
       const next = new Set(prev);
-      next.add(root.id);
-      path.forEach((id) => next.add(id));
+      next.add(root.tree);
+      path.forEach((tree) => next.add(tree));
       return next;
     });
-  }, [path, root.id]);
+  }, [path, root.tree]);
 
   const rows: { node: Node; depth: number; last: boolean }[] = [];
   const walk = (node: Node, depth: number, last: boolean, visible: boolean) => {
     if (!visible) return;
     rows.push({ node, depth, last });
     const kids = node.children ?? [];
-    const isOpen = node.id === root.id || open.has(node.id);
+    const isOpen = node.tree === root.tree || open.has(node.tree);
     kids.forEach((kid, i) => walk(kid, depth + 1, i === kids.length - 1, isOpen));
   };
   walk(root, 0, true, true);
 
-  const toggle = (id: string) =>
+  const toggle = (tree: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(tree)) next.delete(tree);
+      else next.add(tree);
       return next;
     });
 
@@ -92,24 +92,24 @@ export function Tree({
     <ul className="flex flex-col px-2 py-2 text-[13px]" role="tree" aria-label="结构">
       {rows.map(({ node, depth, last }) => {
         const section = isSection(node);
-        const isOpen = node.id === root.id || open.has(node.id);
-        const isRoot = node.id === root.id;
-        const here = path[path.length - 1] === node.id;
+        const isOpen = node.tree === root.tree || open.has(node.tree);
+        const isRoot = node.tree === root.tree;
+        const here = path[path.length - 1] === node.tree;
         const name = section && !isRoot ? `${node.name}/` : node.name;
         return (
           <li
-            key={node.id}
+            key={node.tree}
             role="treeitem"
             aria-expanded={section ? isOpen : undefined}
             className="nm-host nm-host--row"
           >
             <div
-              data-node-id={node.id}
+              data-node-id={node.tree}
               tabIndex={-1}
               onDoubleClick={(e) => {
                 // 折叠箭头和 × 有自己一摊事，双击它们不该顺手开个输入框。
                 if ((e.target as HTMLElement).closest("[data-no-rename]")) return;
-                onBeginRename(node.id, e.currentTarget);
+                onBeginRename(node.tree, e.currentTarget);
               }}
               className={`group relative flex h-8 items-center rounded-md pr-[30px] outline-none transition-colors duration-150 ${
                 here ? "bg-accent/15" : "hover:bg-white/[0.045]"
@@ -121,7 +121,7 @@ export function Tree({
                 <button
                   type="button"
                   data-no-rename
-                  onClick={() => toggle(node.id)}
+                  onClick={() => toggle(node.tree)}
                   aria-label={isOpen ? `收起 ${name}` : `展开 ${name}`}
                   className="relative z-10 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted hover:text-text"
                 >
@@ -133,10 +133,10 @@ export function Tree({
 
               <TreeIcon name={iconFor(name, section)} open={isOpen} />
 
-              {editingId === node.id ? (
+              {editingTree === node.tree ? (
                 <NameInput
                   value={node.name}
-                  onCommit={(next) => onCommitRename(node.id, next)}
+                  onCommit={(next) => onCommitRename(node.tree, next)}
                   onCancel={onCancelRename}
                   className="h-6 flex-1 px-1 text-[13px]"
                 />
@@ -144,7 +144,7 @@ export function Tree({
                 <Row
                   section={section}
                   title={`${node.name} — 双击或 F2 改名`}
-                  onEnter={() => onEnter(isRoot ? [] : [...path, node.id])}
+                  onEnter={() => onEnter(isRoot ? [] : [...path, node.tree])}
                 >
                   <span
                     className={`truncate leading-none ${section ? "text-text" : "text-text/75"}`}
@@ -159,8 +159,8 @@ export function Tree({
               )}
 
               {/* 原来那颗 × 让位给 •••：一行里挂两个删除没道理，删除进菜单。 */}
-              {!isRoot && editingId !== node.id && (
-                <NodeMenuTrigger nodeId={node.id} kind="row" />
+              {!isRoot && editingTree !== node.tree && (
+                <NodeMenuTrigger nodeId={node.tree} kind="row" />
               )}
             </div>
           </li>
@@ -203,7 +203,7 @@ function Elbow({ depth, last }: { depth: number; last: boolean }) {
 }
 
 export const pathNames = (root: Node, path: string[]): string[] =>
-  path.map((id) => findNode(root, id)?.name ?? "?");
+  path.map((tree) => findNode(root, tree)?.name ?? "?");
 
 /** 组是按钮（点了钻进去），块只是行 —— 块自己没事情可做，就别假装能点。 */
 function Row({

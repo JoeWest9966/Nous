@@ -8,10 +8,10 @@ import type { Node } from "./game";
 
 /** 一手棋。log.json 里存的就是这些，人能直接读，git diff 也能看。 */
 export type Move =
-  | { t: "addLeaf"; parent: string; id: string }
-  | { t: "addSection"; parent: string; id: string }
-  | { t: "remove"; id: string }
-  | { t: "rename"; id: string; name: string }
+  | { t: "addLeaf"; parent: string; tree: string }
+  | { t: "addSection"; parent: string; tree: string }
+  | { t: "remove"; tree: string }
+  | { t: "rename"; tree: string; name: string }
   | { t: "undo" };
 
 export type BoardSummary = {
@@ -64,7 +64,7 @@ const isDraft = (v: unknown): v is Draft => {
     Array.isArray(d.moves) &&
     typeof d.root === "object" &&
     d.root !== null &&
-    typeof (d.root as Node).id === "string"
+    typeof (d.root as Node).tree === "string"
   );
 };
 
@@ -73,7 +73,8 @@ export function readDraft(id: string): Draft | null {
     const raw = localStorage.getItem(draftKey(id));
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
-    return isDraft(parsed) ? parsed : null;
+    // 草稿可能是改字段名之前存的 —— 同样接住一次。
+    return isDraft(parsed) ? { ...parsed, root: adoptTrees(parsed.root as LegacyNode) } : null;
   } catch {
     // 存了半截 / 私隐模式禁写：当没草稿，不阻着页面起来。
     return null;
@@ -108,12 +109,26 @@ async function asJson<T>(res: Response): Promise<T> {
   throw new Error(`${res.status} ${res.statusText}`);
 }
 
+/**
+ * 老盘上这个字段叫 `id`，现在叫 `tree`。载入时接住一次，之后写回去就是新格式 ——
+ * 数据文件不用手改，下一次落子自动升级。
+ */
+type LegacyNode = Omit<Node, "tree" | "children"> & { tree?: string; id?: string; children?: LegacyNode[] };
+
+const adoptTrees = (n: LegacyNode): Node => {
+  const out: Node = { tree: n.tree ?? n.id ?? "", name: n.name };
+  if (n.children) out.children = n.children.map(adoptTrees);
+  else out.value = n.value ?? 0;
+  return out;
+};
+
 export async function listBoards(): Promise<BoardSummary[]> {
   return asJson<BoardSummary[]>(await fetch(url(), { headers: { accept: "application/json" } }));
 }
 
 export async function loadBoard(id: string): Promise<LoadedBoard> {
-  return asJson<LoadedBoard>(await fetch(url(id), { headers: { accept: "application/json" } }));
+  const board = await asJson<LoadedBoard>(await fetch(url(id), { headers: { accept: "application/json" } }));
+  return { ...board, root: adoptTrees(board.root as LegacyNode) };
 }
 
 export async function createBoard(name: string): Promise<BoardSummary> {

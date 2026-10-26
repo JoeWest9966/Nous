@@ -9,7 +9,7 @@ import {
   type Node,
   addLeaf,
   addSection,
-  childIds,
+  childTrees,
   findNode,
   handleMap,
   initialState,
@@ -18,7 +18,7 @@ import {
   pathTo,
   removeNode,
   renameNode,
-  seedIds,
+  seedTrees,
   valueOf,
 } from "./game";
 import {
@@ -66,9 +66,9 @@ function writePath(id: string, path: string[]): void {
 }
 
 /** 存下来的路径里可能包含已经被删掉的节点；能进去的只有还在的组。 */
-const alivePath = (root: Node, ids: string[]): string[] =>
-  ids.filter((id) => {
-    const n = findNode(root, id);
+const alivePath = (root: Node, trees: string[]): string[] =>
+  trees.filter((tree) => {
+    const n = findNode(root, tree);
     return n !== undefined && isSection(n);
   });
 /** 下拉里「新建项目」那一项的值。JSX 属性不认 \u 转义，别拿 NUL 当哨兵。 */
@@ -147,7 +147,7 @@ export function App() {
   const [past, setPast] = useState<Node[]>([]);
   /** 正在改名的那个节点，以及它是在哪儿被戳开的。
    *  一个节点同时在左列和盘面上画着 —— 不记来源，两边会各挂一个输入框，互相抢焦点。 */
-  const [editing, setEditing] = useState<{ id: string; where: "tree" | "board" } | null>(null);
+  const [editing, setEditing] = useState<{ tree: string; where: "tree" | "board" } | null>(null);
   /** ⌘K 跳过去之后闪一下。块平时不可点，闪一下是唯一告诉人「就是这块」的办法。 */
   const [flash, setFlash] = useState<string | null>(null);
   const flashTimer = useRef<number | undefined>(undefined);
@@ -213,8 +213,8 @@ export function App() {
       try {
         const board = await loadBoard(projectId);
         if (!alive) return;
-        // 不调 seedIds，新 id 就从 n1 重新数，撞上文件里已有的 id。
-        // 草稿里的 id 是当时那棵树的（seedIds 已经把它算进去了），所以先看草稿再定。
+        // 不调 seedTrees，新 tree 就从 n1 重新数，撞上文件里已有的 tree。
+        // 草稿里的 tree 是当时那棵树的（seedTrees 已经把它算进去了），所以先看草稿再定。
         const draft = readDraft(projectId);
         const loaded = { root: board.root, moves: board.moves.slice(-200) };
         // 草稿内容跟磁盘一模一样：说明它只是一道影子（比如 pagehide 那一刀已经发出去了）。
@@ -227,7 +227,7 @@ export function App() {
         // 底不一样：磁盘被别人改过。两边都留着，等人选。
         setOrphan(draft && !stale && !adopt ? draft : null);
 
-        seedIds(adopt ? adopt.root : board.root);
+        seedTrees(adopt ? adopt.root : board.root);
         version.current = board.version;
         const next = adopt ? { root: adopt.root, moves: adopt.moves } : loaded;
         // 用磁盘那份时它就是磁盘内容，别写回去；用草稿时要存，所以不能跳。
@@ -347,17 +347,17 @@ export function App() {
   const hits = useMemo<Hit[]>(() => {
     const out: Hit[] = [];
     const walk = (n: Node) => {
-      out.push({ node: n, handle: handles.get(n.id) ?? n.name });
+      out.push({ node: n, handle: handles.get(n.tree) ?? n.name });
       n.children?.forEach(walk);
     };
     walk(root);
     return out;
   }, [root, handles]);
 
-  const goTo = (id: string) => {
+  const goTo = (tree: string) => {
     setFindOpen(false);
-    setPath(pathTo(root, id));
-    setFlash(id);
+    setPath(pathTo(root, tree));
+    setFlash(tree);
     window.clearTimeout(flashTimer.current);
     flashTimer.current = window.setTimeout(() => setFlash(null), 1100);
   };
@@ -372,26 +372,26 @@ export function App() {
 
   const addBlockTo = (parentId: string) => {
     const next = addLeaf(root, parentId);
-    const id = childIds(next, parentId).at(-1);
-    if (id) play(next, { t: "addLeaf", parent: parentId, id });
+    const tree = childTrees(next, parentId).at(-1);
+    if (tree) play(next, { t: "addLeaf", parent: parentId, tree });
   };
 
-  const addBlock = () => addBlockTo(here.id);
+  const addBlock = () => addBlockTo(here.tree);
 
   const addGroup = () => {
-    const next = addSection(root, here.id);
-    const id = childIds(next, here.id).at(-1);
-    if (id) play(next, { t: "addSection", parent: here.id, id });
+    const next = addSection(root, here.tree);
+    const tree = childTrees(next, here.tree).at(-1);
+    if (tree) play(next, { t: "addSection", parent: here.tree, tree });
   };
 
-  const remove = (id: string) => play(removeNode(root, id), { t: "remove", id });
+  const remove = (tree: string) => play(removeNode(root, tree), { t: "remove", tree });
 
   /** 开改名的那一刻，是谁被双击的 —— 改完把焦点还给它，别让人跟丢。 */
   const editAnchor = useRef<HTMLElement | null>(null);
 
-  const beginRename = (id: string, el: HTMLElement | null, where: "tree" | "board") => {
+  const beginRename = (tree: string, el: HTMLElement | null, where: "tree" | "board") => {
     editAnchor.current = el;
-    setEditing({ id, where });
+    setEditing({ tree, where });
   };
 
   /** 改名结束（提交或取消）。要不要落盘，看调用方传不传 next。 */
@@ -403,10 +403,10 @@ export function App() {
     el?.focus();
   };
 
-  const commitRename = (id: string, name: string) => {
+  const commitRename = (tree: string, name: string) => {
     endRename();
     // 名字没变 / 改成空白时 renameNode 会把原树原样递回来，play 的早退会兜住。
-    play(renameNode(root, id, name), { t: "rename", id, name: name.trim() });
+    play(renameNode(root, tree, name), { t: "rename", tree, name: name.trim() });
   };
 
   const cancelRename = () => endRename();
@@ -415,8 +415,8 @@ export function App() {
    * 07 号菜单里那几条。删除已经收进菜单了（行上、块上只留一颗 •••），
    * 所以「重命名 / 复制名字 / 复制路径 / 删除」这套动作得在这儿接住。
    */
-  const menuItems = (id: string, host: HTMLElement): MenuItem[] => {
-    const node = findNode(root, id);
+  const menuItems = (tree: string, host: HTMLElement): MenuItem[] => {
+    const node = findNode(root, tree);
     if (!node) return [];
     // 输入框就长在这一行 / 这一块里面 —— 行和块都有一层 [data-node-id]。
     const target =
@@ -426,7 +426,7 @@ export function App() {
         key: "rename",
         label: "重命名",
         icon: <IconPencil />,
-        run: () => beginRename(id, target, target?.closest("aside") ? "tree" : "board"),
+        run: () => beginRename(tree, target, target?.closest("aside") ? "tree" : "board"),
       },
       {
         key: "copy-name",
@@ -438,7 +438,7 @@ export function App() {
         key: "copy-path",
         label: "复制路径",
         icon: <IconLink />,
-        run: () => void copyText(handles.get(id) ?? node.name),
+        run: () => void copyText(handles.get(tree) ?? node.name),
       },
     ];
     if (isSection(node)) {
@@ -446,7 +446,7 @@ export function App() {
         key: "enter",
         label: "进入",
         icon: <IconEnter />,
-        run: () => setPath((prev) => [...prev, id]),
+        run: () => setPath((prev) => [...prev, tree]),
       });
     }
     items.push({
@@ -455,7 +455,7 @@ export function App() {
       icon: <IconTrash />,
       danger: true,
       separatorBefore: true,
-      run: () => remove(id),
+      run: () => remove(tree),
     });
     return items;
   };
@@ -466,9 +466,9 @@ export function App() {
     setPast((p) => p.slice(0, -1));
     setRoot(back);
     setMoves((m) => [...m.slice(-199), { t: "undo" }]);
-    setPath((ids) =>
-      ids.filter((id) => {
-        const n = findNode(back, id);
+    setPath((trees) =>
+      trees.filter((tree) => {
+        const n = findNode(back, tree);
         return n !== undefined && isSection(n);
       }),
     );
@@ -481,7 +481,7 @@ export function App() {
   const keepDraft = () => {
     const d = orphan;
     if (!d || !projectId) return;
-    seedIds(d.root);
+    seedTrees(d.root);
     // 底用磁盘当前的 version：现在写下去不会撞 409，意向就是「以我为准」。
     lastWritten.current = "";
     skipSave.current = false;
@@ -531,16 +531,16 @@ export function App() {
       const anchor = (e.target as HTMLElement | null)?.closest?.("[data-node-id]") as
         | HTMLElement
         | undefined;
-      const id = anchor?.dataset.nodeId;
-      if (!anchor || !id) return;
+      const tree = anchor?.dataset.nodeId;
+      if (!anchor || !tree) return;
       if (e.key === "F2") {
         e.preventDefault();
-        beginRename(id, anchor, anchor.closest("aside") ? "tree" : "board");
+        beginRename(tree, anchor, anchor.closest("aside") ? "tree" : "board");
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
-        play(removeNode(root, id), { t: "remove", id });
+        play(removeNode(root, tree), { t: "remove", tree });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -596,9 +596,9 @@ export function App() {
             <Tree
               root={root}
               path={path}
-              editingId={editing?.where === "tree" ? editing.id : null}
+              editingTree={editing?.where === "tree" ? editing.tree : null}
               onEnter={setPath}
-              onBeginRename={(id, el) => beginRename(id, el, "tree")}
+              onBeginRename={(tree, el) => beginRename(tree, el, "tree")}
               onCommitRename={commitRename}
               onCancelRename={cancelRename}
             />
@@ -649,8 +649,8 @@ export function App() {
               >
                 {root.name}
               </button>
-              {path.map((id, i) => (
-                <span key={id} className="flex min-w-0 items-center gap-0.5">
+              {path.map((tree, i) => (
+                <span key={tree} className="flex min-w-0 items-center gap-0.5">
                   <span className="text-text/25" aria-hidden="true">›</span>
                   <button
                     type="button"
@@ -659,7 +659,7 @@ export function App() {
                       i === path.length - 1 ? "text-text" : "text-muted hover:text-text"
                     }`}
                   >
-                    {findNode(root, id)?.name ?? "?"}
+                    {findNode(root, tree)?.name ?? "?"}
                   </button>
                 </span>
               ))}
@@ -687,7 +687,7 @@ export function App() {
                   {valueOf(root)}
                 </span>
               </div>
-              <IconButton label="按 id 找一块（⌘K）" onClick={() => setFindOpen(true)}>
+              <IconButton label="按 tree 或 handle 找一块（⌘K）" onClick={() => setFindOpen(true)}>
                 <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
                   <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
                   <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -720,21 +720,21 @@ export function App() {
             {placed.length === 0 && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[13px] text-muted">
                 <span>盘上什么都没有了</span>
-                <Pill onClick={() => addBlockTo(root.id)}>＋ 块</Pill>
+                <Pill onClick={() => addBlockTo(root.tree)}>＋ 块</Pill>
               </div>
             )}
             <div className="relative h-full w-full">
               {placed.map((p) => (
                 <Piece
-                  key={p.node.id}
+                  key={p.node.tree}
                   piece={p}
                   origin={{ x: 0, y: 0 }}
                   isSection={isSection}
                   handles={handles}
-                  flashId={flash}
-                  editingId={editing?.where === "board" ? editing.id : null}
-                  onEnter={(id) => setPath([...path, id])}
-                  onBeginRename={(id, el) => beginRename(id, el, "board")}
+                  flashTree={flash}
+                  editingTree={editing?.where === "board" ? editing.tree : null}
+                  onEnter={(tree) => setPath([...path, tree])}
+                  onBeginRename={(tree, el) => beginRename(tree, el, "board")}
                   onCommitRename={commitRename}
                   onCancelRename={cancelRename}
                 />
@@ -766,8 +766,8 @@ function Piece({
   origin,
   isSection,
   handles,
-  flashId,
-  editingId,
+  flashTree,
+  editingTree,
   onEnter,
   onBeginRename,
   onCommitRename,
@@ -777,21 +777,21 @@ function Piece({
   origin: { x: number; y: number };
   isSection: (n: Node) => boolean;
   handles: Map<string, string>;
-  flashId: string | null;
-  editingId: string | null;
-  onEnter: (id: string) => void;
-  onBeginRename: (id: string, el: HTMLElement | null) => void;
-  onCommitRename: (id: string, name: string) => void;
+  flashTree: string | null;
+  editingTree: string | null;
+  onEnter: (tree: string) => void;
+  onBeginRename: (tree: string, el: HTMLElement | null) => void;
+  onCommitRename: (tree: string, name: string) => void;
   onCancelRename: () => void;
 }) {
   const { node, box, depth, color, kids } = piece;
   const place = { left: box.x - origin.x, top: box.y - origin.y, width: box.w, height: box.h };
   const section = isSection(node);
   const value = valueOf(node);
-  const editing = editingId === node.id;
-  const handle = handles.get(node.id) ?? node.name;
+  const editing = editingTree === node.tree;
+  const handle = handles.get(node.tree) ?? node.name;
   /** ⌘K 跳过来的时候套一圈 accent。只在被点名那一块上，一秒就撤。 */
-  const ring = flashId === node.id ? ", 0 0 0 2px var(--n-color-accent)" : "";
+  const ring = flashTree === node.tree ? ", 0 0 0 2px var(--n-color-accent)" : "";
 
   // 双击改名的规矩：名字画得出来的地方才能双击它。名字没地方站，就回左列去改。
   const noRename = (e: React.MouseEvent) =>
@@ -801,7 +801,7 @@ function Piece({
     const dots = Math.min(box.w, box.h) < 40 ? "xs" : Math.min(box.w, box.h) < 64 ? "s" : "m";
     return (
       <div
-        data-node-id={node.id}
+        data-node-id={node.tree}
         className={`group/sec nm-host nm-host--block absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
         style={{
           ...place,
@@ -817,13 +817,13 @@ function Piece({
             style={{ height: strip, color: "var(--n-color-text)" }}
             onDoubleClick={(e) => {
               if (noRename(e)) return;
-              onBeginRename(node.id, e.currentTarget);
+              onBeginRename(node.tree, e.currentTarget);
             }}
           >
             {editing ? (
               <NameInput
                 value={node.name}
-                onCommit={(name) => onCommitRename(node.id, name)}
+                onCommit={(name) => onCommitRename(node.tree, name)}
                 onCancel={onCancelRename}
                 className="flex-1 px-1 text-[11px]"
               />
@@ -840,7 +840,7 @@ function Piece({
                 <button
                   type="button"
                   data-no-rename
-                  onClick={() => onEnter(node.id)}
+                  onClick={() => onEnter(node.tree)}
                   title={`进入 ${node.name}`}
                   className="ml-auto shrink-0 rounded-[3px] px-1.5 py-0.5 text-[11px] opacity-0 transition-opacity duration-150 hover:bg-white/10 group-hover/sec:opacity-100"
                 >
@@ -850,16 +850,16 @@ function Piece({
             )}
           </div>
         )}
-        {!editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
+        {!editing && <NodeMenuTrigger nodeId={node.tree} kind="block" size={dots} />}
         {kids.map((k) => (
           <Piece
-            key={k.node.id}
+            key={k.node.tree}
             piece={k}
             origin={box}
             isSection={isSection}
             handles={handles}
-            flashId={flashId}
-            editingId={editingId}
+            flashTree={flashTree}
+            editingTree={editingTree}
             onEnter={onEnter}
             onBeginRename={onBeginRename}
             onCommitRename={onCommitRename}
@@ -894,17 +894,17 @@ function Piece({
       <div
         tabIndex={0}
         aria-label={`${node.name} ${value}`}
-        data-node-id={node.id}
+        data-node-id={node.tree}
         onDoubleClick={(e) => {
           if (noRename(e)) return;
-          onBeginRename(node.id, e.currentTarget);
+          onBeginRename(node.tree, e.currentTarget);
         }}
         className="flex h-full w-full flex-col items-center justify-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black/40"
       >
         {editing ? (
           <NameInput
             value={node.name}
-            onCommit={(name) => onCommitRename(node.id, name)}
+            onCommit={(name) => onCommitRename(node.tree, name)}
             onCancel={onCancelRename}
             className="w-full px-1 text-center text-[10px]"
           />
@@ -927,7 +927,7 @@ function Piece({
           <Handle value={handle} name={node.name} className="max-w-full opacity-55 hover:opacity-90" />
         )}
       </div>
-      {roomForDelete && !editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
+      {roomForDelete && !editing && <NodeMenuTrigger nodeId={node.tree} kind="block" size={dots} />}
     </div>
   );
 }
@@ -935,7 +935,7 @@ function Piece({
 /**
  * handle —— 人念的那个名字路径。点一下复制。
  *
- * 它不是 id：改名、搬家它都会变。变是允许的 —— **id 负责永不失效，handle 负责念得出来**，
+ * 它不是 tree：改名、搬家它都会变。变是允许的 —— **tree 负责永不失效，handle 负责念得出来**，
  * 两个字段各管一件事，谁也不用假装自己是对方。
  */
 function Handle({
