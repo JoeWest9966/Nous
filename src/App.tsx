@@ -38,6 +38,37 @@ const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
 const SIDE_KEY = "n-sidebar-open";
 /** 上次开着的是哪个项目。这个存在浏览器里无所谓 —— 丢了只是回到默认那一盘。 */
 const PROJECT_KEY = "n-project";
+
+/**
+ * 你在哪一层：`content/<id>` 里的项目文件不该记这个 ——
+ * 那是「我刚才看到哪」，属于这台设备和这次会话；换个设备未必要看同一层。
+ */
+const pathKey = (id: string): string => `n-path:${id}`;
+
+function readPath(id: string): string[] {
+  try {
+    const raw = localStorage.getItem(pathKey(id));
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePath(id: string, path: string[]): void {
+  try {
+    localStorage.setItem(pathKey(id), JSON.stringify(path));
+  } catch {
+    // 写不了就算了，下次从根开始，不是大事。
+  }
+}
+
+/** 存下来的路径里可能包含已经被删掉的节点；能进去的只有还在的组。 */
+const alivePath = (root: Node, ids: string[]): string[] =>
+  ids.filter((id) => {
+    const n = findNode(root, id);
+    return n !== undefined && isSection(n);
+  });
 /** 下拉里「新建项目」那一项的值。JSX 属性不认 \u 转义，别拿 NUL 当哨兵。 */
 const NEW_BOARD = "__new__";
 
@@ -139,6 +170,13 @@ export function App() {
     else localStorage.removeItem(SIDE_KEY);
   }, [side]);
 
+  /* —— 记住你在哪一层。刷新后回到刚才钻进去的那个组，不用重新点。 —— */
+  useEffect(() => {
+    // 载入完成前不能写：那时 path 还是初始的 []，会把上次存的层级冲掉。
+    if (!ready.current || !projectId) return;
+    writePath(projectId, path);
+  }, [path, projectId]);
+
   /* —— 项目列表。挂载时扫一次 content/ 目录。 —— */
   useEffect(() => {
     let alive = true;
@@ -196,7 +234,7 @@ export function App() {
         setRoot(next.root);
         setMoves(next.moves);
         setPast([]);
-        setPath([]);
+        setPath(alivePath(next.root, readPath(projectId)));
         localStorage.setItem(PROJECT_KEY, projectId);
         ready.current = true;
         setStatus(adopt ? "saving" : "saved");

@@ -1,9 +1,11 @@
 /**
- * 一个目录 = 一个项目。每个项目三份 json，各管一层：
+ * 一个目录 = 一个项目。每个项目两份 json，各管一层：
  *
  * - `tree.json`   语义：块、组、父子。**唯一真相**，丢了就是真丢。
  * - `log.json`    最近 200 手：加、删、改名、撤销。丢了只是没历史。
- * - `layout.json` 坐标和颜色。派生数据，丢了重算一次就有，不进 git。
+ *
+ * 没有第三份。布局（谁在哪、多大）是 `squarify` 从值算出来的派生数据，
+ * 丢了重算一次就有 —— 写它等于把衍生物存成事实源。等真能手动调尺寸那天再议。
  *
  * 这个文件不 import 任何浏览器代码 —— 它能被 vite 插件用，也能被真后端用。
  * 它不知道 HTTP 长什么样，HTTP 在 `api.ts` 里。
@@ -37,7 +39,6 @@ const ID_OK = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 const TREE = "tree.json";
 const LOG = "log.json";
-const LAYOUT = "layout.json";
 const LOG_LIMIT = 200;
 
 export const isBoardId = (id: string): boolean => ID_OK.test(id);
@@ -148,7 +149,7 @@ export class BoardStore {
     return { status: "ok", version: next.version };
   }
 
-  /** 新项目：三份 json 一次建齐，layout 那个是空壳，等真pinch/拖拽了才写。 */
+  /** 新项目：两份 json 一次建齐。 */
   async create(name: string, wantId?: string): Promise<BoardSummary> {
     await mkdir(this.root, { recursive: true });
     const slug =
@@ -174,7 +175,6 @@ export class BoardStore {
       root: { id: "n1", name: name.trim() || id, children: [] },
     } satisfies StoredTree);
     await writeJson(path.join(this.dir(id), LOG), { v: 1, moves: [] });
-    await writeJson(path.join(this.dir(id), LAYOUT), { v: 1, boxes: {} });
 
     return { id, name: name.trim() || id, version: 0, updatedAt: now };
   }
