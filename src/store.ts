@@ -152,8 +152,8 @@ export async function saveBoard(
   moves: Move[],
   baseVersion: number,
   keepalive = false,
-): Promise<{ version: number }> {
-  return asJson<{ version: number }>(
+): Promise<{ version: number; restored: string[]; root?: Node }> {
+  return asJson<{ version: number; restored: string[]; root?: Node }>(
     await fetch(url(id), {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -273,4 +273,29 @@ export function clearDocDraft(board: string, node: string): void {
   } catch {
     // 同上。
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * 锁：`content/<board>/.nous/locks.json`
+ *
+ * 锁是宿主的状态，不是块的内容 —— 所以它不住在块的文件夹里，也不进 `tree.json`。
+ * 前端拿它只干一件事：锁定的块不给渲染删除按钮。真正的拦截在服务端（`save()` 会把
+ * 被删的锁定块接回来），这里少画一颗按钮只是防手滑。
+ * ------------------------------------------------------------------ */
+
+export async function loadLocks(board: string): Promise<string[]> {
+  const res = await fetch(`${url(board)}/locks`);
+  if (!res.ok) return [];
+  const body = (await res.json()) as { ids?: unknown };
+  return Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === "string") : [];
+}
+
+export async function setLock(board: string, node: string, locked: boolean): Promise<string[]> {
+  const res = await fetch(`${url(board)}/locks`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: node, locked }),
+  });
+  const body = await asJson<{ ids?: unknown }>(res);
+  return Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === "string") : [];
 }

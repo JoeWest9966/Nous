@@ -79,6 +79,39 @@ export function contentApi(root: string) {
         return;
       }
 
+      // ---- 锁：/:board / locks ----
+      if (parts.length === 2 && parts[1] === "locks") {
+        if (req.method === "GET") {
+          send(res, 200, { ids: await store.locks(id) });
+          return;
+        }
+        if (req.method === "PUT") {
+          const input = await body(req);
+          if (!isRecord(input) || typeof input.id !== "string" || typeof input.locked !== "boolean") {
+            send(res, 400, { error: "id and locked required" });
+            return;
+          }
+          const out = await store.setLock(
+            id,
+            input.id,
+            input.locked,
+            req.socket.remoteAddress ?? "",
+          );
+          if (out === "no-board") {
+            send(res, 404, { error: "no such board" });
+            return;
+          }
+          if (out === "no-node") {
+            send(res, 404, { error: "no such node" });
+            return;
+          }
+          send(res, 200, { ids: await store.locks(id) });
+          return;
+        }
+        send(res, 405, { error: "method not allowed" });
+        return;
+      }
+
       // ---- 块自己的东西：/ :board / nodes / :node / doc ----
       if (parts.length > 1) {
         const [, kind, nodeId, leaf, ...rest] = parts;
@@ -152,11 +185,11 @@ export function contentApi(root: string) {
           return;
         }
         const moves = Array.isArray(input.moves) ? input.moves : [];
-        const result = await store.save(id, {
-          root: input.root,
-          moves,
-          baseVersion: input.baseVersion,
-        });
+        const result = await store.save(
+          id,
+          { root: input.root, moves, baseVersion: input.baseVersion },
+          req.socket.remoteAddress ?? "",
+        );
         if (result.status === "missing") {
           send(res, 404, { error: "no such board" });
           return;
@@ -165,7 +198,14 @@ export function contentApi(root: string) {
           send(res, 409, { error: "version conflict", version: result.version });
           return;
         }
-        send(res, 200, { version: result.version });
+        // root 只有在服务器改过它的时候才回来（有锁定的块被接回去了）。
+        // 客户端必须认这份，否则本地和盘上就分叉了。
+        const corrected = result.restored.length > 0;
+        send(res, 200, {
+          version: result.version,
+          restored: result.restored,
+          ...(corrected ? { root: result.root } : {}),
+        });
         return;
       }
 

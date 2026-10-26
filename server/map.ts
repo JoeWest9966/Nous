@@ -15,8 +15,9 @@
  * 唯一堵不住的：人拿 `mv` 手动改了文件夹名，那份 agent.md 就和节点失联了。
  * 对账时会当成「缺」重建一个空的，旧内容留在改过名的目录里没人认领。认了吧。
  */
-import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { isSection, treeMap, type Node } from "../src/game.ts";
 
@@ -68,6 +69,27 @@ export const hasNode = (node: Node, id: string): boolean =>
 
 const exists = async (p: string): Promise<boolean> =>
   (await readdir(path.dirname(p)).catch(() => [] as string[])).includes(path.basename(p));
+
+/**
+ * 新建一个块时给它铺的地基：`package.json` + `server.js` + `public/index.html`。
+ *
+ * 零依赖、`node server.js` 就能跑，所以「新建完点开就是一个能用的 app + 一套 API」，
+ * 不用先 npm install，也不用从空文件夹开始写服务。这跟 `agent.md` 是同一个承诺：
+ * **建文件夹时写一次，之后永不覆盖** —— 你删了它、改了它，程序都不管。
+ *
+ * 组不铺：组是容器，不是 app。
+ */
+const TEMPLATE = path.join(path.dirname(fileURLToPath(import.meta.url)), "template");
+const TEMPLATE_FILES = ["package.json", "server.js", "public/index.html"];
+
+const scaffold = async (dir: string): Promise<void> => {
+  for (const name of TEMPLATE_FILES) {
+    const src = path.join(TEMPLATE, name);
+    const dst = path.join(dir, name);
+    await mkdir(path.dirname(dst), { recursive: true });
+    await writeFile(dst, await readFile(src, "utf8"), "utf8");
+  }
+};
 
 export const stub = (id: string): string =>
   `# ${id}\n\n这个文件属于节点 \`${id}\`。写什么都行 —— 应用不会覆盖它。\n`;
@@ -139,6 +161,8 @@ export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncR
     }
     await mkdir(live, { recursive: true });
     await writeFile(path.join(live, DOC), stub(n.id), "utf8");
+    // 块要能直接开发：铺一份能跑的地基。组只是容器，不铺。
+    if (!isSection(n)) await scaffold(live).catch(() => undefined);
     out.created++;
   }
 

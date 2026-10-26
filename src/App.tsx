@@ -30,8 +30,10 @@ import {
   createBoard,
   listBoards,
   loadBoard,
+  loadLocks,
   readDraft,
   saveBoard,
+  setLock,
   writeDraft,
 } from "./store";
 
@@ -175,6 +177,8 @@ export function App() {
   const [editing, setEditing] = useState<{ id: string; where: "tree" | "board" } | null>(null);
   /** ⌘K 跳过去之后闪一下。块平时不可点，闪一下是唯一告诉人「就是这块」的办法。 */
   const [flash, setFlash] = useState<string | null>(null);
+  /** 锁着的块：删不掉，前端连按钮都不画。真拦截在服务端（save 会把被删的锁块接回来）。 */
+  const [locks, setLocks] = useState<ReadonlySet<string>>(() => new Set());
   const flashTimer = useRef<number | undefined>(undefined);
   const [findOpen, setFindOpen] = useState(false);
   const [side, setSide] = useState<boolean>(() => localStorage.getItem(SIDE_KEY) === "1");
@@ -262,6 +266,9 @@ export function App() {
         setPast([]);
         setPath(alivePath(next.root, readPath(projectId)));
         localStorage.setItem(PROJECT_KEY, projectId);
+        void loadLocks(projectId).then((ids) => {
+          if (alive) setLocks(new Set(ids));
+        });
         ready.current = true;
         setStatus(adopt ? "saving" : "saved");
       } catch {
@@ -297,9 +304,21 @@ export function App() {
           continue;
         }
         try {
-          const { version: next } = await saveBoard(id, snap.root, snap.moves, version.current);
-          version.current = next;
+          const out = await saveBoard(id, snap.root, snap.moves, version.current);
+          version.current = out.version;
           lastWritten.current = key;
+          // 服务器接回了被删的锁定块：盘上的树和本地不一样了，认盘上那份。
+          // 顺手把接回来的东西闪一下，人就知道它没丢。
+          if (out.root) {
+            lastWritten.current = JSON.stringify({ root: out.root, moves: snap.moves });
+            setRoot(out.root);
+            const first = out.restored[0];
+            if (first) {
+              setFlash(first);
+              window.clearTimeout(flashTimer.current);
+              flashTimer.current = window.setTimeout(() => setFlash(null), 1100);
+            }
+          }
           // 发出去了，草稿就没用了。
           clearDraft(id);
           setStatus("saved");
@@ -447,7 +466,20 @@ export function App() {
     if (id) play(next, { t: "addSection", parent: here.id, id });
   };
 
-  const remove = (id: string) => play(removeNode(root, id), { t: "remove", id });
+  const remove = (id: string) => {
+    // 按钮不会画出来，这是兜底：万一从别的路径进来了，别把「删了又冒出来」演一遍。
+    if (locks.has(id)) return;
+    play(removeNode(root, id), { t: "remove", id });
+  };
+
+  const toggleLock = async (id: string, next: boolean) => {
+    if (!projectId) return;
+    try {
+      setLocks(new Set(await setLock(projectId, id, next)));
+    } catch {
+      setStatus("error");
+    }
+  };
 
   /** 开改名的那一刻，是谁被双击的 —— 改完把焦点还给它，别让人跟丢。 */
   const editAnchor = useRef<HTMLElement | null>(null);
@@ -524,12 +556,24 @@ export function App() {
         run: () => setPath((prev) => [...prev, id]),
       });
     }
+    // 只有块能锁。组是容器 —— 锁容器等于间接锁子节点，那是同一件事的第二种写法。
+    if (!isSection(node)) {
+      const locked = locks.has(id);
+      items.push({
+        key: "lock",
+        label: locked ? "解锁" : "锁定",
+        icon: locked ? <IconLockOpen /> : <IconLock />,
+        separatorBefore: true,
+        run: () => void toggleLock(id, !locked),
+      });
+      if (locked) return items;
+    }
     items.push({
       key: "remove",
       label: "删除",
       icon: <IconTrash />,
       danger: true,
-      separatorBefore: true,
+      separatorBefore: !isSection(node),
       run: () => remove(id),
     });
     return items;
@@ -1211,6 +1255,20 @@ const IconPage = () => (
 const IconNote = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <path d="M2.4 3.1h9.2M2.4 6.4h9.2M2.4 9.7h5.4" />
+  </svg>
+);
+
+const IconLock = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <rect x="3.3" y="6.2" width="7.4" height="5.4" rx="1.1" />
+    <path d="M5.2 6.2V4.6a1.8 1.8 0 0 1 3.6 0v1.6" />
+  </svg>
+);
+
+const IconLockOpen = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <rect x="3.3" y="6.2" width="7.4" height="5.4" rx="1.1" />
+    <path d="M5.2 6.2V4.6a1.8 1.8 0 0 1 3.6 0" />
   </svg>
 );
 

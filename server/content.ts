@@ -16,6 +16,7 @@ import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promi
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { adoptNode, freshId, hasNode, isNodeId, stub, syncMap } from "./map.ts";
+import { audit, readLocks, restoreLocked, writeLocks } from "./locks.ts";
 
 export type BoardSummary = {
   id: string;
@@ -33,7 +34,7 @@ export type StoredTree = {
 };
 
 export type SaveResult =
-  | { status: "ok"; version: number }
+  | { status: "ok"; version: number; root: unknown; restored: string[] }
   | { status: "conflict"; version: number }
   | { status: "missing" };
 
@@ -231,6 +232,44 @@ export class BoardStore {
     return { status: "ok", etag: etagOf(text) };
   }
 
+  /** 这一盘有哪些块被锁了。前端一次拿全，别一个一个问。 */
+  async locks(id: string): Promise<string[]> {
+    if (!(await this.tree(id))) return [];
+    return readLocks(this.dir(id));
+  }
+
+  /**
+   * 上锁 / 解锁。**只有树里还有的块才给上锁** —— 锁一个已经不存在的东西没有意义，
+   * 而且会变成一把永远解不开的空头锁。解锁不管这个：解一把旧锁得随时都行。
+   */
+  async setLock(
+    id: string,
+    nodeId: string,
+    locked: boolean,
+    actor = "",
+  ): Promise<"ok" | "no-board" | "no-node"> {
+    const tree = await this.tree(id);
+    if (!tree) return "no-board";
+    if (!isNodeId(nodeId)) return "no-node";
+    const ids = await readLocks(this.dir(id));
+    const has = ids.includes(nodeId);
+    if (locked) {
+      const root = adoptNode(tree.root);
+      if (!root || !hasNode(root, nodeId)) return "no-node";
+      if (has) return "ok";
+      await writeLocks(this.dir(id), [...ids, nodeId]);
+      await audit(this.dir(id), `上锁 ${nodeId}${actor ? ` (by ${actor})` : ""}`);
+      return "ok";
+    }
+    if (!has) return "ok";
+    await writeLocks(
+      this.dir(id),
+      ids.filter((x) => x !== nodeId),
+    );
+    await audit(this.dir(id), `解锁 ${nodeId}${actor ? ` (by ${actor})` : ""}`);
+    return "ok";
+  }
+
   /**
    * 写之前先比对版本。文件是唯一真相，覆盖等于真丢数据 ——
    * 两个标签页同时开着的时候，这个检查就是唯一拦住静默损失的东西。
@@ -238,6 +277,7 @@ export class BoardStore {
   async save(
     id: string,
     input: { root: unknown; moves: unknown[]; baseVersion: number },
+    from = "",
   ): Promise<SaveResult> {
     const current = await this.tree(id);
     if (!current) return { status: "missing" };
@@ -245,12 +285,33 @@ export class BoardStore {
       return { status: "conflict", version: current.version };
     }
 
+    // 锁定的块不许从树里消失。客户端发什么都会被修正一遍再落盘 ——
+    // 这是「防机器」的那一层：所有树写入都必经这里。
+    const locked = new Set(await readLocks(this.dir(id)));
+    let root = input.root;
+    let restored: string[] = [];
+    if (locked.size) {
+      const prev = adoptNode(current.root);
+      const wanted = adoptNode(input.root);
+      if (prev && wanted) {
+        const fixed = restoreLocked(wanted, prev, locked);
+        root = fixed.root;
+        restored = fixed.restored;
+        if (restored.length) {
+          await audit(
+            this.dir(id),
+            `被删的锁定块被接回: ${restored.join(", ")}${from ? ` (from ${from})` : ""}`,
+          );
+        }
+      }
+    }
+
     const next: StoredTree = {
       v: 1,
       name: current.name,
       version: current.version + 1,
       updatedAt: new Date().toISOString(),
-      root: input.root,
+      root,
     };
     // 顺序要紧：先落语义，再落历史。历史落后了只是少一行，语义落后了是丢盘。
     await writeJson(path.join(this.dir(id), TREE), next);
@@ -258,8 +319,8 @@ export class BoardStore {
       v: 1,
       moves: input.moves.slice(-LOG_LIMIT),
     });
-    await this.syncMap(id, input.root);
-    return { status: "ok", version: next.version };
+    await this.syncMap(id, root);
+    return { status: "ok", version: next.version, root, restored };
   }
 
   /**
