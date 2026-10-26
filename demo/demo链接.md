@@ -7,12 +7,12 @@
 
 ## 打开
 
-**http://100.106.43.81:4784/demo/button/index.html**
+**http://100.106.43.81:4783/demo/button/index.html**
 
 服务没起的话，在 `/opt/TreeMap` 跑：
 
 ```bash
-npm run demo          # = vite --port 4784，带热更新
+npm run build && npm run preview   # 4783，吃 dist/
 ```
 
 （端口被占就是已经起着了，直接用地址。）
@@ -21,8 +21,15 @@ npm run demo          # = vite --port 4784，带热更新
 现在 `.env` 里是 Tailscale 那张网卡，所以只能从 `100.106.43.81` 进 —— 换成公网 IP 一律拒绝连接。
 要让局域网别的机器也能开，改 `.env` 的 `N_HOST`（`0.0.0.0` = 全开）。
 
-**端口**：`4783` 是 `vite preview`，只认 `dist/` 里的构建产物，**看不到这个 demo**（它只会把
-未知路径 fallback 到根页面，看着像"打开了但什么都没有"）。demo 在 `4784`。`src/` 一行没动。
+**demo 跟主应用同一个端口。** `demo/*/index.html` 是 build 的正式入口（`vite.config.ts` 里那个
+`demoInputs()`），产物落在 `dist/demo/<名字>/`，所以 `vite preview` 直接 serve。扔一个新目录
+`demo/foo/index.html` 进来就自动进构建，不用改配置。
+
+之前 demo 单占 `4784`，那个端口已经不用了。只剩一个真的理由会想开它 —— 改 demo 想看热更新：
+
+```bash
+npm run demo          # = vite --port 4784，边改边看
+```
 
 ## 页面上的开关
 
@@ -71,13 +78,17 @@ npm run demo          # = vite --port 4784，带热更新
 
 ## 复用
 
-三个文件，没有依赖，没有构建魔法：
+三个文件，没有依赖，也没有构建魔法 —— 但它现在也是 build 的入口，因为它是 `.tsx` 的：
 
 ```
 demo/button/index.html   页面骨架 + 三个开关
 demo/button/demo.css     全部样式（变量在最上面，每个方案一个 .vNN 命名空间）
 demo/button/main.js      19 个方案的 DOM + 八个需要 JS 的行为（长按/磁吸/菜单/跟随…）
 ```
+
+`demo/button` 和 `demo/id` 的入口是纯 `.js`，拷走就能用。`demo/button-on-tree-map` 和
+`demo/menu-on-tree-map` 的入口是 `.tsx`，还 import 了 `src/App`、`src/tokens/*.css` ——
+那就不只是静态文件了，得跟主应用一起过构建。
 
 搬走一个方案的做法：
 
@@ -102,11 +113,28 @@ demo/button/main.js      19 个方案的 DOM + 八个需要 JS 的行为（长�
 对照表是白盒，这个是长在真行上的 —— 直接渲染 `src/App`，同一份组件、同一份数据、同一份 CSS，
 动作按钮靠运行时挂到左列每一行（**一行 src 都不用改**）。
 
-- **http://100.106.43.81:4784/demo/button-on-tree-map/index.html**
-- 内网：http://100.106.43.81:4784/demo/button-on-tree-map/index.html
+- **http://100.106.43.81:4783/demo/button-on-tree-map/index.html**
 
-它和 4783 那盘读的是同一个 content 目录，所以你在 demo 里加块、改名，4783 那盘跟着变
-（反过来也一样）。注入的四个按钮是空操作，不会写盘。
+它和主应用读的是同一个 content 目录、走的是同一个 `/api/boards`，所以你在 demo 里加块、改名，
+主盘跟着变（反过来也一样）。注入的四个按钮是空操作，不会写盘。
 
 只挂了左列的行。盘面上的块没挂 —— 块会被布局挤到 30px 见方，一摞按钮塞不进去；
 那种尺寸该用 07 号菜单。
+
+---
+
+## 装在真盘子上的实例：07 号 · 三点菜单
+
+同一个菜单挂两个地方 —— **左列的行**和**盘面上的块**。这是 07 存在的理由：
+三个以上动作就不该排一排图标，尤其块会被布局挤到 30px 见方，一排按钮根本塞不下。
+
+- **http://100.106.43.81:4783/demo/menu-on-tree-map/index.html**
+
+- 行上：22px 玻璃 `•••`，顶掉了应用自带那个 `×`（一行两个删除太蠢）。
+- 块上：`•••` 贴在块的右上角，尺寸跟着块走（`data-size` = 14 / 17 / 20px），
+  颜色抄应用自己那个 `×` 的做法压一层黑 —— 块的颜色五花八门，玻璃压不住。
+- 菜单是 `position: fixed` 的。**这是 07 能上块的关键**：块那层 `overflow: hidden` 切不掉它。
+- 靠右会往左收，下面放不下会往上开（`transform-origin` 跟着翻），不探出视口。
+- `Esc` 关、点外面关、滚一下也关（菜单跟着滚动会跟按钮脱节，关掉比让它漂着强）。
+
+注入的条目全是空操作，不写盘。`src/` 一行没改。

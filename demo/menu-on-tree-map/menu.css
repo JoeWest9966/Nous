@@ -1,0 +1,288 @@
+/* 07 号方案 · 三点菜单 —— 装在真盘上的那一版。
+ *
+ * 一个菜单，两个宿主：
+ *   左列的行（li）—— 玻璃 •••，22px
+ *   盘面上的块（group/leaf）—— 深色半透明 •••，14 / 17 / 20px 跟着块走
+ *
+ * 菜单 fixed 定位，块上那个 overflow:hidden 切不到它 —— 这就是 07 能上块的原因。
+ * 只动 transform / translate / scale / opacity。
+ */
+
+:root {
+  /* 和 13 号同一颗弹簧：spring(k=420, c=30)，418ms，回弹 3.2% */
+  --mt-spring: linear(
+    0.0004, 0.0386 3.3%, 0.1287 6.7%, 0.2465 10%, 0.3742 13.3%, 0.4999 16.7%,
+    0.6158 20%, 0.7174 23.3%, 0.7973 26.7%, 0.8675 30%, 0.9223 33.3%, 0.9633 36.7%,
+    0.9926 40%, 1.0122 43.3%, 1.0242 46.7%, 1.0304 50%, 1.0323 53.3%, 1.0315 56.7%,
+    1.0287 60%, 1.025 63.3%, 1.0209 66.7%, 1.0168 70%, 1.013 73.3%, 1.0099 76.7%,
+    1.007 80%, 1.0046 83.3%, 1.0028 86.7%, 1.0014 90%, 1.0004 93.3%, 0.9997 96.7%,
+    0.9993 100%
+  );
+  --mt-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --mt-glass: color-mix(in oklab, var(--n-color-raised) 88%, transparent);
+  --mt-edge: color-mix(in oklab, var(--n-color-text) 12%, transparent);
+  --mt-lift: inset 0 1px 0 color-mix(in oklab, var(--n-color-text) 14%, transparent);
+  --mt-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.28), 0 3px 10px -4px rgba(0, 0, 0, 0.45),
+    0 14px 32px -14px rgba(0, 0, 0, 0.72);
+  --mt-hover: color-mix(in oklab, var(--n-color-text) 8%, transparent);
+}
+
+:root[data-theme="light"] {
+  --mt-shadow:
+    0 1px 1px rgba(16, 20, 26, 0.05), 0 3px 8px -4px rgba(16, 20, 26, 0.1),
+    0 14px 30px -14px rgba(16, 20, 26, 0.3);
+}
+
+/* ── 宿主 ──────────────────────────────────────────────────────────────────── */
+/* 块本身就是 absolute，别给它改 position */
+.menu-host:not(.menu-host--block) {
+  position: relative;
+}
+
+/* 应用自带的那个 ×，位置留给 •••（一行里两个删除没道理） */
+.menu-host:not(.menu-host--block) > div[data-node-id] > button[aria-label^="删除"],
+.menu-host--block > button[aria-label^="删除"] {
+  display: none;
+}
+
+/* ── 那个 ••• ──────────────────────────────────────────────────────────────── */
+.mtg {
+  position: absolute;
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--mt-edge);
+  border-radius: 50%;
+  background: var(--mt-glass);
+  color: var(--n-color-text);
+  box-shadow: var(--mt-shadow), var(--mt-lift);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  cursor: pointer;
+  font: inherit;
+  z-index: 5;
+  opacity: 0;
+  scale: 0.86;
+  pointer-events: none;
+  transition:
+    opacity 110ms var(--mt-exit),
+    scale 130ms var(--mt-exit),
+    background 120ms ease;
+}
+
+/* 行上的 •••：22px，贴着右边 */
+.menu-host:not(.menu-host--block) > .mtg {
+  top: 50%;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  translate: 0 -50%;
+}
+
+.menu-host:not(.menu-host--block) > .mtg svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 块上的 •••：尺寸由 data-size 决定，块的角越窄它越小 */
+.menu-host--block > .mtg {
+  width: 20px;
+  height: 20px;
+  top: 3px;
+  right: 3px;
+  /* 块的颜色五花八门，玻璃在上面不一定看得清 —— 抄应用自己那个 × 的做法：压一层黑 */
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.34);
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.menu-host--block > .mtg svg {
+  width: 12px;
+  height: 12px;
+}
+
+.menu-host--block[data-size="s"] > .mtg {
+  width: 17px;
+  height: 17px;
+  top: 3px;
+  right: 3px;
+}
+
+.menu-host--block[data-size="s"] > .mtg svg {
+  width: 10px;
+  height: 10px;
+}
+
+.menu-host--block[data-size="xs"] > .mtg {
+  width: 14px;
+  height: 14px;
+  top: 2px;
+  right: 2px;
+  border-width: 0.5px;
+}
+
+.menu-host--block[data-size="xs"] > .mtg svg {
+  width: 8px;
+  height: 8px;
+}
+
+.menu-host:is(:hover, :focus-within) > .mtg,
+.menu-host.menu-open > .mtg {
+  opacity: 1;
+  scale: 1;
+  pointer-events: auto;
+  transition:
+    opacity 150ms linear,
+    scale 340ms var(--mt-spring),
+    background 120ms ease;
+}
+
+.menu-host--block > .mtg:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.menu-host:not(.menu-host--block) > .mtg:hover {
+  background: var(--mt-hover);
+}
+
+.mtg:focus-visible {
+  outline: 1.5px solid var(--n-color-accent);
+  outline-offset: 1px;
+}
+
+/* ── 菜单 ──────────────────────────────────────────────────────────────────── */
+.ctx-menu {
+  position: fixed;
+  z-index: 200;
+  width: 188px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--mt-glass);
+  border: 1px solid var(--mt-edge);
+  box-shadow: var(--mt-shadow), var(--mt-lift);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  opacity: 0;
+  scale: 0.92;
+  translate: 0 -6px;
+  pointer-events: none;
+  transition:
+    opacity 120ms var(--mt-exit),
+    scale 140ms var(--mt-exit),
+    translate 140ms var(--mt-exit);
+}
+
+.ctx-menu[data-open="true"] {
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
+  pointer-events: auto;
+  transition:
+    opacity 170ms linear,
+    scale 340ms var(--mt-spring),
+    translate 340ms var(--mt-spring);
+}
+
+.ctx-menu > button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--n-color-text);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0;
+  translate: 0 -3px;
+  transition:
+    opacity 100ms linear,
+    translate 120ms var(--mt-exit),
+    background 120ms ease;
+}
+
+.ctx-menu[data-open="true"] > button {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity 120ms linear,
+    translate 260ms var(--mt-spring),
+    background 120ms ease;
+  transition-delay: calc(40ms + var(--i) * 30ms);
+}
+
+.ctx-menu > button:hover {
+  background: var(--mt-hover);
+}
+
+.ctx-menu > button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  opacity: 0.8;
+}
+
+.ctx-menu > button.ctx-danger {
+  color: var(--n-color-danger);
+}
+
+.ctx-menu > button.ctx-danger:hover {
+  background: color-mix(in oklab, var(--n-color-danger) 14%, transparent);
+}
+
+.ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--n-color-border);
+}
+
+/* ── 底部的说明条：这是 demo 的壳，不属于盘子 ──────────────────────────────── */
+.ctx-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  translate: -50% 0;
+  z-index: 300;
+  appearance: none;
+  border: 1px solid var(--mt-edge);
+  border-radius: 999px;
+  background: var(--mt-glass);
+  color: var(--n-color-muted);
+  box-shadow: var(--mt-shadow);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 11.5px;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+}
+
+.ctx-hint:hover {
+  color: var(--n-color-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mtg,
+  .ctx-menu,
+  .ctx-menu > button {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}
