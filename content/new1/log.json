@@ -59,6 +59,54 @@
     {
       "t": "remove",
       "id": "n42"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n45",
+      "tree": "py24z3"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n45",
+      "tree": "7hfdjp"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n45",
+      "tree": "p282kd"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n45",
+      "tree": "05h7f3"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n45",
+      "tree": "fr56q7"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "n45",
+      "tree": "xh624h"
+    },
+    {
+      "t": "undo"
+    },
+    {
+      "t": "undo"
+    },
+    {
+      "t": "undo"
+    },
+    {
+      "t": "undo"
+    },
+    {
+      "t": "undo"
+    },
+    {
+      "t": "undo"
     }
   ]
 }

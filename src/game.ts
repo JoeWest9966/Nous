@@ -6,7 +6,7 @@
  * - **组**（代码里叫 section）—— 没有值，值是子节点之和，负责把自己那片地方圈起来
  */
 export type Node = {
-  tree: string;
+  id: string;
   name: string;
   /** 只有块有值。组靠子节点算。 */
   value?: number;
@@ -20,23 +20,23 @@ export const valueOf = (n: Node): number =>
 export const isSection = (n: Node): boolean => Array.isArray(n.children);
 
 /**
- * tree 的字母表：32 个，去掉 `i l o u` —— 念得出来、抄得对（`o` 一走，`0` 就没歧义了）。
+ * id 的字母表：32 个，去掉 `i l o u` —— 念得出来、抄得对（`o` 一走，`0` 就没歧义了）。
  */
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
-/** 一颗新树的 tree。6 位 ≈ 10.7 亿种。256 能被 32 整除，所以 `b & 31` 是均匀的。 */
-export const freshTree = (): string => {
+/** 一个新节点的 id。6 位 ≈ 10.7 亿种。256 能被 32 整除，所以 `b & 31` 是均匀的。 */
+export const freshId = (): string => {
   const bytes = crypto.getRandomValues(new Uint8Array(6));
   let out = "";
   for (const b of bytes) out += ALPHABET[b & 31];
   return out;
 };
 
-/** 整棵树已经用掉的 tree。 */
-export const takenTrees = (root: Node): Set<string> => {
+/** 整棵树已经用掉的 id。 */
+export const takenIds = (root: Node): Set<string> => {
   const out = new Set<string>();
   const walk = (n: Node): void => {
-    out.add(n.tree);
+    out.add(n.id);
     n.children?.forEach(walk);
   };
   walk(root);
@@ -44,18 +44,18 @@ export const takenTrees = (root: Node): Set<string> => {
 };
 
 /**
- * 发一个这张盘上没人用过的 tree：撞了就重掷。
+ * 发一个这张盘上没人用过的 id：撞了就重掷。
  * 6 位在 1000 个节点下才 0.05% 会撞 —— 但「才」不是「不会」，重掷一次永远是 0。
  */
-const newTree = (taken: Set<string>): string => {
-  let t = freshTree();
-  while (taken.has(t)) t = freshTree();
+const newId = (taken: Set<string>): string => {
+  let t = freshId();
+  while (taken.has(t)) t = freshId();
   return t;
 };
 
-/** 某个组底下子节点的 tree，按顺序来。落子日志要记「新的是哪个」，就靠它。 */
-export const childTrees = (root: Node, parent: string): string[] =>
-  findNode(root, parent)?.children?.map((c) => c.tree) ?? [];
+/** 某个组底下子节点的 id，按顺序来。落子日志要记「新的是哪个」，就靠它。 */
+export const childIds = (root: Node, parent: string): string[] =>
+  findNode(root, parent)?.children?.map((c) => c.id) ?? [];
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -74,14 +74,14 @@ const nextChildName = (parent: Node): string => {
   return `${parent.name}.${max + 1}`;
 };
 
-export const makeLeaf = (name: string, value: number, tree = freshTree()): Node => ({
-  tree,
+export const makeLeaf = (name: string, value: number, id = freshId()): Node => ({
+  id,
   name,
   value,
 });
 
-export const makeSection = (name: string, children: Node[], tree = freshTree()): Node => ({
-  tree,
+export const makeSection = (name: string, children: Node[], id = freshId()): Node => ({
+  id,
   name,
   children,
 });
@@ -101,43 +101,43 @@ const NAMES = [
   "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi",
 ];
 
-export const findNode = (root: Node, tree: string): Node | undefined => {
-  if (root.tree === tree) return root;
+export const findNode = (root: Node, id: string): Node | undefined => {
+  if (root.id === id) return root;
   for (const c of root.children ?? []) {
-    const hit = findNode(c, tree);
+    const hit = findNode(c, id);
     if (hit) return hit;
   }
   return undefined;
 };
 
 /**
- * 全树的 **handle**：人念的那个名字路径（`src/App.tsx`），同名按出现顺序加 `-2`。
+ * 全树的 **tree**：每个节点在树里的地址（`N/src/App.tsx`），同名按出现顺序加 `-2`。
  *
- * handle 不是 tree。改名、搬家它都会变 —— 这是允许的：**tree 负责永不失效，handle 负责念得出来**。
+ * tree 不是 id。改名、搬家它都会变 —— 这是允许的：**id 负责永不失效，tree 负责念得出来**。
  * 所以它不进 tree.json、不进 log.json，每次从树现算；重名编号跟遍历顺序有关，
  * 必须一次算全树，一个个算会算出行数不一致的结果。
  */
-export function handleMap(root: Node): Map<string, string> {
+export function treeMap(root: Node): Map<string, string> {
   const out = new Map<string, string>();
   const used = new Map<string, number>();
   const walk = (node: Node, prefix: string): void => {
     const base = prefix ? `${prefix}/${node.name}` : node.name;
     const nth = used.get(base) ?? 0;
     used.set(base, nth + 1);
-    const handle = nth === 0 ? base : `${base}-${nth + 1}`;
-    out.set(node.tree, handle);
-    // 子节点挂在这一支 resolved 过的 handle 下面 —— 爹带 -2 的话，儿子也跟着带。
-    node.children?.forEach((kid) => walk(kid, handle));
+    const tree = nth === 0 ? base : `${base}-${nth + 1}`;
+    out.set(node.id, tree);
+    // 子节点挂在这一支 resolved 过的 tree 下面 —— 爹带 -2 的话，儿子也跟着带。
+    node.children?.forEach((kid) => walk(kid, tree));
   };
   walk(root, "");
   return out;
 }
 
 /** 钻到某个节点需要的那条路径。`path` 里只放组，根不算 —— 空数组就是「在根上」。 */
-export function pathTo(root: Node, tree: string): string[] {
+export function pathTo(root: Node, id: string): string[] {
   const rec = (node: Node, acc: string[], isRoot: boolean): string[] | null => {
-    if (node.tree === tree) return isSection(node) && !isRoot ? [...acc, node.tree] : acc;
-    const next = isSection(node) && !isRoot ? [...acc, node.tree] : acc;
+    if (node.id === id) return isSection(node) && !isRoot ? [...acc, node.id] : acc;
+    const next = isSection(node) && !isRoot ? [...acc, node.id] : acc;
     for (const kid of node.children ?? []) {
       const hit = rec(kid, next, false);
       if (hit) return hit;
@@ -147,10 +147,10 @@ export function pathTo(root: Node, tree: string): string[] {
   return rec(root, [], true) ?? [];
 }
 
-function replaceNode(root: Node, tree: string, next: Node): Node {
-  if (root.tree === tree) return next;
+function replaceNode(root: Node, id: string, next: Node): Node {
+  if (root.id === id) return next;
   if (!root.children) return root;
-  return { ...root, children: root.children.map((c) => replaceNode(c, tree, next)) };
+  return { ...root, children: root.children.map((c) => replaceNode(c, id, next)) };
 }
 
 /** 往某个组里塞一块（值 1）。 */
@@ -159,7 +159,7 @@ export function addLeaf(root: Node, section: string): Node {
   if (!node || !node.children) return root;
   return replaceNode(root, section, {
     ...node,
-    children: [...node.children, makeLeaf(nextChildName(node), 1, newTree(takenTrees(root)))],
+    children: [...node.children, makeLeaf(nextChildName(node), 1, newId(takenIds(root)))],
   });
 }
 
@@ -169,11 +169,11 @@ export function addSection(root: Node, parent: string): Node {
   if (!node || !node.children) return root;
   const name =
     NAMES.find((n) => !node.children!.some((c) => c.name === n)) ?? `s${node.children.length + 1}`;
-  // 新组和它底下那块要两个 tree，一次把两个都发掉，别让它们互相撞。
-  const taken = takenTrees(root);
-  const section = newTree(taken);
+  // 新组和它底下那块要两个 id，一次把两个都发掉，别让它们互相撞。
+  const taken = takenIds(root);
+  const section = newId(taken);
   taken.add(section);
-  const leaf = newTree(taken);
+  const leaf = newId(taken);
   return replaceNode(root, parent, {
     ...node,
     children: [...node.children, makeSection(name, [makeLeaf(`${name}.1`, 1, leaf)], section)],
@@ -184,13 +184,13 @@ export function addSection(root: Node, parent: string): Node {
  * 删掉一个节点（连同它的子树），并把因此空掉的组一路收掉。
  * 根不删 —— 空盘也还叫 N，只是底下什么都没有。
  */
-export function removeNode(root: Node, tree: string): Node {
-  if (root.tree === tree) return root;
+export function removeNode(root: Node, id: string): Node {
+  if (root.id === id) return root;
 
   const prune = (n: Node): Node => {
     if (!n.children) return n;
     const kids = n.children
-      .filter((c) => c.tree !== tree)
+      .filter((c) => c.id !== id)
       .map(prune)
       .filter((c) => !isSection(c) || c.children!.length > 0);
     return { ...n, children: kids };
@@ -200,14 +200,14 @@ export function removeNode(root: Node, tree: string): Node {
 }
 
 /**
- * 改名。tree 不动 —— 路径、焦点、撤销栈全靠 tree，名字只是一层皮。
+ * 改名。id 不动 —— 路径、焦点、撤销栈全靠 id，名字只是一层皮。
  * 空名、纯空格、没改，都当没下这一手（返回原树，`play` 的早退会兜住）。
  */
-export function renameNode(root: Node, tree: string, name: string): Node {
-  const node = findNode(root, tree);
+export function renameNode(root: Node, id: string, name: string): Node {
+  const node = findNode(root, id);
   const trimmed = name.trim();
   if (!node || !trimmed || node.name === trimmed) return root;
-  return replaceNode(root, tree, { ...node, name: trimmed });
+  return replaceNode(root, id, { ...node, name: trimmed });
 }
 
 export type Box = { x: number; y: number; w: number; h: number };

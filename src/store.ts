@@ -4,14 +4,14 @@
  * 换了引擎（localStorage → 文件 → 后端 → CRDT）只改这个文件，
  * 调用方一行不动 —— 这就是「一劳永逸」该落脚的地方。
  */
-import { freshTree, type Node } from "./game";
+import { freshId, type Node } from "./game";
 
 /** 一手棋。log.json 里存的就是这些，人能直接读，git diff 也能看。 */
 export type Move =
-  | { t: "addLeaf"; parent: string; tree: string }
-  | { t: "addSection"; parent: string; tree: string }
-  | { t: "remove"; tree: string }
-  | { t: "rename"; tree: string; name: string }
+  | { t: "addLeaf"; parent: string; id: string }
+  | { t: "addSection"; parent: string; id: string }
+  | { t: "remove"; id: string }
+  | { t: "rename"; id: string; name: string }
   | { t: "undo" };
 
 export type BoardSummary = {
@@ -65,7 +65,7 @@ const isDraft = (v: unknown): v is Draft => {
     typeof d.root === "object" &&
     d.root !== null &&
     // 老草稿的根上还叫 id —— 认它，adoptTrees 会转过来。
-    (typeof (d.root as Node).tree === "string" || typeof (d.root as LegacyNode).id === "string")
+    (typeof (d.root as Node).id === "string" || typeof (d.root as LegacyNode).tree === "string")
   );
 };
 
@@ -75,7 +75,7 @@ export function readDraft(id: string): Draft | null {
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     // 草稿可能是改字段名之前存的 —— 同样接住一次。
-    return isDraft(parsed) ? { ...parsed, root: adoptTrees(parsed.root as LegacyNode) } : null;
+    return isDraft(parsed) ? { ...parsed, root: adoptIds(parsed.root as LegacyNode) } : null;
   } catch {
     // 存了半截 / 私隐模式禁写：当没草稿，不阻着页面起来。
     return null;
@@ -111,15 +111,15 @@ async function asJson<T>(res: Response): Promise<T> {
 }
 
 /**
- * 老盘上这个字段叫 `id`，现在叫 `tree`。载入时接住一次，之后写回去就是新格式 ——
- * 数据文件不用手改，下一次落子自动升级。
+ * 这个字段搬过两次家：最早叫 `id`，中间改叫 `tree`，现在又叫回 `id`（值没变过 ——
+ * 永远是新节点出生时发的那个随机六位）。载入时两个名字都认，写回去就是新格式。
  */
-type LegacyNode = Omit<Node, "tree" | "children"> & { tree?: string; id?: string; children?: LegacyNode[] };
+type LegacyNode = Omit<Node, "id" | "children"> & { id?: string; tree?: string; children?: LegacyNode[] };
 
-const adoptTrees = (n: LegacyNode): Node => {
+const adoptIds = (n: LegacyNode): Node => {
   // 两个都没有（手改坏了）：发一个，别让空串顺着 findNode 到处走。
-  const out: Node = { tree: n.tree ?? n.id ?? freshTree(), name: n.name };
-  if (n.children) out.children = n.children.map(adoptTrees);
+  const out: Node = { id: n.id ?? n.tree ?? freshId(), name: n.name };
+  if (n.children) out.children = n.children.map(adoptIds);
   else out.value = n.value ?? 0;
   return out;
 };
@@ -130,7 +130,7 @@ export async function listBoards(): Promise<BoardSummary[]> {
 
 export async function loadBoard(id: string): Promise<LoadedBoard> {
   const board = await asJson<LoadedBoard>(await fetch(url(id), { headers: { accept: "application/json" } }));
-  return { ...board, root: adoptTrees(board.root as LegacyNode) };
+  return { ...board, root: adoptIds(board.root as LegacyNode) };
 }
 
 export async function createBoard(name: string): Promise<BoardSummary> {
