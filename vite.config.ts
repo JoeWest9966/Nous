@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentApi } from "./server/api.ts";
 import { blocksApi, killAllBlocks } from "./server/blocks.ts";
+import { nousApi } from "./server/ctx.ts";
 import { BoardStore } from "./server/content.ts";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -59,7 +60,10 @@ const blockPlugin = () => {
     config: { server: { port?: number } };
   }) => {
     const origin = `http://localhost:${server.config.server.port ?? 4790}`;
-    server.middlewares.use("/p", blocksApi(new BoardStore(CONTENT), { root: CONTENT, origin }) as never);
+    const store = new BoardStore(CONTENT);
+    // 顺序有讲究：块先挑走自己的路径（`__nous/` 除外），剩下的 `__nous/*` 归宿主。
+    server.middlewares.use("/p", blocksApi(store, { root: CONTENT, origin }) as never);
+    server.middlewares.use("/p", nousApi(store, { origin }) as never);
     // 关掉 dev server 就让块跟着下班，别留一堆没人看得见的进程。
     server.httpServer?.once("close", killAllBlocks);
   };

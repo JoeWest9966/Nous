@@ -68,17 +68,35 @@ GET /api/boards/<board>/nodes/<node>/doc   → { text, etag, stub }
 | 只有 `agent.md` | 壳：文档页 |
 | + `package.json` 里有 `scripts.start` | 它自己：剥掉前缀反代到它的进程 |
 
-进程的契约就三条，都是硬的：
+进程的契约就四条，都是硬的：
 
 - **听 `PORT`。** 宿主给的空闲端口，不写进任何文件。
 - **数据写 `NOUS_DATA`**（= 它自己文件夹下的 `data/`）。不是宿主替你存 —— 是「`cp -r` 走了数据也走了」。
-- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（笔记页、将来的 `GET __nous/ctx`）。
+- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（笔记页、`__nous/ctx`）。
 - **链接写相对路径。** 这是唯一能让 `cp -r map/<id> ~/<id> && npm start` 和宿主里打开
   是同一页的写法。宿主不重写 HTML、不改你的绝对路径，`/style.css` 就是逃出前缀。
 
 宿主这边：崩了给墓碑（stderr 最后几行）+ 502，**只坏这一页**；文件夹里的代码一改就收掉进程
 （下次请求带着新代码起来，不自动重启 —— 崩得勤的块会把机器烧穿）；`scripts.start` 改了同理；
 闲 10 分钟退出。`npm install` 不归宿主管：块要依赖就把 `node_modules` 放进去。
+
+给的四个环境变量，就这四个：`PORT`、`NOUS_DATA`、`NOUS_ORIGIN`（宿主地址）、
+`NOUS_SELF`（我在宿主里叫什么，`/p/<board>/<id>`）。
+
+### 块之间怎么说话
+
+```
+GET <NOUS_ORIGIN><NOUS_SELF>/__nous/ctx          → { board, host, base, node, blocks[], resolve }
+GET …/__nous/resolve/<id>[?path=/底下]           → { url }   ← 绝对地址
+```
+
+`ctx.blocks[id].url` 就是邻居的地址，拿到就能电话。**两条铁律：**
+
+- **只走 HTTP。** 不许 import 别人的代码，不许读别人的文件夹，不信任别人的 `data/`。
+  按路径自己拼 `/p/<board>/<id>` 也不许 —— 地址只有一个来源，就是 `resolve`。
+  理由不是洁癖：某块明天搬去自己的域名或容器，改的是宿主那张表，不是所有块。
+- **没有凭据。** 单用户、内网、块与块互信。这里没有 token、签名、scope。
+  要多人、要跑不可信代码那天，先上进程/容器边界，再谈身份 —— 顺序反了全是白工。
 
 ## Agent skills
 

@@ -14,11 +14,13 @@
  * 进程是这套架构里唯一 fake 不掉的东西：接口可以口头约定，API 可以绕过，
  * 但「两个东西跑在两个进程里」这件事骗不了人。
  *
- * 给的三个环境变量（就这三个，端口不写进任何文件）：
+ * 给的四个环境变量（就这四个，端口不写进任何文件）：
  *
  * - `PORT`         宿主分配的空闲端口，块必须听它
  * - `NOUS_DATA`    持久化数据放这儿（= 它的文件夹下的 data/），`cp` 走就带走了
- * - `NOUS_ORIGIN`  宿主自己的地址，将来块之间打招呼用它
+ * - `NOUS_ORIGIN`  宿主自己的地址，块之间打电话用它
+ * - `NOUS_SELF`    我在宿主里叫什么（`/p/<board>/<id>`）。有了它，
+ *                  搬出去跑的时候也能取回自己的上下文：`NOUS_ORIGIN + NOUS_SELF + "/__nous/ctx"`
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
@@ -96,7 +98,12 @@ const kill = (run: Run): void => {
   }
 };
 
-const start = async (key: string, folder: string, cmd: string, origin: string): Promise<Run | { error: string; logs: string }> => {
+const start = async (
+  key: string,
+  folder: string,
+  cmd: string,
+  origin: string,
+): Promise<Run | { error: string; logs: string }> => {
   const port = await freePort();
   const data = path.join(folder, "data");
   await mkdir(data, { recursive: true }).catch(() => undefined);
@@ -111,6 +118,7 @@ const start = async (key: string, folder: string, cmd: string, origin: string): 
       PORT: String(port),
       NOUS_DATA: data,
       NOUS_ORIGIN: origin,
+      NOUS_SELF: `/p/${key}`,
     },
   });
 
