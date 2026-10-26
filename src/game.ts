@@ -193,12 +193,17 @@ function detach(root: Node, id: string): Node {
   return { ...root, children: root.children.filter((c) => c.id !== id).map((c) => detach(c, id)) };
 }
 
-/** 把 node 插进 to，插在 before 前面；没有 before 就是追加到末尾。 */
+/**
+ * 把 node 插进 to，插在 before 前面；没有 before 就是追加到末尾。
+ * `at < 0` 兜一手：摘完之后的树上找不到 before 只能追加，不能喂给 splice(-1)
+ * —— 那会把节点插到倒数第一位，一种很难看的静默错。
+ */
 function insertBefore(root: Node, to: string, node: Node, before?: string): Node {
   if (!root.children) return root;
   if (root.id === to) {
     const kids = root.children;
-    const at = before === undefined ? kids.length : kids.findIndex((c) => c.id === before);
+    const found = before === undefined ? -1 : kids.findIndex((c) => c.id === before);
+    const at = found < 0 ? kids.length : found;
     return { ...root, children: [...kids.slice(0, at), node, ...kids.slice(at)] };
   }
   return { ...root, children: root.children.map((c) => insertBefore(c, to, node, before)) };
@@ -218,8 +223,10 @@ export function moveNode(root: Node, id: string, to: string, before?: string): N
   if (!node || !target || !isSection(target)) return root;
   // `to` 在被搬的东西自己的子树里 → 会造环。根也在这一条里被挡住（根不搬）。
   if (findNode(node, to)) return root;
-  // `before` 不在 to 的直接子节点里（包括它等于自己被搬的那块）→ 当没下这一手。
-  if (before !== undefined && !target.children!.some((c) => c.id === before)) return root;
+  // `before` 不在 to 的直接子节点里，或者就是被搬的这块自己 → 当没下这一手。
+  // 后者不是边角：被判移动的那一行本身也是落点（灰在那儿），点它/回车就该什么也不发生。
+  if (before !== undefined && (before === id || !target.children!.some((c) => c.id === before)))
+    return root;
 
   // 先摘再插 —— 先算下标会差一位，所以下标一定是在摘完之后的树上现算。
   const next = insertBefore(detach(root, id), to, node, before);
