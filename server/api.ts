@@ -3,13 +3,18 @@
  * 这样同一份东西既能挂进 vite 的 connect 中间件，也能挂进真后端。
  *
  * 路由（前缀由挂载方负责剥掉）：
- *   GET  /            → 项目列表
- *   POST /            → 建项目 { name }
- *   GET  /:id         → { root, moves, version, name }
- *   PUT  /:id         → { root, moves, baseVersion } → { version } | 409
+ *   GET  /                       → 项目列表
+ *   POST /                       → 建项目 { name }
+ *   GET  /:id                    → { root, moves, version, name }
+ *   PUT  /:id                    → { root, moves, baseVersion } → { version } | 409
+ *   GET  /:id/nodes/:node/doc    → { text, etag, stub }
+ *
+ * 路径按段读，不按整串读 —— 块自己的地址是 `/p/<board>/<id>/`，同一套 id 得能挂在
+ * board 后面往下走。`/nodes/...` 那一段以后还会有 PUT，以及块进程的转发。
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BoardStore, isBoardId } from "./content.ts";
+import { isNodeId } from "./map.ts";
 
 const MAX_BODY = 4 * 1024 * 1024;
 
@@ -40,12 +45,16 @@ export function contentApi(root: string) {
   const store = new BoardStore(root);
 
   return async (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
-    // connect 挂载会剥掉前缀，req.url 到这里长这样："" "/" "/new1"
-    const seg = (req.url ?? "/").split("?")[0]!.replace(/^\/+|\/+$/g, "");
-    const id = decodeURIComponent(seg);
+    // connect 挂载会剥掉前缀，req.url 到这里长这样："" "/" "/new1" "/new1/nodes/n39/doc"
+    const parts = (req.url ?? "/")
+      .split("?")[0]!
+      .split("/")
+      .filter(Boolean);
+    const seg = parts.length ? decodeURIComponent(parts[0]!) : "";
+    const id = seg;
 
     try {
-      if (!seg) {
+      if (!parts.length) {
         if (req.method === "GET") {
           send(res, 200, await store.list());
           return;
@@ -66,6 +75,34 @@ export function contentApi(root: string) {
 
       if (!isBoardId(id)) {
         send(res, 400, { error: "bad board id" });
+        return;
+      }
+
+      // ---- 块自己的东西：/ :board / nodes / :node / doc ----
+      if (parts.length > 1) {
+        const [, kind, nodeId, leaf, ...rest] = parts;
+        if (kind === "nodes" && nodeId && leaf === "doc" && !rest.length) {
+          if (!isNodeId(nodeId)) {
+            send(res, 400, { error: "bad node id" });
+            return;
+          }
+          if (req.method !== "GET") {
+            send(res, 405, { error: "method not allowed" });
+            return;
+          }
+          const doc = await store.doc(id, nodeId);
+          if (doc.status === "no-board") {
+            send(res, 404, { error: "no such board" });
+            return;
+          }
+          if (doc.status === "no-node") {
+            send(res, 404, { error: "no such node" });
+            return;
+          }
+          send(res, 200, doc);
+          return;
+        }
+        send(res, 404, { error: "no such route" });
         return;
       }
 

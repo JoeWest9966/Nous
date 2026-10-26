@@ -61,10 +61,13 @@ export function Tree({
   );
 
   // 钻进去的时候，左列跟着展开到那一层 —— 不能让人在树里找不着自己。
+  // 换盘（root.id 变了）时把前两层重新摊开：初始 state only 见得到开局那棵示范树，
+  // 从磁盘载进来的真树不补这一下，人会看到一棵全折着的树。
   useEffect(() => {
     setOpen((prev) => {
       const next = new Set(prev);
       next.add(root.id);
+      (root.children ?? []).forEach((c) => next.add(c.id));
       path.forEach((id) => next.add(id));
       return next;
     });

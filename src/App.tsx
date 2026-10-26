@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DocPage } from "./Doc";
 import { Find, type Hit } from "./Find";
 import { NameInput } from "./Rename";
 import { NodeMenuProvider, NodeMenuTrigger, type MenuItem } from "./NodeMenu";
@@ -45,6 +46,26 @@ const PROJECT_KEY = "nous-project";
  * 那是「我刚才看到哪」，属于这台设备和这次会话；换个设备未必要看同一层。
  */
 const pathKey = (id: string): string => `nous-path:${id}`;
+
+/**
+ * 块的页面是**真实路径**，不是 hash：`/p/<board>/<nodeId>/`。
+ *
+ * hash 得等 SPA 先跑起来才认，而这一页要能被冷启动、粘到别处、被将来那个
+ * 独立进程自己 serve —— 那就必须是一条真路径。
+ *
+ * 后面多余的段留给块自己（`/p/new1/n39/orders/42`），这里只管前两段。
+ */
+const DOC_URL = /^\/p\/([^/]+)\/([^/]+)/;
+
+function readLocation(): { board?: string; doc?: string } {
+  const hit = DOC_URL.exec(window.location.pathname);
+  if (!hit) return {};
+  try {
+    return { board: decodeURIComponent(hit[1]!), doc: decodeURIComponent(hit[2]!) };
+  } catch {
+    return {};
+  }
+}
 
 function readPath(id: string): string[] {
   try {
@@ -125,9 +146,13 @@ const tint = (hex: string, alpha: number): string => {
 export function App() {
   const [root, setRoot] = useState<Node>(() => initialState());
   const [path, setPath] = useState<string[]>([]);
+  /** 开着的是谁的页面。`null` = 在盘面上。和 `path` 是两条轴：一个是钻到哪层，一个是打开了谁的文档。 */
+  const [openDoc, setOpenDoc] = useState<string | null>(() => readLocation().doc ?? null);
 
   /* —— 盘本身，存在 content/<id>/ 的三份 json 里 —— */
-  const [projectId, setProjectId] = useState<string | null>(() => localStorage.getItem(PROJECT_KEY));
+  const [projectId, setProjectId] = useState<string | null>(
+    () => readLocation().board ?? localStorage.getItem(PROJECT_KEY),
+  );
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [moves, setMoves] = useState<Move[]>([]);
   const [status, setStatus] = useState<Status>("loading");
@@ -360,6 +385,36 @@ export function App() {
     flashTimer.current = window.setTimeout(() => setFlash(null), 1100);
   };
 
+  /**
+   * 开一块的页面。写 URL 用 pushState —— 于是浏览器的后退键就是“返回盘面”，
+   * 刷新也停在原处。**不卸载盘面**：它只是被盖在下面。
+   */
+  const openBlock = (id: string) => {
+    if (!projectId) return;
+    window.history.pushState(
+      null,
+      "",
+      `/p/${encodeURIComponent(projectId)}/${encodeURIComponent(id)}/`,
+    );
+    setOpenDoc(id);
+  };
+
+  const closeDoc = () => {
+    window.history.pushState(null, "", "/");
+    setOpenDoc(null);
+  };
+
+  /** 后退 / 前进：URL 是唯一的真相，状态跟着它走。 */
+  useEffect(() => {
+    const sync = () => {
+      const at = readLocation();
+      setOpenDoc(at.doc ?? null);
+      if (at.board) setProjectId((cur) => (cur === at.board ? cur : at.board!));
+    };
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+
   const play = (next: Node, move: Move) => {
     // 空操作不入账：撤销栈里不该塞「我点了一下但什么都没变」。
     if (next === root) return;
@@ -420,6 +475,12 @@ export function App() {
     const target =
       host.querySelector<HTMLElement>("[data-node-id]") ?? host.closest<HTMLElement>("[data-node-id]");
     const items: MenuItem[] = [
+      {
+        key: "open",
+        label: "打开",
+        icon: <IconPage />,
+        run: () => openBlock(id),
+      },
       {
         key: "rename",
         label: "重命名",
@@ -512,6 +573,8 @@ export function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // 块的页面盖在上面时，盘面不该再抢键盘（它自己处理 Esc）。
+      if (openDoc) return;
       // 正在改名时键盘全归输入框：⌘Z 是文本撤销，Backspace 是删字，不是删块。
       if (editing) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
@@ -586,6 +649,8 @@ export function App() {
               : `relative ${side ? "w-[248px]" : "w-0 border-r-0"}`
           }`}
           aria-hidden={!side}
+          // 块页面盖着的时候，下面的盘面不该还能 Tab 进去 —— 但它也不卸载（状态在它身上）。
+          inert={!!openDoc}
         >
           <div
             className={`h-full w-[248px] overflow-y-auto ${side ? "opacity-100" : "opacity-0"} transition-opacity duration-200`}
@@ -611,7 +676,7 @@ export function App() {
           />
         )}
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col" inert={!!openDoc}>
           <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-3">
             <IconButton
               label={side ? "收起左列" : "展开左列"}
@@ -731,6 +796,7 @@ export function App() {
                   flashId={flash}
                   editingId={editing?.where === "board" ? editing.id : null}
                   onEnter={(id) => setPath([...path, id])}
+                  onOpen={openBlock}
                   onBeginRename={(id, el) => beginRename(id, el, "board")}
                   onCommitRename={commitRename}
                   onCancelRename={cancelRename}
@@ -741,6 +807,21 @@ export function App() {
         </div>
 
         {findOpen && <Find hits={hits} onGo={goTo} onClose={() => setFindOpen(false)} />}
+
+        {/* 块自己的页面：真实 URL、盖在盘面上面、盘面不卸载。 */}
+        {openDoc && projectId && (
+          <DocPage
+            board={projectId}
+            id={openDoc}
+            root={root}
+            ready={status !== "loading"}
+            onClose={closeDoc}
+            onOpenGroup={(ids) => {
+              setPath(ids);
+              closeDoc();
+            }}
+          />
+        )}
       </main>
     </NodeMenuProvider>
   );
@@ -766,6 +847,7 @@ function Piece({
   flashId,
   editingId,
   onEnter,
+  onOpen,
   onBeginRename,
   onCommitRename,
   onCancelRename,
@@ -777,6 +859,8 @@ function Piece({
   flashId: string | null;
   editingId: string | null;
   onEnter: (id: string) => void;
+  /** 开这一块的页面。组和块都有 —— 正文不长在树上，长在 map/<id>/agent.md 里。 */
+  onOpen: (id: string) => void;
   onBeginRename: (id: string, el: HTMLElement | null) => void;
   onCommitRename: (id: string, name: string) => void;
   onCancelRename: () => void;
@@ -871,6 +955,7 @@ function Piece({
             flashId={flashId}
             editingId={editingId}
             onEnter={onEnter}
+            onOpen={onOpen}
             onBeginRename={onBeginRename}
             onCommitRename={onCommitRename}
             onCancelRename={onCancelRename}
@@ -953,6 +1038,17 @@ function Piece({
         )}
       </div>
       {roomForDelete && !editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
+      {roomForDelete && !editing && (
+        <button
+          type="button"
+          data-no-rename
+          onClick={() => onOpen(node.id)}
+          title={`打开 ${tree}（新页面）`}
+          className="absolute bottom-[3px] right-[3px] rounded-[3px] bg-black/35 px-1.5 py-[1px] text-[10px] leading-[1.3] text-white/90 opacity-0 backdrop-blur-sm transition-opacity duration-150 hover:bg-black/55 group-hover/leaf:opacity-100"
+        >
+          打开 ›
+        </button>
+      )}
     </div>
   );
 }
@@ -1084,6 +1180,14 @@ const IconEnter = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <path d="M3 3v5.2c0 .9.7 1.6 1.6 1.6H11" />
     <path d="M8.8 6.6 11 9.8l-2.2 3.2" transform="translate(0 -3)" />
+  </svg>
+);
+
+/** “打开”：一张纸右上角折一下。不让它长得像“进入”（那个是下一层）。 */
+const IconPage = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M3.2 1.8h5.2l2.4 2.4v8H3.2z" />
+    <path d="M8.4 1.8v2.5h2.4" />
   </svg>
 );
 

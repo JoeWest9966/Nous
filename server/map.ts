@@ -28,6 +28,9 @@ const INDEX = "README.md";
 /** id 直接当目录名用，所以这里必须同时挡路径穿越和跨平台怪字符。 */
 const SAFE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
+/** 节点 id 同时是文件夹名，规则和 board id 一样。读写 agent.md 之前必须过这一道。 */
+export const isNodeId = (id: string): boolean => SAFE_ID.test(id);
+
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
 /** 跟 `src/game.ts` 里 `freshId()` 同一个规格：32 字母表、6 位、无模偏。 */
@@ -47,13 +50,13 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
  *
  * 字段搬过两次家（`id` → `tree` → `id`），两个名字都认：老盘不升级也能长出 map/。
  */
-const adopt = (v: unknown): Node | undefined => {
+export const adoptNode = (v: unknown): Node | undefined => {
   if (!isRecord(v)) return undefined;
   const raw = typeof v.id === "string" ? v.id : v.tree;
   if (typeof raw !== "string" || !SAFE_ID.test(raw)) return undefined;
   const name = typeof v.name === "string" ? v.name : raw;
   if (Array.isArray(v.children)) {
-    const kids = v.children.map(adopt).filter((k): k is Node => k !== undefined);
+    const kids = v.children.map(adoptNode).filter((k): k is Node => k !== undefined);
     return { id: raw, name, children: kids };
   }
   return { id: raw, name, value: typeof v.value === "number" ? v.value : 0 };
@@ -62,7 +65,7 @@ const adopt = (v: unknown): Node | undefined => {
 const exists = async (p: string): Promise<boolean> =>
   (await readdir(path.dirname(p)).catch(() => [] as string[])).includes(path.basename(p));
 
-const stub = (id: string): string =>
+export const stub = (id: string): string =>
   `# ${id}\n\n这个文件属于节点 \`${id}\`。写什么都行 —— 应用不会覆盖它。\n`;
 
 /** 索引是纯派生的，每次保存整份重写。**它是唯一同时写着 id 和 tree 的地方。** */
@@ -97,7 +100,7 @@ export type SyncResult = { created: number; restored: number; buried: number };
  */
 export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncResult> {
   const out: SyncResult = { created: 0, restored: 0, buried: 0 };
-  const root = adopt(rawRoot);
+  const root = adoptNode(rawRoot);
   // 认不出这棵树就一个字节都别动：一棵认不出来的树会被当成空树，
   // 空树会把整个 map/ 埋进 .gone/ —— 一个坏请求不该有这种威力。
   if (!root) return out;

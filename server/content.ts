@@ -13,9 +13,10 @@
  * 它不知道 HTTP 长什么样，HTTP 在 `api.ts` 里。
  */
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
-import { freshId, syncMap } from "./map.ts";
+import { adoptNode, freshId, isNodeId, stub, syncMap } from "./map.ts";
+import type { Node } from "../src/game.ts";
 
 export type BoardSummary = {
   id: string;
@@ -43,8 +44,23 @@ const ID_OK = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const TREE = "tree.json";
 const LOG = "log.json";
 const LOG_LIMIT = 200;
+/** 每个节点的文件夹里那份人写的东西。名字在 `map.ts` 里定过，这里同一个。 */
+const MAP = "map";
+const DOC = "agent.md";
 
 export const isBoardId = (id: string): boolean => ID_OK.test(id);
+
+export type DocResult =
+  | { status: "ok"; text: string; etag: string; stub: boolean }
+  | { status: "no-board" }
+  | { status: "no-node" };
+
+/** 内容哈希，取前 16 位就够认人了 —— 比 mtime 可靠，也不依赖时钟。 */
+const etagOf = (text: string): string =>
+  createHash("sha1").update(text, "utf8").digest("hex").slice(0, 16);
+
+const hasNode = (node: Node, id: string): boolean =>
+  node.id === id || (node.children?.some((c) => hasNode(c, id)) ?? false);
 
 /** 原子写：写临时文件再 rename。断电只会留下一个孤儿 tmp，不会留下半截 json。 */
 async function writeJson(file: string, value: unknown): Promise<void> {
@@ -120,6 +136,32 @@ export class BoardStore {
   async log(id: string): Promise<unknown[]> {
     const raw = await readJson(path.join(this.dir(id), LOG));
     return isRecord(raw) && Array.isArray(raw.moves) ? raw.moves : [];
+  }
+
+  /**
+   * 一块的正文：`map/<nodeId>/agent.md`。
+   *
+   * 三件事值得写在这儿：
+   * - **树里没有这节点就不给看。** 目录可以被手动删、可以躺在 `.gone/` 里，
+   *   不能让一个旧书签顺着 id 把死节点读活。
+   * - **文件没了给 stub，但不落盘。** 看一眼不该长出一个文件；写是下一步的事。
+   * - **etag 是内容哈希，不是 mtime。** mtime 在 git checkout / rsync 下会乱。
+   */
+  async doc(id: string, nodeId: string): Promise<DocResult> {
+    // 双保险：api.ts 已经验过，但拼路径之前再过一道 —— 一个坏 id 能读到盘外面去。
+    if (!isNodeId(nodeId)) return { status: "no-node" };
+    const tree = await this.tree(id);
+    if (!tree) return { status: "no-board" };
+    const root = adoptNode(tree.root);
+    if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
+
+    try {
+      const text = await readFile(path.join(this.dir(id), MAP, nodeId, DOC), "utf8");
+      return { status: "ok", text, etag: etagOf(text), stub: false };
+    } catch {
+      const text = stub(nodeId);
+      return { status: "ok", text, etag: etagOf(text), stub: true };
+    }
   }
 
   /**

@@ -162,3 +162,31 @@ export async function saveBoard(
     }),
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * 块的正文：`map/<nodeId>/agent.md`
+ *
+ * 它和树是**两份互不相干的事实**：写一篇文章不该动 version，落一手棋也不该
+ * 让笔记变成 409。所以这里有自己的 etag（内容哈希），不走 board 的 baseVersion。
+ * ------------------------------------------------------------------ */
+
+export type Doc = {
+  text: string;
+  /** 内容哈希。写回时带上它，磁盘被改过就是 409。 */
+  etag: string;
+  /** true = 磁盘上还没有这个文件，text 是程序给的 stub。 */
+  stub: boolean;
+};
+
+const docUrl = (board: string, node: string): string =>
+  `${url(board)}/nodes/${encodeURIComponent(node)}/doc`;
+
+/**
+ * 树里没有这节点、或者没这一盘，都返回 `null` ——
+ * 调用方要画的是「查无此块」，不是一个错误页。
+ */
+export async function loadDoc(board: string, node: string): Promise<Doc | null> {
+  const res = await fetch(docUrl(board, node), { headers: { accept: "application/json" } });
+  if (res.status === 404) return null;
+  return asJson<Doc>(res);
+}
