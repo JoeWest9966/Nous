@@ -1,15 +1,18 @@
 /**
- * 有代码的块 = 一个独立进程。
+ * 一个块 = 一个独立进程。**没有条件。**
  *
- * 契约只有一条，但它是硬的：**块的文件夹里有 `package.json` 且写了 `scripts.start`，
- * 那个文件夹就必须能自己跑起来。** 宿主不认识它的语言、不看它的依赖、不 import 它 ——
- * 宿主只做反代：`/p/<board>/<id>/*` 剥掉前缀，剩下的原样怼到它监听的端口上。
+ * - 写了 `scripts.start`：那个进程就是它自己写的，宿主只做反代。
+ * - 没写：宿主给它一个内置的空跑 server（`blank.mjs`）—— 文件夹里有 `index.html` 就静态端出去，
+ *   没有就一张**真正的空白页**。空白页也是块自己的页面，宿主不替它画。
+ *
+ * 宿主不认识块的语言、不看它的依赖、不 import 它。`/p/<board>/<id>/*` 剥掉前缀，
+ * 剩下的原样怼到那个进程监听的端口上。
  *
  * 由此换来三件在单进程里做不到的事：
  *
- * - `cp -r map/<id> ~/<id> && npm start` 和宿主里打开是同一页（所以块里所有链接必须写**相对路径**）。
- * - 崩了只坏那一页。宿主拿 stderr 的最后几行当墓碑，树、别的块、编辑器一概不受影响。
- * - 将来它换 origin、进容器、上域名，宿主这边的块代码一行不改。
+ * - `cp -r map/<id> ~/<id> && npm start` 和宿主里打开是同一页（所以块里链接必须写**相对路径**）。
+ * - 崩了只坏那一页。宿主拿 stderr 的最后几行当墓碑，树、别的块一概不受影响。
+ * - 将来它换 origin、进容器、上域名，块代码一行不改 —— 只改 `ctx.ts` 里那张地址表。
  *
  * 进程是这套架构里唯一 fake 不掉的东西：接口可以口头约定，API 可以绕过，
  * 但「两个东西跑在两个进程里」这件事骗不了人。
@@ -19,8 +22,7 @@
  * - `PORT`         宿主分配的空闲端口，块必须听它
  * - `NOUS_DATA`    持久化数据放这儿（= 它的文件夹下的 data/），`cp` 走就带走了
  * - `NOUS_ORIGIN`  宿主自己的地址，块之间打电话用它
- * - `NOUS_SELF`    我在宿主里叫什么（`/p/<board>/<id>`）。有了它，
- *                  搬出去跑的时候也能取回自己的上下文：`NOUS_ORIGIN + NOUS_SELF + "/__nous/ctx"`
+ * - `NOUS_SELF`    我在宿主里叫什么（`/p/<board>/<id>`）。搬出去跑也取得到自己的上下文
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
@@ -28,6 +30,7 @@ import { mkdir } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { BoardStore } from "./content.ts";
 import { adoptNode, hasNode } from "./map.ts";
 
@@ -37,6 +40,10 @@ const BOOT_TIMEOUT = 20_000;
 const IDLE_MS = 10 * 60_000;
 const LOG_LIMIT = 8_000;
 const START = "start";
+/** 没写代码的块用这个跑：它就在宿主这边，不在块的文件夹里。 */
+const BLANK = path.join(path.dirname(fileURLToPath(import.meta.url)), "blank.mjs");
+/** 空跑进程在 `cmd` 里的标记 —— 用来识别「这一版还是那个空跑 server」。 */
+const BLANK_TAG = "__blank__";
 
 type Run = {
   key: string;
@@ -98,17 +105,25 @@ const kill = (run: Run): void => {
   }
 };
 
+type Launch = { bin: string; args: string[]; cmd: string };
+
+const launchFor = (folder: string, startScript: string): Launch =>
+  startScript
+    ? { bin: "npm", args: [START], cmd: startScript }
+    : // 空块也是进程：内置 server 直接跑，不过 npm（没有安装、没有 package.json）。
+      { bin: process.execPath, args: [BLANK, folder], cmd: BLANK_TAG };
+
 const start = async (
   key: string,
   folder: string,
-  cmd: string,
+  launch: Launch,
   origin: string,
 ): Promise<Run | { error: string; logs: string }> => {
   const port = await freePort();
   const data = path.join(folder, "data");
   await mkdir(data, { recursive: true }).catch(() => undefined);
 
-  const child = spawn("npm", [START], {
+  const child = spawn(launch.bin, launch.args, {
     cwd: folder,
     // detached：给它一个自己的进程组，收尸的时候能连孙进程一起收。
     detached: true,
@@ -125,7 +140,7 @@ const start = async (
   const run: Run = {
     key,
     folder,
-    cmd,
+    cmd: launch.cmd,
     port,
     child,
     ready: false,
@@ -154,20 +169,22 @@ const start = async (
     if (runs.get(key) === run) runs.delete(key);
   });
 
-  // 代码改了 = 收掉。不在这里自动重开：崩得勤的块会把机器烧穿，
-  // 让下一个请求去开（那时它就是带着新代码起来的）。
-  try {
-    let timer: NodeJS.Timeout | undefined;
-    run.watcher = watch(folder, { recursive: true }, (_evt, file) => {
-      const rel = file?.toString() ?? "";
-      // 数据不是代码；node_modules 是 npm 的地盘，动它等于自杀。
-      if (rel.startsWith(`data${path.sep}`) || rel.startsWith(`node_modules${path.sep}`)) return;
-      clearTimeout(timer);
-      timer = setTimeout(() => kill(run), 300);
-    });
-    run.watcher.on("error", () => run.watcher?.close());
-  } catch {
-    // 有些文件系统不支持 recursive watch —— 那就等手动重启，不因为它起不来。
+  // 有代码的块盯文件夹：代码一改就收掉（下一次请求带着新代码起来）。
+  // 空块不盯：它没有代码可热，改 agent.md 不该把进程重启一遍。
+  if (launch.cmd !== BLANK_TAG) {
+    try {
+      let timer: NodeJS.Timeout | undefined;
+      run.watcher = watch(folder, { recursive: true }, (_evt, file) => {
+        const rel = file?.toString() ?? "";
+        // 数据不是代码；node_modules 是 npm 的地盘，动它等于自杀。
+        if (rel.startsWith(`data${path.sep}`) || rel.startsWith(`node_modules${path.sep}`)) return;
+        clearTimeout(timer);
+        timer = setTimeout(() => kill(run), 300);
+      });
+      run.watcher.on("error", () => run.watcher?.close());
+    } catch {
+      // 有些文件系统不支持 recursive watch —— 那就等手动重启，不因为它起不来。
+    }
   }
 
   const until = Date.now() + BOOT_TIMEOUT;
@@ -187,13 +204,13 @@ const start = async (
 const acquire = async (
   key: string,
   folder: string,
-  cmd: string,
+  launch: Launch,
   origin: string,
 ): Promise<Run | { error: string; logs: string }> => {
   const existing = runs.get(key);
   if (existing) {
     // start 脚本被改过了：那份进程跑的是上一版代码，留着只会骗人。
-    if (existing.cmd !== cmd) {
+    if (existing.cmd !== launch.cmd) {
       kill(existing);
     } else {
       existing.lastUsed = Date.now();
@@ -202,7 +219,7 @@ const acquire = async (
   }
   const pending = booting.get(key);
   if (pending) return pending;
-  const p = start(key, folder, cmd, origin).finally(() => booting.delete(key));
+  const p = start(key, folder, launch, origin).finally(() => booting.delete(key));
   booting.set(key, p);
   return p;
 };
@@ -312,20 +329,12 @@ export function blocksApi(store: BoardStore, opts: BlocksOptions) {
         next();
         return;
       }
-      const cmd = await store.startCmd(board, node);
-      if (!cmd) {
-        // 代码没了（`start` 被删、文件夹被清空）：还开着的进程得收走，
-        // 否则它会一直以旧代码应答一个已经不再属于它的地址。
-        const stale = runs.get(`${board}/${node}`);
-        if (stale) kill(stale);
-        next();
-        return;
-      }
+      const launch = launchFor(folder, await store.startCmd(board, node));
 
       const prefix = `/p/${board}/${node}`;
       const key = `${board}/${node}`;
       const origin = req.headers.host ? `http://${req.headers.host}` : opts.origin;
-      const run = await acquire(key, folder, cmd, origin);
+      const run = await acquire(key, folder, launch, origin);
       if ("error" in run) {
         req.resume();
         res.writeHead(502, { "content-type": "text/html; charset=utf-8" });

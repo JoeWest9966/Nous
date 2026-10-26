@@ -53,11 +53,10 @@ const pathKey = (id: string): string => `nous-path:${id}`;
  * hash 得等 SPA 先跑起来才认，而这一页要能被冷启动、粘到别处、被将来那个
  * 独立进程自己 serve —— 那就必须是一条真路径。
  *
- * 后面多余的段留给块自己（`/p/new1/n39/orders/42`），这里只管前两段。
- * `__nous/` 是留给宿主的那一段：块的进程可以拿走其余所有路径，只有 `__nous/` 永远是壳的
- * （笔记页在这儿，将来块要问宿主「我是谁」也在这儿）。
+ * **只在 `__nous/` 下面才有壳的页面。** `/p/<board>/<id>/` 往下全归那个块的进程 ——
+ * 没开发的块就是一张空白页，壳不去替它画。这段正则因此只认笔记页那一条。
  */
-const DOC_URL = /^\/p\/([^/]+)\/([^/]+)(?:\/__nous\/doc)?\/?$/;
+const DOC_URL = /^\/p\/([^/]+)\/([^/]+)\/__nous\/doc\/?$/;
 
 function readLocation(): { board?: string; doc?: string } {
   const hit = DOC_URL.exec(window.location.pathname);
@@ -388,10 +387,19 @@ export function App() {
   };
 
   /**
-   * 开一块的页面。写 URL 用 pushState —— 于是浏览器的后退键就是“返回盘面”，
-   * 刷新也停在原处。**不卸载盘面**：它只是被盖在下面。
+   * 开一块的页面。**整页跳走**，不是盖一层：那一页是它自己的进程端出来的，
+   * 壳管不着它长什么样（没开发的块就停在一张空白页上）。后退键回盘面。
    */
   const openBlock = (id: string) => {
+    if (!projectId) return;
+    window.location.assign(`/p/${encodeURIComponent(projectId)}/${encodeURIComponent(id)}/`);
+  };
+
+  /**
+   * 开它的笔记本（`agent.md`）。这个是壳的页面，所以留在 SPA 里、盖在盘面上、
+   * 不卸载盘面 —— 否则树的展开状态、滚动位置、撤销栈全丢。
+   */
+  const openNotes = (id: string) => {
     if (!projectId) return;
     window.history.pushState(
       null,
@@ -482,6 +490,12 @@ export function App() {
         label: "打开",
         icon: <IconPage />,
         run: () => openBlock(id),
+      },
+      {
+        key: "notes",
+        label: "笔记",
+        icon: <IconNote />,
+        run: () => openNotes(id),
       },
       {
         key: "rename",
@@ -1191,6 +1205,12 @@ const IconPage = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <path d="M3.2 1.8h5.2l2.4 2.4v8H3.2z" />
     <path d="M8.4 1.8v2.5h2.4" />
+  </svg>
+);
+
+const IconNote = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M2.4 3.1h9.2M2.4 6.4h9.2M2.4 9.7h5.4" />
   </svg>
 );
 

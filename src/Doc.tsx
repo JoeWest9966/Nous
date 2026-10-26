@@ -402,18 +402,17 @@ export function DocPage({
                 </p>
               )}
 
-              {hasApp && (
-                <a
-                  href={`/p/${encodeURIComponent(board)}/${encodeURIComponent(id)}/`}
-                  className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-muted transition-colors hover:text-text"
-                >
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-                  <span className="min-w-0 flex-1 truncate">
-                    这一块自己在跑（文件夹里有 scripts.start）—— 这是它的笔记，它的界面在隔壁
-                  </span>
-                  <span className="shrink-0">打开界面 ›</span>
-                </a>
-              )}
+              <a
+                href={`/p/${encodeURIComponent(board)}/${encodeURIComponent(id)}/`}
+                className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-muted transition-colors hover:text-text"
+              >
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                <span className="min-w-0 flex-1 truncate">
+                  {hasApp ? "这一块在自己跑（文件夹里有 scripts.start）" : "这一块还没有界面，打开是一张空白页"}
+                  —— 它是个独立进程，这是它的笔记本
+                </span>
+                <span className="shrink-0">打开它 ›</span>
+              </a>
 
               {stubFile && (
                 <p className="mb-3 text-[11.5px] text-muted/70">
