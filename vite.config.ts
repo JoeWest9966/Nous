@@ -58,8 +58,8 @@ export default defineConfig(({ mode }) => {
         registerType: "autoUpdate",
         includeAssets: ["icon.svg"],
         manifest: {
-          name: "N",
-          short_name: "N",
+          name: "Nous",
+          short_name: "Nous",
           description: "The Durable Agent Network panel.",
           display: "standalone",
           start_url: "/",

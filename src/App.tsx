@@ -37,15 +37,15 @@ import {
 
 const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
 /** 左栏默认是收起的。只有你手动展开过才记一个 1 —— 没记录就是关着。 */
-const SIDE_KEY = "n-sidebar-open";
+const SIDE_KEY = "nous-sidebar-open";
 /** 上次开着的是哪个项目。这个存在浏览器里无所谓 —— 丢了只是回到默认那一盘。 */
-const PROJECT_KEY = "n-project";
+const PROJECT_KEY = "nous-project";
 
 /**
  * 你在哪一层：`content/<id>` 里的项目文件不该记这个 ——
  * 那是「我刚才看到哪」，属于这台设备和这次会话；换个设备未必要看同一层。
  */
-const pathKey = (id: string): string => `n-path:${id}`;
+const pathKey = (id: string): string => `nous-path:${id}`;
 
 function readPath(id: string): string[] {
   try {

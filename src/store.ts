@@ -53,7 +53,7 @@ export type Draft = {
   at: string;
 };
 
-const draftKey = (id: string): string => `n-draft:${id}`;
+const draftKey = (id: string): string => `nous-draft:${id}`;
 
 const isDraft = (v: unknown): v is Draft => {
   const d = v as Draft | null;
