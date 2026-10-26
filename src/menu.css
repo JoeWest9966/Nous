@@ -1,0 +1,267 @@
+/* 07 号 · 三点菜单。材质全部从 token 混出来 —— 换调色板不用改这个文件。
+ *
+ * 只动 transform / translate / scale / opacity：按钮绝不推布局。
+ * 进场的弹簧是真实阻尼振子采样出来的 `linear()`；退场 140ms 无过冲。
+ */
+
+:root {
+  /* spring(k=420, c=30)：418ms 到 1，回弹 3.2% */
+  --nm-spring: linear(
+    0.0004, 0.0386 3.3%, 0.1287 6.7%, 0.2465 10%, 0.3742 13.3%, 0.4999 16.7%,
+    0.6158 20%, 0.7174 23.3%, 0.7973 26.7%, 0.8675 30%, 0.9223 33.3%, 0.9633 36.7%,
+    0.9926 40%, 1.0122 43.3%, 1.0242 46.7%, 1.0304 50%, 1.0323 53.3%, 1.0315 56.7%,
+    1.0287 60%, 1.025 63.3%, 1.0209 66.7%, 1.0168 70%, 1.013 73.3%, 1.0099 76.7%,
+    1.007 80%, 1.0046 83.3%, 1.0028 86.7%, 1.0014 90%, 1.0004 93.3%, 0.9997 96.7%,
+    0.9993 100%
+  );
+  --nm-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --nm-glass: color-mix(in oklab, var(--n-color-raised) 88%, transparent);
+  --nm-edge: color-mix(in oklab, var(--n-color-text) 12%, transparent);
+  --nm-lift: inset 0 1px 0 color-mix(in oklab, var(--n-color-text) 14%, transparent);
+  --nm-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.28), 0 3px 10px -4px rgba(0, 0, 0, 0.45),
+    0 14px 32px -14px rgba(0, 0, 0, 0.72);
+  --nm-hover: color-mix(in oklab, var(--n-color-text) 8%, transparent);
+}
+
+:root[data-theme="light"] {
+  --nm-shadow:
+    0 1px 1px rgba(16, 20, 26, 0.05), 0 3px 8px -4px rgba(16, 20, 26, 0.1),
+    0 14px 30px -14px rgba(16, 20, 26, 0.3);
+}
+
+/* ── 那颗 ••• ─────────────────────────────────────────────────────────────── */
+
+.nm-dots {
+  position: absolute;
+  appearance: none;
+  -webkit-appearance: none;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--nm-edge);
+  border-radius: 50%;
+  background: var(--nm-glass);
+  color: var(--n-color-text);
+  box-shadow: var(--nm-shadow), var(--nm-lift);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  cursor: pointer;
+  font: inherit;
+  z-index: 5;
+  /* 平时完全不存在：不亮、不吃点击。宿主 hover / 里面有焦点时才浮出来。 */
+  opacity: 0;
+  scale: 0.86;
+  pointer-events: none;
+  transition:
+    opacity 110ms var(--nm-exit),
+    scale 130ms var(--nm-exit),
+    background 120ms ease;
+}
+
+.nm-dots > svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* 行上的：22px，贴着右边，垂直居中。••• 在行那个 div 里（和名字、数值同一层）。 */
+.nm-host--row .nm-dots {
+  top: 50%;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  translate: 0 -50%;
+}
+
+/* 块上的：尺寸跟着块走，块的角越窄它越小 */
+.nm-dots--block {
+  top: 3px;
+  right: 3px;
+  width: 20px;
+  height: 20px;
+  /* 块的颜色五花八门，玻璃在上面不一定看得清 —— 跟应用原来那个 × 一样压一层黑 */
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.34);
+  color: rgba(255, 255, 255, 0.92);
+  box-shadow: none;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.nm-dots--block[data-size="s"] {
+  width: 17px;
+  height: 17px;
+  top: 3px;
+  right: 3px;
+}
+
+.nm-dots--block[data-size="s"] > svg {
+  width: 10px;
+  height: 10px;
+}
+
+.nm-dots--block[data-size="xs"] {
+  width: 14px;
+  height: 14px;
+  top: 2px;
+  right: 2px;
+  border-width: 0.5px;
+}
+
+.nm-dots--block[data-size="xs"] > svg {
+  width: 8px;
+  height: 8px;
+}
+
+/* 宿主 hover、宿主里有焦点、或者菜单正开着（这时鼠标可能已经不在行上了）。
+   行用后代选择器（••• 跟名字同层）；块必须用直接子代 —— 不然 hover 一个区块
+   会把它里面所有小块的点也一起点亮。 */
+.nm-host--row:is(:hover, :focus-within) .nm-dots,
+.nm-host--block:is(:hover, :focus-within) > .nm-dots,
+.nm-dots[data-open] {
+  opacity: 1;
+  scale: 1;
+  pointer-events: auto;
+  transition:
+    opacity 150ms linear,
+    scale 340ms var(--nm-spring),
+    background 120ms ease;
+}
+
+/* 没有 hover 的设备（手机、平板）：悬停这套规则永远不会触发，
+   所以那颗 ••• 得一直亮着 —— 否则它在触屏上根本点不到。 */
+@media (hover: none) {
+  .nm-dots {
+    opacity: 1;
+    scale: 1;
+    pointer-events: auto;
+  }
+}
+
+.nm-dots--block:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.nm-host--row .nm-dots:hover {
+  background: var(--nm-hover);
+}
+
+.nm-dots:focus-visible {
+  outline: 1.5px solid var(--n-color-accent);
+  outline-offset: 1px;
+}
+
+/* ── 菜单 ─────────────────────────────────────────────────────────────────── */
+
+.nm-menu {
+  position: fixed;
+  z-index: 200;
+  width: 188px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--nm-glass);
+  border: 1px solid var(--nm-edge);
+  box-shadow: var(--nm-shadow), var(--nm-lift);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+  opacity: 0;
+  scale: 0.92;
+  translate: 0 -6px;
+  pointer-events: none;
+  transition:
+    opacity 120ms var(--nm-exit),
+    scale 140ms var(--nm-exit),
+    translate 140ms var(--nm-exit);
+}
+
+.nm-menu[data-open="true"] {
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
+  pointer-events: auto;
+  transition:
+    opacity 170ms linear,
+    scale 340ms var(--nm-spring),
+    translate 340ms var(--nm-spring);
+}
+
+.nm-menu > button {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--n-color-text);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  /* 每一条错开 30ms 出来，像牌摊开 */
+  opacity: 0;
+  translate: 0 -3px;
+  transition:
+    opacity 100ms linear,
+    translate 120ms var(--nm-exit),
+    background 120ms ease;
+}
+
+.nm-menu[data-open="true"] > button {
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    opacity 120ms linear,
+    translate 260ms var(--nm-spring),
+    background 120ms ease;
+  transition-delay: calc(40ms + var(--i) * 30ms);
+}
+
+.nm-menu > button:hover,
+.nm-menu > button:focus-visible {
+  background: var(--nm-hover);
+}
+
+.nm-menu > button:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-color-accent) 70%, transparent);
+}
+
+.nm-menu > button > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  opacity: 0.8;
+}
+
+.nm-menu > button.nm-danger {
+  color: var(--n-color-danger);
+}
+
+.nm-menu > button.nm-danger:hover,
+.nm-menu > button.nm-danger:focus-visible {
+  background: color-mix(in oklab, var(--n-color-danger) 14%, transparent);
+}
+
+.nm-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--n-color-border);
+}
+
+/* 系统让少动，就一步到位 —— 但别留个半透明的东西在屏幕上 */
+@media (prefers-reduced-motion: reduce) {
+  .nm-dots,
+  .nm-menu,
+  .nm-menu > button {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}

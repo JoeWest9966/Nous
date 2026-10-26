@@ -25,11 +25,14 @@ npm run build && npm run preview   # 4783，吃 dist/
 `demoInputs()`），产物落在 `dist/demo/<名字>/`，所以 `vite preview` 直接 serve。扔一个新目录
 `demo/foo/index.html` 进来就自动进构建，不用改配置。
 
-之前 demo 单占 `4784`，那个端口已经不用了。只剩一个真的理由会想开它 —— 改 demo 想看热更新：
+**只有一个 4783**（`4784` 已删）。两种起法，二选一，不能同时：
 
 ```bash
-npm run demo          # = vite --port 4784，边改边看
+npm run build && npm run preview   # 吃 dist，demo 在 dist/demo/ 里，改了要重新 build
+npm run demo                       # = vite，dev server 就在 4783，改 demo 立刻生效
 ```
+
+`strictPort` 开着，所以两个都想起会直接报端口被占 —— 先把 preview 停掉再 `npm run demo`。
 
 ## 页面上的开关
 
@@ -124,6 +127,11 @@ demo/button/main.js      19 个方案的 DOM + 八个需要 JS 的行为（长�
 ---
 
 ## 装在真盘子上的实例：07 号 · 三点菜单
+
+> **07 号已经进 `src/` 了**（`src/NodeMenu.tsx` + `src/menu.css`），真身自己就有这颗 •••。
+> 这个 demo 目录保留下来只当对照 —— 它靠运行时注入，会和真身那颗打架（同一行两颗 •••）。
+> 想看干净的效果，直接开 `http://100.106.43.81:4783/`。
+
 
 同一个菜单挂两个地方 —— **左列的行**和**盘面上的块**。这是 07 存在的理由：
 三个以上动作就不该排一排图标，尤其块会被布局挤到 30px 见方，一排按钮根本塞不下。

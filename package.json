@@ -8,7 +8,7 @@
     "build": "tsc --noEmit -p . && vite build",
     "check": "tsc --noEmit -p .",
     "preview": "vite preview",
-    "demo": "vite --port 4784"
+    "demo": "vite"
   },
   "dependencies": {
     "react": "^19.3.1",

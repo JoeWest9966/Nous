@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Find, type Hit } from "./Find";
 import { NameInput } from "./Rename";
+import { NodeMenuProvider, NodeMenuTrigger, type MenuItem } from "./NodeMenu";
 import { Tree } from "./Tree";
+import { copyText } from "./clipboard";
 import {
   type Box,
   type Node,
@@ -409,6 +411,55 @@ export function App() {
 
   const cancelRename = () => endRename();
 
+  /**
+   * 07 号菜单里那几条。删除已经收进菜单了（行上、块上只留一颗 •••），
+   * 所以「重命名 / 复制名字 / 复制路径 / 删除」这套动作得在这儿接住。
+   */
+  const menuItems = (id: string, host: HTMLElement): MenuItem[] => {
+    const node = findNode(root, id);
+    if (!node) return [];
+    // 输入框就长在这一行 / 这一块里面 —— 行和块都有一层 [data-node-id]。
+    const target =
+      host.querySelector<HTMLElement>("[data-node-id]") ?? host.closest<HTMLElement>("[data-node-id]");
+    const items: MenuItem[] = [
+      {
+        key: "rename",
+        label: "重命名",
+        icon: <IconPencil />,
+        run: () => beginRename(id, target, target?.closest("aside") ? "tree" : "board"),
+      },
+      {
+        key: "copy-name",
+        label: "复制名字",
+        icon: <IconCopy />,
+        run: () => void copyText(node.name),
+      },
+      {
+        key: "copy-path",
+        label: "复制路径",
+        icon: <IconLink />,
+        run: () => void copyText(handles.get(id) ?? node.name),
+      },
+    ];
+    if (isSection(node)) {
+      items.push({
+        key: "enter",
+        label: "进入",
+        icon: <IconEnter />,
+        run: () => setPath((prev) => [...prev, id]),
+      });
+    }
+    items.push({
+      key: "remove",
+      label: "删除",
+      icon: <IconTrash />,
+      danger: true,
+      separatorBefore: true,
+      run: () => remove(id),
+    });
+    return items;
+  };
+
   const undo = () => {
     if (!past.length) return;
     const back = past[past.length - 1]!;
@@ -534,175 +585,175 @@ export function App() {
   }, [here, size]);
 
   return (
-    <main className="relative flex h-dvh w-full overflow-hidden bg-canvas text-text antialiased">
-      <aside
-        className={`shrink-0 overflow-hidden border-r border-border bg-canvas transition-[width] duration-300 ${EASE} ${
-          narrow
-            ? `absolute bottom-0 left-0 top-[52px] z-20 shadow-[0_0_60px_rgba(0,0,0,0.6)] ${side ? "w-[248px]" : "w-0 border-r-0"}`
-            : `relative ${side ? "w-[248px]" : "w-0 border-r-0"}`
-        }`}
-        aria-hidden={!side}
-      >
-        <div
-          className={`h-full w-[248px] overflow-y-auto ${side ? "opacity-100" : "opacity-0"} transition-opacity duration-200`}
+    <NodeMenuProvider items={menuItems}>
+      <main className="relative flex h-dvh w-full overflow-hidden bg-canvas text-text antialiased">
+        <aside
+          className={`shrink-0 overflow-hidden border-r border-border bg-canvas transition-[width] duration-300 ${EASE} ${
+            narrow
+              ? `absolute bottom-0 left-0 top-[52px] z-20 shadow-[0_0_60px_rgba(0,0,0,0.6)] ${side ? "w-[248px]" : "w-0 border-r-0"}`
+              : `relative ${side ? "w-[248px]" : "w-0 border-r-0"}`
+          }`}
+          aria-hidden={!side}
         >
-          <Tree
-            root={root}
-            path={path}
-            editingId={editing?.where === "tree" ? editing.id : null}
-            onEnter={setPath}
-            onRemove={remove}
-            onBeginRename={(id, el) => beginRename(id, el, "tree")}
-            onCommitRename={commitRename}
-            onCancelRename={cancelRename}
-          />
-        </div>
-      </aside>
-
-      {narrow && side && (
-        <button
-          type="button"
-          aria-label="关闭左列浮层"
-          onClick={() => setSide(false)}
-          className="absolute bottom-0 left-0 top-[52px] z-10 w-full bg-black/40"
-        />
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-3">
-          <IconButton
-            label={side ? "收起左列" : "展开左列"}
-            onClick={() => setSide(!side)}
-            className={side ? "text-text/80" : "text-muted"}
+          <div
+            className={`h-full w-[248px] overflow-y-auto ${side ? "opacity-100" : "opacity-0"} transition-opacity duration-200`}
           >
-            <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
-              <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
-              <path d="M6 2.5v11" stroke="currentColor" strokeWidth="1.2" />
-            </svg>
-          </IconButton>
+            <Tree
+              root={root}
+              path={path}
+              editingId={editing?.where === "tree" ? editing.id : null}
+              onEnter={setPath}
+              onBeginRename={(id, el) => beginRename(id, el, "tree")}
+              onCommitRename={commitRename}
+              onCancelRename={cancelRename}
+            />
+          </div>
+        </aside>
 
-          <nav className="flex min-w-0 items-center gap-0.5 text-[13px]" aria-label="项目与路径">
-            <select
-              value={projectId ?? ""}
-              onChange={(e) => (e.target.value === NEW_BOARD ? void newBoard() : setProjectId(e.target.value))}
-              title="每个目录是一个独立项目"
-              className="mr-1 h-7 max-w-[150px] shrink-0 truncate rounded-lg bg-surface px-1.5 text-[12px] text-text/90 outline-none hover:bg-raised"
-            >
-              {boards.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-              <option value={NEW_BOARD}>＋ 新项目…</option>
-            </select>
-            <span className="text-text/25" aria-hidden="true">/</span>
-            <button
-              type="button"
-              onClick={() => setPath([])}
-              className={`truncate rounded-md px-1.5 py-1 transition-colors ${path.length ? "text-muted hover:text-text" : "text-text"}`}
-            >
-              {root.name}
-            </button>
-            {path.map((id, i) => (
-              <span key={id} className="flex min-w-0 items-center gap-0.5">
-                <span className="text-text/25" aria-hidden="true">›</span>
-                <button
-                  type="button"
-                  onClick={() => setPath(path.slice(0, i + 1))}
-                  className={`truncate rounded-md px-1.5 py-1 transition-colors ${
-                    i === path.length - 1 ? "text-text" : "text-muted hover:text-text"
-                  }`}
-                >
-                  {findNode(root, id)?.name ?? "?"}
-                </button>
-              </span>
-            ))}
-          </nav>
+        {narrow && side && (
+          <button
+            type="button"
+            aria-label="关闭左列浮层"
+            onClick={() => setSide(false)}
+            className="absolute bottom-0 left-0 top-[52px] z-10 w-full bg-black/40"
+          />
+        )}
 
-          <div className="ml-auto flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={status === "conflict" ? reload : undefined}
-              disabled={status !== "conflict"}
-              title={
-                status === "conflict"
-                  ? "磁盘上的这一盘被别的窗口改过了。点一下重读磁盘，本地这几手会丢。"
-                  : "每次落子自动写到 content/<id>/tree.json"
-              }
-              className={`mr-1 text-[11px] tabular-nums transition-colors ${
-                status === "conflict" ? "text-danger hover:underline" : "text-muted"
-              }`}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-3">
+            <IconButton
+              label={side ? "收起左列" : "展开左列"}
+              onClick={() => setSide(!side)}
+              className={side ? "text-text/80" : "text-muted"}
             >
-              {STATUS_TEXT[status]}
-            </button>
-            <div className="mr-1 flex items-baseline gap-1.5">
-              <span className="text-[11px] text-muted">总分</span>
-              <span className="text-[17px] font-semibold tabular-nums" style={{ letterSpacing: "-0.02em" }}>
-                {valueOf(root)}
-              </span>
-            </div>
-            <IconButton label="按 id 找一块（⌘K）" onClick={() => setFindOpen(true)}>
               <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
-                <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
-                <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <rect x="1.5" y="2.5" width="13" height="11" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M6 2.5v11" stroke="currentColor" strokeWidth="1.2" />
               </svg>
             </IconButton>
-            <Pill onClick={undo} disabled={!past.length} title="⌘Z / Ctrl+Z">
-              撤销
-            </Pill>
-            <Pill onClick={addBlock} disabled={status === "conflict"}>
-              ＋ 块
-            </Pill>
-            <Pill onClick={addGroup} disabled={status === "conflict"}>
-              ＋ 组
-            </Pill>
-            <Pill onClick={reset} muted>
-              重开
-            </Pill>
-          </div>
-        </header>
 
-        <div ref={board} className="relative min-h-0 flex-1 bg-board p-2" aria-label="盘面">
-          {orphan && (
-            <div className="absolute inset-x-2 top-2 z-30 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] shadow-lg">
-              <span className="min-w-0 flex-1 text-muted">
-                本地有 {orphan.moves.length} 手没发出去，但磁盘上的这一盘已经被改过了。两边都还在，你选。
-              </span>
-              <Pill onClick={keepDraft}>用本地的</Pill>
-              <Pill onClick={dropDraft} muted>
-                丢掉本地的
+            <nav className="flex min-w-0 items-center gap-0.5 text-[13px]" aria-label="项目与路径">
+              <select
+                value={projectId ?? ""}
+                onChange={(e) => (e.target.value === NEW_BOARD ? void newBoard() : setProjectId(e.target.value))}
+                title="每个目录是一个独立项目"
+                className="mr-1 h-7 max-w-[150px] shrink-0 truncate rounded-lg bg-surface px-1.5 text-[12px] text-text/90 outline-none hover:bg-raised"
+              >
+                {boards.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+                <option value={NEW_BOARD}>＋ 新项目…</option>
+              </select>
+              <span className="text-text/25" aria-hidden="true">/</span>
+              <button
+                type="button"
+                onClick={() => setPath([])}
+                className={`truncate rounded-md px-1.5 py-1 transition-colors ${path.length ? "text-muted hover:text-text" : "text-text"}`}
+              >
+                {root.name}
+              </button>
+              {path.map((id, i) => (
+                <span key={id} className="flex min-w-0 items-center gap-0.5">
+                  <span className="text-text/25" aria-hidden="true">›</span>
+                  <button
+                    type="button"
+                    onClick={() => setPath(path.slice(0, i + 1))}
+                    className={`truncate rounded-md px-1.5 py-1 transition-colors ${
+                      i === path.length - 1 ? "text-text" : "text-muted hover:text-text"
+                    }`}
+                  >
+                    {findNode(root, id)?.name ?? "?"}
+                  </button>
+                </span>
+              ))}
+            </nav>
+
+            <div className="ml-auto flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={status === "conflict" ? reload : undefined}
+                disabled={status !== "conflict"}
+                title={
+                  status === "conflict"
+                    ? "磁盘上的这一盘被别的窗口改过了。点一下重读磁盘，本地这几手会丢。"
+                    : "每次落子自动写到 content/<id>/tree.json"
+                }
+                className={`mr-1 text-[11px] tabular-nums transition-colors ${
+                  status === "conflict" ? "text-danger hover:underline" : "text-muted"
+                }`}
+              >
+                {STATUS_TEXT[status]}
+              </button>
+              <div className="mr-1 flex items-baseline gap-1.5">
+                <span className="text-[11px] text-muted">总分</span>
+                <span className="text-[17px] font-semibold tabular-nums" style={{ letterSpacing: "-0.02em" }}>
+                  {valueOf(root)}
+                </span>
+              </div>
+              <IconButton label="按 id 找一块（⌘K）" onClick={() => setFindOpen(true)}>
+                <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
+                  <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                  <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                </svg>
+              </IconButton>
+              <Pill onClick={undo} disabled={!past.length} title="⌘Z / Ctrl+Z">
+                撤销
+              </Pill>
+              <Pill onClick={addBlock} disabled={status === "conflict"}>
+                ＋ 块
+              </Pill>
+              <Pill onClick={addGroup} disabled={status === "conflict"}>
+                ＋ 组
+              </Pill>
+              <Pill onClick={reset} muted>
+                重开
               </Pill>
             </div>
-          )}
-          {placed.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[13px] text-muted">
-              <span>盘上什么都没有了</span>
-              <Pill onClick={() => addBlockTo(root.id)}>＋ 块</Pill>
+          </header>
+
+          <div ref={board} className="relative min-h-0 flex-1 bg-board p-2" aria-label="盘面">
+            {orphan && (
+              <div className="absolute inset-x-2 top-2 z-30 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] shadow-lg">
+                <span className="min-w-0 flex-1 text-muted">
+                  本地有 {orphan.moves.length} 手没发出去，但磁盘上的这一盘已经被改过了。两边都还在，你选。
+                </span>
+                <Pill onClick={keepDraft}>用本地的</Pill>
+                <Pill onClick={dropDraft} muted>
+                  丢掉本地的
+                </Pill>
+              </div>
+            )}
+            {placed.length === 0 && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[13px] text-muted">
+                <span>盘上什么都没有了</span>
+                <Pill onClick={() => addBlockTo(root.id)}>＋ 块</Pill>
+              </div>
+            )}
+            <div className="relative h-full w-full">
+              {placed.map((p) => (
+                <Piece
+                  key={p.node.id}
+                  piece={p}
+                  origin={{ x: 0, y: 0 }}
+                  isSection={isSection}
+                  handles={handles}
+                  flashId={flash}
+                  editingId={editing?.where === "board" ? editing.id : null}
+                  onEnter={(id) => setPath([...path, id])}
+                  onBeginRename={(id, el) => beginRename(id, el, "board")}
+                  onCommitRename={commitRename}
+                  onCancelRename={cancelRename}
+                />
+              ))}
             </div>
-          )}
-          <div className="relative h-full w-full">
-            {placed.map((p) => (
-              <Piece
-                key={p.node.id}
-                piece={p}
-                origin={{ x: 0, y: 0 }}
-                isSection={isSection}
-                handles={handles}
-                flashId={flash}
-                editingId={editing?.where === "board" ? editing.id : null}
-                onEnter={(id) => setPath([...path, id])}
-                onRemove={remove}
-                onBeginRename={(id, el) => beginRename(id, el, "board")}
-                onCommitRename={commitRename}
-                onCancelRename={cancelRename}
-              />
-            ))}
           </div>
         </div>
-      </div>
 
-      {findOpen && <Find hits={hits} onGo={goTo} onClose={() => setFindOpen(false)} />}
-    </main>
+        {findOpen && <Find hits={hits} onGo={goTo} onClose={() => setFindOpen(false)} />}
+      </main>
+    </NodeMenuProvider>
   );
 }
 
@@ -726,7 +777,6 @@ function Piece({
   flashId,
   editingId,
   onEnter,
-  onRemove,
   onBeginRename,
   onCommitRename,
   onCancelRename,
@@ -738,7 +788,6 @@ function Piece({
   flashId: string | null;
   editingId: string | null;
   onEnter: (id: string) => void;
-  onRemove: (id: string) => void;
   onBeginRename: (id: string, el: HTMLElement | null) => void;
   onCommitRename: (id: string, name: string) => void;
   onCancelRename: () => void;
@@ -757,10 +806,11 @@ function Piece({
     (e.target as HTMLElement).closest("[data-no-rename]") !== null;
   if (section) {
     const strip = hat(box, depth);
+    const dots = Math.min(box.w, box.h) < 40 ? "xs" : Math.min(box.w, box.h) < 64 ? "s" : "m";
     return (
       <div
         data-node-id={node.id}
-        className={`group/sec absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
+        className={`group/sec nm-host nm-host--block absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
         style={{
           ...place,
           background: tint(color, 0.12),
@@ -771,7 +821,7 @@ function Piece({
         {strip > 0 && (
           <div
             tabIndex={-1}
-            className="absolute inset-x-0 top-0 flex items-center gap-1.5 px-2 text-[11px] outline-none"
+            className="absolute inset-x-0 top-0 flex items-center gap-1.5 pl-2 pr-8 text-[11px] outline-none"
             style={{ height: strip, color: "var(--n-color-text)" }}
             onDoubleClick={(e) => {
               if (noRename(e)) return;
@@ -804,20 +854,11 @@ function Piece({
                 >
                   进入 ›
                 </button>
-                <button
-                  type="button"
-                  data-no-rename
-                  onClick={() => onRemove(node.id)}
-                  aria-label={`删除 ${node.name}`}
-                  title={`删除 ${node.name}（可撤销）`}
-                  className="shrink-0 rounded-[3px] px-1.5 py-0.5 text-[11px] leading-none opacity-0 transition-opacity duration-150 hover:bg-white/15 group-hover/sec:opacity-100"
-                >
-                  ×
-                </button>
               </>
             )}
           </div>
         )}
+        {!editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
         {kids.map((k) => (
           <Piece
             key={k.node.id}
@@ -828,7 +869,6 @@ function Piece({
             flashId={flashId}
             editingId={editingId}
             onEnter={onEnter}
-            onRemove={onRemove}
             onBeginRename={onBeginRename}
             onCommitRename={onCommitRename}
             onCancelRename={onCancelRename}
@@ -846,10 +886,12 @@ function Piece({
   const showHandle = box.w > 62 && box.h > 48;
   const valueSize = Math.max(12, Math.min(40, Math.round(big / 3)));
   const roomForDelete = box.w > 34 && box.h > 26;
+  /** ••• 比原来那颗 × 略小一号，所以 30px 见方的块也容得下 —— 但 30px 以下就真没了。 */
+  const dots = Math.min(box.w, box.h) < 40 ? "xs" : Math.min(box.w, box.h) < 64 ? "s" : "m";
 
   return (
     <div
-      className={`group/leaf absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
+      className={`group/leaf nm-host nm-host--block absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
       style={{
         ...place,
         background: color,
@@ -893,18 +935,7 @@ function Piece({
           <Handle value={handle} name={node.name} className="max-w-full opacity-55 hover:opacity-90" />
         )}
       </div>
-      {roomForDelete && (
-        <button
-          type="button"
-          data-no-rename
-          onClick={() => onRemove(node.id)}
-          aria-label={`删除 ${node.name}`}
-          title={`删除 ${node.name}（可撤销）`}
-          className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-[3px] bg-black/25 text-[12px] leading-none text-white/85 opacity-0 transition-opacity duration-150 hover:bg-black/45 hover:text-white focus-visible:opacity-100 group-hover/leaf:opacity-100"
-        >
-          ×
-        </button>
-      )}
+      {roomForDelete && !editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
     </div>
   );
 }
@@ -927,33 +958,8 @@ function Handle({
   muted?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  /**
-   * 剪贴板在 http 下是整个不存在的（不是报错，是 `navigator.clipboard` 直接 undefined）——
-   * 局域网 IP 打开就属于这种情况。所以留一条 `execCommand` 的老路，它不挑协议。
-   */
-  const write = async (): Promise<boolean> => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-        return true;
-      }
-    } catch {
-      // 权限被拒也会走到这里 —— 继续试老办法，别直接放弃。
-    }
-    const ta = document.createElement("textarea");
-    ta.value = value;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand?.("copy") ?? false;
-    ta.remove();
-    return ok;
-  };
-
   const copy = async () => {
-    if (!(await write())) return;
+    if (!(await copyText(value))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 900);
   };
@@ -1028,3 +1034,46 @@ function IconButton({
     </button>
   );
 }
+
+/* 菜单里那几个图标。都 ≤14px 的线稿 —— 菜单项里再花就只剩噪点了。 */
+const stroke = {
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.5,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
+
+const IconPencil = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M9.2 2.4 11.6 4.8 5.4 11H3V8.6z" />
+  </svg>
+);
+
+const IconCopy = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <rect x="2.5" y="2.5" width="7" height="7" rx="1.6" />
+    <path d="M5.5 11.5h4.4a1.6 1.6 0 0 0 1.6-1.6V5.5" />
+  </svg>
+);
+
+const IconLink = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M5.8 8.2a2.5 2.5 0 0 0 3.5 0l1.9-1.9a2.5 2.5 0 0 0-3.5-3.5l-.5.5" />
+    <path d="M8.2 5.8a2.5 2.5 0 0 0-3.5 0L2.8 7.7a2.5 2.5 0 0 0 3.5 3.5l.5-.5" />
+  </svg>
+);
+
+const IconEnter = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M3 3v5.2c0 .9.7 1.6 1.6 1.6H11" />
+    <path d="M8.8 6.6 11 9.8l-2.2 3.2" transform="translate(0 -3)" />
+  </svg>
+);
+
+const IconTrash = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M2.6 4h8.8M5.6 4V2.9c0-.2.2-.4.4-.4h2c.2 0 .4.2.4.4V4" />
+    <path d="M4.1 4l.5 7.1c0 .3.3.5.6.5h3.6c.3 0 .6-.2.6-.5L9.9 4" />
+  </svg>
+);

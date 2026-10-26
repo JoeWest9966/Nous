@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { NameInput } from "./Rename";
+import { NodeMenuTrigger } from "./NodeMenu";
 import { type Node, findNode, isSection, valueOf } from "./game";
 import { TreeIcon, iconFor } from "./icons";
 
@@ -42,7 +43,6 @@ export function Tree({
   path,
   editingId,
   onEnter,
-  onRemove,
   onBeginRename,
   onCommitRename,
   onCancelRename,
@@ -51,7 +51,6 @@ export function Tree({
   path: string[];
   editingId: string | null;
   onEnter: (ids: string[]) => void;
-  onRemove: (id: string) => void;
   onBeginRename: (id: string, el: HTMLElement | null) => void;
   onCommitRename: (id: string, name: string) => void;
   onCancelRename: () => void;
@@ -98,7 +97,12 @@ export function Tree({
         const here = path[path.length - 1] === node.id;
         const name = section && !isRoot ? `${node.name}/` : node.name;
         return (
-          <li key={node.id} role="treeitem" aria-expanded={section ? isOpen : undefined}>
+          <li
+            key={node.id}
+            role="treeitem"
+            aria-expanded={section ? isOpen : undefined}
+            className="nm-host nm-host--row"
+          >
             <div
               data-node-id={node.id}
               tabIndex={-1}
@@ -107,7 +111,7 @@ export function Tree({
                 if ((e.target as HTMLElement).closest("[data-no-rename]")) return;
                 onBeginRename(node.id, e.currentTarget);
               }}
-              className={`group relative flex h-8 items-center rounded-md pr-1.5 outline-none transition-colors duration-150 ${
+              className={`group relative flex h-8 items-center rounded-md pr-[30px] outline-none transition-colors duration-150 ${
                 here ? "bg-accent/15" : "hover:bg-white/[0.045]"
               }`}
               style={{ paddingLeft: depth * INDENT + 4 }}
@@ -154,17 +158,9 @@ export function Tree({
                 </Row>
               )}
 
-              {!isRoot && (
-                <button
-                  type="button"
-                  data-no-rename
-                  onClick={() => onRemove(node.id)}
-                  aria-label={`删除 ${node.name}`}
-                  title={`删除 ${node.name}（可撤销）`}
-                  className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-[3px] text-[12px] leading-none text-muted opacity-0 transition-opacity duration-150 hover:bg-white/10 hover:text-text focus-visible:opacity-100 group-hover:opacity-100"
-                >
-                  ×
-                </button>
+              {/* 原来那颗 × 让位给 •••：一行里挂两个删除没道理，删除进菜单。 */}
+              {!isRoot && editingId !== node.id && (
+                <NodeMenuTrigger nodeId={node.id} kind="row" />
               )}
             </div>
           </li>
