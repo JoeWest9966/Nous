@@ -160,6 +160,23 @@ class Card {
     this.armedMode = "before";
     this.pathDraft = null; // 08
 
+    // 11–20 自己的状态。都挂在卡片上，互不打扰。
+    this.menu = null; // 11 浮起的两层菜单
+    this.menuAt = null; // 11
+    this.lift = null; // 11 跟着手指的替身
+    this.swallowUntil = 0; // 11 松手后吞掉那一下 click
+    this.ring = null; // 12 { src, path }
+    this.link = null; // 13 { src }
+    this.wireMove = null; // 13
+    this.snip = null; // 14 剪贴板
+    this.wheel = null; // 15 { src, idx }
+    this.nl = ""; // 16 那句话
+    this.drill = null; // 17 { src, path }
+    this.cf = null; // 18 { src, idx }
+    this.scrub = null; // 19 { id, origin }
+    this.ed = ""; // 20 输入
+    this.edSrc = null; // 20 第一拍的行号
+
     const el = document.createElement("section");
     el.className = `card ${cfg.id}`;
     el.id = cfg.id;
@@ -207,6 +224,8 @@ class Card {
       row.classList.add("cur");
     });
 
+    el.addEventListener("wheel", (ev) => this.cfg.onWheel?.(this, ev), { passive: false });
+
     if (cfg.drag) installDrag(this);
     CARDS.push(this);
     this.render();
@@ -226,7 +245,7 @@ class Card {
   /* ── 画 ── */
   render() {
     const rows = this.cfg.rows ? this.cfg.rows(this) : entries(this.tree);
-    this.listEl.innerHTML = rows.map((e) => this.rowHTML(e)).join("");
+    this.listEl.innerHTML = rows.map((e, i) => this.rowHTML(e, i)).join("");
     this.bar.innerHTML = this.cfg.bar
       ? this.cfg.bar(this)
       : this.pick
@@ -241,7 +260,7 @@ class Card {
     this.cfg.afterRender?.(this);
   }
 
-  rowHTML(e) {
+  rowHTML(e, i = 0) {
     const n = e.node;
     const g = isGroup(n);
     const cls = ["row", g ? "group" : "leaf"];
@@ -255,7 +274,9 @@ class Card {
 
     return `<div class="${cls.join(" ")}" role="treeitem" aria-level="${e.depth + 1}"
       data-id="${n.id}" tabindex="0" style="--d:${e.depth}">
+      ${this.cfg.numbering ? `<span class="idx">${i + 1}</span>` : ""}
       <span class="glyph" aria-hidden="true"></span>
+      ${this.cfg.pre ? this.cfg.pre(this, e) : ""}
       <span class="nid">${n.id}</span>
       <span class="nm">${esc(n.name)}</span>
       ${hint ? `<span class="hint">${esc(hint)}</span>` : ""}
@@ -311,6 +332,7 @@ class Card {
       return;
     }
     if (kind === "path") this.pathDraft = ev.target.value;
+    this.cfg.onInput?.(this, ev);
   }
 
   onChange(ev) {
@@ -587,7 +609,521 @@ const applyPath = (c) => {
   c.applyPos(pos, src);
 };
 
-/* ── 十个方案 ───────────────────────────────────────────────────────────────
+/* ── 11–20 的共用零件 ────────────────────────────────────────────────────────
+   第一排（01–10）比的是「怎么落子」：点、拖、打字，都还在左栏这张表里。
+   这一排换的是**手**：按住、画线、转环、翻卡片、滚着走 —— 有四格干脆不在树上落子了，
+   树只负责被改完之后长成什么样。题还是那道题：把 App.tsx 挪到 docs/ADR 前面。 */
+
+/** 落点 → 位置。每个节点前面一次，每个组末尾一次。 */
+const posOf = (root, slot) => (slot.mode === "into" ? intoPos(slot.id) : beforePos(root, slot.id));
+
+const relLabel = (root, id, rel) =>
+  rel === "into"
+    ? `放进 ${treePath(root, id)} 末尾`
+    : rel === "after"
+      ? `插到 ${treePath(root, id)} 后面`
+      : `插到 ${treePath(root, id)} 前面`;
+
+/** 前序里的「下一行 / 上一行」—— 19 的滚一格走一行。
+    往下一行是组的时候进到它第一格，不然块永远进不了组。 */
+const stepPos = (root, id, dir) => {
+  const all = entries(root);
+  const at = all.findIndex((e) => e.node.id === id);
+  if (at < 0) return null;
+  if (dir < 0) {
+    const prev = all[at - 1];
+    return prev ? beforePos(root, prev.node.id) : null;
+  }
+  const next = all[at + 1];
+  if (!next) return null;
+  const first = isGroup(next.node) ? next.node.children[0] : null;
+  if (first) return beforePos(root, first.id);
+  return afterPos(root, next.node.id);
+};
+
+/** 16 的关系词。顺序有讲究：先说「末尾」再说「里」，不然「放到 docs 里」会被前面吃掉。 */
+const relOf = (s) =>
+  /末尾|最后|尽头/.test(s)
+    ? "into"
+    : /前面|之前|上头|顶上/.test(s)
+      ? "before"
+      : /后面|之后|下头|底下/.test(s)
+        ? "after"
+        : /里面|里头|里边|放进|塞进|挪进|移到.*里/.test(s)
+          ? "into"
+          : null;
+
+/** 16 的中文解析：句子里认这棵树上的名字，别的全当噪音。
+    名字和全路径都认（「ADR」和「docs/ADR」），长的先匹配。 */
+const parseNL = (root, text) => {
+  const raw = String(text ?? "").trim();
+  if (!raw) return { why: "先说一句话" };
+
+  const hits = [];
+  for (const e of entries(root)) {
+    if (e.depth === 0) continue;
+    const path = treePath(root, e.node.id);
+    for (const needle of path === e.node.name ? [e.node.name] : [path, e.node.name]) {
+      const at = raw.indexOf(needle);
+      if (at >= 0) hits.push({ e, needle, at, end: at + needle.length });
+    }
+  }
+  if (!hits.length) return { why: "这句话里没有一个名字是这棵树上的" };
+  // 同一位置长的优先（docs/ADR 盖掉 ADR）
+  hits.sort((a, b) => a.at - b.at || b.end - a.end);
+
+  const srcHit = hits.find((h) => h.at >= 0 && !isGroup(h.e.node));
+  if (!srcHit) return { why: "只找到组 —— 这一页只挪块" };
+
+  const tgtHit = hits.find((h) => h.at >= srcHit.end && h.e.node.id !== srcHit.e.node.id);
+  if (!tgtHit) return { why: "只找到要挪的，没找到落到哪儿" };
+
+  const rel = relOf(raw.slice(tgtHit.at)) ?? "before";
+  const tgtId = tgtHit.e.node.id;
+  if (rel === "into" && !isGroup(tgtHit.e.node)) {
+    return { why: `${treePath(root, tgtId)} 不是组，进不去` };
+  }
+  if (rel !== "into" && !tgtHit.e.parent) return { why: "根上没有前面后面" };
+
+  return {
+    src: srcHit.e.node.id,
+    targetId: tgtId,
+    rel,
+    pos: rel === "into" ? intoPos(tgtId) : rel === "after" ? afterPos(root, tgtId) : beforePos(root, tgtId),
+    says: relLabel(root, tgtId, rel),
+  };
+};
+
+/** 20 的 ed 式指令：`3>8` / `3 8` / `3m8` —— 四个键。 */
+const parseEd = (root, text) => {
+  const m = String(text ?? "").trim().match(/^(\d{1,2})\s*(?:[>,]|m|\s)\s*(\d{1,2})$/);
+  if (!m) return { why: "写成 3>8：左边是它现在第几行，右边是挪到第几行前面" };
+  const all = entries(root);
+  const a = Number(m[1]) - 1;
+  const b = Number(m[2]) - 1;
+  if (!all[a]) return { why: `没有第 ${m[1]} 行` };
+  if (!all[b]) return { why: `没有第 ${m[2]} 行` };
+  if (isGroup(all[a].node)) return { why: `第 ${m[1]} 行是组 —— 这一页只挪块` };
+  if (a === b) return { why: "两头是同一行" };
+  const pos = beforePos(root, all[b].node.id);
+  if (!pos) return { why: "根上没有前面" };
+  return { src: all[a].node.id, srcIdx: a + 1, tgtId: all[b].node.id, tgtIdx: b + 1, pos };
+};
+
+/* ── 11 长按浮起：两层菜单跟着手指走 ─────────────────────────────────────── */
+const ctxItems = (c, level = c.menu?.level ?? 0) => {
+  if (!c.menu) return [];
+  if (level === 0) {
+    return entries(c.tree)
+      .filter((e) => isGroup(e.node))
+      .map((e) => ({ kind: "into", id: e.node.id, label: `放进 ${treePath(c.tree, e.node.id)} 末尾` }))
+      .concat([{ kind: "sub", label: "插到某一行前面 ▸" }]);
+  }
+  return [{ kind: "back", label: "← 返回" }].concat(
+    entries(c.tree)
+      .filter((e) => e.depth > 0 && e.node.id !== c.menu.src)
+      .map((e) => ({ kind: "before", id: e.node.id, label: `插到 ${treePath(c.tree, e.node.id)} 前面` })),
+  );
+};
+
+const ctxHTML = (c) => {
+  const at = c.menuAt ?? { x: 16, y: 16 };
+  const left = Math.max(4, Math.min(at.x, Math.max(4, c.body.clientWidth - 210)));
+  const top = Math.max(4, Math.min(at.y, 46));
+  const panel = (lvl) => `
+    <div class="ctx-panel">
+      <p class="ctx-cap">${lvl === 0 ? "放进哪个组末尾" : "插到哪一行前面"}</p>
+      ${ctxItems(c, lvl)
+        .map(
+          (it, i) =>
+            `<button class="mitem ${it.kind === "sub" || it.kind === "back" ? "sub" : ""}"
+               role="menuitem" data-act="mitem" data-lvl="${lvl}" data-i="${i}">${esc(it.label)}</button>`,
+        )
+        .join("")}
+    </div>`;
+  return `
+    <div class="ctx-scrim" data-act="ctx-close"></div>
+    <div class="ctx" role="menu" aria-label="移到哪里" style="left:${left}px; top:${top}px">
+      <div class="ctx-path">${esc(treePath(c.tree, c.menu.src))}</div>
+      <div class="ctx-slide" style="--lvl:${c.menu.level}">${panel(0)}${panel(1)}</div>
+    </div>`;
+};
+
+const closeCtx = (c, msg = "已取消 —— 树没动") => {
+  c.menu = null;
+  c.lift?.remove();
+  c.lift = null;
+  c.say(msg);
+  c.render();
+};
+
+const ctxGo = (c, lvl, i) => {
+  const item = ctxItems(c, lvl)[i];
+  if (!item || !c.menu) return;
+  if (item.kind === "back") {
+    c.menu.level = 0;
+    c.menu.hover = -1;
+    c.say("回到第一层");
+    c.render();
+    c.el.querySelector(".mitem")?.focus();
+    return;
+  }
+  if (item.kind === "sub") {
+    c.menu.level = 1;
+    c.menu.hover = -1;
+    c.say("第二层：插到哪一行前面");
+    c.render();
+    c.el.querySelector(".mitem")?.focus();
+    return;
+  }
+  const src = c.menu.src;
+  const pos = posOf(c.tree, item);
+  c.menu = null;
+  c.lift?.remove();
+  c.lift = null;
+  c.applyPos(pos, src);
+};
+
+function openCtx(c, id, at) {
+  if (c.swallowUntil && performance.now() < c.swallowUntil) return;
+  const node = c.nodeOf(id);
+  if (!node || isGroup(node)) return c.say("组不能挪 —— 这一页只挪块", true);
+  if (c.menu?.src === id) return;
+
+  const box = c.body.getBoundingClientRect();
+  const rowBox = c.rowEl(id)?.getBoundingClientRect();
+  c.menu = { src: id, level: 0, hover: -1 };
+  c.menuAt = at
+    ? { x: at.x - box.left, y: at.y - box.top }
+    : rowBox
+      ? { x: rowBox.left - box.left + 24, y: rowBox.top - box.top + 26 }
+      : { x: 16, y: 16 };
+  c.say(`浮着 ${c.nameOf(id)} —— 选一项，Esc 放回去`);
+  c.render();
+
+  if (!at) {
+    c.el.querySelector(".mitem")?.focus();
+    return;
+  }
+
+  c.lift?.remove();
+  const lift = document.createElement("div");
+  lift.className = "lift";
+  lift.innerHTML = `<span>${esc(c.nameOf(id))}</span><b>${id}</b>`;
+  document.body.appendChild(lift);
+  c.lift = lift;
+  const place = (x, y) => {
+    lift.style.transform = `translate3d(${x + 14}px, ${y - 36}px, 0)`;
+  };
+  place(at.x, at.y);
+
+  const move = (ev) => {
+    place(ev.clientX, ev.clientY);
+    const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".mitem");
+    const items = [...c.el.querySelectorAll(".mitem")];
+    const i = el && c.el.contains(el) ? items.indexOf(el) : -1;
+    if (i !== (c.menu?.hover ?? -1)) {
+      if (c.menu) c.menu.hover = i;
+      items.forEach((n, k) => n.classList.toggle("hot", k === i));
+    }
+  };
+  const up = (ev) => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".mitem");
+    if (el && c.el.contains(el)) {
+      c.swallowUntil = performance.now() + 260;
+      ctxGo(c, Number(el.dataset.lvl), Number(el.dataset.i));
+    } else closeCtx(c, "松手落在空地上 —— 树没动");
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+function installHold(c) {
+  if (c.holdReady) return;
+  c.holdReady = true;
+  let timer = null;
+  const stop = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  c.listEl.addEventListener("pointerdown", (ev) => {
+    if (ev.button !== 0 || c.menu) return;
+    if (ev.target.closest?.("button, input, select, a")) return;
+    const row = ev.target.closest?.(".row");
+    if (!row || !c.listEl.contains(row)) return;
+    const id = row.dataset.id;
+    if (isGroup(c.nodeOf(id))) return;
+    stop();
+    const { clientX, clientY } = ev;
+    timer = setTimeout(() => {
+      timer = null;
+      openCtx(c, id, { x: clientX, y: clientY });
+    }, 260);
+  });
+  ["pointerup", "pointercancel"].forEach((k) => c.el.addEventListener(k, stop));
+}
+
+/* ── 12 径向环：一圈按钮，靠角度分落点 ───────────────────────────────────── */
+const ringItems = (c) => {
+  const path = c.ring?.path ?? [];
+  const cur = c.nodeOf(path[path.length - 1]);
+  if (!cur) return [];
+  const out = cur.children.map((n) => ({
+    kind: "node",
+    id: n.id,
+    group: isGroup(n),
+    label: n.name,
+  }));
+  out.push({ kind: "into", id: cur.id, label: "放进这层末尾" });
+  if (path.length > 1) out.push({ kind: "up", id: cur.id, label: "← 上一层" });
+  return out;
+};
+
+const ringHTML = (c) => {
+  const items = ringItems(c);
+  const cur = c.nodeOf(c.ring.path[c.ring.path.length - 1]);
+  const n = items.length || 1;
+  const wedges = items
+    .map((it, i) => {
+      const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+      const style = `left:calc(50% + ${Math.round(132 * Math.cos(a))}px);top:calc(50% + ${Math.round(88 * Math.sin(a))}px)`;
+      if (it.kind === "node") {
+        return `<div class="wedge ${it.group ? "is-g" : ""}" style="${style}">
+          <button class="wl" data-act="ring-go" data-id="${it.id}"
+            aria-label="插到 ${esc(it.label)} 前面"><span class="wn">${esc(it.label)}</span></button>
+          ${it.group ? `<button class="wgo" data-act="ring-in" data-id="${it.id}" aria-label="进入 ${esc(it.label)}">进 ▸</button>` : ""}
+        </div>`;
+      }
+      const act = it.kind === "up" ? "ring-up" : "ring-into";
+      return `<button class="wedge spec ${it.kind}" style="${style}" data-act="${act}" data-id="${it.id}">${esc(it.label)}</button>`;
+    })
+    .join("");
+
+  return `
+    <div class="ring">
+      <div class="ring-core">
+        <b>${esc(treePath(c.tree, cur.id))}</b>
+        <span>点名字 = 插到它前面</span>
+      </div>
+      ${wedges}
+      <button class="linkbtn ring-x" data-act="ring-close">Esc</button>
+    </div>`;
+};
+
+/* ── 13 连线：一根橡皮筋，行不动 ──────────────────────────────────────────── */
+const drawWire = (c, cx, cy) => {
+  const path = c.body.querySelector(".wires .wire");
+  const src = c.link && c.listEl.querySelector(`.port[data-id="${c.link.src}"]`);
+  if (!path || !src) return;
+  const box = c.body.getBoundingClientRect();
+  const s = src.getBoundingClientRect();
+  const x1 = s.left + s.width / 2 - box.left;
+  const y1 = s.top + s.height / 2 - box.top;
+  const x2 = cx == null ? x1 + 90 : cx - box.left;
+  const y2 = cy == null ? y1 + 46 : cy - box.top;
+  const mx = (x1 + x2) / 2;
+  path.setAttribute("d", `M ${x1} ${y1} C ${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`);
+};
+
+const startWire = (c, id) => {
+  c.link = { src: id };
+  c.el.classList.add("wiring");
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "wires");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("class", "wire");
+  svg.appendChild(path);
+  c.body.appendChild(svg);
+  c.wireMove = (ev) => drawWire(c, ev.clientX, ev.clientY);
+  c.el.addEventListener("pointermove", c.wireMove);
+  c.say("拉到另一颗圆点上 —— 左端点插前面，组右边的点进末尾");
+  drawWire(c, null, null);
+};
+
+const endWire = (c, msg) => {
+  c.link = null;
+  c.el.classList.remove("wiring");
+  if (c.wireMove) c.el.removeEventListener("pointermove", c.wireMove);
+  c.wireMove = null;
+  c.body.querySelector(".wires")?.remove();
+  if (msg) c.say(msg);
+};
+
+/* ── 15 / 18 共用的候选清单 ───────────────────────────────────────────────── */
+const slotsOf = (c) => targetRows(c.tree, c.wheel?.src ?? c.cf?.src ?? null);
+
+const wheelHTML = (c) => {
+  const items = slotsOf(c);
+  const idx = c.wheel.idx;
+  return `
+    <div class="wheel-wrap">
+      <div class="wheel" role="listbox" aria-label="目的地" tabindex="-1">
+        ${items
+          .map((it, i) => {
+            const d = i - idx;
+            const far = Math.abs(d) > 3;
+            const style = [
+              `transform: translateY(calc(-50% + ${d * 34}px)) rotateX(${-d * 24}deg) scale(${Math.max(0.72, 1 - Math.abs(d) * 0.06).toFixed(3)})`,
+              `opacity:${Math.max(0, 1 - Math.abs(d) * 0.26).toFixed(3)}`,
+              far ? "visibility:hidden" : "",
+            ]
+              .filter(Boolean)
+              .join(";");
+            return `<button class="witem ${d === 0 ? "on" : ""}" data-act="wheel-go" data-i="${i}"
+              style="${style}" role="option" aria-selected="${d === 0}">${esc(it.label)}</button>`;
+          })
+          .join("")}
+      </div>
+      <div class="wheel-guard" aria-hidden="true"></div>
+      <button class="linkbtn wheel-x" data-act="wheel-close">Esc</button>
+    </div>`;
+};
+
+const wheelStep = (c, dir) => {
+  if (!c.wheel) return;
+  const n = slotsOf(c).length;
+  const next = Math.max(0, Math.min(n - 1, c.wheel.idx + dir));
+  if (next === c.wheel.idx) return c.say("到头了 —— 再滚也没有了", true);
+  c.wheel.idx = next;
+  c.render();
+};
+
+const wheelDrop = (c, i) => {
+  const src = c.wheel?.src;
+  const it = slotsOf(c)[i];
+  if (!src || !it) return;
+  const pos = posOf(c.tree, it);
+  c.wheel = null;
+  c.applyPos(pos, src);
+};
+
+const cfHTML = (c) => {
+  const items = slotsOf(c);
+  const idx = c.cf.idx;
+  return `
+    <div class="cf">
+      <div class="cf-stage">
+        ${items
+          .map((it, i) => {
+            const d = i - idx;
+            if (Math.abs(d) > 2) return "";
+            const style = `transform: translateX(${d * 118}px) rotateY(${-d * 36}deg) translateZ(${-Math.abs(d) * 70}px) scale(${1 - Math.abs(d) * 0.06});opacity:${(1 - Math.abs(d) * 0.34).toFixed(3)}`;
+            return `<button class="cfcard ${d === 0 ? "on" : ""}" data-act="cf-go" data-i="${i}" style="${style}">
+              <span class="cfpath">${esc(it.label)}</span>
+              <span class="cfmeta">${it.mode === "into" ? "进组末尾" : "插到前面"} · ${it.id}</span>
+            </button>`;
+          })
+          .join("")}
+      </div>
+      <div class="cf-bar">
+        <span class="cf-count">${idx + 1} / ${items.length}</span>
+        <button class="linkbtn" data-act="cf-go" data-i="${idx}">落这一张</button>
+        <button class="linkbtn" data-act="cf-close">Esc</button>
+      </div>
+    </div>`;
+};
+
+const cfDrop = (c, i) => {
+  const src = c.cf?.src;
+  const it = slotsOf(c)[i];
+  if (!src || !it) return;
+  const pos = posOf(c.tree, it);
+  c.cf = null;
+  c.applyPos(pos, src);
+};
+
+/* ── 17 面包屑下潜 ───────────────────────────────────────────────────────── */
+const drillHTML = (c) => {
+  const path = c.drill.path;
+  const cur = c.nodeOf(path[path.length - 1]);
+  const crumbs = path
+    .map(
+      (id, i) =>
+        `<button class="crumb ${i === path.length - 1 ? "on" : ""}" data-act="drill-up" data-i="${i}">${esc(c.nodeOf(id).name)}</button>`,
+    )
+    .join(`<span class="csep" aria-hidden="true">/</span>`);
+  const tiles = cur.children
+    .map(
+      (n) => `<div class="tile ${isGroup(n) ? "is-g" : ""}">
+        <button class="tmain" data-act="drill-go" data-id="${n.id}">
+          <span class="tname">${esc(n.name)}</span>
+          <span class="tcap">插到它前面</span>
+        </button>
+        ${
+          isGroup(n)
+            ? n.children.length
+              ? `<button class="tgo" data-act="drill-in" data-id="${n.id}">进 ▸</button>`
+              : `<span class="tgo is-empty">空组</span>`
+            : ""
+        }
+      </div>`,
+    )
+    .join("");
+  return `
+    <div class="drill">
+      <div class="drill-head">
+        <div class="crumbs">${crumbs}</div>
+        <button class="linkbtn" data-act="drill-close">Esc</button>
+      </div>
+      <button class="drop-here" data-act="drill-into">放进 ${esc(cur.name)} 末尾</button>
+      <div class="tgrid">${tiles || `<p class="empty">这一层是空的 —— 只能放进末尾</p>`}</div>
+    </div>`;
+};
+
+/* ── 16 说话 ─────────────────────────────────────────────────────────────── */
+const nlGo = (c) => {
+  const p = parseNL(c.tree, c.nl);
+  if (p.why) return c.say(`没听懂：${p.why}`, true);
+  c.nl = "";
+  c.applyPos(p.pos, p.src);
+};
+
+/* ── 19 滚着挪 ───────────────────────────────────────────────────────────── */
+const startScrub = (c, id) => {
+  const node = c.nodeOf(id);
+  if (!node || isGroup(node)) return c.say("组不能挪 —— 这一页只挪块", true);
+  if (c.scrub?.id === id) return;
+  if (c.scrub) {
+    const prev = c.scrub.id;
+    c.scrub = null;
+    c.landed(prev);
+  }
+  const e = entryOf(c.tree, id);
+  c.scrub = { id, origin: { parentId: e.parent.id, index: e.index } };
+  c.fresh = null;
+  c.say(`攥住 ${c.nameOf(id)} —— 滚轮或 ⌥↑↓ 走一行，Enter 定住，Esc 退回原处`);
+  c.render();
+  c.rowEl(id)?.focus();
+};
+
+const scrubStep = (c, dir) => {
+  const s = c.scrub;
+  if (!s) return;
+  const pos = stepPos(c.tree, s.id, dir);
+  if (!pos) return c.say("到头了 —— 再滚也走不动", true);
+  if (!applyMove(c.tree, s.id, pos.parentId, pos.index)) return;
+  const e = entryOf(c.tree, s.id);
+  c.say(`${c.nameOf(s.id)} · ${treePath(c.tree, e.parent.id)} 第 ${e.index + 1} 位 · Enter 定住 / Esc 退回原处`);
+  c.render();
+  c.rowEl(s.id)?.focus();
+};
+
+/* ── 20 序号指令 ─────────────────────────────────────────────────────────── */
+const edParse = (c) => parseEd(c.tree, c.ed);
+
+const edGo = (c) => {
+  const p = edParse(c);
+  if (p.why) return c.say(p.why, true);
+  c.ed = "";
+  c.edSrc = null;
+  c.applyPos(p.pos, p.src);
+};
+
+/* ── 二十个方案 ───────────────────────────────────────────────────────────────
    每格只写给「拎起来」和「算落点」有关的那几行，别的都在上面的引擎里。 */
 const VARIANTS = [
   {
@@ -1052,6 +1588,718 @@ const VARIANTS = [
       return true;
     },
     afterDrop: () => "（只换了爹，排序还是做不到）",
+  },
+  /* ══ 11–20：换的是手，不是题 ══════════════════════════════════════════════ */
+
+  /* ── 11 长按浮起 ───────────────────────────────────────────────────────── */
+  {
+    id: "v11",
+    name: "长按浮起",
+    blurb:
+      "按住一行 0.26 秒：它从树里分离出来跟着手指走，底下压成暗底，菜单在手指边冒出来 —— 第一层是「放进哪个组」，第二层才是「插到哪一行前面」。滑到哪项、松开就落在哪项。赌的是菜单比落点好认：树不参与落点，就没有瞄准这回事。",
+    specs: [
+      ["入口", "长按 260ms"],
+      ["菜单", "两层"],
+      ["树", "压成暗底"],
+    ],
+    bar: () =>
+      `<p class="barnote">按住任意一个块 0.26 秒（或者按 <kbd>Enter</kbd>）—— 它浮起来，菜单跟着手指走。</p>`,
+    onRow: (c, id) => openCtx(c, id),
+    afterRender: (c) => installHold(c),
+    auxOn: (c) => !!c.menu,
+    aux: (c) => (c.menu ? ctxHTML(c) : ""),
+    act: (c, kind, _id, _ev, el) => {
+      if (kind === "mitem") {
+        ctxGo(c, Number(el.dataset.lvl), Number(el.dataset.i));
+        return true;
+      }
+      if (kind === "ctx-close") {
+        closeCtx(c);
+        return true;
+      }
+      return false;
+    },
+    onKey: (c, ev) => {
+      if (!c.menu) return false;
+      const items = [...c.el.querySelectorAll(".mitem")];
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        const at = items.indexOf(document.activeElement);
+        const next = Math.max(0, Math.min(items.length - 1, at + (ev.key === "ArrowDown" ? 1 : -1)));
+        c.menu.hover = next;
+        items.forEach((n, k) => n.classList.toggle("hot", k === next));
+        items[next]?.focus();
+        return true;
+      }
+      if (ev.key === "Backspace" && c.menu.level === 1) {
+        ev.preventDefault();
+        ctxGo(c, 1, 0); // 「← 返回」那一项
+        return true;
+      }
+      return false;
+    },
+    onEscape: (c) => {
+      if (!c.menu) return false;
+      closeCtx(c);
+      return true;
+    },
+  },
+
+  /* ── 12 径向环 ─────────────────────────────────────────────────────────── */
+  {
+    id: "v12",
+    name: "径向环",
+    blurb:
+      "点一个块，一圈按钮在它上面铺开：这一层的每一格 + 一条「放进这一层末尾」。点名字 = 插到它前面；组上多一颗「进 ▸」，钻下去看它里面。赌的是环不受行数限制 —— 这一格终于把「插到组前面」和「放进组里面」分成了两个按钮。",
+    specs: [
+      ["形状", "16px 一颗"],
+      ["两个意思", "分得开"],
+      ["键盘", "1–9 / Backspace"],
+    ],
+    bar: (c) =>
+      `<div class="barnote">${
+        c.ring
+          ? `环在 <b>${esc(treePath(c.tree, c.ring.path[c.ring.path.length - 1]))}</b> 这一层 · 点名字 = 插到它前面 · Esc 收起`
+          : `点一个块 —— 环会绕着它铺开，一格一颗。`
+      }</div>`,
+    onRow: (c, id) => {
+      if (isGroup(c.nodeOf(id))) return;
+      c.ring = { src: id, path: [c.tree.id] };
+      c.say("");
+      c.render();
+    },
+    auxOn: (c) => !!c.ring,
+    aux: (c) => (c.ring ? ringHTML(c) : ""),
+    act: (c, kind, id) => {
+      if (kind === "ring-go") {
+        const src = c.ring?.src;
+        c.ring = null;
+        c.applyPos(beforePos(c.tree, id), src);
+        return true;
+      }
+      if (kind === "ring-in") {
+        c.ring.path.push(id);
+        c.render();
+        return true;
+      }
+      if (kind === "ring-into") {
+        const src = c.ring?.src;
+        c.ring = null;
+        c.applyPos(intoPos(id), src);
+        return true;
+      }
+      if (kind === "ring-up") {
+        if (c.ring.path.length > 1) c.ring.path.pop();
+        else c.ring = null;
+        c.render();
+        return true;
+      }
+      if (kind === "ring-close") {
+        c.ring = null;
+        c.say("已取消 —— 树没动");
+        c.render();
+        return true;
+      }
+      return false;
+    },
+    onKey: (c, ev) => {
+      if (!c.ring) return false;
+      if (ev.key === "Backspace") {
+        ev.preventDefault();
+        c.ring.path.length > 1 ? c.ring.path.pop() : (c.ring = null);
+        c.render();
+        return true;
+      }
+      if (/^[1-9]$/.test(ev.key)) {
+        const items = ringItems(c);
+        const item = items[Number(ev.key) - 1];
+        if (!item) return false;
+        ev.preventDefault();
+        if (item.kind === "up") {
+          c.ring.path.pop();
+          c.render();
+        } else if (item.kind === "into") {
+          const src = c.ring.src;
+          c.ring = null;
+          c.applyPos(intoPos(item.id), src);
+        } else if (item.group) {
+          c.ring.path.push(item.id); // 组：数字键先进去看
+          c.render();
+        } else {
+          const src = c.ring.src;
+          c.ring = null;
+          c.applyPos(beforePos(c.tree, item.id), src);
+        }
+        return true;
+      }
+      return false;
+    },
+    onEscape: (c) => {
+      if (!c.ring) return false;
+      c.ring = null;
+      c.say("已取消 —— 树没动");
+      c.render();
+      return true;
+    },
+  },
+
+  /* ── 13 连线 ───────────────────────────────────────────────────────────── */
+  {
+    id: "v13",
+    name: "连线",
+    blurb:
+      "每一行左边一颗圆点，组右边多一颗：从一个圆点拉一条线到另一个圆点 —— 线是唯一的落点。赌的是「不搬东西」：这一行从头到尾没离开过它的位置，动的是那条线。代价也明摆着：圆点只有 12px，比行还小。",
+    specs: [
+      ["落点", "12px 的圆点"],
+      ["源不动", "全程在原位"],
+      ["键盘", "Tab 到圆点"],
+    ],
+    bar: () =>
+      `<p class="barnote">从一个圆点拉到另一个圆点：左端点 = 插到它前面，组右边的点 = 放进组末尾。</p>`,
+    pre: (c, e) =>
+      e.depth === 0
+        ? `<span class="port is-off" aria-hidden="true"></span>`
+        : `<button class="port" data-act="wire" data-id="${e.node.id}" tabindex="0"
+             aria-label="从 ${esc(e.node.name)} 拉一条线"></button>`,
+    tail: (c, e) =>
+      isGroup(e.node) && e.depth > 0
+        ? `<button class="port inport" data-act="wire-in" data-id="${e.node.id}" tabindex="0"
+             aria-label="把线拉进 ${esc(e.node.name)}"></button>`
+        : "",
+    act: (c, kind, id) => {
+      if (kind === "wire") {
+        if (!c.link) {
+          if (isGroup(c.nodeOf(id))) return true;
+          startWire(c, id);
+          return true;
+        }
+        if (c.link.src === id) {
+          endWire(c, "同一颗点 —— 松开了");
+          return true;
+        }
+        const src = c.link.src;
+        endWire(c);
+        c.applyPos(beforePos(c.tree, id), src);
+        return true;
+      }
+      if (kind === "wire-in") {
+        if (!c.link) return true;
+        const src = c.link.src;
+        endWire(c);
+        c.applyPos(intoPos(id), src);
+        return true;
+      }
+      return false;
+    },
+    onClick: (c) => {
+      if (c.link) endWire(c, "线断了 —— 树没动");
+    },
+    onEscape: (c) => {
+      if (!c.link) return false;
+      endWire(c, "线断了 —— 树没动");
+      return true;
+    },
+  },
+
+  /* ── 14 剪贴板 ─────────────────────────────────────────────────────────── */
+  {
+    id: "v14",
+    name: "剪贴板",
+    blurb:
+      "剪下来，再粘上去。剪切之后整棵树**一个字都没动** —— 它只是进了剪贴板；每一行这时都多一颗粘贴键。赌的是「先拿走、再放」：动作是两拍的，中间那拍可以反悔，也可以先去看清楚。",
+    specs: [
+      ["拍数", "2 拍"],
+      ["粘贴前", "树不动"],
+      ["键盘", "⌘X / ⌘V"],
+    ],
+    bar: (c) =>
+      c.snip
+        ? `<div class="clip">
+             <span class="clip-lab">剪贴板</span>
+             <b>${esc(c.nameOf(c.snip))}</b><span class="clip-id">${c.snip}</span>
+             <span class="clip-tip">粘到哪一行前面 · <kbd>⌘V</kbd></span>
+             <button class="linkbtn" data-act="unsnip">放回 <kbd>Esc</kbd></button>
+           </div>`
+        : `<p class="barnote">行尾「剪切」（或 <kbd>⌘X</kbd>）—— 树在你按粘贴之前一个字都不动。</p>`,
+    tail: (c, e) => {
+      if (e.depth === 0) return "";
+      if (!c.snip) {
+        return isGroup(e.node)
+          ? ""
+          : `<button class="mv" data-act="cut" data-id="${e.node.id}">剪切</button>`;
+      }
+      if (c.snip === e.node.id) return `<button class="mv" data-act="unsnip">放回</button>`;
+      return isGroup(e.node)
+        ? `<button class="mv" data-act="paste" data-id="${e.node.id}" data-mode="before">粘到前面</button>
+           <button class="mv" data-act="paste" data-id="${e.node.id}" data-mode="into">粘进末尾</button>`
+        : `<button class="mv" data-act="paste" data-id="${e.node.id}" data-mode="before">粘到前面</button>`;
+    },
+    act: (c, kind, id, _ev, el) => {
+      if (kind === "cut") {
+        c.snip = id;
+        c.sel = id;
+        c.say(`剪下来了：${c.nameOf(id)} —— 树没动，等你粘`);
+        c.render();
+        return true;
+      }
+      if (kind === "unsnip") {
+        c.snip = null;
+        c.sel = null;
+        c.say("放回去了 —— 树从头到尾没动过");
+        c.render();
+        return true;
+      }
+      if (kind === "paste") {
+        const src = c.snip;
+        if (!src) return true;
+        const mode = el.dataset.mode;
+        c.snip = null;
+        c.sel = null;
+        c.applyPos(posOf(c.tree, { id, mode }), src);
+        return true;
+      }
+      return false;
+    },
+    onKey: (c, ev) => {
+      const row = ev.target.closest?.(".row");
+      const id = row && c.listEl.contains(row) ? row.dataset.id : null;
+      const mod = ev.metaKey || ev.ctrlKey;
+      if (mod && ev.key.toLowerCase() === "x") {
+        ev.preventDefault();
+        if (!id) {
+          c.say("先把光标放到一行上", true);
+          return true;
+        }
+        c.cfg.act(c, "cut", id);
+        return true;
+      }
+      if (mod && ev.key.toLowerCase() === "v") {
+        ev.preventDefault();
+        if (!c.snip) {
+          c.say("剪贴板是空的", true);
+          return true;
+        }
+        if (!id) {
+          c.say("先选一行当落点", true);
+          return true;
+        }
+        const mode = isGroup(c.nodeOf(id)) ? "into" : "before";
+        const src = c.snip;
+        c.snip = null;
+        c.sel = null;
+        c.applyPos(posOf(c.tree, { id, mode }), src);
+        return true;
+      }
+      return false;
+    },
+    onEscape: (c) => {
+      if (!c.snip) return false;
+      c.snip = null;
+      c.sel = null;
+      c.say("放回去了 —— 树从头到尾没动过");
+      c.render();
+      return true;
+    },
+  },
+
+  /* ── 15 滚轮 ───────────────────────────────────────────────────────────── */
+  {
+    id: "v15",
+    name: "滚轮",
+    blurb:
+      "点一个块当源，目的地变成一只转轮：滚一格换一个候选，只有正中间那一格会被落下 —— 上下两侧的按距离缩小、转身、变淡。赌的是「候选再多也不用扫」：眼睛只盯中间一格。",
+    specs: [
+      ["选择", "滚一格"],
+      ["候选", "一次只看见 3 个"],
+      ["确认", "中间那格"],
+    ],
+    bar: (c) =>
+      c.wheel
+        ? `<div class="barnote">滚到中间那一格 · <kbd>Enter</kbd> 落 · <kbd>Esc</kbd> 收起来</div>`
+        : `<p class="barnote">先点一个块当源，然后滚轮转目的地。</p>`,
+    onRow: (c, id) => {
+      if (isGroup(c.nodeOf(id))) return;
+      c.wheel = { src: id, idx: 0 };
+      c.say(`源：${treePath(c.tree, id)} —— 转到中间那一格`);
+      c.render();
+    },
+    auxOn: (c) => !!c.wheel,
+    aux: (c) => (c.wheel ? wheelHTML(c) : ""),
+    act: (c, kind, _id, _ev, el) => {
+      if (kind === "wheel-go") {
+        const i = Number(el.dataset.i);
+        if (i === c.wheel.idx) wheelDrop(c, i);
+        else {
+          c.wheel.idx = i;
+          c.render();
+        }
+        return true;
+      }
+      if (kind === "wheel-close") {
+        c.wheel = null;
+        c.say("收起来了 —— 树没动");
+        c.render();
+        return true;
+      }
+      return false;
+    },
+    onWheel: (c, ev) => {
+      if (!c.wheel) return;
+      ev.preventDefault();
+      wheelStep(c, ev.deltaY > 0 ? 1 : -1);
+    },
+    onKey: (c, ev) => {
+      if (!c.wheel) return false;
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        wheelStep(c, ev.key === "ArrowDown" ? 1 : -1);
+        return true;
+      }
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        wheelDrop(c, c.wheel.idx);
+        return true;
+      }
+      return false;
+    },
+    onEscape: (c) => {
+      if (!c.wheel) return false;
+      c.wheel = null;
+      c.say("收起来了 —— 树没动");
+      c.render();
+      return true;
+    },
+  },
+
+  /* ── 16 说话 ───────────────────────────────────────────────────────────── */
+  {
+    id: "v16",
+    name: "说话",
+    blurb:
+      "不打路径、不点行：用中文说一句「把 App.tsx 挪到 ADR 前面」，它从这句话里认出源、落点和关系，下面那行字告诉你它听懂了什么。赌的是这一格最省动作，也最可能听错 —— 它只认这棵树上的名字，多一个字都算噪音。",
+    specs: [
+      ["动作", "打一句话"],
+      ["树", "只用来显示结果"],
+      ["听不懂", "明说，不猜"],
+    ],
+    bar: (c) => `
+      <div class="saybox">
+        <input class="say" data-act="nl" spellcheck="false" value="${esc(c.nl)}"
+               placeholder="把 App.tsx 挪到 ADR 前面" aria-label="用一句话说要怎么挪" />
+        <button class="linkbtn" data-act="nl-go">执行</button>
+      </div>
+      <button class="ex" data-act="nl-ex" data-text="把 App.tsx 挪到 ADR 前面">试试：把 App.tsx 挪到 ADR 前面</button>
+      <button class="ex" data-act="nl-ex" data-text="notes.md 放进 docs 里">试试：notes.md 放进 docs 里</button>`,
+    hint: (c) => {
+      if (!c.nl.trim()) return "说一句就行。它只认这页面上的名字。";
+      const p = parseNL(c.tree, c.nl);
+      return p.why ? `没听懂：${p.why}` : `听成：${p.says}`;
+    },
+    act: (c, kind, _id, _ev, el) => {
+      if (kind === "nl-go") {
+        nlGo(c);
+        return true;
+      }
+      if (kind === "nl-ex") {
+        c.nl = el.dataset.text;
+        nlGo(c);
+        return true;
+      }
+      return false;
+    },
+    onInput(c, ev) {
+      if (ev.target.dataset?.act !== "nl") return false;
+      c.nl = ev.target.value;
+      const p = parseNL(c.tree, c.nl);
+      c.say(p.why ? `没听懂：${p.why}` : `听成：${p.says}`, !!p.why);
+      return true;
+    },
+    onKey: (c, ev) => {
+      if (ev.key === "Enter" && ev.target.dataset?.act === "nl") {
+        ev.preventDefault();
+        nlGo(c);
+        return true;
+      }
+      return false;
+    },
+  },
+
+  /* ── 17 面包屑下潜 ─────────────────────────────────────────────────────── */
+  {
+    id: "v17",
+    name: "面包屑下潜",
+    blurb:
+      "选一个块，整块面板变成一层一层往下钻的格子：每层只看得到这一层的孩子，顶上是面包屑，回去就点面包屑。每一格两个意思都摆在明面上 —— 「插到它前面」，或者「进它里面」。赌的是深树里，钻比滚好受。",
+    specs: [
+      ["一屏", "1 层"],
+      ["回去", "点面包屑"],
+      ["每格", "2 个意思"],
+    ],
+    bar: (c) =>
+      `<div class="barnote">${
+        c.drill
+          ? `源 <b>${esc(c.nameOf(c.drill.src))}</b> · 一层一层钻到落点那一层 · Esc 收起`
+          : `点一个块当源 —— 面板会变成钻头。`
+      }</div>`,
+    onRow: (c, id) => {
+      if (isGroup(c.nodeOf(id))) return;
+      c.drill = { src: id, path: [c.tree.id] };
+      c.say("");
+      c.render();
+    },
+    auxOn: (c) => !!c.drill,
+    aux: (c) => (c.drill ? drillHTML(c) : ""),
+    act: (c, kind, id, _ev, el) => {
+      if (kind === "drill-up") {
+        c.drill.path = c.drill.path.slice(0, Number(el.dataset.i) + 1);
+        c.render();
+        return true;
+      }
+      if (kind === "drill-in") {
+        c.drill.path.push(id);
+        c.render();
+        return true;
+      }
+      if (kind === "drill-go") {
+        const src = c.drill.src;
+        c.drill = null;
+        c.applyPos(beforePos(c.tree, id), src);
+        return true;
+      }
+      if (kind === "drill-into") {
+        const src = c.drill.src;
+        const level = c.drill.path[c.drill.path.length - 1];
+        c.drill = null;
+        c.applyPos(intoPos(level), src);
+        return true;
+      }
+      if (kind === "drill-close") {
+        c.drill = null;
+        c.say("收起来了 —— 树没动");
+        c.render();
+        return true;
+      }
+      return false;
+    },
+    onKey: (c, ev) => {
+      if (!c.drill) return false;
+      if (ev.key === "Backspace") {
+        ev.preventDefault();
+        c.drill.path = c.drill.path.slice(0, -1);
+        if (!c.drill.path.length) c.drill = null;
+        c.render();
+        return true;
+      }
+      return false;
+    },
+    onEscape: (c) => {
+      if (!c.drill) return false;
+      c.drill = null;
+      c.say("收起来了 —— 树没动");
+      c.render();
+      return true;
+    },
+  },
+
+  /* ── 18 封面流 ─────────────────────────────────────────────────────────── */
+  {
+    id: "v18",
+    name: "封面流",
+    blurb:
+      "落点做成一张一张的卡，排成一条有透视的带子：中间的正面朝你，两边的转过身、退远、变暗。←→ 翻，Enter 落中间那张。赌的是「看一眼就够」—— 每条落点都写着完整路径，不用在树里找它在哪。",
+    specs: [
+      ["深度", "3D 透视"],
+      ["一次看见", "5 张"],
+      ["确认", "中间那张"],
+    ],
+    bar: (c) =>
+      c.cf
+        ? `<div class="barnote">←→ 翻卡片 · <kbd>Enter</kbd> 落中间那张 · <kbd>Esc</kbd> 收起来</div>`
+        : `<p class="barnote">点一个块当源，落点会排成一条带子。</p>`,
+    onRow: (c, id) => {
+      if (isGroup(c.nodeOf(id))) return;
+      c.cf = { src: id, idx: 0 };
+      c.say("");
+      c.render();
+    },
+    auxOn: (c) => !!c.cf,
+    aux: (c) => (c.cf ? cfHTML(c) : ""),
+    act: (c, kind, _id, _ev, el) => {
+      if (kind === "cf-go") {
+        const i = Number(el.dataset.i);
+        if (i === c.cf.idx) cfDrop(c, i);
+        else {
+          c.cf.idx = i;
+          c.render();
+        }
+        return true;
+      }
+      if (kind === "cf-close") {
+        c.cf = null;
+        c.say("收起来了 —— 树没动");
+        c.render();
+        return true;
+      }
+      return false;
+    },
+    onKey: (c, ev) => {
+      if (!c.cf) return false;
+      const n = slotsOf(c).length;
+      if (ev.key === "ArrowRight" || ev.key === "ArrowLeft") {
+        ev.preventDefault();
+        c.cf.idx = (c.cf.idx + (ev.key === "ArrowRight" ? 1 : -1) + n) % n;
+        c.render();
+        return true;
+      }
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        cfDrop(c, c.cf.idx);
+        return true;
+      }
+      return false;
+    },
+    onEscape: (c) => {
+      if (!c.cf) return false;
+      c.cf = null;
+      c.say("收起来了 —— 树没动");
+      c.render();
+      return true;
+    },
+  },
+
+  /* ── 19 滚着挪 ─────────────────────────────────────────────────────────── */
+  {
+    id: "v19",
+    name: "滚着挪",
+    blurb:
+      "没有落点这回事：攥住一行，滚一格它就往下走一行 —— 下一行是组，它就直接进到组的头一格。树是真的在动，Esc 把它送回原处。赌的是连续比离散好使：眼睛跟着那一行走，根本不用挑落点。",
+    specs: [
+      ["落点", "没有"],
+      ["树", "边滚边变"],
+      ["Esc", "送回原处"],
+    ],
+    bar: (c) =>
+      `<div class="barnote">${
+        c.scrub
+          ? `攥着 <b>${esc(c.nameOf(c.scrub.id))}</b> · 滚轮或 <kbd>⌥↑↓</kbd> 走一行 · <kbd>Enter</kbd> 定住 · <kbd>Esc</kbd> 退回原处`
+          : `点一个块攥住 —— 然后滚。没有落点，只有一步一行。`
+      }</div>`,
+    tail: (c, e) => {
+      if (isGroup(e.node)) return "";
+      if (c.scrub?.id === e.node.id) {
+        return `<span class="nudge">
+          <button data-act="scrub-up" aria-label="往上一行">↑</button><button data-act="scrub-down" aria-label="往下一行">↓</button>
+        </span>`;
+      }
+      return `<button class="grab" data-act="scrub" data-id="${e.node.id}"
+        aria-label="攥住 ${esc(e.node.name)}">攥</button>`;
+    },
+    onRow: (c, id) => startScrub(c, id),
+    act: (c, kind, _id, _ev, el) => {
+      if (kind === "scrub") {
+        startScrub(c, el.dataset.id);
+        return true;
+      }
+      if (kind === "scrub-up" || kind === "scrub-down") {
+        scrubStep(c, kind === "scrub-down" ? 1 : -1);
+        return true;
+      }
+      return false;
+    },
+    onWheel: (c, ev) => {
+      if (!c.scrub) return;
+      ev.preventDefault();
+      scrubStep(c, ev.deltaY > 0 ? 1 : -1);
+    },
+    onKey: (c, ev) => {
+      if (!c.scrub) return false;
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        scrubStep(c, ev.key === "ArrowDown" ? 1 : -1);
+        return true;
+      }
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        const id = c.scrub.id;
+        c.scrub = null;
+        c.landed(id);
+        return true;
+      }
+      return false;
+    },
+    onEscape: (c) => {
+      if (!c.scrub) return false;
+      const { id, origin } = c.scrub;
+      c.scrub = null;
+      applyMove(c.tree, id, origin.parentId, origin.index);
+      c.say(`${c.nameOf(id)} 退回原处 —— 树回到你动手之前`);
+      c.render();
+      return true;
+    },
+  },
+
+  /* ── 20 序号指令 ───────────────────────────────────────────────────────── */
+  {
+    id: "v20",
+    name: "序号指令",
+    blurb:
+      "行号印在左边。敲 3>8 回车 —— 把第 3 行挪到第 8 行前面，跟 ed 里的 m 命令一模一样；也可以点两行凑出这两个数。赌的是熟手只要四个键：不要搜索、不要落点、不要确认。",
+    specs: [
+      ["动作", "4 个键"],
+      ["鼠标", "不用"],
+      ["落点", "写成数字"],
+    ],
+    numbering: true,
+    bar: (c) => `
+      <div class="edbar">
+        <span class="ed-prompt" aria-hidden="true">:</span>
+        <input class="ed-in" data-act="ed" spellcheck="false" value="${esc(c.ed)}"
+               placeholder="3>8" aria-label="按行号挪：3>8 表示第 3 行挪到第 8 行前面" />
+        <button class="linkbtn" data-act="ed-go">执行</button>
+      </div>`,
+    hint: (c) => {
+      const p = edParse(c);
+      if (!c.ed.trim()) return "3>8 = 把第 3 行挪到第 8 行前面 · 也可以直接点两行";
+      return p.why ? p.why : `会这么落：${c.nameOf(p.src)} → 第 ${p.tgtIdx} 行（${c.nameOf(p.tgtId)}）前面`;
+    },
+    onRow: (c, id) => {
+      const i = entries(c.tree).findIndex((e) => e.node.id === id) + 1;
+      if (c.edSrc && c.edSrc !== i) {
+        c.ed = `${c.edSrc}>${i}`;
+        c.edSrc = null;
+        edGo(c);
+        return;
+      }
+      if (isGroup(c.nodeOf(id))) return c.say("第一个数是组 —— 这一页只挪块", true);
+      c.edSrc = i;
+      c.ed = `${i}>`;
+      c.say(`第 ${i} 行 ${c.nameOf(id)} —— 再点一行当落点，或者把数字敲完`);
+      c.render();
+      c.el.querySelector('[data-act="ed"]')?.focus();
+    },
+    onInput: (c, ev) => {
+      if (ev.target.dataset?.act !== "ed") return false;
+      c.ed = ev.target.value;
+      const p = edParse(c);
+      if (!c.ed.trim()) return c.say(""), true;
+      c.say(p.why ? p.why : `会这么落：${c.nameOf(p.src)} → 第 ${p.tgtIdx} 行（${c.nameOf(p.tgtId)}）前面`, !!p.why);
+      return true;
+    },
+    act: (c, kind) => {
+      if (kind === "ed-go") {
+        edGo(c);
+        return true;
+      }
+      return false;
+    },
+    onKey: (c, ev) => {
+      if (ev.key === "Enter" && ev.target.dataset?.act === "ed") {
+        ev.preventDefault();
+        edGo(c);
+        return true;
+      }
+      return false;
+    },
   },
 ];
 

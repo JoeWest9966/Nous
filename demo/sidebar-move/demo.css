@@ -249,6 +249,8 @@ h1 {
   margin-bottom: 8px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
 }
 
 .bar:empty {
@@ -813,6 +815,7 @@ body.is-dragging.nope .line {
 .trow,
 .prow {
   appearance: none;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1016,6 +1019,10 @@ body.is-dragging.nope .line {
   color: var(--n-color-text);
 }
 
+.notes h3.notes-b {
+  margin-top: 24px;
+}
+
 .notes ul {
   margin: 0;
   padding-left: 18px;
@@ -1047,6 +1054,792 @@ kbd {
   border-bottom-width: 2px;
   border-radius: 4px;
   color: var(--n-color-text);
+}
+
+/* ══ 11–20 的零件 ═══════════════════════════════════════════════════════════
+   这一排的东西都不在行里：菜单、环、线、转轮、卡片、格子。颜色还是那套 token，
+   动画还是只动 transform / opacity / 颜色。 */
+
+/* ── 11 长按浮起：压暗的底 + 两层菜单 + 跟着手指的替身 ──────────────────── */
+.ctx-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--n-color-canvas) 46%, transparent);
+  backdrop-filter: blur(3px) saturate(70%);
+  opacity: 0;
+  transition: opacity var(--d-out) var(--ease-out);
+}
+
+.body.show-aux .ctx-scrim {
+  opacity: 1;
+}
+
+.ctx {
+  position: absolute;
+  width: 216px;
+  border-radius: 11px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  backdrop-filter: blur(22px) saturate(180%);
+  overflow: hidden;
+  z-index: 3;
+  transform-origin: 24% 0;
+  opacity: 0;
+  scale: 0.94;
+  translate: 0 -5px;
+  transition:
+    opacity var(--d-out) var(--ease-out),
+    scale var(--d-in) var(--ease-spring),
+    translate var(--d-in) var(--ease-spring);
+}
+
+.body.show-aux .ctx {
+  opacity: 1;
+  scale: 1;
+  translate: 0 0;
+}
+
+.ctx-path,
+.ctx-cap {
+  font-family: var(--n-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--n-color-muted);
+}
+
+.ctx-path {
+  padding: 6px 10px 5px;
+  border-bottom: 1px solid var(--n-color-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ctx-slide {
+  display: flex;
+  width: 100%;
+  transform: translateX(calc(var(--lvl, 0) * -100%));
+  transition: transform 220ms var(--ease-spring);
+}
+
+.ctx-panel {
+  flex: none;
+  width: 100%;
+  max-height: 196px;
+  overflow: auto;
+  padding: 3px 3px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  scrollbar-width: none;
+}
+
+.ctx-panel::-webkit-scrollbar {
+  display: none;
+}
+
+.ctx-cap {
+  padding: 2px 7px 3px;
+}
+
+.mitem {
+  appearance: none;
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--n-color-text);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 4px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 110ms ease;
+}
+
+.mitem:hover,
+.mitem.hot {
+  background: var(--tint);
+}
+
+.mitem.sub {
+  color: var(--n-color-accent);
+}
+
+/* 跟着手指的那颗替身 —— 它才是「被拿起来」的那个东西 */
+.lift {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-brd);
+  box-shadow: var(--glass-shadow), var(--glass-hi);
+  backdrop-filter: blur(16px) saturate(160%);
+  font-size: 11.5px;
+  pointer-events: none;
+  white-space: nowrap;
+  scale: 1.04;
+}
+
+.lift b {
+  font-family: var(--n-font-mono);
+  font-size: 10px;
+  color: var(--n-color-muted);
+  font-weight: 500;
+}
+
+/* ── 12 径向环 ───────────────────────────────────────────────────────────── */
+.ring {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--n-color-canvas) 62%, transparent);
+  backdrop-filter: blur(2.5px) saturate(80%);
+  animation: calm-in var(--d-out) var(--ease-out);
+}
+
+@keyframes calm-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.ring-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  text-align: center;
+  pointer-events: none;
+  font-size: 10px;
+  color: var(--n-color-muted);
+}
+
+.ring-core b {
+  font-family: var(--n-font-mono);
+  font-size: 11px;
+  color: var(--n-color-text);
+  font-weight: 600;
+}
+
+.wedge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px solid var(--n-color-border);
+  box-shadow: var(--glass-hi);
+  animation: wedge-in 240ms var(--ease-spring) both;
+}
+
+@keyframes wedge-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.82);
+  }
+}
+
+.wl {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--n-color-text);
+  font: inherit;
+  font-size: 11px;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 110ms ease;
+}
+
+.wl:hover {
+  background: var(--tint);
+}
+
+.wedge.is-g {
+  border-color: var(--tint-strong);
+}
+
+.wgo {
+  appearance: none;
+  border: 1px solid var(--n-color-border);
+  background: transparent;
+  color: var(--n-color-accent);
+  font: inherit;
+  font-size: 9.5px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+.wgo:hover {
+  background: var(--tint);
+  border-color: var(--n-color-accent);
+}
+
+.wedge.spec {
+  padding: 3px 9px;
+  font-size: 10.5px;
+  color: var(--n-color-muted);
+  cursor: pointer;
+}
+
+.wedge.spec:hover {
+  color: var(--n-color-text);
+  border-color: var(--n-color-accent);
+}
+
+.wedge.into {
+  color: var(--n-color-accent);
+  border-color: var(--tint-strong);
+}
+
+.ring-x {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+}
+
+/* ── 13 连线：圆点 + 一根橡皮筋 ─────────────────────────────────────────── */
+.port {
+  appearance: none;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-left: -1px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-canvas);
+  cursor: crosshair;
+  opacity: 0;
+  transition:
+    opacity 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.row:is(:hover, :focus-within) .port,
+.port:focus-visible,
+.card.wiring .port {
+  opacity: 1;
+}
+
+.port:hover,
+.port:focus-visible {
+  border-color: var(--n-color-accent);
+  background: var(--tint);
+}
+
+.port.is-off {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.port.inport {
+  margin-left: auto;
+  cursor: cell;
+}
+
+.card.wiring .port {
+  border-color: var(--n-color-accent);
+}
+
+.wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.wire {
+  fill: none;
+  stroke: var(--n-color-accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* ── 14 剪贴板 ───────────────────────────────────────────────────────────── */
+.clip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 3px 4px 3px 9px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  border: 1px dashed var(--n-color-accent);
+  font-size: 11.5px;
+}
+
+.clip-lab {
+  font-family: var(--n-font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--n-color-accent);
+}
+
+.clip b {
+  font-weight: 600;
+}
+
+.clip-id {
+  font-family: var(--n-font-mono);
+  font-size: 10px;
+  color: var(--n-color-muted);
+}
+
+.clip-tip {
+  font-size: 10.5px;
+  color: var(--n-color-muted);
+}
+
+.clip .linkbtn {
+  margin-left: auto;
+  flex: none;
+}
+
+/* ── 15 滚轮 ─────────────────────────────────────────────────────────────── */
+.wheel-wrap {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklab, var(--n-color-canvas) 74%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+.wheel {
+  position: relative;
+  width: 76%;
+  max-width: 330px;
+  height: 100%;
+  perspective: 620px;
+  transform-style: preserve-3d;
+}
+
+.witem {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 30px;
+  appearance: none;
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-surface);
+  color: var(--n-color-muted);
+  font: inherit;
+  font-size: 11px;
+  border-radius: 7px;
+  padding: 0 9px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    transform 150ms var(--ease-out),
+    opacity 150ms linear,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.witem.on {
+  color: var(--n-color-text);
+  background: var(--n-color-raised);
+  border-color: var(--n-color-accent);
+}
+
+.wheel-guard {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 86%;
+  height: 34px;
+  transform: translate(-50%, -50%);
+  border-radius: 8px;
+  border: 1px solid var(--tint-strong);
+  pointer-events: none;
+}
+
+.wheel-x {
+  position: absolute;
+  right: 8px;
+  bottom: 7px;
+}
+
+/* ── 16 说话 ─────────────────────────────────────────────────────────────── */
+.saybox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 3px 2px 10px;
+  border: 1px solid var(--n-color-border);
+  border-radius: 8px;
+  background: var(--n-color-surface);
+}
+
+.saybox:focus-within {
+  border-color: var(--n-color-accent);
+}
+
+.say {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--n-color-text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 0;
+}
+
+.ex {
+  appearance: none;
+  border: 1px dashed var(--n-color-border);
+  background: transparent;
+  color: var(--n-color-muted);
+  font: inherit;
+  font-size: 10.5px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.ex:hover {
+  color: var(--n-color-accent);
+  border-color: var(--n-color-accent);
+}
+
+/* ── 17 面包屑下潜 ───────────────────────────────────────────────────────── */
+.drill {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--n-color-surface);
+}
+
+.drill-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--n-color-border);
+}
+
+.crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  overflow: hidden;
+}
+
+.crumb {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--n-color-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.crumb:hover {
+  background: var(--row-hover);
+}
+
+.crumb.on {
+  color: var(--n-color-text);
+  font-weight: 600;
+}
+
+.csep {
+  font-size: 10px;
+  color: var(--n-color-border);
+}
+
+.drop-here {
+  appearance: none;
+  margin: 6px;
+  border: 1px dashed var(--n-color-accent);
+  background: transparent;
+  color: var(--n-color-accent);
+  font: inherit;
+  font-size: 11px;
+  border-radius: 7px;
+  padding: 4px;
+  cursor: pointer;
+}
+
+.drop-here:hover {
+  background: var(--tint);
+}
+
+.tgrid {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  padding: 0 6px 6px;
+  overflow: auto;
+}
+
+.tile {
+  flex: none;
+  width: 112px;
+  min-height: 46px;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--n-color-border);
+  border-radius: 8px;
+  background: var(--n-color-canvas);
+  overflow: hidden;
+}
+
+.tmain {
+  appearance: none;
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--n-color-text);
+  font: inherit;
+  text-align: left;
+  padding: 6px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  cursor: pointer;
+  transition: background 110ms ease;
+}
+
+.tmain:hover {
+  background: var(--tint);
+}
+
+.tname {
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile.is-g .tname {
+  font-weight: 600;
+}
+
+.tcap {
+  font-size: 9.5px;
+  color: var(--n-color-muted);
+}
+
+.tgo {
+  appearance: none;
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--n-color-border);
+  background: transparent;
+  color: var(--n-color-accent);
+  font: inherit;
+  font-size: 10px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.tgo:hover {
+  background: var(--tint);
+}
+
+.tgo.is-empty {
+  display: flex;
+  align-items: center;
+  color: var(--n-color-muted);
+  cursor: default;
+  white-space: nowrap;
+}
+
+/* ── 18 封面流 ───────────────────────────────────────────────────────────── */
+.cf {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: color-mix(in oklab, var(--n-color-canvas) 82%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.cf-stage {
+  position: relative;
+  flex: 1;
+  perspective: 820px;
+  transform-style: preserve-3d;
+}
+
+.cfcard {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 226px;
+  min-height: 86px;
+  margin: -43px 0 0 -113px;
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 9px;
+  border-radius: 10px;
+  border: 1px solid var(--n-color-border);
+  background: var(--n-color-raised);
+  color: var(--n-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--glass-shadow);
+  transition:
+    transform 240ms var(--ease-out),
+    opacity 200ms linear,
+    border-color 150ms ease;
+}
+
+.cfcard.on {
+  border-color: var(--n-color-accent);
+}
+
+.cfpath {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.cfmeta {
+  font-family: var(--n-font-mono);
+  font-size: 9.5px;
+  color: var(--n-color-muted);
+}
+
+.cf-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--n-color-border);
+}
+
+.cf-count {
+  margin-right: auto;
+  font-family: var(--n-font-mono);
+  font-size: 10px;
+  color: var(--n-color-muted);
+}
+
+/* ── 19 滚着挪：两颗粒子按钮 ─────────────────────────────────────────────── */
+.nudge {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.nudge button {
+  appearance: none;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid var(--n-color-border);
+  border-radius: 4px;
+  background: var(--n-color-raised);
+  color: var(--n-color-text);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.nudge button:hover {
+  border-color: var(--n-color-accent);
+}
+
+/* ── 20 序号指令 ─────────────────────────────────────────────────────────── */
+.idx {
+  flex: none;
+  width: 13px;
+  text-align: right;
+  font-family: var(--n-font-mono);
+  font-size: 9.5px;
+  color: var(--n-color-muted);
+  opacity: 0.75;
+}
+
+.edbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 3px 2px 8px;
+  border: 1px solid var(--n-color-border);
+  border-radius: 8px;
+  background: var(--n-color-surface);
+  font-family: var(--n-font-mono);
+}
+
+.edbar:focus-within {
+  border-color: var(--n-color-accent);
+}
+
+.ed-prompt {
+  color: var(--n-color-accent);
+  font-size: 12px;
+}
+
+.ed-in {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--n-color-text);
+  font: inherit;
+  font-family: var(--n-font-mono);
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  padding: 3px 0;
 }
 
 /* ── 少动 / 不动 ──────────────────────────────────────────────────────────── */
