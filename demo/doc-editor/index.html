@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="default">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>文档 —— 十个方案</title>
+    <link rel="stylesheet" href="/demo/doc-editor/demo.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <h1>文档 —— 十个方案</h1>
+          <p class="lede">
+            一个节点不止一份 <code>.md</code>。十格共用同一份假数据（<b>4 篇</b>：
+            <code>AGENTS.md</code> + 3 篇自己的），也只回答同一个问题：<b>「我要在其中一份上写两行字」
+            —— 用你最少的动作做到。</b>每格都能真的打字、切文档、新建、删除、恢复：状态走
+            「编辑中 → 正在保存… → 已保存」，全在内存里，一个字节都不落盘。
+            <code>AGENTS.md</code> 是 coding agent 进目录时找的那一份 ——
+            <b>它在任何一条路上都拿不到删除入口</b>，删掉的文档只是挪进「最近删除」，能恢复。
+            头上的 <b>桌面 / 手机</b> 开关是全局的，每张卡片自己也能单独切：手机形态是
+            <b>375×812 的真实外框</b>，外框里页面真的重排（侧栏变抽屉 / 变底部 sheet / 变全屏列表页），
+            不是把桌面版缩小。<kbd>Esc</kbd> 关掉任何浮层、对话、输入框，未提交的编辑不丢。
+          </p>
+        </div>
+        <div class="tools">
+          <div class="seg" id="mode" role="group" aria-label="形态">
+            <button class="seg-btn" data-mode="desk" aria-pressed="true">桌面</button>
+            <button class="seg-btn" data-mode="phone" aria-pressed="false">手机</button>
+          </div>
+          <button class="btn" id="theme" aria-pressed="false">浅色</button>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs" aria-label="方案"></nav>
+
+      <main class="deck" id="deck"></main>
+
+      <section class="notes">
+        <h3>看的时候重点看这几件事</h3>
+        <ul>
+          <li>
+            在 <code>设计.md</code> 里打两个字，<b>别等它保存完就切到 <code>notes.md</code></b>：
+            正文必须换成 notes 那一份，左上角状态字说的是 notes 的状态。再切回去，那两个未保存的字
+            <b>还在</b> —— 串台就是 bug。
+          </li>
+          <li>
+            <code>AGENTS.md</code> 在每一格里都<b>拿不到删除入口</b>：列表里的 ✕、标题栏的 ⋯、
+            <kbd>⌘K</kbd> 面板里的行、08 的左滑手势 —— 四条路上都不许出现。真功能里它只能改。
+          </li>
+          <li>
+            删掉一份（叫「移到最近删除」，因为它确实只是挪进 <code>map/&lt;id&gt;/.trash/</code>）：
+            它出现在「最近删除」分组里，<b>能恢复</b>。确认卡片默认焦点在<b>取消</b>，
+            <kbd>Esc</kbd> 等于取消，destructive 那个按钮是红的、在左边。
+          </li>
+          <li>
+            切到手机形态：<b>外框里真的重排了</b>（不是缩小），行高 ≥ 44px，输入框字号 ≥ 16px，
+            <code>:hover</code> 不残留。01 和 06 是同一件事的两个极端，02 和 05 也是，03 和 09 也是 ——
+            摆在一起是为了做减法，不是选最多的那个。
+          </li>
+        </ul>
+      </section>
+    </div>
+    <script type="module" src="/demo/doc-editor/main.js"></script>
+  </body>
+</html>
