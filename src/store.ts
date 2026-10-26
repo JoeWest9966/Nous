@@ -164,7 +164,7 @@ export async function saveBoard(
 }
 
 /* ------------------------------------------------------------------ *
- * 块的正文：`map/<nodeId>/agent.md`
+ * 块的正文：`map/<nodeId>/AGENTS.md`
  *
  * 它和树是**两份互不相干的事实**：写一篇文章不该动 version，落一手棋也不该
  * 让笔记变成 409。所以这里有自己的 etag（内容哈希），不走 board 的 baseVersion。

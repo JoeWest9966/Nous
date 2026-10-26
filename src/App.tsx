@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DocPage } from "./Doc";
 import { Find, type Hit } from "./Find";
+import { MoveTo } from "./Move";
 import { NameInput } from "./Rename";
 import { NodeMenuProvider, NodeMenuTrigger, type MenuItem } from "./NodeMenu";
 import { Tree } from "./Tree";
@@ -16,6 +17,7 @@ import {
   initialState,
   isSection,
   layout,
+  moveNode,
   pathTo,
   removeNode,
   renameNode,
@@ -181,6 +183,8 @@ export function App() {
   const [locks, setLocks] = useState<ReadonlySet<string>>(() => new Set());
   const flashTimer = useRef<number | undefined>(undefined);
   const [findOpen, setFindOpen] = useState(false);
+  /** 「移动到…」捧着的是源 id + 触发它的那颗按钮的位置 —— 面板从那儿长出来，也从那儿缩回去。 */
+  const [moving, setMoving] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [side, setSide] = useState<boolean>(() => localStorage.getItem(SIDE_KEY) === "1");
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 819px)").matches);
@@ -415,7 +419,7 @@ export function App() {
   };
 
   /**
-   * 开它的笔记本（`agent.md`）。这个是壳的页面，所以留在 SPA 里、盖在盘面上、
+   * 开它的笔记本（`AGENTS.md`）。这个是壳的页面，所以留在 SPA 里、盖在盘面上、
    * 不卸载盘面 —— 否则树的展开状态、滚动位置、撤销栈全丢。
    */
   const openNotes = (id: string) => {
@@ -464,6 +468,18 @@ export function App() {
     const next = addSection(root, here.id);
     const id = childIds(next, here.id).at(-1);
     if (id) play(next, { t: "addSection", parent: here.id, id });
+  };
+
+  /**
+   * 落这一手。移动是 declaratively reversible 的 —— 没有任何不可滑回的后果，
+   * 所以不弹确认（Apple：确认只留给真不可逆的事，滥用它等于训练人闭眼点过去）。
+   * 回报是「闪一下 + 状态行」，不拽视野：挪一块多半还要再挪下一块。
+   */
+  const doMove = (id: string, to: string, before?: string) => {
+    setMoving(null);
+    const next = moveNode(root, id, to, before);
+    // moveNode 把“其实没动”原样递回来，play 的早退会兜住 —— 不用在这儿再判一遍。
+    play(next, { t: "move", id, to, ...(before === undefined ? {} : { before }) });
   };
 
   const remove = (id: string) => {
@@ -534,6 +550,12 @@ export function App() {
         label: "重命名",
         icon: <IconPencil />,
         run: () => beginRename(id, target, target?.closest("aside") ? "tree" : "board"),
+      },
+      {
+        key: "move",
+        label: "移动到…",
+        icon: <IconMove />,
+        run: () => setMoving({ id, rect: (target ?? host).getBoundingClientRect() }),
       },
       {
         key: "copy-name",
@@ -867,6 +889,15 @@ export function App() {
         </div>
 
         {findOpen && <Find hits={hits} onGo={goTo} onClose={() => setFindOpen(false)} />}
+        {moving && projectId && (
+          <MoveTo
+            source={moving.id}
+            root={root}
+            anchor={moving.rect}
+            onMove={(to, before) => doMove(moving.id, to, before)}
+            onClose={() => setMoving(null)}
+          />
+        )}
 
         {/* 块自己的页面：真实 URL、盖在盘面上面、盘面不卸载。 */}
         {openDoc && projectId && (
@@ -920,7 +951,7 @@ function Piece({
   flashId: string | null;
   editingId: string | null;
   onEnter: (id: string) => void;
-  /** 开这一块的页面。组和块都有 —— 正文不长在树上，长在 map/<id>/agent.md 里。 */
+  /** 开这一块的页面。组和块都有 —— 正文不长在树上，长在 map/<id>/AGENTS.md 里。 */
   onOpen: (id: string) => void;
   onBeginRename: (id: string, el: HTMLElement | null) => void;
   onCommitRename: (id: string, name: string) => void;
@@ -1234,6 +1265,14 @@ const IconLink = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <path d="M5.8 8.2a2.5 2.5 0 0 0 3.5 0l1.9-1.9a2.5 2.5 0 0 0-3.5-3.5l-.5.5" />
     <path d="M8.2 5.8a2.5 2.5 0 0 0-3.5 0L2.8 7.7a2.5 2.5 0 0 0 3.5 3.5l.5-.5" />
+  </svg>
+);
+
+/** “移动”：一根横向箭头两端带端帽，旁边一枚沿箭头进框的竖 —— 换爹与排序同一枚图标。 */
+const IconMove = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M2 10.2h10M4.4 8 2 10.2 4.4 12.4M10.4 2v6.4c0 .6-.5 1.1-1.1 1.1H4" />
+    <path d="M6 6.8 3.6 9.3 6 11.8" />
   </svg>
 );
 

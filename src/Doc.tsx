@@ -12,7 +12,7 @@ import {
 /**
  * 一块的页面。**真实路径**：`/p/<board>/<nodeId>/` —— 冷启动能打开，粘到别处也能打开。
  *
- * 这里现在是一个编辑器：`map/<nodeId>/agent.md` 的原文，改了就自己叹口气存下去。
+ * 这里现在是一个编辑器：`map/<nodeId>/AGENTS.md` 的原文，改了就自己叹口气存下去。
  * 三件事是刻意的：
  *
  * - **它盖在盘面上面，不卸载盘面。** 卸载会丢掉树的展开状态、滚动位置和撤销栈。
@@ -435,7 +435,7 @@ export function DocPage({
 
           <div className="mt-6 flex items-center gap-3 border-t border-border pt-3">
             <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted/60">
-              content/{board}/map/{id}/agent.md
+              content/{board}/map/{id}/AGENTS.md
             </span>
             <span className="shrink-0 text-[10.5px] tabular-nums text-muted/60">
               {text.length} 字

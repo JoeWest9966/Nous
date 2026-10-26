@@ -35,10 +35,22 @@ content/<board-id>/
 ├── log.json    { v: 1, moves[] }                        ← 最近 200 手，丢了只是没历史
 │                                    move 里指节点的字段也叫 `tree`（老记录是 `id`，只当历史看）
 └── map/<nodeId>/
-    ├── agent.md          ← 这一块的正文。用户的，程序只在建文件夹时写一次，之后永不覆盖
+    ├── AGENTS.md         ← 这一块的正文，也是 agent 进来时自动读的那份。程序只在建文件夹时写一次，之后永不覆盖
+    ├── package.json      ← 块（叶子）才有：有 `scripts.start` = 它是个 app
+    ├── server.js         ← 同上：它的后端，零依赖
+    ├── public/           ← 同上：它的静态页面
+    ├── data/             ← 它自己的数据（`cp -r` 走就带走了）
     ├── README.md         ← `map/` 的索引（id ↔ tree ↔ 名字），每次保存整份重写，纯派生
     └── .gone/<nodeId>/   ← 树里已经没有的节点，连文件夹挪到这儿，**不删**
 ```
+
+**这个文件叫 `AGENTS.md`，不叫 `agent.md`。** 一字之差决定 agent 会不会读它：
+所有 coding agent 进来先找 `AGENTS.md` / `CLAUDE.md`，小写的 `agent.md` 谁都不会自动打开。
+在这个文件夹里跑 `setup-matt-pocock-skills` 时，它编辑的也是这一份（它只就地更新 `## Agent skills`
+那一段，不覆盖周围的内容）；万一写坏了，`content/` 在 git 里，`git checkout` 能退回。
+
+新建的块自动拿到上面那四样（零依赖、`npm start` 就能跑、带 `/api/health` 和一组 `/api/notes`），
+新建的组只拿 `AGENTS.md` —— 组是容器，不是 app。**只铺一次，之后永不覆盖。**
 
 `map/` 的文件夹名是 **id**，不是名字：改名、换爹、撤销都不碰文件系统。对账在 `server/map.ts`，
 保存后跑一次，幂等。

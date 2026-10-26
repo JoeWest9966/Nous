@@ -170,7 +170,7 @@ const start = async (
   });
 
   // 有代码的块盯文件夹：代码一改就收掉（下一次请求带着新代码起来）。
-  // 空块不盯：它没有代码可热，改 agent.md 不该把进程重启一遍。
+  // 空块不盯：它没有代码可热，改 AGENTS.md 不该把进程重启一遍。
   if (launch.cmd !== BLANK_TAG) {
     try {
       let timer: NodeJS.Timeout | undefined;

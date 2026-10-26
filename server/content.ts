@@ -3,7 +3,7 @@
  *
  * - `tree.json`   语义：块、组、父子。**唯一真相**，丢了就是真丢。
  * - `log.json`    最近 200 手：加、删、改名、撤销。丢了只是没历史。
- * - `map/<id>/`   每个节点一个文件夹（agent.md）。**派生 + 用户内容**：文件夹跟着树长，
+ * - `map/<id>/`   每个节点一个文件夹（AGENTS.md）。**派生 + 用户内容**：文件夹跟着树长，
  *                 里面的东西是自己的，程序不碰。对账在 `map.ts`。
  *
  * 语义没有第三份。布局（谁在哪、多大）是 `squarify` 从值算出来的派生数据，
@@ -15,7 +15,8 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
-import { adoptNode, freshId, hasNode, isNodeId, stub, syncMap } from "./map.ts";
+import { adoptNode, freshId, hasNode, intro, isNodeId, stub, syncMap } from "./map.ts";
+import { findNode, treeMap } from "../src/game.ts";
 import { audit, readLocks, restoreLocked, writeLocks } from "./locks.ts";
 
 export type BoardSummary = {
@@ -46,7 +47,7 @@ const LOG = "log.json";
 const LOG_LIMIT = 200;
 /** 每个节点的文件夹里那份人写的东西。名字在 `map.ts` 里定过，这里同一个。 */
 const MAP = "map";
-const DOC = "agent.md";
+const DOC = "AGENTS.md";
 
 export const isBoardId = (id: string): boolean => ID_OK.test(id);
 
@@ -154,7 +155,7 @@ export class BoardStore {
   }
 
   /**
-   * 一块的正文：`map/<nodeId>/agent.md`。
+   * 一块的正文：`map/<nodeId>/AGENTS.md`。
    *
    * 三件事值得写在这儿：
    * - **树里没有这节点就不给看。** 目录可以被手动删、可以躺在 `.gone/` 里，
@@ -193,9 +194,20 @@ export class BoardStore {
       const text = await readFile(path.join(this.dir(id), MAP, nodeId, DOC), "utf8");
       return { status: "ok", text, etag: etagOf(text), stub: false, hasApp };
     } catch {
-      const text = stub(nodeId);
+      // 文件不在：给的内容必须和建文件夹时会写下去的那份一模一样 ——
+      // 看一眼不该长出一个文件，但也不该看到一份不同的文案。
+      const text = await this.intro(id, nodeId);
       return { status: "ok", text, etag: STUB_ETAG, stub: true, hasApp };
     }
+  }
+
+  /** 建文件夹时那份 `AGENTS.md` 的原文。文件不在时用同一份，两边永远一致。 */
+  private async intro(id: string, nodeId: string): Promise<string> {
+    const tree = await this.tree(id);
+    const root = tree ? adoptNode(tree.root) : undefined;
+    const node = root && findNode(root, nodeId);
+    if (!root || !node) return stub(nodeId);
+    return intro(node, id, treeMap(root).get(nodeId) ?? node.name);
   }
 
   /**
