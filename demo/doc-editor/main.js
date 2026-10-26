@@ -240,9 +240,20 @@ class Card {
     const d = this.docOf(id);
     if (!d || d.trashed) return;
     if (this.cfg.beforeOpen?.(this, id)) return;
+    this.settleSave(); // 切文档前把正在走的保存走完，上一份别卡在「编辑中」
     this.cur = id;
     this.closeOverlays();
     this.render();
+  }
+
+  /** 保存链（编辑中 → 正在保存… → 已保存）立刻走完。切文档 / 收摊时用。 */
+  settleSave() {
+    const d = this.active();
+    if (d.state === "saved") return;
+    clearTimeout(this.t1);
+    clearTimeout(this.t2);
+    d.state = "saved";
+    d.ago = "刚刚";
   }
 
   type(text) {
@@ -374,6 +385,7 @@ class Card {
     } else {
       node.classList.add(cls);
     }
+    /* 退场 140ms（--d-out）走完再重画；多留 20ms 是等最后一帧真的画完 */
     setTimeout(() => this.render(), 160);
     return true;
   }
@@ -396,7 +408,6 @@ class Card {
     const phone = this.mode === "phone";
     const inner = phone ? this.cfg.phone(this) : this.cfg.desk(this);
     const ovl = this.overlayHTML();
-    const list = this.cfg.listHTML ?? listHTML;
 
     const html = phone
       ? `<div class="frame mode-phone">
@@ -411,7 +422,6 @@ class Card {
          <p class="status" aria-live="polite">${esc(this.noteText)}</p>`;
 
     this.wrapEl.innerHTML = html;
-    this._list = list;
 
     this.el.querySelectorAll(".card-tools [data-mode]").forEach((b) => {
       b.setAttribute("aria-pressed", String(b.dataset.mode === this.mode));
@@ -987,7 +997,7 @@ const v5 = {
         <div class="ed-head">${titleHTML(c.active())} ${stateHTML(c.active())} ${moreBtnHTML(c)}</div>
         ${edBodyHTML(c.active())}
       </div>
-      <div class="tabbar bottom">${tabsHTML(c, true)}</div>
+      <div class="tabbar bottom">${tabsHTML(c, true)}<button class="tab add" data-act="new" tabindex="0" aria-label="新建文档">${I.plus}</button></div>
       ${c.adding ? `<div style="padding:6px 8px">${newrowHTML(c)}</div>` : ""}
       ${c.more ? morePopHTML(c) : ""}
     </div>`,
@@ -1273,43 +1283,36 @@ const v8 = {
         return;
       }
     }
-    /* 左缘内滑 → 拉出侧栏 */
+    /* 左缘内滑 → 拉出侧栏。
+       拖动之前就把 rail 插进 DOM —— 但 pointerdown 是挂在卡片上的委托，
+       render 会重建整棵子树，listeners 必须挂在存活的节点（wrapEl）上，
+       而不是被换掉的 edge / rail 上。 */
     const edge = ev.target.closest?.("[data-edge]");
     if (edge && !c.rail) {
       ev.preventDefault();
       const x0 = ev.clientX;
       let dx = 0;
       edge.setPointerCapture(ev.pointerId);
-      const move = (e) => {
-        dx = Math.max(0, Math.min(240, e.clientX - x0));
-        const rail = c.wrapEl.querySelector(".rail");
-        if (rail) rail.style.translate = `${dx - 240}px 0`;
-      };
-      const up = () => {
-        edge.removeEventListener("pointermove", move);
-        edge.removeEventListener("pointerup", up);
-        const want = dx > 44;
-        if (!want) {
-          c.rail = false;
-          c.render();
-        } else {
-          c.rail = true;
-          const rail = c.wrapEl.querySelector(".rail");
-          if (rail) {
-            rail.style.translate = "";
-            rail.classList.add("snap");
-          }
-          c.render();
-        }
-      };
-      // 拖动时先把 rail 插进 DOM，才有东西可动
       if (!c.wrapEl.querySelector(".rail")) {
         c.rail = true;
         c.render();
         c.wrapEl.querySelector(".rail").style.translate = "-240px 0";
       }
-      edge.addEventListener("pointermove", move);
-      edge.addEventListener("pointerup", up);
+      const wrap = c.wrapEl;
+      const move = (e) => {
+        dx = Math.max(0, Math.min(240, e.clientX - x0));
+        const rail = wrap.querySelector(".rail");
+        if (rail) rail.style.translate = `${dx - 240}px 0`;
+      };
+      const up = () => {
+        wrap.removeEventListener("pointermove", move);
+        wrap.removeEventListener("pointerup", up);
+        const want = dx > 44;
+        c.rail = want;
+        c.render();
+      };
+      wrap.addEventListener("pointermove", move);
+      wrap.addEventListener("pointerup", up);
     }
   },
 };
@@ -1582,7 +1585,11 @@ paintTheme();
 /* Esc 在哪儿按都算数；⌘K / ⌘[ / ⌘] 只给看得见的那一格 */
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") {
-    for (const c of CARDS) c.escape();
+    /* 只收看得见的格子 —— 焦点在哪一格，就从那一格开始关 */
+    const visible = CARDS.filter((c) => !c.el.hidden);
+    const focused = visible.find((c) => c.el.contains(document.activeElement));
+    if (focused?.escape()) return;
+    for (const c of visible) if (c.escape()) return;
     return;
   }
   const key = ev.key.toLowerCase();

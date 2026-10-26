@@ -1625,8 +1625,16 @@ kbd {
 }
 
 .mode-phone .iact {
+  position: relative;
   width: 34px;
   height: 34px;
+}
+
+/* 热区垫层：命中区 44px，图形只有 22px —— 不然列表行会高得离谱 */
+.mode-phone .iact::before {
+  content: "";
+  position: absolute;
+  inset: -11px;
 }
 
 .mode-phone .iact.wide {
@@ -1634,7 +1642,14 @@ kbd {
 }
 
 .mode-phone .mini {
+  position: relative;
   min-height: 32px;
+}
+
+.mode-phone .mini::before {
+  content: "";
+  position: absolute;
+  inset: -7px -9px;
 }
 
 /* ── 08 的侧栏：手机上铺满，不再是一条 240px 窄栏 ────────────────────────── */
@@ -1707,9 +1722,23 @@ kbd {
   }
 }
 
-/* 手机形态：贴底那条标签条让开 home indicator */
+/* 05 手机形态：贴底，标签铺开成一段一段的分段控件 */
 .mode-phone .tabbar.bottom {
   padding-bottom: 8px;
+}
+
+.mode-phone .tabbar.bottom .tab {
+  flex: 1;
+  justify-content: center;
+  min-width: 0;
+  max-width: none;
+}
+
+/* 手机上 ＋ 永远在 —— 分段控件末尾那一格 */
+.tabbar.bottom .tab.add {
+  flex: none;
+  width: 44px;
+  justify-content: center;
 }
 
 /* ── notes ───────────────────────────────────────────────────────────────── */
