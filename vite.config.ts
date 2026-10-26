@@ -82,7 +82,7 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: { input: { main: path.join(ROOT, "index.html"), ...demoInputs() } },
     },
-    // 自己的端口，跟 Treemap（4783）永不重叠：两个可以同时开着。
+    // 自己的端口，4783 留给隔壁那个老项目：两个可以同时开着。
     // allowedHosts 放宽是因为 tailnet 里可能用 MagicDNS 主机名访问，不只 IP。
     server: {
       host,
