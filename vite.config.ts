@@ -45,9 +45,9 @@ const contentPlugin = () => {
 };
 
 export default defineConfig(({ mode }) => {
-  // 默认只听本机。想在内网（比如 Tailscale）访问就往 .env 里写 N_HOST=那张网卡的地址。
-  // 内容层能写磁盘，写接口不该默认对着全世界开。
-  const host = loadEnv(mode, process.cwd(), "").N_HOST || "127.0.0.1";
+  // Nous 只跑在自己的 Tailscale 内网里：默认听 0.0.0.0，tailnet 里谁都能开。
+  // 要收回本机就往 .env 写 NOUS_HOST=127.0.0.1。
+  const host = loadEnv(mode, process.cwd(), "").NOUS_HOST || "0.0.0.0";
 
   return {
     plugins: [
@@ -82,14 +82,16 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: { input: { main: path.join(ROOT, "index.html"), ...demoInputs() } },
     },
-    // Own port, own host: this package never shares a server with the old panel.
+    // 自己的端口，跟 Treemap（4783）永不重叠：两个可以同时开着。
+    // allowedHosts 放宽是因为 tailnet 里可能用 MagicDNS 主机名访问，不只 IP。
     server: {
       host,
-      port: 4783,
+      port: 4790,
       strictPort: true,
+      allowedHosts: true,
       // content/ 是数据不是源码：它每写一次都会触发 HMR，整页重载会把正在编辑的盘打回磁盘版本。
       watch: { ignored: ["**/content/**", "**/dist/**"] },
     },
-    preview: { host, port: 4783 },
+    preview: { host, port: 4790, strictPort: true, allowedHosts: true },
   };
 });

@@ -1,0 +1,25 @@
+[Unit]
+Description=Nous (panel) — vite preview on 0.0.0.0:4790
+Documentation=https://github.com/JoeWest9966/Nous
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/Nous
+Environment=NODE_ENV=production
+Environment=NOUS_HOST=0.0.0.0
+ExecStart=/usr/bin/node /opt/Nous/node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 4790
+Restart=always
+RestartSec=3
+
+# 日志走 journald: journalctl -u nous-panel -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
+# 安装：cp deploy/nous-panel.service /etc/systemd/system/
+#       systemctl daemon-reload && systemctl enable --now nous-panel
+# 先 npm ci && npm run build，preview 读的是 dist/。
