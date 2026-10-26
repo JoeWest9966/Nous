@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="default">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>左栏 · 移动 —— 十个方案</title>
+    <link rel="stylesheet" href="/demo/sidebar-move/demo.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <h1>左栏 · 移动 —— 十个方案</h1>
+          <p class="lede">
+            十张卡片共用同一棵三层树，也都只回答同一个问题：<b>把 <code>App.tsx</code> 挪到
+            <code>docs/ADR</code> 前面</b>，用你几个动作、错几次。每格的左栏都是真的 ——
+            点、拖、按键之后树真的变了，而每行左边的 id 一个字符都不许变。这一页只挪块：挪组会把
+            这道题搅乱。有几格<b>答不上来</b>：落到哪里、为什么，下面那几条里写着。中途
+            <kbd>Esc</kbd> 一律取消，树回原样。
+          </p>
+        </div>
+        <div class="tools">
+          <button class="btn" id="theme" aria-pressed="false">浅色</button>
+        </div>
+      </header>
+
+      <nav class="tabs" id="tabs" aria-label="方案"></nav>
+
+      <main class="deck" id="deck"></main>
+
+      <section class="notes">
+        <h3>看的时候重点看这四件事</h3>
+        <ul>
+          <li>
+            每行左边都印着 id。<b>不管怎么挪，<code>n3</code> 永远是 App.tsx</b>，换的只是它挂在谁底下、
+            第几位。十格都跑一遍，谁把 id 挪变了，那一格就错了。
+          </li>
+          <li>
+            能真正让 <code>n3</code> 落到<b>「docs 第 1 位」（也就是 ADR 前面）</b>的只有
+            <b>03 / 06 / 07 / 08 / 09</b>。01、04、05 的组只有「里面」一个落点（行尾提示就写着
+            「放进末尾」），02 和 10 连排序都没有 —— 它们把 n3 塞进 ADR 里，状态行会明说是
+            <code>docs/ADR 第 1 位</code>。这一条不是 bug，是这十格最值钱的结论。
+          </li>
+          <li>
+            03 的行高 26px，上中下三段各 <b>8.6px</b>，块行的中段还是死区。04 把整行 26px 都算落点，
+            代价是永远只能表达「前面」。同一棵树、两种代价 —— 这就是 03 和 04 要你选的东西。
+          </li>
+          <li>
+            每格按一次 <kbd>Esc</kbd>：树回原样、id 不变、状态行说「已取消」。再用
+            <kbd>Tab</kbd> + <kbd>Enter</kbd> 走一遍 —— 鼠标点得到的每一个动作，键盘都得也点得到。
+          </li>
+        </ul>
+      </section>
+    </div>
+    <script type="module" src="/demo/sidebar-move/main.js"></script>
+  </body>
+</html>
