@@ -94,6 +94,43 @@ export const findNode = (root: Node, id: string): Node | undefined => {
   return undefined;
 };
 
+/**
+ * 全树的 **handle**：人念的那个名字路径（`src/App.tsx`），同名按出现顺序加 `-2`。
+ *
+ * handle 不是 id。改名、搬家它都会变 —— 这是允许的：**id 负责永不失效，handle 负责念得出来**。
+ * 所以它不进 tree.json、不进 log.json，每次从树现算；重名编号跟遍历顺序有关，
+ * 必须一次算全树，一个个算会算出行数不一致的结果。
+ */
+export function handleMap(root: Node): Map<string, string> {
+  const out = new Map<string, string>();
+  const used = new Map<string, number>();
+  const walk = (node: Node, prefix: string): void => {
+    const base = prefix ? `${prefix}/${node.name}` : node.name;
+    const nth = used.get(base) ?? 0;
+    used.set(base, nth + 1);
+    const handle = nth === 0 ? base : `${base}-${nth + 1}`;
+    out.set(node.id, handle);
+    // 子节点挂在这一支 resolved 过的 handle 下面 —— 爹带 -2 的话，儿子也跟着带。
+    node.children?.forEach((kid) => walk(kid, handle));
+  };
+  walk(root, "");
+  return out;
+}
+
+/** 钻到某个节点需要的那条路径。`path` 里只放组，根不算 —— 空数组就是「在根上」。 */
+export function pathTo(root: Node, id: string): string[] {
+  const rec = (node: Node, acc: string[], isRoot: boolean): string[] | null => {
+    if (node.id === id) return isSection(node) && !isRoot ? [...acc, node.id] : acc;
+    const next = isSection(node) && !isRoot ? [...acc, node.id] : acc;
+    for (const kid of node.children ?? []) {
+      const hit = rec(kid, next, false);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return rec(root, [], true) ?? [];
+}
+
 function replaceNode(root: Node, id: string, next: Node): Node {
   if (root.id === id) return next;
   if (!root.children) return root;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Find, type Hit } from "./Find";
 import { NameInput } from "./Rename";
 import { Tree } from "./Tree";
 import {
@@ -8,9 +9,11 @@ import {
   addSection,
   childIds,
   findNode,
+  handleMap,
   initialState,
   isSection,
   layout,
+  pathTo,
   removeNode,
   renameNode,
   seedIds,
@@ -18,12 +21,16 @@ import {
 } from "./game";
 import {
   type BoardSummary,
+  type Draft,
   type Move,
   ConflictError,
+  clearDraft,
   createBoard,
   listBoards,
   loadBoard,
+  readDraft,
   saveBoard,
+  writeDraft,
 } from "./store";
 
 const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
@@ -92,6 +99,8 @@ export function App() {
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [moves, setMoves] = useState<Move[]>([]);
   const [status, setStatus] = useState<Status>("loading");
+  /** 磁盘变了、本地还有没发出去的一手。两边都不自动丢，等人选。 */
+  const [orphan, setOrphan] = useState<Draft | null>(null);
   /** 用 ref 存版本号：放 state 里会让保存 effect 自己触发自己，转成死循环。 */
   const version = useRef(0);
   /** 载入完成之前绝不许存 —— 否则拿一首示范盘把用户文件盖了。 */
@@ -106,6 +115,10 @@ export function App() {
   /** 正在改名的那个节点，以及它是在哪儿被戳开的。
    *  一个节点同时在左列和盘面上画着 —— 不记来源，两边会各挂一个输入框，互相抢焦点。 */
   const [editing, setEditing] = useState<{ id: string; where: "tree" | "board" } | null>(null);
+  /** ⌘K 跳过去之后闪一下。块平时不可点，闪一下是唯一告诉人「就是这块」的办法。 */
+  const [flash, setFlash] = useState<string | null>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
+  const [findOpen, setFindOpen] = useState(false);
   const [side, setSide] = useState<boolean>(() => localStorage.getItem(SIDE_KEY) === "1");
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 819px)").matches);
@@ -161,19 +174,32 @@ export function App() {
         const board = await loadBoard(projectId);
         if (!alive) return;
         // 不调 seedIds，新 id 就从 n1 重新数，撞上文件里已有的 id。
-        seedIds(board.root);
-        version.current = board.version;
-        skipSave.current = true;
+        // 草稿里的 id 是当时那棵树的（seedIds 已经把它算进去了），所以先看草稿再定。
+        const draft = readDraft(projectId);
         const loaded = { root: board.root, moves: board.moves.slice(-200) };
-        // 刚从磁盘读上来的这份就是磁盘上的内容，别再它写回去。
-        lastWritten.current = JSON.stringify(loaded);
-        setRoot(loaded.root);
-        setMoves(loaded.moves);
+        // 草稿内容跟磁盘一模一样：说明它只是一道影子（比如 pagehide 那一刀已经发出去了）。
+        // 没“手”要救，别去打扰用户。
+        const stale = draft && JSON.stringify(draft.root) === JSON.stringify(board.root);
+        if (stale) clearDraft(projectId);
+
+        // 草稿的底就是磁盘当前这一版：只是没发出去，直接补写，不麻烦用户。
+        const adopt = draft && !stale && draft.baseVersion === board.version ? draft : null;
+        // 底不一样：磁盘被别人改过。两边都留着，等人选。
+        setOrphan(draft && !stale && !adopt ? draft : null);
+
+        seedIds(adopt ? adopt.root : board.root);
+        version.current = board.version;
+        const next = adopt ? { root: adopt.root, moves: adopt.moves } : loaded;
+        // 用磁盘那份时它就是磁盘内容，别写回去；用草稿时要存，所以不能跳。
+        skipSave.current = !adopt;
+        lastWritten.current = adopt ? "" : JSON.stringify(loaded);
+        setRoot(next.root);
+        setMoves(next.moves);
         setPast([]);
         setPath([]);
         localStorage.setItem(PROJECT_KEY, projectId);
         ready.current = true;
-        setStatus("saved");
+        setStatus(adopt ? "saving" : "saved");
       } catch {
         if (alive) setStatus("error");
       }
@@ -201,11 +227,17 @@ export function App() {
         const snap = pending.current;
         pending.current = null;
         const key = JSON.stringify(snap);
-        if (key === lastWritten.current) continue;
+        if (key === lastWritten.current) {
+          // 磁盘上已经是这份了（上一轮写成功／刚载入的就是它）。草稿多余，清掉。
+          clearDraft(id);
+          continue;
+        }
         try {
           const { version: next } = await saveBoard(id, snap.root, snap.moves, version.current);
           version.current = next;
           lastWritten.current = key;
+          // 发出去了，草稿就没用了。
+          clearDraft(id);
           setStatus("saved");
         } catch (err) {
           if (err instanceof ConflictError) {
@@ -233,6 +265,8 @@ export function App() {
       return;
     }
     pending.current = { root, moves };
+    // 同一步先记本地草稿：服务重启/断网时，快照至少还在磁盘上躺着。
+    writeDraft(projectId, root, moves, version.current);
     setStatus("saving");
     const timer = setTimeout(() => void drain(projectId), 400);
     return () => clearTimeout(timer);
@@ -244,6 +278,7 @@ export function App() {
       if (!ready.current || !projectId || blocked.current) return;
       const snap = { root, moves };
       if (JSON.stringify(snap) === lastWritten.current) return;
+      writeDraft(projectId, snap.root, snap.moves, version.current);
       void saveBoard(projectId, snap.root, snap.moves, version.current, true).catch(() => {});
     };
     const onHide = () => {
@@ -265,6 +300,27 @@ export function App() {
   }, []);
 
   const here = (path.length ? findNode(root, path[path.length - 1]!) : root) ?? root;
+
+  /** 全树 handle。改名、搬家都会变，所以每次从树现算 —— 它不落盘，也不该落盘。 */
+  const handles = useMemo(() => handleMap(root), [root]);
+  /** ⌘K 的候选。盘面画不下的节点，这里是唯一看得到它们 handle 的地方。 */
+  const hits = useMemo<Hit[]>(() => {
+    const out: Hit[] = [];
+    const walk = (n: Node) => {
+      out.push({ node: n, handle: handles.get(n.id) ?? n.name });
+      n.children?.forEach(walk);
+    };
+    walk(root);
+    return out;
+  }, [root, handles]);
+
+  const goTo = (id: string) => {
+    setFindOpen(false);
+    setPath(pathTo(root, id));
+    setFlash(id);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 1100);
+  };
 
   const play = (next: Node, move: Move) => {
     // 空操作不入账：撤销栈里不该塞「我点了一下但什么都没变」。
@@ -337,6 +393,30 @@ export function App() {
   /** 撞了别人写的版本：只给「重读磁盘」这一条路 —— 自动覆盖等于帮另一个标签页删数据。 */
   const reload = () => setEpoch((e) => e + 1);
 
+  /** 本地有一手没发出去，而磁盘已经被改过。拿本地这份盖上去 —— 人明确点了才盖。 */
+  const keepDraft = () => {
+    const d = orphan;
+    if (!d || !projectId) return;
+    seedIds(d.root);
+    // 底用磁盘当前的 version：现在写下去不会撞 409，意向就是「以我为准」。
+    lastWritten.current = "";
+    skipSave.current = false;
+    blocked.current = false;
+    ready.current = true;
+    setRoot(d.root);
+    setMoves(d.moves);
+    setPast([]);
+    setOrphan(null);
+    setStatus("saving");
+  };
+
+  /** 反过来：认磁盘那份，把本地草稿丢掉。 */
+  const dropDraft = () => {
+    if (projectId) clearDraft(projectId);
+    setOrphan(null);
+    setStatus("saved");
+  };
+
   const newBoard = async () => {
     const name = window.prompt("新项目叫什么", "new");
     if (!name?.trim()) return;
@@ -356,6 +436,11 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
         e.preventDefault();
         undo();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setFindOpen((o) => !o);
         return;
       }
       // 焦点在哪一格，按键就作用在那一格上 —— 悬停才出现的按钮不该是唯一入口。
@@ -518,6 +603,12 @@ export function App() {
                 {valueOf(root)}
               </span>
             </div>
+            <IconButton label="按 id 找一块（⌘K）" onClick={() => setFindOpen(true)}>
+              <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
+                <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M10.5 10.5 14 14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+            </IconButton>
             <Pill onClick={undo} disabled={!past.length} title="⌘Z / Ctrl+Z">
               撤销
             </Pill>
@@ -534,6 +625,17 @@ export function App() {
         </header>
 
         <div ref={board} className="relative min-h-0 flex-1 bg-board p-2" aria-label="盘面">
+          {orphan && (
+            <div className="absolute inset-x-2 top-2 z-30 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] shadow-lg">
+              <span className="min-w-0 flex-1 text-muted">
+                本地有 {orphan.moves.length} 手没发出去，但磁盘上的这一盘已经被改过了。两边都还在，你选。
+              </span>
+              <Pill onClick={keepDraft}>用本地的</Pill>
+              <Pill onClick={dropDraft} muted>
+                丢掉本地的
+              </Pill>
+            </div>
+          )}
           {placed.length === 0 && (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-[13px] text-muted">
               <span>盘上什么都没有了</span>
@@ -547,6 +649,8 @@ export function App() {
                 piece={p}
                 origin={{ x: 0, y: 0 }}
                 isSection={isSection}
+                handles={handles}
+                flashId={flash}
                 editingId={editing?.where === "board" ? editing.id : null}
                 onEnter={(id) => setPath([...path, id])}
                 onRemove={remove}
@@ -558,6 +662,8 @@ export function App() {
           </div>
         </div>
       </div>
+
+      {findOpen && <Find hits={hits} onGo={goTo} onClose={() => setFindOpen(false)} />}
     </main>
   );
 }
@@ -578,6 +684,8 @@ function Piece({
   piece,
   origin,
   isSection,
+  handles,
+  flashId,
   editingId,
   onEnter,
   onRemove,
@@ -588,6 +696,8 @@ function Piece({
   piece: Placed;
   origin: { x: number; y: number };
   isSection: (n: Node) => boolean;
+  handles: Map<string, string>;
+  flashId: string | null;
   editingId: string | null;
   onEnter: (id: string) => void;
   onRemove: (id: string) => void;
@@ -600,6 +710,9 @@ function Piece({
   const section = isSection(node);
   const value = valueOf(node);
   const editing = editingId === node.id;
+  const handle = handles.get(node.id) ?? node.name;
+  /** ⌘K 跳过来的时候套一圈 accent。只在被点名那一块上，一秒就撤。 */
+  const ring = flashId === node.id ? ", 0 0 0 2px var(--n-color-accent)" : "";
 
   // 双击改名的规矩：名字画得出来的地方才能双击它。名字没地方站，就回左列去改。
   const noRename = (e: React.MouseEvent) =>
@@ -614,7 +727,7 @@ function Piece({
           ...place,
           background: tint(color, 0.12),
           // pele 的组框描边就是 series 原色，1px，不降透明度。
-          boxShadow: `inset 0 0 0 1px ${color}`,
+          boxShadow: `inset 0 0 0 1px ${color}${ring}`,
         }}
       >
         {strip > 0 && (
@@ -642,6 +755,8 @@ function Piece({
                 {strip >= 24 && (
                   <span className="shrink-0 text-muted">{node.children!.length} 块</span>
                 )}
+                {/* handle 只在盘面上露脸：左列保持干净，那是给人看结构的。 */}
+                {strip >= 18 && <Handle value={handle} name={node.name} muted />}
                 <button
                   type="button"
                   data-no-rename
@@ -671,6 +786,8 @@ function Piece({
             piece={k}
             origin={box}
             isSection={isSection}
+            handles={handles}
+            flashId={flashId}
             editingId={editingId}
             onEnter={onEnter}
             onRemove={onRemove}
@@ -687,19 +804,29 @@ function Piece({
   // 编辑中先把名字的位置腾出来，再小的块也得看得见自己在打什么。
   const showName = (box.w > 56 && box.h > 30) || editing;
   const showValue = big > 24;
+  // handle 比名字还挑地方：它是给人抄走的，画一半还不如不画。
+  const showHandle = box.w > 62 && box.h > 48;
   const valueSize = Math.max(12, Math.min(40, Math.round(big / 3)));
   const roomForDelete = box.w > 34 && box.h > 26;
 
   return (
     <div
       className={`group/leaf absolute overflow-hidden rounded-[4px] transition-[left,top,width,height] duration-300 ${EASE}`}
-      style={{ ...place, background: color, color: "var(--n-color-canvas)" }}
+      style={{
+        ...place,
+        background: color,
+        color: "var(--n-color-canvas)",
+        boxShadow: ring ? "0 0 0 2px var(--n-color-accent)" : undefined,
+      }}
     >
       <div
         tabIndex={0}
         aria-label={`${node.name} ${value}`}
         data-node-id={node.id}
-        onDoubleClick={(e) => onBeginRename(node.id, e.currentTarget)}
+        onDoubleClick={(e) => {
+          if (noRename(e)) return;
+          onBeginRename(node.id, e.currentTarget);
+        }}
         className="flex h-full w-full flex-col items-center justify-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black/40"
       >
         {editing ? (
@@ -724,6 +851,9 @@ function Piece({
             {value}
           </span>
         )}
+        {showHandle && !editing && (
+          <Handle value={handle} name={node.name} className="max-w-full opacity-55 hover:opacity-90" />
+        )}
       </div>
       {roomForDelete && (
         <button
@@ -738,6 +868,72 @@ function Piece({
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * handle —— 人念的那个名字路径。点一下复制。
+ *
+ * 它不是 id：改名、搬家它都会变。变是允许的 —— **id 负责永不失效，handle 负责念得出来**，
+ * 两个字段各管一件事，谁也不用假装自己是对方。
+ */
+function Handle({
+  value,
+  name,
+  className = "",
+  muted = false,
+}: {
+  value: string;
+  name: string;
+  className?: string;
+  muted?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  /**
+   * 剪贴板在 http 下是整个不存在的（不是报错，是 `navigator.clipboard` 直接 undefined）——
+   * 局域网 IP 打开就属于这种情况。所以留一条 `execCommand` 的老路，它不挑协议。
+   */
+  const write = async (): Promise<boolean> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch {
+      // 权限被拒也会走到这里 —— 继续试老办法，别直接放弃。
+    }
+    const ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand?.("copy") ?? false;
+    ta.remove();
+    return ok;
+  };
+
+  const copy = async () => {
+    if (!(await write())) return;
+    setCopied(true);
+    setTimeout(() => setCopied(false), 900);
+  };
+  return (
+    <button
+      type="button"
+      data-no-rename
+      onClick={(e) => {
+        e.stopPropagation();
+        void copy();
+      }}
+      title={`${value} —— 点一下复制（${name} 的 handle）`}
+      className={`min-w-0 truncate rounded-[3px] px-1 font-mono text-[9.5px] leading-[1.4] transition-colors duration-150 hover:bg-white/15 ${
+        muted ? "text-muted" : ""
+      } ${className}`}
+    >
+      {copied ? "已复制" : value}
+    </button>
   );
 }
 

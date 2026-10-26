@@ -37,6 +37,67 @@ export class ConflictError extends Error {
   }
 }
 
+/**
+ * 本地草稿：已经落下但还没发出去的一手。
+ *
+ * 写盘失败（服务重启、断网、合盖醒来）时，快照存在这里；页面一关，内存那份就没了，
+ * 这一份还能活。下次启动先看它 —— 因为滑落的手不该靠「用户再点一下」才能救回来。
+ *
+ * `baseVersion` 是它当时的底：跟磁盘一样就说明只是没发出去，可以无感补写；
+ * 不一样就说明磁盘被别人改过，必须问人，不能自动覆盖。
+ */
+export type Draft = {
+  baseVersion: number;
+  root: Node;
+  moves: Move[];
+  at: string;
+};
+
+const draftKey = (id: string): string => `n-draft:${id}`;
+
+const isDraft = (v: unknown): v is Draft => {
+  const d = v as Draft | null;
+  return (
+    typeof d === "object" &&
+    d !== null &&
+    typeof d.baseVersion === "number" &&
+    typeof d.at === "string" &&
+    Array.isArray(d.moves) &&
+    typeof d.root === "object" &&
+    d.root !== null &&
+    typeof (d.root as Node).id === "string"
+  );
+};
+
+export function readDraft(id: string): Draft | null {
+  try {
+    const raw = localStorage.getItem(draftKey(id));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return isDraft(parsed) ? parsed : null;
+  } catch {
+    // 存了半截 / 私隐模式禁写：当没草稿，不阻着页面起来。
+    return null;
+  }
+}
+
+export function writeDraft(id: string, root: Node, moves: Move[], baseVersion: number): void {
+  try {
+    const draft: Draft = { baseVersion, root, moves, at: new Date().toISOString() };
+    localStorage.setItem(draftKey(id), JSON.stringify(draft));
+  } catch {
+    // 配额满了就算了：内存里的 pending 还在，本条路只是兼保险。
+  }
+}
+
+export function clearDraft(id: string): void {
+  try {
+    localStorage.removeItem(draftKey(id));
+  } catch {
+    // 同上。
+  }
+}
+
 const url = (id?: string): string => (id ? `/api/boards/${encodeURIComponent(id)}` : "/api/boards");
 
 async function asJson<T>(res: Response): Promise<T> {
