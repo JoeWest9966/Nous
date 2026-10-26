@@ -15,8 +15,7 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
-import { adoptNode, freshId, isNodeId, stub, syncMap } from "./map.ts";
-import type { Node } from "../src/game.ts";
+import { adoptNode, freshId, hasNode, isNodeId, stub, syncMap } from "./map.ts";
 
 export type BoardSummary = {
   id: string;
@@ -51,7 +50,7 @@ const DOC = "agent.md";
 export const isBoardId = (id: string): boolean => ID_OK.test(id);
 
 export type DocResult =
-  | { status: "ok"; text: string; etag: string; stub: boolean }
+  | { status: "ok"; text: string; etag: string; stub: boolean; hasApp: boolean }
   | { status: "no-board" }
   | { status: "no-node" };
 
@@ -67,9 +66,6 @@ const STUB_ETAG = "stub";
 /** 内容哈希，取前 16 位就够认人了 —— 比 mtime 可靠，也不依赖时钟。 */
 const etagOf = (text: string): string =>
   createHash("sha1").update(text, "utf8").digest("hex").slice(0, 16);
-
-const hasNode = (node: Node, id: string): boolean =>
-  node.id === id || (node.children?.some((c) => hasNode(c, id)) ?? false);
 
 /** 原子写：写临时文件再 rename。断电只会留下一个孤儿 tmp，不会留下半截 json。 */
 async function writeAtomic(file: string, body: string): Promise<void> {
@@ -101,6 +97,12 @@ export class BoardStore {
     // 双保险：正则已经挡了 `../`，但路径拼接这东西值得再确认一次。
     if (path.dirname(p) !== path.resolve(this.root)) throw new Error("bad board id");
     return p;
+  }
+
+  /** 一个块的文件夹。**id 就是文件夹名** —— 整套东西的魔力全在这一行。 */
+  folder(id: string, nodeId: string): string | undefined {
+    if (!isNodeId(nodeId)) return undefined;
+    return path.join(this.dir(id), MAP, nodeId);
   }
 
   async list(): Promise<BoardSummary[]> {
@@ -159,6 +161,24 @@ export class BoardStore {
    * - **文件没了给 stub，但不落盘。** 看一眼不该长出一个文件；写是下一步的事。
    * - **etag 是内容哈希，不是 mtime。** mtime 在 git checkout / rsync 下会乱。
    */
+  /**
+   * 这块自己有没有代码。判定**只看文件夹**（`package.json` 的 `scripts.start`）——
+   * 不往 `tree.json` 里写「这是个应用块」，那会变成第二份真相。
+   */
+  async startCmd(id: string, nodeId: string): Promise<string> {
+    const folder = this.folder(id, nodeId);
+    if (!folder) return "";
+    try {
+      const pkg = JSON.parse(await readFile(path.join(folder, "package.json"), "utf8")) as {
+        scripts?: Record<string, unknown>;
+      };
+      const cmd = pkg.scripts?.["start"];
+      return typeof cmd === "string" ? cmd.trim() : "";
+    } catch {
+      return "";
+    }
+  }
+
   async doc(id: string, nodeId: string): Promise<DocResult> {
     // 双保险：api.ts 已经验过，但拼路径之前再过一道 —— 一个坏 id 能读到盘外面去。
     if (!isNodeId(nodeId)) return { status: "no-node" };
@@ -167,12 +187,13 @@ export class BoardStore {
     const root = adoptNode(tree.root);
     if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
 
+    const hasApp = (await this.startCmd(id, nodeId)) !== "";
     try {
       const text = await readFile(path.join(this.dir(id), MAP, nodeId, DOC), "utf8");
-      return { status: "ok", text, etag: etagOf(text), stub: false };
+      return { status: "ok", text, etag: etagOf(text), stub: false, hasApp };
     } catch {
       const text = stub(nodeId);
-      return { status: "ok", text, etag: STUB_ETAG, stub: true };
+      return { status: "ok", text, etag: STUB_ETAG, stub: true, hasApp };
     }
   }
 

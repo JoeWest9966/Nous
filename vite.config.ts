@@ -6,6 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentApi } from "./server/api.ts";
+import { blocksApi, killAllBlocks } from "./server/blocks.ts";
+import { BoardStore } from "./server/content.ts";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 /** content/ 是项目根，不是 /demo —— demo 里的东西会被当静态资源 serve 出去。 */
@@ -44,6 +46,30 @@ const contentPlugin = () => {
   };
 };
 
+/**
+ * 有代码的块是**独立进程**，宿主只做反代。
+ *
+ * 这里不认 iframe、不认沙箱：`/p/<board>/<id>/` 前缀剥掉，剩下的原样交给那块自己。
+ * 壳（文档页）和它共用一个 URL 空间 —— 块有 `scripts.start` 就归进程，没有就归壳。
+ */
+const blockPlugin = () => {
+  const mount = (server: {
+    middlewares: { use: (p: string, h: unknown) => void };
+    httpServer?: { once: (ev: string, fn: () => void) => void } | null;
+    config: { server: { port?: number } };
+  }) => {
+    const origin = `http://localhost:${server.config.server.port ?? 4790}`;
+    server.middlewares.use("/p", blocksApi(new BoardStore(CONTENT), { root: CONTENT, origin }) as never);
+    // 关掉 dev server 就让块跟着下班，别留一堆没人看得见的进程。
+    server.httpServer?.once("close", killAllBlocks);
+  };
+  return {
+    name: "n-blocks",
+    configureServer: mount,
+    configurePreviewServer: mount,
+  };
+};
+
 export default defineConfig(({ mode }) => {
   // Nous 只跑在自己的 Tailscale 内网里：默认听 0.0.0.0，tailnet 里谁都能开。
   // 要收回本机就往 .env 写 NOUS_HOST=127.0.0.1。
@@ -54,6 +80,7 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       contentPlugin(),
+      blockPlugin(),
       VitePWA({
         registerType: "autoUpdate",
         includeAssets: ["icon.svg"],

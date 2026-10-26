@@ -62,6 +62,10 @@ export const adoptNode = (v: unknown): Node | undefined => {
   return { id: raw, name, value: typeof v.value === "number" ? v.value : 0 };
 };
 
+/** 树里还有没有这个 id。写文件之前必查：`.gone/` 里躺着的不能被一个旧页面写活。 */
+export const hasNode = (node: Node, id: string): boolean =>
+  node.id === id || (node.children?.some((c) => hasNode(c, id)) ?? false);
+
 const exists = async (p: string): Promise<boolean> =>
   (await readdir(path.dirname(p)).catch(() => [] as string[])).includes(path.basename(p));
 

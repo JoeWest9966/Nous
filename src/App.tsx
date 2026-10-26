@@ -54,8 +54,10 @@ const pathKey = (id: string): string => `nous-path:${id}`;
  * 独立进程自己 serve —— 那就必须是一条真路径。
  *
  * 后面多余的段留给块自己（`/p/new1/n39/orders/42`），这里只管前两段。
+ * `__nous/` 是留给宿主的那一段：块的进程可以拿走其余所有路径，只有 `__nous/` 永远是壳的
+ * （笔记页在这儿，将来块要问宿主「我是谁」也在这儿）。
  */
-const DOC_URL = /^\/p\/([^/]+)\/([^/]+)/;
+const DOC_URL = /^\/p\/([^/]+)\/([^/]+)(?:\/__nous\/doc)?\/?$/;
 
 function readLocation(): { board?: string; doc?: string } {
   const hit = DOC_URL.exec(window.location.pathname);
@@ -394,7 +396,7 @@ export function App() {
     window.history.pushState(
       null,
       "",
-      `/p/${encodeURIComponent(projectId)}/${encodeURIComponent(id)}/`,
+      `/p/${encodeURIComponent(projectId)}/${encodeURIComponent(id)}/__nous/doc`,
     );
     setOpenDoc(id);
   };

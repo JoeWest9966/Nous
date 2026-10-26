@@ -176,6 +176,8 @@ export type Doc = {
   etag: string;
   /** true = 磁盘上还没有这个文件，text 是程序给的 stub。 */
   stub: boolean;
+  /** true = 这个文件夹里有 `scripts.start`。它的 URL 根归它自己，不归笔记页。 */
+  hasApp: boolean;
 };
 
 const docUrl = (board: string, node: string): string =>

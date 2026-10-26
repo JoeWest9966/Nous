@@ -61,6 +61,8 @@ export function DocPage({
   /** 本地草稿，但它基于的是旧版本 —— 不能无感补写。 */
   const [orphan, setOrphan] = useState<{ text: string; etag: string } | null>(null);
   const [stubFile, setStubFile] = useState(false);
+  /** 这块自己会不会跑。会跑的话，它的 URL 根归它自己，这里只是它的笔记本。 */
+  const [hasApp, setHasApp] = useState(false);
   const [msg, setMsg] = useState("");
 
   /** 还没发出去的那一版。`null` = 干净。 */
@@ -160,6 +162,7 @@ export function DocPage({
         lastSaved.current = doc.text;
         latest.current = doc.text;
         setStubFile(doc.stub);
+        setHasApp(doc.hasApp);
         setText(doc.text);
         setPhase("ready");
         setStatus("saved");
@@ -397,6 +400,19 @@ export function DocPage({
                 <p className="mb-3 text-[11.5px] text-danger">
                   没连上。字已经存成本地草稿了，下次进来先看它。
                 </p>
+              )}
+
+              {hasApp && (
+                <a
+                  href={`/p/${encodeURIComponent(board)}/${encodeURIComponent(id)}/`}
+                  className="mb-4 flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-muted transition-colors hover:text-text"
+                >
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                  <span className="min-w-0 flex-1 truncate">
+                    这一块自己在跑（文件夹里有 scripts.start）—— 这是它的笔记，它的界面在隔壁
+                  </span>
+                  <span className="shrink-0">打开界面 ›</span>
+                </a>
               )}
 
               {stubFile && (
