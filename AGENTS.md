@@ -34,14 +34,18 @@ content/<board-id>/
 ├── tree.json   { v, name, version, updatedAt, root }   ← 语义唯一真相，丢了就是真丢
 ├── log.json    { v: 1, moves[] }                        ← 最近 200 手，丢了只是没历史
 │                                    move 里指节点的字段也叫 `tree`（老记录是 `id`，只当历史看）
-└── map/<nodeId>/
-    ├── AGENTS.md         ← 这一块的正文，也是 agent 进来时自动读的那份。程序只在建文件夹时写一次，之后永不覆盖
-    ├── package.json      ← 块（叶子）才有：有 `scripts.start` = 它是个 app
-    ├── server.js         ← 同上：它的后端，零依赖
-    ├── public/           ← 同上：它的静态页面
-    ├── data/             ← 它自己的数据（`cp -r` 走就带走了）
-    ├── README.md         ← `map/` 的索引（id ↔ tree ↔ 名字），每次保存整份重写，纯派生
-    └── .gone/<nodeId>/   ← 树里已经没有的节点，连文件夹挪到这儿，**不删**
+├── .nous/      ← 宿主的：locks.json（锁）、audit.log（谁想动锁着的块）
+└── map/
+    ├── README.md         ← 索引（id ↔ tree ↔ 名字），每次保存整份重写，纯派生
+    ├── .gone/<nodeId>/   ← 树里已经没有的节点，连文件夹挪到这儿，**不删**
+    └── <nodeId>/
+        ├── AGENTS.md     ← 入口，也是 agent 进来时自动读的那份。程序只在建文件夹时写一次，之后永不覆盖
+        ├── *.md          ← 这一块别的文档。文件夹就是清单，能建能删
+        ├── .trash/       ← 删掉的文档躺这儿，**不真删**
+        ├── package.json  ← 块（叶子）才有：有 `scripts.start` = 它是个 app
+        ├── server.js     ← 同上：它的后端，零依赖
+        ├── public/       ← 同上：它的静态页面
+        └── data/         ← 它自己的数据（`cp -r` 走就带走了）
 ```
 
 **这个文件叫 `AGENTS.md`，不叫 `agent.md`。** 一字之差决定 agent 会不会读它：
@@ -58,18 +62,34 @@ content/<board-id>/
 ### 块自己的页面
 
 ```
-/p/<board>/<nodeId>/          ← 真实路径（不是 hash）。冷启动、粘贴、后退都认它
-GET /api/boards/<board>/nodes/<node>/doc   → { text, etag, stub }
+/p/<board>/<nodeId>/                       ← 真实路径（不是 hash）。冷启动、粘贴、后退都认它
+/p/<board>/<nodeId>/__nous/doc             ← 文档页：map/<nodeId>/ 里那一堆 md
+
+GET    /api/boards/<b>/nodes/<n>/docs            → { files[], hasApp }   文件夹里有什么就是什么
+GET    /api/boards/<b>/nodes/<n>/docs?q=         → 同上，按名字 + 正文筛，命中带 snippet
+POST   /api/boards/<b>/nodes/<n>/docs { name }   → { name }             建一份
+GET    /api/boards/<b>/nodes/<n>/doc/<name>      → { text, etag, stub }
+PUT    /api/boards/<b>/nodes/<n>/doc/<name>      → { text, etag } → { etag } | 409
+DELETE /api/boards/<b>/nodes/<n>/doc/<name>      → { name }             挪进 .trash/
+POST   /api/boards/<b>/nodes/<n>/doc/<name>/restore → { name }          从 .trash/ 搬回来
 ```
 
-四条不变的：
+五条不变的：
 
-- **正文不进 `tree.json`。** 它有自己的文件、自己的 `etag`（内容哈希），**不参与 board 的 `version`** ——
-  写一篇文章不该把树顶成 409，落一手棋也不该让笔记冲突。
+- **正文不进 `tree.json`。** 每份文档有自己的文件、自己的 `etag`（内容哈希），**不参与 board 的 `version`** ——
+  写一篇文章不该把树顶成 409，落一手棋也不该让文档冲突。
+- **文件夹就是清单。** 不存 index、不往树里写「他有几份文档」。`touch ideas.md` 进去它就出现。
+- **`AGENTS.md` 只能改，不能删。** 它是 coding agent 进目录时自动找的文件名，删了整块就没人读得懂。
+  UI 上删除入口根本不生成，服务端 `DELETE` 是 403，大小写变体一起拦（macOS 上 `agents.md`
+  和 `AGENTS.md` 是同一个文件，Linux 上是两个 —— 别让一个名字在两台机器上是两件事）。
+  删别的文档是**挪进 `map/<id>/.trash/`**，不真删，和节点的 `.gone/` 同一套逻辑。
 - **树里没有的节点不给看。** 文件夹可以躺在 `.gone/` 里，旧书签不能顺着 id 把它读活。
-- **文件不在就给 stub，但不落盘。** 看一眼不该长出一个文件。
+- **文件不在就给 stub，但不落盘。** 看一眼不该长出一个文件。只有入口那份给 stub，别的不在就是不在。
 - **页面盖在盘面上，不卸载盘面。** 卸载会丢掉树的展开状态、滚动位置和撤销栈；
   被盖住的区域用 `inert`，键盘别穿透下去。
+
+文档名（`src/docname.ts`，服务端和浏览器共用同一份）：小写、空格转 `-`、只留字母数字中文和 `._-`、
+补 `.md`。**只有这一份实现** —— 两份会漂，上一版就漂过：客户端补 `.md`，服务端不补。
 
 ### 一个块 = 一个独立进程（没有条件）
 
@@ -82,14 +102,14 @@ GET /api/boards/<board>/nodes/<node>/doc   → { text, etag, stub }
 | 只有 `index.html` / 静态文件 | 宿主内置的空跑 server（`server/blank.mjs`），静态端出去 |
 | 什么都没有 | 同一个空跑 server，回一张**真正的空白页**（无标题、无文字、无链接） |
 
-壳只渲染两样东西：`/`（盘面）和 `/p/<board>/<id>/__nous/doc`（笔记本，盖在盘面上）。
+壳只渲染两样东西：`/`（盘面）和 `/p/<board>/<id>/__nous/doc`（文档页，盖在盘面上）。
 **块的页面壳一概不管** —— 所以左列「打开」是整页跳走，不是盖一层。
 
 进程的契约，都是硬的：
 
 - **听 `PORT`。** 宿主给的空闲端口，不写进任何文件。
 - **数据写 `NOUS_DATA`**（= 它自己文件夹下的 `data/`）。不是宿主替你存 —— 是「`cp -r` 走了数据也走了」。
-- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（笔记页、`__nous/ctx`）。
+- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（文档页、`__nous/ctx`）。
 - **链接写相对路径。** 这是唯一能让 `cp -r map/<id> ~/<id> && npm start` 和宿主里打开
   是同一页的写法。宿主不重写 HTML、不改你的绝对路径，`/style.css` 就是逃出前缀。
 
