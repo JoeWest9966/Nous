@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { NameInput } from "./Rename";
 import { NodeMenuTrigger } from "./NodeMenu";
-import { type Node, findNode, isSection, valueOf } from "./game";
+import { type Node, findNode, isSection, pathTo, valueOf } from "./game";
+import { LockIcon } from "./icons";
 import { TreeIcon, iconFor } from "./icons";
 
 /**
@@ -41,6 +42,7 @@ const Chevron = ({ open }: { open: boolean }) => (
 export function Tree({
   root,
   path,
+  lockTitle,
   editingId,
   onEnter,
   onBeginRename,
@@ -49,6 +51,8 @@ export function Tree({
 }: {
   root: Node;
   path: string[];
+  /** 这枚锁是谁的 —— 一行里放不下解释，至少给一句 title。 */
+  lockTitle: (id: string) => string | undefined;
   editingId: string | null;
   onEnter: (path: string[]) => void;
   onBeginRename: (id: string, el: HTMLElement | null) => void;
@@ -147,7 +151,9 @@ export function Tree({
                 <Row
                   section={section}
                   title={`${node.name} — 双击或 F2 改名`}
-                  onEnter={() => onEnter(isRoot ? [] : [...path, node.id])}
+                  // 这一行是一条**跳转**，不是往栈上压一层：点哪儿就按它在树里的真实位置走。
+                  // 所以点已在的那一层不会再长一节，点祖先行是回去一层。
+                  onEnter={() => onEnter(isRoot ? [] : pathTo(root, node.id))}
                 >
                   <span
                     className={`truncate leading-none ${section ? "text-text" : "text-text/75"}`}
@@ -155,8 +161,13 @@ export function Tree({
                   >
                     {name}
                   </span>
-                  <span className="ml-auto shrink-0 pl-2 text-[11px] tabular-nums text-muted">
-                    {valueOf(node)}
+                  <span className="ml-auto flex shrink-0 items-center gap-1 pl-2">
+                    {lockTitle(node.id) && (
+                      <span className="text-muted" title={lockTitle(node.id)}>
+                        <LockIcon className="h-3 w-3" />
+                      </span>
+                    )}
+                    <span className="text-[11px] tabular-nums text-muted">{valueOf(node)}</span>
                   </span>
                 </Row>
               )}

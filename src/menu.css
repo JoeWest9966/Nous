@@ -33,6 +33,10 @@
 
 /* ── 那颗 ••• ─────────────────────────────────────────────────────────────── */
 
+/* `.nm-dots` 默认是「浮在别人身上的一颗按钮」：绝对定位、透明、不吃点击，
+   只在 `.nm-host:hover` 或触屏上复活。
+   要把它放进普通工具条（文档页的头）时，**必须**加 `--inline`，否则你得到的是一块
+   看不见也点不到的空气 —— 而且它会从流里掉出去，盖在旁边的徽章上。 */
 .nm-dots {
   position: absolute;
   appearance: none;
@@ -64,6 +68,28 @@
 .nm-dots > svg {
   width: 12px;
   height: 12px;
+}
+
+/* 进流的版本：普通工具条里的 ⋯。它是页面上一直看得见的一颗按钮，不是一个悬停彩蛋。 */
+.nm-dots--inline {
+  position: static;
+  opacity: 1;
+  scale: 1;
+  pointer-events: auto;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.nm-dots--inline:hover {
+  background: var(--n-color-surface);
+}
+
+.nm-dots--inline:active {
+  scale: 0.94;
 }
 
 /* 行上的：22px，贴着右边，垂直居中。••• 在行那个 div 里（和名字、数值同一层）。 */
@@ -248,6 +274,18 @@
 .nm-menu > button.nm-danger:hover,
 .nm-menu > button.nm-danger:focus-visible {
   background: color-mix(in oklab, var(--n-color-danger) 14%, transparent);
+}
+
+/* 摆得出来、按不动：浅一档，但不能浅到像坏了 —— 它的用处就是把理由说出来。 */
+.nm-menu > button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.nm-menu > button:disabled:hover,
+.nm-menu > button:disabled:focus-visible {
+  background: transparent;
+  box-shadow: none;
 }
 
 .nm-sep {

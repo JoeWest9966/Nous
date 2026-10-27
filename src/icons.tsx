@@ -165,6 +165,34 @@ const FileIcon = () => (
   </svg>
 );
 
+/**
+ * 锁：`open` 就是开了的那把（能解锁），闭着的是真锁着。
+ *
+ * 两个宿主都用它：菜单里的一条、左列行尾和盘面块上的那枚小记号。
+ * 所以尺寸跟着 `className` 走，不要焊死在这里 —— 菜单里 14px，盘面上只有 9px 也容得下。
+ */
+export const LockIcon = ({
+  open = false,
+  className = "h-3.5 w-3.5",
+}: {
+  open?: boolean;
+  className?: string;
+}) => (
+  <svg
+    viewBox="0 0 14 14"
+    aria-hidden="true"
+    className={className}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.5}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <rect x="3.3" y="6.2" width="7.4" height="5.4" rx="1.1" />
+    <path d={open ? "M5.2 6.2V4.6a1.8 1.8 0 0 1 3.6 0" : "M5.2 6.2V4.6a1.8 1.8 0 0 1 3.6 0v1.6"} />
+  </svg>
+);
+
 export function TreeIcon({ name, open }: { name: IconName; open: boolean }) {
   switch (name) {
     case "folder":

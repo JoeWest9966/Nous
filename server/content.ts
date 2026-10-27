@@ -441,6 +441,42 @@ export class BoardStore {
     return { status: "ok", name };
   }
 
+  /**
+   * 改名 = 把文件挪到同一个文件夹里的新名字上。**不走回收站、不新写一份** ——
+   * 名字就是身份，内容一个字节都不该因为改名而重新落盘（etag 也就不会变，打开着的页面不会 409）。
+   *
+   * 两头都拦：`AGENTS.md` 改不了名（它就是入口那个文件名），也改不成 `AGENTS.md`
+   * （那是凭空造一个 agent 入口出来）。
+   */
+  async renameDoc(id: string, nodeId: string, name: string, raw: string): Promise<DocEditResult> {
+    if (!isNodeId(nodeId)) return { status: "no-node" };
+    if (!isDocName(name)) return { status: "bad-name" };
+    if (isEntry(name)) return { status: "protected" };
+    // 和服务端别处一样，规矩只有 `src/docname.ts` 那一份。
+    const to = normalizeDocName(raw);
+    if (!to || !isDocName(to)) return { status: "bad-name" };
+    if (isEntry(to)) return { status: "protected" };
+    const tree = await this.tree(id);
+    if (!tree) return { status: "no-board" };
+    const root = adoptNode(tree.root);
+    if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
+
+    const folder = path.join(this.dir(id), MAP, nodeId);
+    const from = path.join(folder, name);
+    if (!(await stat(from).then((s) => s.isFile()).catch(() => false))) return { status: "missing" };
+    if (to === name) return { status: "ok", name };
+
+    const target = path.join(folder, to);
+    // 只改大小写（`notes.md` → `Notes.md`）：Linux 上是两个文件，macOS 上是同一个。
+    // 同一个就同一个，直接改；别的撞名才算撞名。
+    const sameFile = to.toLowerCase() === name.toLowerCase();
+    if (!sameFile && (await stat(target).then(() => true).catch(() => false))) {
+      return { status: "exists" };
+    }
+    await rename(from, target);
+    return { status: "ok", name: to };
+  }
+
   /** 这一盘有哪些块被锁了。前端一次拿全，别一个一个问。 */
   async locks(id: string): Promise<string[]> {
     if (!(await this.tree(id))) return [];
@@ -448,7 +484,10 @@ export class BoardStore {
   }
 
   /**
-   * 上锁 / 解锁。**只有树里还有的块才给上锁** —— 锁一个已经不存在的东西没有意义，
+   * 上锁 / 解锁。块和组都能锁 —— 锁的是**子树**，所以锁一个组等于锁住它底下的全部。
+   * `locks.json` 里只记人亲手按下的那个 id，继承那一层由 `lockMap` 现算。
+   *
+   * **只有树里还有的节点才给上锁** —— 锁一个已经不存在的东西没有意义，
    * 而且会变成一把永远解不开的空头锁。解锁不管这个：解一把旧锁得随时都行。
    */
   async setLock(
@@ -494,8 +533,11 @@ export class BoardStore {
       return { status: "conflict", version: current.version };
     }
 
-    // 锁定的块不许从树里消失。客户端发什么都会被修正一遍再落盘 ——
+    // 锁定的东西不许从树里消失。客户端发什么都会被修正一遍再落盘 ——
     // 这是「防机器」的那一层：所有树写入都必经这里。
+    //
+    // 读出来的是人亲手按下的 id；`restoreLocked` 按**子树**理解它们 ——
+    // 锁了组，组底下的节点一样接得回来（树里还留着的那几个不会被复制第二份）。
     const locked = new Set(await readLocks(this.dir(id)));
     let root = input.root;
     let restored: string[] = [];
@@ -509,7 +551,7 @@ export class BoardStore {
         if (restored.length) {
           await audit(
             this.dir(id),
-            `被删的锁定块被接回: ${restored.join(", ")}${from ? ` (from ${from})` : ""}`,
+            `被删的锁定节点被接回: ${restored.join(", ")}${from ? ` (from ${from})` : ""}`,
           );
         }
       }

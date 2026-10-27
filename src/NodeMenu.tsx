@@ -32,6 +32,11 @@ export type MenuItem = {
   danger?: boolean;
   /** 这一条上面画一条分隔线 */
   separatorBefore?: boolean;
+  /**
+   * 摆得出来但按不动 —— 不是「藏起来」。
+   * 用在锁上：块被上层的组锁住时，「删除」消失得莫名其妙，不如把理由写在那一行。
+   */
+  disabled?: boolean;
   run: () => void;
 };
 
@@ -215,6 +220,7 @@ export function NodeMenuProvider({
 
   const pick = (item: MenuItem) => {
     close();
+    if (item.disabled) return;
     item.run();
   };
 
@@ -242,6 +248,8 @@ export function NodeMenuProvider({
                   type="button"
                   role="menuitem"
                   tabIndex={-1}
+                  disabled={item.disabled}
+                  aria-disabled={item.disabled || undefined}
                   className={item.danger ? "nm-danger" : undefined}
                   style={{ "--i": i } as CSSProperties}
                   onClick={() => pick(item)}

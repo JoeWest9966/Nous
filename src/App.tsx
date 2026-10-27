@@ -4,6 +4,7 @@ import { Find, type Hit } from "./Find";
 import { MoveTo } from "./Move";
 import { NameInput } from "./Rename";
 import { NodeMenuProvider, NodeMenuTrigger, type MenuItem } from "./NodeMenu";
+import { LockIcon } from "./icons";
 import { Tree } from "./Tree";
 import { copyText } from "./clipboard";
 import {
@@ -17,6 +18,7 @@ import {
   initialState,
   isSection,
   layout,
+  lockMap,
   moveNode,
   pathTo,
   removeNode,
@@ -192,6 +194,12 @@ export function App() {
   const [flash, setFlash] = useState<string | null>(null);
   /** 锁着的块：删不掉，前端连按钮都不画。真拦截在服务端（save 会把被删的锁块接回来）。 */
   const [locks, setLocks] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 真正生效的锁：`locks` 里只有人亲手按下的 id，锁是**子树** —— 锁住一个组，
+   * 里面每一块跟着锁。这张表是派生的（`lockMap`），进盘的是原来那串 id。
+   * 两个用途：拦住本地的删除，和说清楚「这为什么删不掉」。
+   */
+  const locked = useMemo(() => lockMap(root, locks), [root, locks]);
   /** content/<board>/ 的绝对路径，载入时服务器给的。浏览器自己拼不出来 —— 不硬编码。 */
   const [boardDir, setBoardDir] = useState("");
   const flashTimer = useRef<number | undefined>(undefined);
@@ -503,8 +511,9 @@ export function App() {
   };
 
   const remove = (id: string) => {
-    // 按钮不会画出来，这是兜底：万一从别的路径进来了，别把「删了又冒出来」演一遍。
-    if (locks.has(id)) return;
+    // 按钮不会画出来，这是兜底：万一从别的路径进来了（Delete 键、菜单、将来某处），
+    // 别把「删了又冒出来」演一遍。锁是子树，所以继承来的锁也在这里挡。
+    if (locked.has(id)) return;
     play(removeNode(root, id), { t: "remove", id });
   };
 
@@ -515,6 +524,20 @@ export function App() {
     } catch {
       setStatus("error");
     }
+  };
+
+  /**
+   * 「这块为什么删不掉」。锁不只是一枚图标 —— 人看不到删除按钮的那一刻就需要一句话，
+   * 尤其当那锁其实在上一层（他只在那一个组里按过一次）。
+   *
+   * 只说「删不掉」：锁管的是**消失**，改名、搬家、往里加东西都还能做。
+   * 别在提示里许一个实现没有的愿。
+   */
+  const lockTitle = (id: string): string | undefined => {
+    const owner = locked.get(id);
+    if (!owner) return undefined;
+    if (owner === id) return "已锁定：删不掉";
+    return `被「${findNode(root, owner)?.name ?? owner}」锁住：删不掉`;
   };
 
   /** 开改名的那一刻，是谁被双击的 —— 改完把焦点还给它，别让人跟丢。 */
@@ -613,24 +636,30 @@ export function App() {
         run: () => setPath(pathTo(root, id)),
       });
     }
-    // 只有块能锁。组是容器 —— 锁容器等于间接锁子节点，那是同一件事的第二种写法。
-    if (!isSection(node)) {
-      const locked = locks.has(id);
-      items.push({
-        key: "lock",
-        label: locked ? "解锁" : "锁定",
-        icon: locked ? <IconLockOpen /> : <IconLock />,
-        separatorBefore: true,
-        run: () => void toggleLock(id, !locked),
-      });
-      if (locked) return items;
-    }
+    // 锁是子树：锁住一个组，里面每一块都跟着锁上 —— 和锁一个块是同一件事，只是范围大一号。
+    // 真正拦住机器的那一层在服务端的 `save()`，这里只负责不给人画一个按下去会弹回来的按钮。
+    const owner = locked.get(id);
+    const mine = locks.has(id);
+    items.push({
+      key: "lock",
+      // 继承来的锁不能从下往上解：要说清是谁锁的，并把人指向那一层。
+      label: !owner
+        ? "锁定"
+        : mine
+          ? "解锁"
+          : `已被「${findNode(root, owner)?.name ?? owner}」锁住`,
+      icon: <LockIcon open={mine} />,
+      separatorBefore: true,
+      disabled: !!owner && !mine,
+      run: () => void toggleLock(id, !mine),
+    });
+    // 删不掉就把「删除」整个收起来 —— 理由就在上面那一条里，不另外解释一遍。
+    if (owner) return items;
     items.push({
       key: "remove",
       label: "删除",
       icon: <IconTrash />,
       danger: true,
-      separatorBefore: !isSection(node),
       run: () => remove(id),
     });
     return items;
@@ -713,6 +742,8 @@ export function App() {
       }
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
+        // 和 remove() 同一道关 —— 键盘是第二条路，不能比按钮宽松。
+        if (locked.has(id)) return;
         play(removeNode(root, id), { t: "remove", id });
       }
     };
@@ -771,6 +802,7 @@ export function App() {
             <Tree
               root={root}
               path={path}
+              lockTitle={lockTitle}
               editingId={editing?.where === "tree" ? editing.id : null}
               onEnter={setPath}
               onBeginRename={(id, el) => beginRename(id, el, "tree")}
@@ -906,6 +938,8 @@ export function App() {
                   origin={{ x: 0, y: 0 }}
                   isSection={isSection}
                   trees={trees}
+                  locked={locked}
+                  lockTitle={lockTitle}
                   flashId={flash}
                   editingId={editing?.where === "board" ? editing.id : null}
                   onEnter={(id) => setPath(pathTo(root, id))}
@@ -967,6 +1001,8 @@ function Piece({
   origin,
   isSection,
   trees,
+  locked,
+  lockTitle,
   flashId,
   editingId,
   onEnter,
@@ -979,6 +1015,10 @@ function Piece({
   origin: { x: number; y: number };
   isSection: (n: Node) => boolean;
   trees: Map<string, string>;
+  /** 生效中的锁（含从祖先继承的）：盘上得看得见，不然删不掉的块跟别的块没法区分。 */
+  locked: ReadonlyMap<string, string>;
+  /** 这枚锁是谁的 —— 一枚记号顶不住「为什么」，得有一句话说。 */
+  lockTitle: (id: string) => string | undefined;
   flashId: string | null;
   editingId: string | null;
   onEnter: (id: string) => void;
@@ -994,6 +1034,7 @@ function Piece({
   const value = valueOf(node);
   const editing = editingId === node.id;
   const tree = trees.get(node.id) ?? node.name;
+  const lock = lockTitle(node.id);
   /** ⌘K 跳过来的时候套一圈 accent。只在被点名那一块上，一秒就撤。 */
   const ring = flashId === node.id ? ", 0 0 0 2px var(--n-color-accent)" : "";
 
@@ -1036,6 +1077,11 @@ function Piece({
                 <span className="truncate" style={{ letterSpacing: "0.01em" }}>
                   {node.name}
                 </span>
+                {lock && (
+                  <span className="shrink-0 opacity-60" title={lock} data-no-rename>
+                    <LockIcon className="h-3 w-3" />
+                  </span>
+                )}
                 {strip >= 24 && (
                   <span className="shrink-0 text-muted">{node.children!.length} 块</span>
                 )}
@@ -1068,6 +1114,14 @@ function Piece({
           </div>
         )}
         {!editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
+        {lock && (
+          <span
+            className="pointer-events-none absolute left-[3px] top-[3px] opacity-60"
+            title={lock}
+          >
+            <LockIcon className="h-[10px] w-[10px]" />
+          </span>
+        )}
         {kids.map((k) => (
           <Piece
             key={k.node.id}
@@ -1075,6 +1129,8 @@ function Piece({
             origin={box}
             isSection={isSection}
             trees={trees}
+            locked={locked}
+            lockTitle={lockTitle}
             flashId={flashId}
             editingId={editingId}
             onEnter={onEnter}
@@ -1171,6 +1227,15 @@ function Piece({
         >
           打开 ›
         </button>
+      )}
+      {/* 锁标记：块一直是底色 + 深字，用 `color` 跟着走的那一档就够显了。 */}
+      {lock && (
+        <span
+          className="pointer-events-none absolute left-[3px] top-[3px] opacity-55"
+          title={lock}
+        >
+          <LockIcon className="h-[10px] w-[10px]" />
+        </span>
       )}
     </div>
   );
@@ -1333,20 +1398,6 @@ const IconPage = () => (
 const IconNote = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <path d="M2.4 3.1h9.2M2.4 6.4h9.2M2.4 9.7h5.4" />
-  </svg>
-);
-
-const IconLock = () => (
-  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
-    <rect x="3.3" y="6.2" width="7.4" height="5.4" rx="1.1" />
-    <path d="M5.2 6.2V4.6a1.8 1.8 0 0 1 3.6 0v1.6" />
-  </svg>
-);
-
-const IconLockOpen = () => (
-  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
-    <rect x="3.3" y="6.2" width="7.4" height="5.4" rx="1.1" />
-    <path d="M5.2 6.2V4.6a1.8 1.8 0 0 1 3.6 0" />
   </svg>
 );
 

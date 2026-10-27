@@ -111,6 +111,29 @@ export const findNode = (root: Node, id: string): Node | undefined => {
 };
 
 /**
+ * 锁是**子树**：锁住一个组，组里的东西也不许被删。
+ *
+ * 所以「谁被锁了」不能只看 `locks.json` —— 那里面只有人亲手按下的那几个 id，
+ * 真正生效的是它连同底下整棵树。回一张 `节点 id → 握着这把锁的最近祖先 id`：
+ * 值等于自己就是亲手锁的，不等就是继承来的。
+ *
+ * 这张表是**派生**的，不进树、不进盘 —— 真相永远是那串 id。UI 要它只有一个用途：
+ * 说清楚「为什么这块删不掉」，不然人只看到按钮没了。
+ */
+export function lockMap(root: Node, locks: ReadonlySet<string>): Map<string, string> {
+  const out = new Map<string, string>();
+  if (!locks.size) return out;
+  const walk = (node: Node, above: readonly string[]): void => {
+    const chain = [node.id, ...above];
+    const owner = chain.find((id) => locks.has(id));
+    if (owner !== undefined) out.set(node.id, owner);
+    node.children?.forEach((c) => walk(c, chain));
+  };
+  walk(root, []);
+  return out;
+}
+
+/**
  * 全树的 **tree**：每个节点在树里的地址（`N/src/App.tsx`），同名按出现顺序加 `-2`。
  *
  * tree 不是 id。改名、搬家它都会变 —— 这是允许的：**id 负责永不失效，tree 负责念得出来**。
