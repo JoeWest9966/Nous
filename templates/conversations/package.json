@@ -1,0 +1,9 @@
+{
+  "name": "qrd3wh",
+  "private": true,
+  "type": "module",
+  "description": "会开很多对话的块：一个 sqlite，N 个 conversation，会话是一棵树。",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
