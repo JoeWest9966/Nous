@@ -128,6 +128,20 @@ POST   /api/boards/<b>/nodes/<n>/doc/<name>/restore → { name }          从 .t
 给的四个环境变量，就这四个：`PORT`、`NOUS_DATA`、`NOUS_ORIGIN`（宿主地址）、
 `NOUS_SELF`（我在宿主里叫什么，`/p/<board>/<id>`）。
 
+### agent 运行时：`@earendil-works/*`
+
+`pi-durable`（agent loop + tools）、`chord`（持久化/sqlite）、`pi-ai`（模型供应商）钉在 **1.4.0**，
+三个一起升、一起锁死 —— `pi-durable` 自己就是精确钉 `1.4.0`，顶层写 `^` 迟早分叉出两份 `pi-ai`，
+症状是「同一个类却不相等」。
+
+- **只在 Node 里跑。** 只有 `server/*.ts` 能 import。`src/` 里一行都不许 —— 它们拖着
+  `openai` / `@anthropic-ai/sdk` / `@aws-sdk/client-bedrock-runtime` / photon wasm，
+  进客户端 bundle 就是几十兆跑不了的死重。`vite.config.ts` 把 `@earendil-works/*` 标成 external，
+  手滑了在 build 期就吭声，不是悄悄膨胀。
+- **持久化状态写 `NOUS_DATA`。** chord 的 sqlite 也好、agent 的会话记录也好，落块的 `data/` 底下，
+  **不许落仓库根**。理由跟块一样：`cp -r map/<id> ~/<id>` 走了，状态也跟着走。
+- `node >= 22.19.0`（`engines` 已声明）。`node:sqlite` 在 20.x 上不存在，别指望它会以看得懂的方式报错。
+
 ### 锁：做成了 app 的块不许被删
 
 ```

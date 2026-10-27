@@ -113,7 +113,12 @@ export default defineConfig(({ mode }) => {
       }),
     ],
     build: {
-      rollupOptions: { input: { main: path.join(ROOT, "index.html"), ...demoInputs() } },
+      rollupOptions: {
+        input: { main: path.join(ROOT, "index.html"), ...demoInputs() },
+        // 壳是浏览器，这些是 Node 侧的东西（openai / anthropic / aws-sdk / photon wasm）。
+        // 标成 external：src/ 里手滑 import 了，build 期就吭声，而不是悄悄打出一个几十兆的 chunk。
+        external: (id) => id.startsWith("@earendil-works/"),
+      },
     },
     // 自己的端口，4783 留给隔壁那个老项目：两个可以同时开着。
     // allowedHosts 放宽是因为 tailnet 里可能用 MagicDNS 主机名访问，不只 IP。

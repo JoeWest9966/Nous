@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "description": "Nous: the durable agent network panel.",
+  "engines": { "node": ">=22.19.0" },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p . && vite build",
@@ -11,6 +12,9 @@
     "demo": "vite"
   },
   "dependencies": {
+    "@earendil-works/chord": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-durable": "1.4.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
