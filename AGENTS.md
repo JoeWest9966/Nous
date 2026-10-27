@@ -42,9 +42,9 @@ content/<board-id>/
         ├── AGENTS.md     ← 入口，也是 agent 进来时自动读的那份。程序只在建文件夹时写一次，之后永不覆盖
         ├── *.md          ← 这一块别的文档。文件夹就是清单，能建能删
         ├── .trash/       ← 删掉的文档躺这儿，**不真删**
-        ├── package.json  ← 块（叶子）才有：有 `scripts.start` = 它是个 app
-        ├── server.js     ← 同上：它的后端，零依赖
-        ├── public/       ← 同上：它的静态页面
+        ├── package.json  ← **你自己建的**：有 `scripts.start` = 它是个 app
+        ├── server.js     ← 你自己建的：它的后端
+        ├── public/       ← 你自己建的：它的静态页面
         └── data/         ← 它自己的数据（`cp -r` 走就带走了）
 ```
 
@@ -53,8 +53,13 @@ content/<board-id>/
 在这个文件夹里跑 `setup-matt-pocock-skills` 时，它编辑的也是这一份（它只就地更新 `## Agent skills`
 那一段，不覆盖周围的内容）；万一写坏了，`content/` 在 git 里，`git checkout` 能退回。
 
-新建的块自动拿到上面那四样（零依赖、`npm start` 就能跑、带 `/api/health` 和一组 `/api/notes`），
-新建的组只拿 `AGENTS.md` —— 组是容器，不是 app。**只铺一次，之后永不覆盖。**
+**新建的节点（块和组都一样）只拿到 `AGENTS.md`，一行代码都没有。**
+所以它的「打开」是一张白板 —— 那不是坏了，是「还没写」。
+
+这里曾经铺过一份脚手架（`package.json` + `server.js` + `public/index.html`，
+一个带 `/api/notes` 的示例 app），**已经拆掉了**：谁都没写过的块，一出生就端出一个像模像样的
+功能页，等于骗人说它有内容了。想让它动起来，写 `package.json` 的 `scripts.start` —— 就这一条。
+`AGENTS.md` 只铺一次，之后永不覆盖。
 
 `map/` 的文件夹名是 **id**，不是名字：改名、换爹、撤销都不碰文件系统。对账在 `server/map.ts`，
 保存后跑一次，幂等。

@@ -67,30 +67,11 @@ export const adoptNode = (v: unknown): Node | undefined => {
 export const hasNode = (node: Node, id: string): boolean =>
   node.id === id || (node.children?.some((c) => hasNode(c, id)) ?? false);
 
-/** `server/template/`：块的脚手架和 `AGENTS.md` 的两套文案。 */
+/** `server/template/`：三份 `AGENTS.md` 的文案（根 / 组 / 块）。就这三份，没有脚手架。 */
 const TEMPLATE = path.join(path.dirname(fileURLToPath(import.meta.url)), "template");
-const TEMPLATE_FILES = ["package.json", "server.js", "public/index.html"];
 
 const exists = async (p: string): Promise<boolean> =>
   (await readdir(path.dirname(p)).catch(() => [] as string[])).includes(path.basename(p));
-
-/**
- * 新建一个块时给它铺的地基：`package.json` + `server.js` + `public/index.html`。
- *
- * 零依赖、`node server.js` 就能跑，所以「新建完点开就是一个能用的 app + 一套 API」，
- * 不用先 npm install，也不用从空文件夹开始写服务。这跟 `AGENTS.md` 是同一个承诺：
- * **建文件夹时写一次，之后永不覆盖** —— 你删了它、改了它，程序都不管。
- *
- * 组不铺：组是容器，不是 app。
- */
-const scaffold = async (dir: string): Promise<void> => {
-  for (const name of TEMPLATE_FILES) {
-    const src = path.join(TEMPLATE, name);
-    const dst = path.join(dir, name);
-    await mkdir(path.dirname(dst), { recursive: true });
-    await writeFile(dst, await readFile(src, "utf8"), "utf8");
-  }
-};
 
 /**
  * 建文件夹时写进 `AGENTS.md` 的那份说明。
@@ -216,8 +197,9 @@ export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncR
       await intro(n, path.basename(boardDir), trees.get(n.id) ?? n.name, n.id === root.id),
       "utf8",
     );
-    // 块要能直接开发：铺一份能跑的地基。组只是容器，不铺。
-    if (!isSection(n)) await scaffold(live).catch(() => undefined);
+    // **不铺代码。** 新块里只有这一份 AGENTS.md —— 所以它的「打开」是一张白板。
+    // 曾经在这里铺过 package.json + server.js + public/index.html，那是一份假的功能页：
+    // 谁都没写过的块，一出生就端出一个带 API 的 app，等于骗人说它有内容了。
     out.created++;
   }
 
