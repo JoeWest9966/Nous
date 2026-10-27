@@ -5,14 +5,15 @@
  * map/
  * ├── README.md          索引：id ↔ tree ↔ 名字，每次保存重写（纯派生，删了没关系）
  * ├── .gone/<id>/        树里已经没有的节点，连文件夹带内容挪到这儿，**不删**
- * └── <id>/AGENTS.md      节点的地盘。这份是用户的，程序只在建文件夹时写一次，之后永不覆盖
+ * └── <id>/              节点的地盘。**刚建出来是空的**：一没 AGENTS.md，二没代码，
+ *                        你写第一个字的时候才长出 AGENTS.md，那份从此归你，永不覆盖
  * ```
  *
  * 文件夹名就是 `id`（随机六位，出生即定型）。所以改名、搬爹、撤销都不碰文件系统 ——
  * 没有 rename，没有半路失败，没有两个名字指同一个东西。撤销回来的节点 id 没变，
  * 文件夹自动就又是它的，`.gone/` 里的内容原样搬回来。
  *
- * 唯一堵不住的：人拿 `mv` 手动改了文件夹名，那份 AGENTS.md 就和节点失联了。
+ * 唯一堵不住的：人拿 `mv` 手动改了文件夹名，里面的 AGENTS.md 就和节点失联了。
  * 对账时会当成「缺」重建一个空的，旧内容留在改过名的目录里没人认领。认了吧。
  */
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -131,7 +132,7 @@ const renderIndex = (root: Node | undefined, nodes: Node[]): string => {
     "# map",
     "",
     "一个节点一个文件夹，文件夹名 = 节点的 id。**id 永不改变** —— 改名、搬爹、撤销都不动它。",
-    "`AGENTS.md` 是你的地盘（也是 agent 进来时自动读的那份），程序只在建文件夹时写一次，之后永不覆盖。",
+    "`AGENTS.md` 是你的地盘（也是 agent 进来时自动读的那份）。它是你写第一个字那天才出现的 —— 宿主不铺，之后也永不覆盖。",
     "",
     "树里已经没有的节点，文件夹会挪进 `.gone/`，不删。哪天撤销把它带回来，同样的 id 会把它接回家。",
     "",
@@ -173,8 +174,6 @@ export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncR
   };
 
   const present = await listing(dir);
-  /** 全树 tree：写进 `AGENTS.md` 里那行「在树里 `N/src/xxx`」靠它。 */
-  const trees = treeMap(root);
 
   for (const n of nodes) {
     const live = path.join(dir, n.id);
@@ -191,15 +190,11 @@ export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncR
       out.restored++;
       continue;
     }
+    // **只建文件夹，一个字节都不写。** 没有 AGENTS.md，没有脚手架，没有 README。
+    // 新建的东西一出生就是空的，这是它能说真话的唯一前提。
+    // 说明书不丢：`doc()` 拿不到文件时会现渲染同一份（模板在 `server/template/`），
+    // 你写第一个字的时候它才落成磁盘上的文件 —— 那份从此是你的，永不覆盖。
     await mkdir(live, { recursive: true });
-    await writeFile(
-      path.join(live, DOC),
-      await intro(n, path.basename(boardDir), trees.get(n.id) ?? n.name, n.id === root.id),
-      "utf8",
-    );
-    // **不铺代码。** 新块里只有这一份 AGENTS.md —— 所以它的「打开」是一张白板。
-    // 曾经在这里铺过 package.json + server.js + public/index.html，那是一份假的功能页：
-    // 谁都没写过的块，一出生就端出一个带 API 的 app，等于骗人说它有内容了。
     out.created++;
   }
 

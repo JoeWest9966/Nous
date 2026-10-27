@@ -39,7 +39,7 @@ content/<board-id>/
     ├── README.md         ← 索引（id ↔ tree ↔ 名字），每次保存整份重写，纯派生
     ├── .gone/<nodeId>/   ← 树里已经没有的节点，连文件夹挪到这儿，**不删**
     └── <nodeId>/
-        ├── AGENTS.md     ← 入口，也是 agent 进来时自动读的那份。程序只在建文件夹时写一次，之后永不覆盖
+        ├── AGENTS.md     ← 入口，agent 进来时自动读的那份。**宿主不铺**：你写第一个字那天它才出现
         ├── *.md          ← 这一块别的文档。文件夹就是清单，能建能删
         ├── .trash/       ← 删掉的文档躺这儿，**不真删**
         ├── package.json  ← **你自己建的**：有 `scripts.start` = 它是个 app
@@ -51,15 +51,18 @@ content/<board-id>/
 **这个文件叫 `AGENTS.md`，不叫 `agent.md`。** 一字之差决定 agent 会不会读它：
 所有 coding agent 进来先找 `AGENTS.md` / `CLAUDE.md`，小写的 `agent.md` 谁都不会自动打开。
 在这个文件夹里跑 `setup-matt-pocock-skills` 时，它编辑的也是这一份（它只就地更新 `## Agent skills`
-那一段，不覆盖周围的内容）；万一写坏了，`content/` 在 git 里，`git checkout` 能退回。
+那一段，不覆盖周围的内容）。万一写坏了没有 git 兜底 —— `content/` 是运行时数据，不在版本控制里；
+要靠版本就自己 `git init` 到别处，或者用 `tar`/`rsync` 做备份。
 
-**新建的节点（块和组都一样）只拿到 `AGENTS.md`，一行代码都没有。**
+**新建的节点（块和组都一样）只有一个空文件夹：没有 `AGENTS.md`，没有代码，什么都没有。**
 所以它的「打开」是一张白板 —— 那不是坏了，是「还没写」。
+`AGENTS.md` 不会预先出现：你点开笔记、写下第一个字，它才落成磁盘上的文件；那份从此归你。
 
 这里曾经铺过一份脚手架（`package.json` + `server.js` + `public/index.html`，
 一个带 `/api/notes` 的示例 app），**已经拆掉了**：谁都没写过的块，一出生就端出一个像模像样的
 功能页，等于骗人说它有内容了。想让它动起来，写 `package.json` 的 `scripts.start` —— 就这一条。
-`AGENTS.md` 只铺一次，之后永不覆盖。
+宿主写的文件只有两个：`map/README.md`（每盘一份的索引）和 `data/`（进程起来时建的）；
+其余全是你的，宿主**永不覆盖**。
 
 `map/` 的文件夹名是 **id**，不是名字：改名、换爹、撤销都不碰文件系统。对账在 `server/map.ts`，
 保存后跑一次，幂等。
