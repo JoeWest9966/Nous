@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cmqt66</title>
+<style>
+  :root { color-scheme: dark; --bg:#0e0f11; --fg:#e6e6e6; --dim:#8a8f98; --line:#23262b; --accent:#7ee787; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  header { display:flex; gap:12px; align-items:baseline; padding:14px 18px; border-bottom:1px solid var(--line); }
+  header b { font-size:15px; letter-spacing:.02em; }
+  header span { color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums; }
+  main { max-width:760px; margin:0 auto; padding:18px; display:flex; flex-direction:column; gap:10px; min-height:calc(100dvh - 110px); }
+  #log { display:flex; flex-direction:column; gap:10px; flex:1; }
+  .m { border:1px solid var(--line); border-radius:10px; padding:10px 12px; white-space:pre-wrap; word-break:break-word; }
+  .m.user { border-color:#2b3138; background:#14171a; }
+  .m.bot { background:#111315; }
+  .m.tool { border-style:dashed; color:var(--dim); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  .m .who { display:block; color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em; margin-bottom:4px; }
+  .m.err { border-color:#5a2a2a; color:#ffb4b4; }
+  form { display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:10px 0 16px; }
+  input { flex:1; background:#16191c; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; }
+  input:focus { outline:2px solid #2f6f3f; outline-offset:-1px; }
+  button { background:#1d2126; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:0 14px; font:inherit; cursor:pointer; }
+  button:hover { border-color:#3a4149; }
+  button:disabled { opacity:.5; cursor:default; }
+  .hint { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<header><b>cmqt66</b><span id="meta">连接中…</span></header>
+<main>
+  <div id="log"></div>
+  <p class="hint">试试 <code>!ls -la</code> —— 假 provider 会真的调一次 bash。</p>
+  <form id="say">
+    <input id="q" autocomplete="off" placeholder="说点什么…" autofocus>
+    <button id="go" type="submit">发送</button>
+    <button id="stop" type="button" title="停掉手头的活">停</button>
+  </form>
+</main>
+<script type="module">
+// 相对地址：宿主把 /p/<board>/<id>/ 反代进来，绝对路径会逃出前缀。
+const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const $ = (id) => document.getElementById(id);
+const log = $("log");
+
+const add = (role, text) => {
+  const el = document.createElement("div");
+  el.className = "m " + role;
+  const who = document.createElement("span");
+  who.className = "who";
+  who.textContent = role === "user" ? "你" : role === "tool" ? "工具" : "agent";
+  el.append(who, document.createTextNode(text));
+  log.append(el);
+  el.scrollIntoView({ block: "end" });
+  return el;
+};
+
+const textOf = (content) => {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.filter((b) => b?.type === "text").map((b) => b.text ?? "").join("");
+};
+
+// 一条在飞的对话气泡：message_update 的增量都并进它。
+let live = null;
+const liveBubble = () => (live ??= add("bot", ""));
+
+const stream = new EventSource(base + "v1/events");
+stream.onmessage = (message) => {
+  const event = JSON.parse(message.data);
+
+  if (event.type === "snapshot") {
+    log.replaceChildren();
+    live = null;
+    for (const entry of event.entries ?? []) {
+      const text = (entry.model ?? []).map((m) => textOf(m.content)).join("").trim();
+      if (!text) continue;
+      const role = entry.kind === "pi.user" ? "user" : entry.kind === "pi.assistant" ? "bot" : "tool";
+      add(role, text);
+    }
+    return;
+  }
+
+  if (event.type === "message_start") {
+    if (event.message?.role === "assistant") liveBubble();
+    return;
+  }
+
+  if (event.type === "message_update") {
+    for (const change of event.changes ?? []) {
+      if (change.type === "text_delta") {
+        const bubble = liveBubble();
+        bubble.lastChild.textContent += change.delta;
+        bubble.scrollIntoView({ block: "end" });
+      }
+    }
+    return;
+  }
+
+  if (event.type === "message_end") {
+    live = null;
+    return;
+  }
+
+  if (event.type === "tool_execution_start") {
+    live = null;
+    add("tool", `${event.name}(${JSON.stringify(event.args ?? {})})`);
+    return;
+  }
+
+  if (event.type === "run_end") {
+    live = null;
+    $("go").disabled = false;
+    $("meta").textContent = "空闲";
+  }
+};
+
+stream.onerror = () => { $("meta").textContent = "断流了，正在重连…"; };
+
+fetch(base + "v1/device")
+  .then((r) => r.json())
+  .then((d) => {
+    $("meta").textContent = `${d.model.provider}/${d.model.modelId}${d.faux ? " · 假 provider" : ""}`;
+  })
+  .catch(() => { $("meta").textContent = "拿不到设备信息"; });
+
+$("say").onsubmit = async (event) => {
+  event.preventDefault();
+  const input = $("q");
+  const content = input.value.trim();
+  if (!content) return;
+  input.value = "";
+  add("user", content);
+  live = null;
+  $("go").disabled = true;
+  $("meta").textContent = "想…";
+  try {
+    const res = await fetch(base + "v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) add("err", `HTTP ${res.status} ${await res.text()}`);
+  } catch (error) {
+    add("err", String(error));
+  } finally {
+    $("go").disabled = false;
+  }
+};
+
+$("stop").onclick = () => fetch(base + "v1/abort", { method: "POST" }).catch(() => {});
+</script>
+</body>
+</html>

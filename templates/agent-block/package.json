@@ -1,0 +1,9 @@
+{
+  "name": "cmqt66",
+  "private": true,
+  "type": "module",
+  "description": "块自己的 agent 后端：一个会话、read/write/edit/bash 四件套、SSE。",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
