@@ -28,6 +28,8 @@ export type LoadedBoard = {
   version: number;
   root: Node;
   moves: Move[];
+  /** content/<board>/ 的绝对路径，服务器给的。块菜单的「终端路径」拼它。 */
+  dir?: string;
 };
 
 /** 磁盘上别人先写了。调用方必须停手，不能覆盖。 */

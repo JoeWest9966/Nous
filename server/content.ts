@@ -144,6 +144,11 @@ export class BoardStore {
     return path.join(this.dir(id), MAP, nodeId);
   }
 
+  /** 块在磁盘上的家。给「终端路径」用的 —— 浏览器不知道 content/ 在哪儿，只有服务器知道。 */
+  absDir(id: string): string {
+    return this.dir(id);
+  }
+
   async list(): Promise<BoardSummary[]> {
     let names: string[] = [];
     try {

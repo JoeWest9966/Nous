@@ -254,6 +254,8 @@ export function contentApi(root: string) {
           version: tree.version,
           root: tree.root,
           moves: await store.log(id),
+          // 绝对路径只有服务器知道。前端拼「终端路径」用 —— 不硬编码到客户端，换机器换目录都还对。
+          dir: store.absDir(id),
         });
         return;
       }

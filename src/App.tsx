@@ -90,12 +90,23 @@ function writePath(id: string, path: string[]): void {
   }
 }
 
-/** 存下来的路径里可能包含已经被删掉的节点；能进去的只有还在的组。 */
-const alivePath = (root: Node, ids: string[]): string[] =>
-  ids.filter((id) => {
-    const n = findNode(root, id);
-    return n !== undefined && isSection(n);
-  });
+/**
+ * 一条路径是**一条链**：`ids[i+1]` 必须是 `ids[i]` 的孩子，而且得是组。
+ *
+ * 所以这里不是「过滤掉不存在的」，是从根往下走一遍，走到哪一节断了就停在哪儿。
+ * 重复塞进来的同一个 id、被删掉的、被搬去别的支的，全都在断点处折掉 ——
+ * 留下来的前缀一定串得起来，面包屑画的才是真的路，不是一段点出来的历史。
+ */
+const alivePath = (root: Node, ids: string[]): string[] => {
+  let at = root;
+  for (const id of ids) {
+    const kid = at.children?.find((c) => c.id === id);
+    if (!kid || !isSection(kid)) break;
+    at = kid;
+  }
+  // 回到断点那一层：`pathTo` 保证拿到的是一条真链，根会返回 []。
+  return pathTo(root, at.id);
+};
 /** 下拉里「新建项目」那一项的值。JSX 属性不认 \u 转义，别拿 NUL 当哨兵。 */
 const NEW_BOARD = "__new__";
 
@@ -181,6 +192,8 @@ export function App() {
   const [flash, setFlash] = useState<string | null>(null);
   /** 锁着的块：删不掉，前端连按钮都不画。真拦截在服务端（save 会把被删的锁块接回来）。 */
   const [locks, setLocks] = useState<ReadonlySet<string>>(() => new Set());
+  /** content/<board>/ 的绝对路径，载入时服务器给的。浏览器自己拼不出来 —— 不硬编码。 */
+  const [boardDir, setBoardDir] = useState("");
   const flashTimer = useRef<number | undefined>(undefined);
   const [findOpen, setFindOpen] = useState(false);
   /** 「移动到…」捧着的是源 id + 触发它的那颗按钮的位置 —— 面板从那儿长出来，也从那儿缩回去。 */
@@ -261,6 +274,7 @@ export function App() {
         setOrphan(draft && !stale && !adopt ? draft : null);
 
         version.current = board.version;
+        setBoardDir(board.dir ?? "");
         const next = adopt ? { root: adopt.root, moves: adopt.moves } : loaded;
         // 用磁盘那份时它就是磁盘内容，别写回去；用草稿时要存，所以不能跳。
         skipSave.current = !adopt;
@@ -575,13 +589,28 @@ export function App() {
         icon: <IconLink />,
         run: () => void copyText(trees.get(id) ?? node.name),
       },
+      // 只给块给：组没有「进终端看看」的自然场景，真要看也是看组里某一块。
+      // 路径由服务器随盘一起发下来（dir 字段）—— 前端不硬编码部署位置，换机器都还对。
+      ...(isSection(node)
+        ? []
+        : boardDir
+          ? [
+              {
+                key: "copy-terminal",
+                label: "终端路径",
+                icon: <IconTerminal />,
+                run: () => void copyText(`${boardDir}/map/${id}`),
+              },
+            ]
+          : []),
     ];
     if (isSection(node)) {
       items.push({
         key: "enter",
         label: "进入",
         icon: <IconEnter />,
-        run: () => setPath((prev) => [...prev, id]),
+        // 「进入」= 去它那儿，不是「再往下钻一层」：已经在里面时这一下就该什么都不动。
+        run: () => setPath(pathTo(root, id)),
       });
     }
     // 只有块能锁。组是容器 —— 锁容器等于间接锁子节点，那是同一件事的第二种写法。
@@ -613,12 +642,8 @@ export function App() {
     setPast((p) => p.slice(0, -1));
     setRoot(back);
     setMoves((m) => [...m.slice(-199), { t: "undo" }]);
-    setPath((ids) =>
-      ids.filter((id) => {
-        const n = findNode(back, id);
-        return n !== undefined && isSection(n);
-      }),
-    );
+    // 撤销可能把那几层里的某一节撤没了。跟载入时同一套判据，别养第二套。
+    setPath((ids) => alivePath(back, ids));
   };
 
   /** 撞了别人写的版本：只给「重读磁盘」这一条路 —— 自动覆盖等于帮另一个标签页删数据。 */
@@ -883,7 +908,7 @@ export function App() {
                   trees={trees}
                   flashId={flash}
                   editingId={editing?.where === "board" ? editing.id : null}
-                  onEnter={(id) => setPath([...path, id])}
+                  onEnter={(id) => setPath(pathTo(root, id))}
                   onOpen={openBlock}
                   onBeginRename={(id, el) => beginRename(id, el, "board")}
                   onCommitRename={commitRename}
@@ -1264,6 +1289,14 @@ const IconCopy = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <rect x="2.5" y="2.5" width="7" height="7" rx="1.6" />
     <path d="M5.5 11.5h4.4a1.6 1.6 0 0 0 1.6-1.6V5.5" />
+  </svg>
+);
+
+/** “终端路径”：经典提示符 —— 一根横杠加一个尖括号，无需文字就能认出“去命令行”。 */
+const IconTerminal = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M3.5 5l2.5 2-2.5 2" />
+    <path d="M7.5 9.5h3" />
   </svg>
 );
 
