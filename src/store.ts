@@ -307,6 +307,23 @@ export async function restoreDoc(board: string, node: string, name: string): Pro
   return editCall(`${docUrl(board, node, name)}/restore`, { method: "POST" });
 }
 
+/**
+ * 改名：同一个文件夹里的文件改名，正文一个字节都不动（etag 不变，开着的那一页不会 409）。
+ * `to` 走一遍和服务端同一份 sanitize，回来的是**落盘后的名字** —— 调用方拿它当新游标。
+ */
+export async function renameDoc(
+  board: string,
+  node: string,
+  name: string,
+  to: string,
+): Promise<{ name: string }> {
+  return editCall(`${docUrl(board, node, name)}/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: to }),
+  });
+}
+
 /* —— 正文的本地草稿。和 board 的 Draft 一个道理：滑落的那几个字不该靠重敲才回来。 —— */
 
 export type DocDraft = {

@@ -54,8 +54,8 @@ const sendEdit = (res: ServerResponse, out: DocEditResult): void => {
     "no-node": [404, "no such node"],
     "bad-name": [400, "bad doc name"],
     missing: [404, "no such doc"],
-    // 唯一一条 403：AGENTS.md 只能改。前端根本没那个入口，这里是硬的。
-    protected: [403, "AGENTS.md 只能改，不能删"],
+    // 唯一一条 403：AGENTS.md 只能改 —— 删不掉，也改不了名。
+    protected: [403, "AGENTS.md 只能改"],
     exists: [409, "already exists"],
   };
   const [code, error] = map[out.status];
@@ -187,6 +187,25 @@ export function contentApi(root: string) {
           }
           const out = await store.restoreDoc(id, nodeId, docName!);
           sendEdit(res, out);
+          return;
+        }
+        // `doc/:name/rename`：同一个文件夹里换个名字，正文一个字节都不动。
+        if (verb === "rename") {
+          if (rest.length || req.method !== "POST") {
+            send(res, 405, { error: "method not allowed" });
+            return;
+          }
+          if (!docName) {
+            send(res, 400, { error: "name required" });
+            return;
+          }
+          const input = await body(req);
+          const raw = isRecord(input) && typeof input.name === "string" ? input.name : "";
+          if (!normalizeDocName(raw)) {
+            send(res, 400, { error: "name required" });
+            return;
+          }
+          sendEdit(res, await store.renameDoc(id, nodeId, docName, raw));
           return;
         }
         if (verb !== undefined || rest.length) {

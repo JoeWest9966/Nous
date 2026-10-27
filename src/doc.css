@@ -1,7 +1,12 @@
-/* 文档页 —— 材质和小动效。
+/* 文档页 —— 材质、排版、动效。
  *
- * 规则和别处一样：只动 transform / scale / opacity，颜色走 token，一个色值都不发明。
- * 弹簧是 demo/doc-editor 里那条（k=420 c=30，418ms，回弹 3.2%），退场 140ms 无过冲。 */
+ * 三条规矩和别处一样：只动 transform / scale / opacity，颜色走 token，一个色值都不发明。
+ * 弹簧是 demo/doc-editor 里那条（k=420 c=30，418ms，回弹 3.2%），退场 140ms 无过冲。
+ *
+ * 这一页的形状是「一张纸 + 一层浮起来的工具条」：
+ * 工具条是**材质**（半透明 + 模糊），正文从它底下滚过去 —— 不是一条吃掉 52px 的实心眼。
+ * 所以工具条没有下边框；滚起来了才浮起来（`data-lifted`），阴影替掉那根线。
+ */
 
 :root {
   --dp-spring: linear(
@@ -15,7 +20,10 @@
   --dp-in: 260ms;
   --dp-out: 140ms;
   --dp-ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  --dp-toolbar-h: 52px;
 }
+
+/* ── 材质 ─────────────────────────────────────────────────────────────────── */
 
 /* 毛玻璃：半透明底 + 发丝边 + 顶边一道高光。浅色主题下高光要更亮，阴影要更浅。 */
 .dp-glass {
@@ -36,6 +44,304 @@
     0 12px 26px -14px rgba(16, 20, 26, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
+
+/* 工具条：比正文轻、比正文凉。正文滚到它底下时能看见一点点形，但读不清 —— 那是刻意的。 */
+.dp-toolbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--dp-toolbar-h);
+  padding: 0 10px;
+  background: color-mix(in oklab, var(--n-color-canvas) 68%, transparent);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  /* 没有下边框。滚起来了才浮起来 —— 见 `data-lifted`。 */
+  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
+  transition: box-shadow 220ms var(--dp-ease-out), background 220ms var(--dp-ease-out);
+}
+
+.dp-toolbar[data-lifted="true"] {
+  background: color-mix(in oklab, var(--n-color-canvas) 82%, transparent);
+  box-shadow:
+    0 1px 0 color-mix(in oklab, var(--n-color-text) 8%, transparent),
+    0 6px 16px -12px rgba(0, 0, 0, 0.9);
+}
+
+/* 工具条上的按钮：28px 的方，按下立刻缩一下 —— 反馈在 pointer-down，不等 click。 */
+.dp-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--n-color-muted);
+  transition:
+    background 120ms var(--dp-ease-out),
+    color 120ms var(--dp-ease-out),
+    scale 100ms var(--dp-ease-out);
+}
+
+.dp-icon:hover {
+  background: var(--n-color-surface);
+  color: var(--n-color-text);
+}
+
+.dp-icon:active {
+  scale: 0.92;
+}
+
+.dp-icon:focus-visible {
+  outline: 2px solid var(--n-color-accent);
+  outline-offset: -2px;
+}
+
+/* 触屏：热区撑到 44px，但视觉还是小的那颗 —— 手指有肉，眼睛没有。 */
+.dp-icon--touch {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+}
+
+/* ── 面包屑 / 小标签 ─────────────────────────────────────────────────────── */
+
+.dp-crumbs {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 1px;
+  font-size: 12.5px;
+  color: var(--n-color-muted);
+}
+
+.dp-crumb {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 6px;
+  border-radius: 7px;
+  transition: color 120ms var(--dp-ease-out), background 120ms var(--dp-ease-out);
+}
+
+.dp-crumb:hover {
+  color: var(--n-color-text);
+  background: var(--n-color-surface);
+}
+
+.dp-crumb--here {
+  color: var(--n-color-text);
+  font-weight: 550;
+}
+
+.dp-crumb-sep {
+  flex: none;
+  color: color-mix(in oklab, var(--n-color-text) 26%, transparent);
+  font-size: 11px;
+}
+
+.dp-chip {
+  flex: none;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--n-color-surface);
+  color: var(--n-color-muted);
+  font-family: var(--n-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.dp-pill {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--n-color-accent) 16%, transparent);
+  color: color-mix(in oklab, var(--n-color-accent) 78%, var(--n-color-text));
+  font-size: 10.5px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
+/* ── 版心 ─────────────────────────────────────────────────────────────────── */
+
+.dp-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.dp-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  width: 100%;
+  max-width: 46rem;
+  margin: 0 auto;
+  /* 上面给浮着的工具条让路，下面给那颗提示留口气。 */
+  padding: calc(var(--dp-toolbar-h) + 28px) 20px 96px;
+}
+
+@media (min-width: 640px) {
+  .dp-column {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+
+/* 眼睛先看到「这是哪个文件」，再看到标题，再看到正文。三步，一次呼吸。 */
+.dp-eyebrow {
+  margin-bottom: 10px;
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  color: color-mix(in oklab, var(--n-color-muted) 78%, transparent);
+  word-break: break-all;
+}
+
+.dp-title {
+  font-size: clamp(1.625rem, 1.35rem + 1.1vw, 2rem);
+  line-height: 1.08;
+  /* 大字号要收字距，小字号才要放 —— 一个值套所有尺寸必然错一半。 */
+  letter-spacing: -0.028em;
+  font-weight: 620;
+  font-optical-sizing: auto;
+  text-wrap: balance;
+  margin: 0;
+}
+
+.dp-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dp-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  margin-bottom: 26px;
+  font-size: 11.5px;
+  color: var(--n-color-muted);
+}
+
+.dp-stat {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.dp-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--n-color-muted) 55%, transparent);
+}
+
+/* 状态：平时淡得像没有，存的那一刻才亮一下，然后自己凉下去。
+   ——不用图标、不用转圈：这里要的是「安静」，不是「正在发生什么」。 */
+.dp-status {
+  transition: color 200ms var(--dp-ease-out), opacity 400ms var(--dp-ease-out);
+  opacity: 0.72;
+}
+
+/* 存下了：先报一声（accent），1.4 秒后回到 muted，把注意力还给正文。 */
+.dp-status[data-s="saved"] {
+  color: var(--n-color-accent);
+  opacity: 1;
+  animation: dp-settle 1400ms var(--dp-ease-out) forwards;
+}
+
+@keyframes dp-settle {
+  0%,
+  45% {
+    color: var(--n-color-accent);
+  }
+  100% {
+    color: var(--n-color-muted);
+  }
+}
+
+.dp-status[data-s="saving"] {
+  color: var(--n-color-text);
+  opacity: 0.9;
+}
+
+.dp-status[data-s="conflict"],
+.dp-status[data-s="error"] {
+  color: var(--n-color-danger);
+  opacity: 1;
+}
+
+.dp-link {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  margin-right: -6px;
+  border-radius: 7px;
+  color: color-mix(in oklab, var(--n-color-muted) 88%, transparent);
+  transition: color 120ms var(--dp-ease-out), background 120ms var(--dp-ease-out);
+}
+
+.dp-link:hover {
+  color: var(--n-color-text);
+  background: var(--n-color-surface);
+}
+
+/* ── 编辑区 ───────────────────────────────────────────────────────────────── */
+
+/* 正文就是这一页，别给它画框、别给它加背景。 */
+.dp-text {
+  field-sizing: content;
+  min-height: 100%;
+  font-family: var(--n-font-mono);
+  font-size: 13.5px;
+  line-height: 1.78;
+  letter-spacing: 0.002em;
+  color: color-mix(in oklab, var(--n-color-text) 94%, transparent);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* markdown 的软换行不该被自动折出半个词 —— 只在真空格处断。 */
+  overflow-wrap: anywhere;
+}
+
+.dp-text::placeholder {
+  color: color-mix(in oklab, var(--n-color-muted) 62%, transparent);
+}
+
+/* 手机上正文就是读的：14.5px 的等宽读起来太紧，而且 iOS 在 16px 以下会自己把页面放大。 */
+@media (max-width: 639px) {
+  .dp-text {
+    font-size: 16px;
+    line-height: 1.72;
+  }
+}
+
+.dp-text::selection {
+  background: color-mix(in oklab, var(--n-color-accent) 26%, transparent);
+}
+
+/* 空状态：一句人话，一颗按钮。别用插画，别用大图标。 */
+.dp-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  padding-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--n-color-muted);
+}
+
+/* ── 浮层 ─────────────────────────────────────────────────────────────────── */
 
 /* 进场：从一个点长大，不是从下面滑上来 —— 面板是从那颗按钮里出来的。 */
 .dp-pop {
@@ -66,18 +372,120 @@
   }
 }
 
+/* 手机上的 ⋯ 菜单：从底下升上来的 sheet，顶部一道抓手 —— 它说的话是「能拖、能关」。 */
+.dp-sheet {
+  animation: dp-sheet var(--dp-in) var(--dp-spring);
+  border-radius: 20px 20px 0 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@keyframes dp-sheet {
+  from {
+    opacity: 0.001;
+    translate: 0 12px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.dp-grabber {
+  width: 32px;
+  height: 4px;
+  margin: 6px auto 2px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--n-color-muted) 45%, transparent);
+}
+
+/* 回执：一颗浮起来的胶囊，3.4 秒后自己走。不该占一行正文的位置。 */
+.dp-toast {
+  position: absolute;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  translate: -50% 0;
+  z-index: 20;
+  max-width: min(90vw, 34rem);
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--n-color-text);
+  pointer-events: none;
+  animation: dp-toast var(--dp-in) var(--dp-spring);
+}
+
+@keyframes dp-toast {
+  from {
+    opacity: 0.001;
+    scale: 0.94;
+    translate: -50% 8px;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+    translate: -50% 0;
+  }
+}
+
 /* 搜索命中那一行的高亮：底色就是 accent 的一层，不动字色。 */
 .dp-hit {
   background: color-mix(in oklab, var(--n-color-accent) 22%, transparent);
   border-radius: 2px;
 }
 
-/* 编辑区：正文就是全屏，别给它画框、别给它加背景 —— 它自己就是这一页。 */
-.dp-text {
-  field-sizing: content;
-  min-height: 100%;
+/* ── 三档偏好 ─────────────────────────────────────────────────────────────── */
+
+/* 少动一点 ≠ 没有反馈：滑动、缩放、弹簧全换成短淡入，颜色和透明度照旧。 */
+@media (prefers-reduced-motion: reduce) {
+  .dp-pop,
+  .dp-fade,
+  .dp-sheet,
+  .dp-toast {
+    animation: dp-fade 160ms ease;
+  }
+
+  .dp-icon:active {
+    scale: 1;
+  }
+
+  .dp-toolbar,
+  .dp-icon,
+  .dp-status {
+    transition-duration: 120ms;
+  }
 }
 
-.dp-text::selection {
-  background: color-mix(in oklab, var(--n-color-accent) 26%, transparent);
+/* 少透明：玻璃变瓷。抬高不透明度、砍掉模糊，读得清比好看重要。 */
+@media (prefers-reduced-transparency: reduce) {
+  .dp-glass {
+    background: var(--n-color-raised);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .dp-toolbar {
+    background: var(--n-color-canvas);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* 要高对比：该有一根边的地方就给一根真的边。 */
+@media (prefers-contrast: more) {
+  .dp-toolbar {
+    background: var(--n-color-canvas);
+    box-shadow: 0 1px 0 var(--n-color-border);
+  }
+
+  .dp-glass {
+    background: var(--n-color-raised);
+    border-color: var(--n-color-text);
+  }
+
+  .dp-status,
+  .dp-eyebrow,
+  .dp-meta {
+    color: var(--n-color-text);
+    opacity: 1;
+  }
 }
