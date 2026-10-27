@@ -58,7 +58,7 @@ const pathKey = (id: string): string => `nous-path:${id}`;
  * 独立进程自己 serve —— 那就必须是一条真路径。
  *
  * **只在 `__nous/` 下面才有壳的页面。** `/p/<board>/<id>/` 往下全归那个块的进程 ——
- * 没开发的块就是一张空白页，壳不去替它画。这段正则因此只认笔记页那一条。
+ * 没开发的块就是一张空白页，壳不去替它画。这段正则因此只认文档页那一条。
  */
 const DOC_URL = /^\/p\/([^/]+)\/([^/]+)\/__nous\/doc\/?$/;
 
@@ -422,10 +422,13 @@ export function App() {
   };
 
   /**
-   * 开它的笔记本（`AGENTS.md`）。这个是壳的页面，所以留在 SPA 里、盖在盘面上、
-   * 不卸载盘面 —— 否则树的展开状态、滚动位置、撤销栈全丢。
+   * 开它的文档（`map/<id>/` 里那一堆 md）。这个是壳的页面，所以留在 SPA 里、
+   * 盖在盘面上、不卸载盘面 —— 否则树的展开状态、滚动位置、撤销栈全丢。
+   *
+   * 具体看哪一份不进 URL：那一份是「我刚才翻到哪」，换了设备未必想接着看同一页。
+   * 它记在 localStorage（`nous-doc-last`），和左栏展开到第几层一个道理。
    */
-  const openNotes = (id: string) => {
+  const openDocs = (id: string) => {
     if (!projectId) return;
     window.history.pushState(
       null,
@@ -543,10 +546,10 @@ export function App() {
         run: () => openBlock(id),
       },
       {
-        key: "notes",
-        label: "笔记",
+        key: "docs",
+        label: "文档",
         icon: <IconNote />,
-        run: () => openNotes(id),
+        run: () => openDocs(id),
       },
       {
         key: "rename",

@@ -164,11 +164,32 @@ export async function saveBoard(
 }
 
 /* ------------------------------------------------------------------ *
- * 块的正文：`map/<nodeId>/AGENTS.md`
+ * 文档：`map/<nodeId>/` 里那些 `.md`
  *
- * 它和树是**两份互不相干的事实**：写一篇文章不该动 version，落一手棋也不该
- * 让笔记变成 409。所以这里有自己的 etag（内容哈希），不走 board 的 baseVersion。
+ * 文件夹就是清单。它和树是**两份互不相干的事实**：写一篇文章不该动 version，
+ * 落一手棋也不该让文档变成 409。所以每份文档有自己的 etag（内容哈希），
+ * 不走 board 的 baseVersion。
+ *
+ * 名字是身份，id 不是：`AGENTS.md` 永远在、永远第一、只能改不能删；
+ * 其余的名字就是文件名，能建、能改、能删（进 `.trash/`）。
  * ------------------------------------------------------------------ */
+
+export type DocFile = {
+  name: string;
+  size: number;
+  at: string;
+  /** `AGENTS.md` —— 入口，禁止删除。界面上那个删除入口根本不生成。 */
+  protected: boolean;
+  trashed: boolean;
+  /** 搜索命中时那一行的上下文。 */
+  snippet?: string;
+};
+
+export type DocList = {
+  files: DocFile[];
+  /** true = 这个文件夹里有 `scripts.start`。它的 URL 根归它自己，不归文档页。 */
+  hasApp: boolean;
+};
 
 export type Doc = {
   text: string;
@@ -176,21 +197,29 @@ export type Doc = {
   etag: string;
   /** true = 磁盘上还没有这个文件，text 是程序给的 stub。 */
   stub: boolean;
-  /** true = 这个文件夹里有 `scripts.start`。它的 URL 根归它自己，不归笔记页。 */
   hasApp: boolean;
 };
 
-const docUrl = (board: string, node: string): string =>
-  `${url(board)}/nodes/${encodeURIComponent(node)}/doc`;
+const docUrl = (board: string, node: string, name?: string): string =>
+  `${url(board)}/nodes/${encodeURIComponent(node)}/doc${name ? `/${encodeURIComponent(name)}` : ""}`;
 
 /**
  * 树里没有这节点、或者没这一盘，都返回 `null` ——
  * 调用方要画的是「查无此块」，不是一个错误页。
+ * 文档被删了（404 + missing）也是 `null`：那是「这一份不在了」，不是错误。
  */
-export async function loadDoc(board: string, node: string): Promise<Doc | null> {
-  const res = await fetch(docUrl(board, node), { headers: { accept: "application/json" } });
+export async function loadDoc(board: string, node: string, name?: string): Promise<Doc | null> {
+  const res = await fetch(docUrl(board, node, name), { headers: { accept: "application/json" } });
   if (res.status === 404) return null;
   return asJson<Doc>(res);
+}
+
+/** 这一块的文档清单。`q` 非空时按名字 + 正文筛（筛在服务端做，正文不上网）. */
+export async function listDocs(board: string, node: string, q = ""): Promise<DocList | null> {
+  const tail = q ? `?q=${encodeURIComponent(q)}` : "";
+  const res = await fetch(`${url(board)}/nodes/${encodeURIComponent(node)}/docs${tail}`);
+  if (res.status === 404) return null;
+  return asJson<DocList>(res);
 }
 
 /** 磁盘上那份被别处改过了。带回来的是磁盘的全文 —— 让人当面选，别默默盖掉。 */
@@ -211,11 +240,12 @@ export class DocConflictError extends Error {
 export async function saveDoc(
   board: string,
   node: string,
+  name: string,
   text: string,
   etag: string,
   keepalive = false,
 ): Promise<{ etag: string }> {
-  const res = await fetch(docUrl(board, node), {
+  const res = await fetch(docUrl(board, node, name), {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ text, etag }),
@@ -229,6 +259,52 @@ export async function saveDoc(
   return asJson<{ etag: string }>(res);
 }
 
+/** 服务端说得出口的那几句。UI 直接拿去显示，不再翻译一遍。 */
+export class DocEditError extends Error {
+  constructor(
+    readonly status: number,
+    readonly reason: "bad-name" | "exists" | "protected" | "missing" | "other",
+  ) {
+    super(reason);
+    this.name = "DocEditError";
+  }
+}
+
+const editCall = async (path: string, init: RequestInit): Promise<{ name: string }> => {
+  const res = await fetch(path, init);
+  if (res.ok) return (await res.json()) as { name: string };
+  const reason =
+    res.status === 400
+      ? "bad-name"
+      : res.status === 409
+        ? "exists"
+        : res.status === 403
+          ? "protected"
+          : res.status === 404
+            ? "missing"
+            : "other";
+  throw new DocEditError(res.status, reason);
+};
+
+/** 新建一份。名字 sanitize 在服务端也做，这里先做一遍只为「不用等一次往返」才知道重名。 */
+export async function createDoc(board: string, node: string, name: string): Promise<{ name: string }> {
+  return editCall(`${url(board)}/nodes/${encodeURIComponent(node)}/docs`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+}
+
+/** 删一份 —— 实际是挪进 `.trash/`。`AGENTS.md` 会拿到 403。 */
+export async function trashDoc(board: string, node: string, name: string): Promise<{ name: string }> {
+  return editCall(docUrl(board, node, name), { method: "DELETE" });
+}
+
+/** 从 `.trash/` 搬回来，名字不改。 */
+export async function restoreDoc(board: string, node: string, name: string): Promise<{ name: string }> {
+  return editCall(`${docUrl(board, node, name)}/restore`, { method: "POST" });
+}
+
 /* —— 正文的本地草稿。和 board 的 Draft 一个道理：滑落的那几个字不该靠重敲才回来。 —— */
 
 export type DocDraft = {
@@ -238,11 +314,13 @@ export type DocDraft = {
   at: string;
 };
 
-const docDraftKey = (board: string, node: string): string => `nous-doc-draft:${board}:${node}`;
+/** 草稿按「盘 + 块 + 文件名」分。一份文档一个字都不能串到另一份上。 */
+const docDraftKey = (board: string, node: string, name: string): string =>
+  `nous-doc-draft:${board}:${node}:${name}`;
 
-export function readDocDraft(board: string, node: string): DocDraft | null {
+export function readDocDraft(board: string, node: string, name: string): DocDraft | null {
   try {
-    const raw = localStorage.getItem(docDraftKey(board, node));
+    const raw = localStorage.getItem(docDraftKey(board, node, name));
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     if (
       parsed &&
@@ -258,20 +336,45 @@ export function readDocDraft(board: string, node: string): DocDraft | null {
   }
 }
 
-export function writeDocDraft(board: string, node: string, text: string, etag: string): void {
+export function writeDocDraft(
+  board: string,
+  node: string,
+  name: string,
+  text: string,
+  etag: string,
+): void {
   try {
     const draft: DocDraft = { text, etag, at: new Date().toISOString() };
-    localStorage.setItem(docDraftKey(board, node), JSON.stringify(draft));
+    localStorage.setItem(docDraftKey(board, node, name), JSON.stringify(draft));
   } catch {
     // 存不下就算了：字还在 textarea 里，下一次落键还会再试。
   }
 }
 
-export function clearDocDraft(board: string, node: string): void {
+export function clearDocDraft(board: string, node: string, name: string): void {
   try {
-    localStorage.removeItem(docDraftKey(board, node));
+    localStorage.removeItem(docDraftKey(board, node, name));
   } catch {
     // 同上。
+  }
+}
+
+/** 上次在看哪一份。打开文档页时从那篇接着看，不然每次都落回 AGENTS.md。 */
+const lastDocKey = (board: string, node: string): string => `nous-doc-last:${board}:${node}`;
+
+export function readLastDoc(board: string, node: string): string | null {
+  try {
+    return localStorage.getItem(lastDocKey(board, node));
+  } catch {
+    return null;
+  }
+}
+
+export function writeLastDoc(board: string, node: string, name: string): void {
+  try {
+    localStorage.setItem(lastDocKey(board, node), name);
+  } catch {
+    // 记不住就记不住，回 AGENTS.md。
   }
 }
 

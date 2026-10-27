@@ -1,0 +1,83 @@
+/* 文档页 —— 材质和小动效。
+ *
+ * 规则和别处一样：只动 transform / scale / opacity，颜色走 token，一个色值都不发明。
+ * 弹簧是 demo/doc-editor 里那条（k=420 c=30，418ms，回弹 3.2%），退场 140ms 无过冲。 */
+
+:root {
+  --dp-spring: linear(
+    0.0004, 0.0386 3.3%, 0.1287 6.7%, 0.2465 10%, 0.3742 13.3%, 0.4999 16.7%,
+    0.6158 20%, 0.7174 23.3%, 0.7973 26.7%, 0.8675 30%, 0.9223 33.3%, 0.9633 36.7%,
+    0.9926 40%, 1.0122 43.3%, 1.0242 46.7%, 1.0304 50%, 1.0323 53.3%, 1.0315 56.7%,
+    1.0287 60%, 1.025 63.3%, 1.0209 66.7%, 1.0168 70%, 1.013 73.3%, 1.0099 76.7%,
+    1.007 80%, 1.0046 83.3%, 1.0028 86.7%, 1.0014 90%, 1.0004 93.3%, 0.9997 96.7%,
+    0.9993 100%
+  );
+  --dp-in: 260ms;
+  --dp-out: 140ms;
+  --dp-ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 毛玻璃：半透明底 + 发丝边 + 顶边一道高光。浅色主题下高光要更亮，阴影要更浅。 */
+.dp-glass {
+  background: color-mix(in oklab, var(--n-color-raised) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--n-color-text) 12%, transparent);
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.3),
+    0 2px 8px -4px rgba(0, 0, 0, 0.45),
+    0 12px 28px -14px rgba(0, 0, 0, 0.8),
+    inset 0 1px 0 color-mix(in oklab, var(--n-color-text) 13%, transparent);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+
+:root[data-theme="light"] .dp-glass {
+  box-shadow:
+    0 1px 1px rgba(16, 20, 26, 0.05),
+    0 2px 6px -3px rgba(16, 20, 26, 0.1),
+    0 12px 26px -14px rgba(16, 20, 26, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+/* 进场：从一个点长大，不是从下面滑上来 —— 面板是从那颗按钮里出来的。 */
+.dp-pop {
+  animation: dp-pop var(--dp-in) var(--dp-spring);
+}
+
+@keyframes dp-pop {
+  from {
+    opacity: 0.001;
+    scale: 0.96;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+.dp-fade {
+  animation: dp-fade var(--dp-in) var(--dp-spring);
+}
+
+@keyframes dp-fade {
+  from {
+    opacity: 0.001;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 搜索命中那一行的高亮：底色就是 accent 的一层，不动字色。 */
+.dp-hit {
+  background: color-mix(in oklab, var(--n-color-accent) 22%, transparent);
+  border-radius: 2px;
+}
+
+/* 编辑区：正文就是全屏，别给它画框、别给它加背景 —— 它自己就是这一页。 */
+.dp-text {
+  field-sizing: content;
+  min-height: 100%;
+}
+
+.dp-text::selection {
+  background: color-mix(in oklab, var(--n-color-accent) 26%, transparent);
+}
