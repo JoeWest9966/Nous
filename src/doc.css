@@ -489,3 +489,53 @@
     opacity: 1;
   }
 }
+
+/* ── 标题：点一下就地改名 ─────────────────────────────────────────────────── */
+
+/* 名字就是标题，标题就是按钮。悬停才露出那支铅笔 —— 不悬停的时候它就是一段标题。 */
+.dp-title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border-radius: 8px;
+  text-align: left;
+  transition: background 120ms var(--dp-ease-out);
+}
+
+.dp-title-btn:hover {
+  background: color-mix(in oklab, var(--n-color-surface) 70%, transparent);
+}
+
+.dp-title-btn:focus-visible {
+  outline: 2px solid var(--n-color-accent);
+  outline-offset: 1px;
+}
+
+.dp-title-pencil {
+  flex: none;
+  color: var(--n-color-muted);
+  opacity: 0;
+  transition: opacity 120ms var(--dp-ease-out);
+}
+
+.dp-title-btn:hover .dp-title-pencil,
+.dp-title-btn:focus-visible .dp-title-pencil {
+  opacity: 0.75;
+}
+
+/* 输入态：和标题同一号字、同一条字距，下面压一根 accent 的线 —— 就地改，不跳到别处去。 */
+.dp-title-input {
+  width: 100%;
+  padding: 2px 0;
+  background: transparent;
+  border: 0;
+  border-bottom: 1.5px solid var(--n-color-accent);
+  outline: none;
+  color: var(--n-color-text);
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}

@@ -328,6 +328,10 @@ export function DocPage({
   const [note, setNote] = useState("");
   /** 正文滚起来没有。滚起来了工具条才浮起来 —— 用阴影替掉那根硬边框。 */
   const [scrolled, setScrolled] = useState(false);
+  /** 标题就地改名：点标题换成一个输入框。 */
+  const [titleEdit, setTitleEdit] = useState(false);
+  const skipBlur = useRef(false);
+  const renamed = useRef(false);
 
   const closeAll = useCallback(() => {
     setPal(false);
@@ -366,6 +370,11 @@ export function DocPage({
     mq.addEventListener("change", on);
     return () => mq.removeEventListener("change", on);
   }, []);
+
+  /* 换了一份：标题回到「看的」状态，别把上一份的输入框留在那儿。 */
+  useEffect(() => {
+    setTitleEdit(false);
+  }, [cur]);
 
   /* —— 当前在看哪一份 → 记住；那份不在了（别处删了）→ 退回 AGENTS.md —— */
   useEffect(() => {
@@ -486,6 +495,18 @@ export function DocPage({
           : "没删成",
       );
     }
+  };
+
+  /** 标题就地改：回车 / 失焦提交。Enter 之后框会消失，别让随后的 blur 再提交一次。 */
+  const commitTitle = (raw: string) => {
+    if (renamed.current) return;
+    renamed.current = true;
+    setTitleEdit(false);
+    const to = normalizeDocName(raw);
+    if (to && to !== cur) void doRename(cur, raw);
+    window.setTimeout(() => {
+      renamed.current = false;
+    }, 0);
   };
 
   /**
@@ -696,7 +717,64 @@ export function DocPage({
                 map/{id}/{cur}
               </p>
               <div className="dp-title-row">
-                <h1 className="dp-title min-w-0 break-words">{title}</h1>
+                {/* 标题就是名字。**点一下就地改**，不用绕到 ⋯ 里去 —— 名字在哪儿，就在哪儿改。
+                    和 Finder / Notes 一个手感：回车或失焦交，Esc 退。AGENTS.md 不能改，
+                    那就不是一颗按钮（不装一个假的可点击）。 */}
+                {titleEdit ? (
+                  <input
+                    key={cur}
+                    autoFocus
+                    defaultValue={title}
+                    aria-label="文档名"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className="dp-title dp-title-input min-w-0"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        commitTitle(e.currentTarget.value);
+                      }
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        skipBlur.current = true;
+                        setTitleEdit(false);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      if (skipBlur.current) {
+                        skipBlur.current = false;
+                        return;
+                      }
+                      commitTitle(e.currentTarget.value);
+                    }}
+                  />
+                ) : current?.protected ? (
+                  <h1 className="dp-title min-w-0 break-words">{title}</h1>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setTitleEdit(true)}
+                    title="点一下改名字"
+                    className="dp-title-btn min-w-0"
+                  >
+                    <span className="break-words">{title}</span>
+                    <svg
+                      viewBox="0 0 14 14"
+                      className="dp-title-pencil h-4 w-4 shrink-0"
+                      aria-hidden="true"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M9.4 2.6 11.4 4.6 5.1 10.9 2.6 11.4 3.1 8.9z" />
+                      <path d="M8.4 3.6 10.4 5.6" />
+                    </svg>
+                  </button>
+                )}
                 {current?.protected && <span className="dp-pill">agent 入口</span>}
               </div>
 
