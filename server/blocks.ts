@@ -26,7 +26,6 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { watch, type FSWatcher } from "node:fs";
-import { mkdir } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -120,8 +119,9 @@ const start = async (
   origin: string,
 ): Promise<Run | { error: string; logs: string }> => {
   const port = await freePort();
+  // 不替块建 data/：宿主只告诉它路径（NOUS_DATA），要不要目录、什么时候建，块自己决定。
+  // 一个从没写过数据的块，文件夹里就该什么也没有 —— 白纸上一行字都不替它写。
   const data = path.join(folder, "data");
-  await mkdir(data, { recursive: true }).catch(() => undefined);
 
   const child = spawn(launch.bin, launch.args, {
     cwd: folder,

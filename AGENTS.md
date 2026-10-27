@@ -45,7 +45,7 @@ content/<board-id>/
         ├── package.json  ← **你自己建的**：有 `scripts.start` = 它是个 app
         ├── server.js     ← 你自己建的：它的后端
         ├── public/       ← 你自己建的：它的静态页面
-        └── data/         ← 它自己的数据（`cp -r` 走就带走了）
+        └── data/         ← **你的代码自己建的**：数据放这儿，`cp -r` 走就带走了（宿主不预建）
 ```
 
 **这个文件叫 `AGENTS.md`，不叫 `agent.md`。** 一字之差决定 agent 会不会读它：
@@ -61,8 +61,8 @@ content/<board-id>/
 这里曾经铺过一份脚手架（`package.json` + `server.js` + `public/index.html`，
 一个带 `/api/notes` 的示例 app），**已经拆掉了**：谁都没写过的块，一出生就端出一个像模像样的
 功能页，等于骗人说它有内容了。想让它动起来，写 `package.json` 的 `scripts.start` —— 就这一条。
-宿主写的文件只有两个：`map/README.md`（每盘一份的索引）和 `data/`（进程起来时建的）；
-其余全是你的，宿主**永不覆盖**。
+宿主**不建任何东西**：`data/` 也不建（它只把路径塞进 `NOUS_DATA`，要不要这个目录、什么时候建，
+块自己决定）。宿主写的文件只有一个：`map/README.md` —— 每盘一份的索引。其余全是你的。
 
 `map/` 的文件夹名是 **id**，不是名字：改名、换爹、撤销都不碰文件系统。对账在 `server/map.ts`，
 保存后跑一次，幂等。
