@@ -14,7 +14,8 @@
  * board 后面往下走。`/nodes/...` 那一段以后还会有 PUT，以及块进程的转发。
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { BoardStore, isBoardId } from "./content.ts";
+import { BoardStore, isBoardId, type DocEditResult } from "./content.ts";
+import { isDocName, normalizeDocName } from "../src/docname.ts";
 import { isNodeId } from "./map.ts";
 
 const MAX_BODY = 4 * 1024 * 1024;
@@ -42,15 +43,36 @@ const send = (res: ServerResponse, code: number, value: unknown): void => {
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+/** 新建 / 删 / 恢复 三个动作的回执：成功就是 200，其余一条条翻译成说得出口的话。 */
+const sendEdit = (res: ServerResponse, out: DocEditResult): void => {
+  if (out.status === "ok") {
+    send(res, 200, { name: out.name });
+    return;
+  }
+  const map: Record<Exclude<DocEditResult["status"], "ok">, [number, string]> = {
+    "no-board": [404, "no such board"],
+    "no-node": [404, "no such node"],
+    "bad-name": [400, "bad doc name"],
+    missing: [404, "no such doc"],
+    // 唯一一条 403：AGENTS.md 只能改。前端根本没那个入口，这里是硬的。
+    protected: [403, "AGENTS.md 只能改，不能删"],
+    exists: [409, "already exists"],
+  };
+  const [code, error] = map[out.status];
+  send(res, code, { error });
+};
+
 export function contentApi(root: string) {
   const store = new BoardStore(root);
 
   return async (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void) => {
     // connect 挂载会剥掉前缀，req.url 到这里长这样："" "/" "/new1" "/new1/nodes/n39/doc"
+    const at = (req.url ?? "/").indexOf("?");
     const parts = (req.url ?? "/")
       .split("?")[0]!
       .split("/")
       .filter(Boolean);
+    const query = new URLSearchParams(at === -1 ? "" : (req.url ?? "").slice(at + 1));
     const seg = parts.length ? decodeURIComponent(parts[0]!) : "";
     const id = seg;
 
@@ -112,54 +134,112 @@ export function contentApi(root: string) {
         return;
       }
 
-      // ---- 块自己的东西：/ :board / nodes / :node / doc ----
+      // ---- 块自己的东西：/ :board / nodes / :node / docs | doc/:name ----
       if (parts.length > 1) {
-        const [, kind, nodeId, leaf, ...rest] = parts;
-        if (kind === "nodes" && nodeId && leaf === "doc" && !rest.length) {
-          if (!isNodeId(nodeId)) {
-            send(res, 400, { error: "bad node id" });
-            return;
-          }
+        const [, kind, nodeId, leaf, name, verb, ...rest] = parts;
+        if (!nodeId || !isNodeId(nodeId)) {
+          send(res, 400, { error: "bad node id" });
+          return;
+        }
+
+        // 文档清单（`:docs`）：文件夹里有什么就是什么，不存清单。`?q=` 搜名字和正文。
+        if (kind === "nodes" && leaf === "docs" && !name) {
           if (req.method === "GET") {
-            const doc = await store.doc(id, nodeId);
-            if (doc.status === "no-board") {
-              send(res, 404, { error: "no such board" });
+            const out = await store.docs(id, nodeId, query.get("q") ?? "");
+            if (out.status !== "ok") {
+              send(res, 404, { error: out.status === "no-board" ? "no such board" : "no such node" });
               return;
             }
-            if (doc.status === "no-node") {
-              send(res, 404, { error: "no such node" });
-              return;
-            }
-            send(res, 200, doc);
+            send(res, 200, out);
             return;
           }
-          if (req.method === "PUT") {
+          // 新建：POST `docs` { name }。名字 sanitize 在服务端再做一遍，客户端那份只为少一次往返。
+          if (req.method === "POST") {
             const input = await body(req);
-            if (
-              !isRecord(input) ||
-              typeof input.text !== "string" ||
-              typeof input.etag !== "string"
-            ) {
-              send(res, 400, { error: "text and etag required" });
+            const raw = isRecord(input) && typeof input.name === "string" ? input.name : "";
+            if (!normalizeDocName(raw)) {
+              send(res, 400, { error: "name required" });
               return;
             }
-            const saved = await store.saveDoc(id, nodeId, input.text, input.etag);
-            if (saved.status === "no-board" || saved.status === "no-node") {
-              send(res, 404, { error: saved.status === "no-board" ? "no such board" : "no such node" });
-              return;
-            }
-            if (saved.status === "conflict") {
-              // 409 带上磁盘上那份：调用方要能让人当面选，不能只剩一句「冲突了」。
-              send(res, 409, { error: "etag conflict", etag: saved.etag, text: saved.text });
-              return;
-            }
-            send(res, 200, { etag: saved.etag });
+            sendEdit(res, await store.createDoc(id, nodeId, raw));
             return;
           }
           send(res, 405, { error: "method not allowed" });
           return;
         }
-        send(res, 404, { error: "no such route" });
+
+        // 一份文档：`doc`（= AGENTS.md，老接口）/ `doc/:name` / `doc/:name/restore`。
+        if (!(kind === "nodes" && leaf === "doc")) {
+          send(res, 404, { error: "no such route" });
+          return;
+        }
+
+        const docName = name ? decodeURIComponent(name) : undefined;
+        if (docName !== undefined && !isDocName(docName)) {
+          send(res, 400, { error: "bad doc name" });
+          return;
+        }
+        // `doc/:name/restore`：从 `.trash/` 搬回来。
+        if (verb === "restore") {
+          if (rest.length || req.method !== "POST") {
+            send(res, 405, { error: "method not allowed" });
+            return;
+          }
+          const out = await store.restoreDoc(id, nodeId, docName!);
+          sendEdit(res, out);
+          return;
+        }
+        if (verb !== undefined || rest.length) {
+          send(res, 404, { error: "no such route" });
+          return;
+        }
+
+        if (req.method === "GET") {
+          const doc = await store.doc(id, nodeId, docName);
+          if (doc.status === "no-board") {
+            send(res, 404, { error: "no such board" });
+            return;
+          }
+          if (doc.status === "no-node") {
+            send(res, 404, { error: "no such node" });
+            return;
+          }
+          if (doc.status === "no-file") {
+            send(res, 404, { error: "no such doc", missing: true });
+            return;
+          }
+          send(res, 200, doc);
+          return;
+        }
+        if (req.method === "PUT") {
+          const input = await body(req);
+          if (!isRecord(input) || typeof input.text !== "string" || typeof input.etag !== "string") {
+            send(res, 400, { error: "text and etag required" });
+            return;
+          }
+          const saved = await store.saveDoc(id, nodeId, input.text, input.etag, docName);
+          if (saved.status === "no-board" || saved.status === "no-node") {
+            send(res, 404, { error: saved.status === "no-board" ? "no such board" : "no such node" });
+            return;
+          }
+          if (saved.status === "conflict") {
+            // 409 带上磁盘上那份：调用方要能让人当面选，不能只剩一句「冲突了」。
+            send(res, 409, { error: "etag conflict", etag: saved.etag, text: saved.text });
+            return;
+          }
+          send(res, 200, { etag: saved.etag });
+          return;
+        }
+        // 删：DELETE `doc/:name`，进 `.trash/`。
+        if (req.method === "DELETE") {
+          if (!docName) {
+            send(res, 400, { error: "name required" });
+            return;
+          }
+          sendEdit(res, await store.trashDoc(id, nodeId, docName));
+          return;
+        }
+        send(res, 405, { error: "method not allowed" });
         return;
       }
 

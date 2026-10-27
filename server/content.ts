@@ -17,6 +17,7 @@ import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { adoptNode, freshId, hasNode, intro, isNodeId, stub, syncMap } from "./map.ts";
 import { findNode, treeMap } from "../src/game.ts";
+import { isDocName, normalizeDocName } from "../src/docname.ts";
 import { audit, readLocks, restoreLocked, writeLocks } from "./locks.ts";
 
 export type BoardSummary = {
@@ -47,20 +48,56 @@ const LOG = "log.json";
 const LOG_LIMIT = 200;
 /** 每个节点的文件夹里那份人写的东西。名字在 `map.ts` 里定过，这里同一个。 */
 const MAP = "map";
+/** coding agent 进目录时自动找的那一份。它只有一份，删不掉、改得动。 */
 const DOC = "AGENTS.md";
+/**
+ * 判「是不是入口」一律不分大小写：macOS 上 `agents.md` 和 `AGENTS.md` 是同一个文件，
+ * Linux 上是两个。让一个名字在两台机器上是两件事，是 bug 的温床。
+ */
+const isEntry = (name: string): boolean => name.toLowerCase() === DOC.toLowerCase();
+/** 删掉的文档进这里。**不真删** —— 和节点的 `.gone/` 一个道理。 */
+const TRASH = ".trash";
 
 export const isBoardId = (id: string): boolean => ID_OK.test(id);
+
+
+export type DocFile = {
+  name: string;
+  size: number;
+  at: string;
+  /** `AGENTS.md` —— 能改，不能删、不能改名。 */
+  protected: boolean;
+  trashed: boolean;
+  /** 搜索命中时那一行的上下文。 */
+  snippet?: string;
+};
+
+export type DocListResult =
+  | { status: "ok"; files: DocFile[]; hasApp: boolean }
+  | { status: "no-board" }
+  | { status: "no-node" };
 
 export type DocResult =
   | { status: "ok"; text: string; etag: string; stub: boolean; hasApp: boolean }
   | { status: "no-board" }
-  | { status: "no-node" };
+  | { status: "no-node" }
+  | { status: "no-file" };
 
 export type DocSaveResult =
   | { status: "ok"; etag: string }
   | { status: "conflict"; etag: string; text: string }
   | { status: "no-board" }
   | { status: "no-node" };
+
+export type DocEditResult =
+  | { status: "ok"; name: string }
+  | { status: "no-board" }
+  | { status: "no-node" }
+  | { status: "bad-name" }
+  | { status: "missing" }
+  /** 这份不许动：`AGENTS.md` 只能改内容。 */
+  | { status: "protected" }
+  | { status: "exists" };
 
 /** 文件还不存在时 GET 给的就是这个 etag —— 它得能被写回时认出来，不能是空串的哈希。 */
 const STUB_ETAG = "stub";
@@ -181,9 +218,84 @@ export class BoardStore {
     }
   }
 
-  async doc(id: string, nodeId: string): Promise<DocResult> {
-    // 双保险：api.ts 已经验过，但拼路径之前再过一道 —— 一个坏 id 能读到盘外面去。
+  /**
+   * 这个块名下的文档：文件夹里的 `*.md`，加上 `.trash/` 里的。
+   *
+   * **文件夹就是清单。** 不存 index、不往 `tree.json` 写一行 —— 你 `touch` 一个
+   * `ideas.md` 进去，下次打开它就在列表里；删掉文件它就不在。
+   *
+   * `AGENTS.md` 哪怕磁盘上没有也永远在列表里（第一条）：它是 agent 入口，
+   * 一个块没有它才是异常情况。
+   */
+  async docs(id: string, nodeId: string, q = ""): Promise<DocListResult> {
     if (!isNodeId(nodeId)) return { status: "no-node" };
+    const tree = await this.tree(id);
+    if (!tree) return { status: "no-board" };
+    const root = adoptNode(tree.root);
+    if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
+
+    const folder = path.join(this.dir(id), MAP, nodeId);
+    const hasApp = (await this.startCmd(id, nodeId)) !== "";
+    const needle = q.trim().toLowerCase();
+
+    const read = async (dir: string, trashed: boolean): Promise<DocFile[]> => {
+      const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+      const out: DocFile[] = [];
+      for (const e of entries) {
+        if (!e.isFile() || !isDocName(e.name)) continue;
+        const full = path.join(dir, e.name);
+        const st = await stat(full).catch(() => null);
+        if (!st) continue;
+        const hit = needle ? await this.matchIn(full, needle) : undefined;
+        if (needle && !e.name.toLowerCase().includes(needle) && !hit) continue;
+        out.push({
+          name: e.name,
+          size: st.size,
+          at: st.mtime.toISOString(),
+          protected: isEntry(e.name),
+          trashed,
+          ...(hit ? { snippet: hit } : {}),
+        });
+      }
+      return out;
+    };
+
+    const live = await read(folder, false);
+    const gone = await read(path.join(folder, TRASH), true);
+
+    // 入口永远排第一，哪怕文件还没落盘 —— 删它只会在列表里少一行，那是假象。
+    // 但搜索时不补：搜「设计」却冒出一份没命中的 AGENTS.md，那是撒谎。
+    if (!needle && !live.some((f) => f.protected)) {
+      live.unshift({
+        name: DOC,
+        size: 0,
+        at: new Date(0).toISOString(),
+        protected: true,
+        trashed: false,
+      });
+    }
+    live.sort((a, b) =>
+      a.protected === b.protected ? a.name.localeCompare(b.name) : a.protected ? -1 : 1,
+    );
+
+    return { status: "ok", files: [...live, ...gone.sort((a, b) => a.name.localeCompare(b.name))], hasApp };
+  }
+
+  /** 命中就有上下文，没命中有名字也不算白搜。返回那一行，前后各截 40 字。 */
+  private async matchIn(file: string, needle: string): Promise<string | undefined> {
+    const text = await readFile(file, "utf8").catch(() => "");
+    const at = text.toLowerCase().indexOf(needle);
+    if (at < 0) return undefined;
+    const from = Math.max(0, text.lastIndexOf("\n", at) + 1);
+    const to = text.indexOf("\n", at);
+    const line = text.slice(from, to < 0 ? text.length : to).trim();
+    return line.length > 90 ? `${line.slice(0, 90)}…` : line;
+  }
+
+  /** 读一份文档。`name` 省略 = `AGENTS.md`（老接口和块自己的页面都还认这条）。 */
+  async doc(id: string, nodeId: string, name = DOC): Promise<DocResult> {
+    // 双保险：api.ts 已经验过，但拼路径之前再过一道 —— 一个坏 id 能读到盘外面去。
+    if (!isNodeId(nodeId) || !isDocName(name)) return { status: "no-node" };
     const tree = await this.tree(id);
     if (!tree) return { status: "no-board" };
     const root = adoptNode(tree.root);
@@ -191,9 +303,11 @@ export class BoardStore {
 
     const hasApp = (await this.startCmd(id, nodeId)) !== "";
     try {
-      const text = await readFile(path.join(this.dir(id), MAP, nodeId, DOC), "utf8");
+      const text = await readFile(path.join(this.dir(id), MAP, nodeId, name), "utf8");
       return { status: "ok", text, etag: etagOf(text), stub: false, hasApp };
     } catch {
+      // 只有入口那份给 stub：别的名字不在，就是不在（前端该提示「被删了」）。
+      if (!isEntry(name)) return { status: "no-file" };
       // 文件不在：给的内容必须和建文件夹时会写下去的那份一模一样 ——
       // 看一眼不该长出一个文件，但也不该看到一份不同的文案。
       const text = await this.intro(id, nodeId);
@@ -207,7 +321,7 @@ export class BoardStore {
     const root = tree ? adoptNode(tree.root) : undefined;
     const node = root && findNode(root, nodeId);
     if (!root || !node) return stub(nodeId);
-    return intro(node, id, treeMap(root).get(nodeId) ?? node.name);
+    return intro(node, id, treeMap(root).get(nodeId) ?? node.name, node.id === root.id);
   }
 
   /**
@@ -216,7 +330,13 @@ export class BoardStore {
    *
    * 冲突不是失败：把磁盘上那份一起递回去，让人当面选，而不是默默盖掉。
    */
-  async saveDoc(id: string, nodeId: string, text: string, baseEtag: string): Promise<DocSaveResult> {
+  async saveDoc(
+    id: string,
+    nodeId: string,
+    text: string,
+    baseEtag: string,
+    name = DOC,
+  ): Promise<DocSaveResult> {
     if (!isNodeId(nodeId)) return { status: "no-node" };
     const tree = await this.tree(id);
     if (!tree) return { status: "no-board" };
@@ -224,7 +344,7 @@ export class BoardStore {
     // 树里没有的节点不写：`.gone/` 里躺着的不能被一个旧页面写活。
     if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
 
-    const file = path.join(this.dir(id), MAP, nodeId, DOC);
+    const file = path.join(this.dir(id), MAP, nodeId, name);
     let current = "";
     let currentEtag = STUB_ETAG;
     try {
@@ -242,6 +362,78 @@ export class BoardStore {
     await mkdir(path.dirname(file), { recursive: true });
     await writeAtomic(file, text);
     return { status: "ok", etag: etagOf(text) };
+  }
+
+  /** 新建一份。写一行的正文（`# 名字`）—— 空文件在列表里是一行空白，看着像坏了。 */
+  async createDoc(id: string, nodeId: string, raw: string): Promise<DocEditResult> {
+    if (!isNodeId(nodeId)) return { status: "no-node" };
+    // 规矩只有一份（`src/docname.ts`）：补 `.md`、压平空格、滤掉怪字符都在那里。
+    const name = normalizeDocName(raw);
+    if (!name || !isDocName(name) || isEntry(name)) return { status: "bad-name" };
+    const tree = await this.tree(id);
+    if (!tree) return { status: "no-board" };
+    const root = adoptNode(tree.root);
+    if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
+
+    const folder = path.join(this.dir(id), MAP, nodeId);
+    const file = path.join(folder, name);
+    // 同名文件已经在 → 不覆盖。重名是个正常的输入错误，不是冲突。
+    if (await stat(file).then(() => true).catch(() => false)) return { status: "exists" };
+    await mkdir(folder, { recursive: true });
+    await writeAtomic(file, `# ${name.replace(/\.md$/i, "")}\n\n`);
+    return { status: "ok", name };
+  }
+
+  /**
+   * 删一份 → 挪进 `map/<id>/.trash/`。**不真删** —— 和节点的 `.gone/` 同一套逻辑：
+   * 想恢复的时候，内容得还在。
+   *
+   * 回收站里重名就加 `-2` `-3`：文件名就是它的身份，**不藏时间戳、不做任何解析** ——
+   * 恢复的时候原样搬回去，看到什么名字就是什么名字。
+   */
+  async trashDoc(id: string, nodeId: string, name: string): Promise<DocEditResult> {
+    if (!isNodeId(nodeId)) return { status: "no-node" };
+    if (!isDocName(name)) return { status: "bad-name" };
+    // AGENTS.md 能改，不能删。这一层是硬的 —— UI 不给入口，服务端也不给过。
+    if (isEntry(name)) return { status: "protected" };
+    const tree = await this.tree(id);
+    if (!tree) return { status: "no-board" };
+    const root = adoptNode(tree.root);
+    if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
+
+    const folder = path.join(this.dir(id), MAP, nodeId);
+    const file = path.join(folder, name);
+    if (!(await stat(file).then((s) => s.isFile()).catch(() => false))) return { status: "missing" };
+
+    const bin = path.join(folder, TRASH);
+    await mkdir(bin, { recursive: true });
+    const stem = name.slice(0, -3);
+    let target = path.join(bin, name);
+    for (let n = 2; n < 1000; n++) {
+      if (!(await stat(target).then(() => true).catch(() => false))) break;
+      target = path.join(bin, `${stem}-${n}.md`);
+    }
+    await rename(file, target);
+    return { status: "ok", name };
+  }
+
+  /** 从回收站搬回来，名字一个字符不改。同名还在就回不去 —— 宁可报错，也不默默改名。 */
+  async restoreDoc(id: string, nodeId: string, name: string): Promise<DocEditResult> {
+    if (!isNodeId(nodeId)) return { status: "no-node" };
+    if (!isDocName(name)) return { status: "bad-name" };
+    const tree = await this.tree(id);
+    if (!tree) return { status: "no-board" };
+    const root = adoptNode(tree.root);
+    if (!root || !hasNode(root, nodeId)) return { status: "no-node" };
+
+    const folder = path.join(this.dir(id), MAP, nodeId);
+    const from = path.join(folder, TRASH, name);
+    if (!(await stat(from).then((s) => s.isFile()).catch(() => false))) return { status: "missing" };
+
+    const to = path.join(folder, name);
+    if (await stat(to).then(() => true).catch(() => false)) return { status: "exists" };
+    await rename(from, to);
+    return { status: "ok", name };
   }
 
   /** 这一盘有哪些块被锁了。前端一次拿全，别一个一个问。 */

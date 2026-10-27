@@ -104,8 +104,15 @@ const scaffold = async (dir: string): Promise<void> => {
 const fill = (tpl: string, vars: Record<string, string>): string =>
   tpl.replace(/\{\{(\w+)\}\}/g, (hit, key: string) => vars[key] ?? hit);
 
-export const intro = async (node: Node, board: string, tree: string): Promise<string> => {
-  const file = path.join(TEMPLATE, isSection(node) ? "AGENTS.group.md" : "AGENTS.block.md");
+export const intro = async (
+  node: Node,
+  board: string,
+  tree: string,
+  isRoot = false,
+): Promise<string> => {
+  // 根不是「块」也不是「组」：它删不掉、搬不走，是这盘的门面，文案得另写一份。
+  const which = isRoot ? "AGENTS.board.md" : isSection(node) ? "AGENTS.group.md" : "AGENTS.block.md";
+  const file = path.join(TEMPLATE, which);
   const tpl = await readFile(file, "utf8").catch(() => "");
   const vars = { id: node.id, name: node.name, tree, board };
   // 模板读不到（被人删了、被搬走了）也不能让建文件夹失败 —— 降级成最朴素的那一版。
@@ -206,7 +213,7 @@ export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncR
     await mkdir(live, { recursive: true });
     await writeFile(
       path.join(live, DOC),
-      await intro(n, path.basename(boardDir), trees.get(n.id) ?? n.name),
+      await intro(n, path.basename(boardDir), trees.get(n.id) ?? n.name, n.id === root.id),
       "utf8",
     );
     // 块要能直接开发：铺一份能跑的地基。组只是容器，不铺。
@@ -222,9 +229,11 @@ export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncR
   const wanted = new Set(nodes.map((n) => n.id));
   for (const name of present) {
     if (wanted.has(name) || name.startsWith(".")) continue;
-    const to = path.join(graveyard, name);
-    if (await exists(to)) continue; // 垃圾堆里已经有一份同名的，不覆盖它
+    // 坟场里已经有同名的（撤销又删、或者 git 把删掉的文件夹复活了）：**换个名字埋**，
+    // 绝不跳过。跳过就等于这个文件夹永远留在 map/ 里，和树永久对不上。
     await mkdir(graveyard, { recursive: true });
+    let to = path.join(graveyard, name);
+    for (let i = 2; await exists(to); i++) to = path.join(graveyard, `${name}-${i}`);
     await rename(path.join(dir, name), to);
     out.buried++;
   }

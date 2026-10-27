@@ -10,3 +10,8 @@ dist/
 *.log
 
 content/*/*.tmp
+
+# content/ 是运行时数据，不是源码：
+# 块的删除语义在 map/.gone/ 里，git 再存一份就是第二个撤销系统 ——
+# 每次 checkout / stash 都会把删掉的块复活，跟坟场打架。备份用 tar/rsync。
+content/
