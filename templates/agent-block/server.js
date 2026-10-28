@@ -34,7 +34,10 @@ const DATA = process.env.NOUS_DATA ?? path.join(HERE, "data");
 const startedAt = Date.now();
 
 const textOf = (content) => contentText(content ?? "").trim();
-const textOfEntry = (entry) => (entry?.model?.length ? textOf(entry.model.map((m) => m.content).flat()) : null);
+const textOfEntry = (entry) => {
+  if (!entry?.model?.length) return null;
+  return entry.model.map((m) => (typeof m.content === "string" ? m.content : contentText(m.content))).join("").trim() || null;
+};
 
 // ── 模型：有 key 就用真的，没有就假 provider ──────────────────────────────
 // 假的那套能跑完整条链路（生成 → 工具调用 → 结果 → 收尾），不联网也不烧钱。
