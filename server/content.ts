@@ -3,10 +3,10 @@
  *
  * - `tree.json`   语义：块、组、父子。**唯一真相**，丢了就是真丢。
  * - `log.json`    最近 200 手：加、删、改名、撤销。丢了只是没历史。
- * - `map/<id>/`   每个节点一个文件夹（AGENTS.md）。**派生 + 用户内容**：文件夹跟着树长，
+ * - `map/<id>/`   每个节点一个文件夹。**派生 + 用户内容**：文件夹跟着树长，
  *                 里面的东西是自己的，程序不碰。对账在 `map.ts`。
  *
- * 语义没有第三份。布局（谁在哪、多大）是 `squarify` 从值算出来的派生数据，
+ * 语义没有第三份。布局（谁在哪、多大）是 `grid()` 从宽度算出来的派生数据，
  * 丢了重算一次就有 —— 写它等于把衍生物存成事实源。等真能手动调尺寸那天再议。
  *
  * 这个文件不 import 任何浏览器代码 —— 它能被 vite 插件用，也能被真后端用。
@@ -15,8 +15,7 @@
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
-import { adoptNode, freshId, hasNode, intro, isNodeId, stub, syncMap } from "./map.ts";
-import { findNode, treeMap } from "../src/game.ts";
+import { adoptNode, freshId, hasNode, isNodeId, syncMap } from "./map.ts";
 import { isDocName, normalizeDocName } from "../src/docname.ts";
 import { audit, readLocks, restoreLocked, writeLocks } from "./locks.ts";
 
@@ -48,7 +47,7 @@ const LOG = "log.json";
 const LOG_LIMIT = 200;
 /** 每个节点的文件夹里那份人写的东西。名字在 `map.ts` 里定过，这里同一个。 */
 const MAP = "map";
-/** coding agent 进目录时自动找的那一份。它只有一份，删不掉、改得动。 */
+/** coding agent 进目录时自动找的那一份。**它和别的文档一样，写了才有** —— 不预生成。 */
 const DOC = "AGENTS.md";
 /**
  * 判「是不是入口」一律不分大小写：macOS 上 `agents.md` 和 `AGENTS.md` 是同一个文件，
@@ -65,7 +64,7 @@ export type DocFile = {
   name: string;
   size: number;
   at: string;
-  /** `AGENTS.md` —— 能改，不能删、不能改名。 */
+  /** `AGENTS.md` —— 存在时能改，不能删、不能改名。不存在就是不存在。 */
   protected: boolean;
   trashed: boolean;
   /** 搜索命中时那一行的上下文。 */
@@ -78,7 +77,7 @@ export type DocListResult =
   | { status: "no-node" };
 
 export type DocResult =
-  | { status: "ok"; text: string; etag: string; stub: boolean; hasApp: boolean }
+  | { status: "ok"; text: string; etag: string; hasApp: boolean }
   | { status: "no-board" }
   | { status: "no-node" }
   | { status: "no-file" };
@@ -99,8 +98,8 @@ export type DocEditResult =
   | { status: "protected" }
   | { status: "exists" };
 
-/** 文件还不存在时 GET 给的就是这个 etag —— 它得能被写回时认出来，不能是空串的哈希。 */
-const STUB_ETAG = "stub";
+/** 磁盘上没有那份文件时，写回的底就是这个。老客户端可能还带着它来 —— 认。 */
+const MISSING_ETAG = "stub";
 
 /** 内容哈希，取前 16 位就够认人了 —— 比 mtime 可靠，也不依赖时钟。 */
 const etagOf = (text: string): string =>
@@ -197,15 +196,6 @@ export class BoardStore {
   }
 
   /**
-   * 一块的正文：`map/<nodeId>/AGENTS.md`。
-   *
-   * 三件事值得写在这儿：
-   * - **树里没有这节点就不给看。** 目录可以被手动删、可以躺在 `.gone/` 里，
-   *   不能让一个旧书签顺着 id 把死节点读活。
-   * - **文件没了给 stub，但不落盘。** 看一眼不该长出一个文件；写是下一步的事。
-   * - **etag 是内容哈希，不是 mtime。** mtime 在 git checkout / rsync 下会乱。
-   */
-  /**
    * 这块自己有没有代码。判定**只看文件夹**（`package.json` 的 `scripts.start`）——
    * 不往 `tree.json` 里写「这是个应用块」，那会变成第二份真相。
    */
@@ -229,8 +219,8 @@ export class BoardStore {
    * **文件夹就是清单。** 不存 index、不往 `tree.json` 写一行 —— 你 `touch` 一个
    * `ideas.md` 进去，下次打开它就在列表里；删掉文件它就不在。
    *
-   * `AGENTS.md` 哪怕磁盘上没有也永远在列表里（第一条）：它是 agent 入口，
-   * 一个块没有它才是异常情况。
+   * **没有例外。** `AGENTS.md` 也不凭空出现：文件夹空着，列表就空着。
+   * 一个刚建出来的块，文档页上就该是一片空 —— 那是「还没写」，不是坏了。
    */
   async docs(id: string, nodeId: string, q = ""): Promise<DocListResult> {
     if (!isNodeId(nodeId)) return { status: "no-node" };
@@ -268,17 +258,7 @@ export class BoardStore {
     const live = await read(folder, false);
     const gone = await read(path.join(folder, TRASH), true);
 
-    // 入口永远排第一，哪怕文件还没落盘 —— 删它只会在列表里少一行，那是假象。
-    // 但搜索时不补：搜「设计」却冒出一份没命中的 AGENTS.md，那是撒谎。
-    if (!needle && !live.some((f) => f.protected)) {
-      live.unshift({
-        name: DOC,
-        size: 0,
-        at: new Date(0).toISOString(),
-        protected: true,
-        trashed: false,
-      });
-    }
+    // 入口只是排在前面，不是凭空多一行：它得先在磁盘上存在。
     live.sort((a, b) =>
       a.protected === b.protected ? a.name.localeCompare(b.name) : a.protected ? -1 : 1,
     );
@@ -297,7 +277,16 @@ export class BoardStore {
     return line.length > 90 ? `${line.slice(0, 90)}…` : line;
   }
 
-  /** 读一份文档。`name` 省略 = `AGENTS.md`（老接口和块自己的页面都还认这条）。 */
+  /**
+   * 一块的正文：`map/<nodeId>/<name>`（`name` 省略 = 入口那份）。
+   *
+   * 三件事值得写在这儿：
+   * - **树里没有这节点就不给看。** 目录可以被手动删、可以躺在 `.gone/` 里，
+   *   不能让一个旧书签顺着 id 把死节点读活。
+   * - **文件不在就是不在。** 返回 `no-file`，不渲染任何说明书 —— 看一眼既不该
+   *   长出一个文件，也不该看到一份没人写过的正文。
+   * - **etag 是内容哈希，不是 mtime。** mtime 在 git checkout / rsync 下会乱。
+   */
   async doc(id: string, nodeId: string, name = DOC): Promise<DocResult> {
     // 双保险：api.ts 已经验过，但拼路径之前再过一道 —— 一个坏 id 能读到盘外面去。
     if (!isNodeId(nodeId) || !isDocName(name)) return { status: "no-node" };
@@ -309,24 +298,10 @@ export class BoardStore {
     const hasApp = (await this.startCmd(id, nodeId)) !== "";
     try {
       const text = await readFile(path.join(this.dir(id), MAP, nodeId, name), "utf8");
-      return { status: "ok", text, etag: etagOf(text), stub: false, hasApp };
+      return { status: "ok", text, etag: etagOf(text), hasApp };
     } catch {
-      // 只有入口那份给 stub：别的名字不在，就是不在（前端该提示「被删了」）。
-      if (!isEntry(name)) return { status: "no-file" };
-      // 文件不在：给的内容必须和建文件夹时会写下去的那份一模一样 ——
-      // 看一眼不该长出一个文件，但也不该看到一份不同的文案。
-      const text = await this.intro(id, nodeId);
-      return { status: "ok", text, etag: STUB_ETAG, stub: true, hasApp };
+      return { status: "no-file" };
     }
-  }
-
-  /** 建文件夹时那份 `AGENTS.md` 的原文。文件不在时用同一份，两边永远一致。 */
-  private async intro(id: string, nodeId: string): Promise<string> {
-    const tree = await this.tree(id);
-    const root = tree ? adoptNode(tree.root) : undefined;
-    const node = root && findNode(root, nodeId);
-    if (!root || !node) return stub(nodeId);
-    return intro(node, id, treeMap(root).get(nodeId) ?? node.name, node.id === root.id);
   }
 
   /**
@@ -351,12 +326,12 @@ export class BoardStore {
 
     const file = path.join(this.dir(id), MAP, nodeId, name);
     let current = "";
-    let currentEtag = STUB_ETAG;
+    let currentEtag = MISSING_ETAG;
     try {
       current = await readFile(file, "utf8");
       currentEtag = etagOf(current);
     } catch {
-      // 文件不在（文件夹被手动删过、或者从来就写）：stub 那把 etag 算匹配。
+      // 文件不在（文件夹被手动删过、或者从来就写）：认那个「没有」的 etag。
     }
 
     if (currentEtag !== baseEtag) {
@@ -373,8 +348,11 @@ export class BoardStore {
   async createDoc(id: string, nodeId: string, raw: string): Promise<DocEditResult> {
     if (!isNodeId(nodeId)) return { status: "no-node" };
     // 规矩只有一份（`src/docname.ts`）：补 `.md`、压平空格、滤掉怪字符都在那里。
-    const name = normalizeDocName(raw);
-    if (!name || !isDocName(name) || isEntry(name)) return { status: "bad-name" };
+    const typed = normalizeDocName(raw);
+    if (!typed || !isDocName(typed)) return { status: "bad-name" };
+    // 入口名没有禁令：新块一开始就没有 `AGENTS.md`，想有就自己建一份。
+    // 大小写一律归到正经写法 —— `agents.md` 和 `AGENTS.md` 在两台机器上不该是两件事。
+    const name = isEntry(typed) ? DOC : typed;
     const tree = await this.tree(id);
     if (!tree) return { status: "no-board" };
     const root = adoptNode(tree.root);

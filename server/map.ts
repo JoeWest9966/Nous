@@ -5,8 +5,8 @@
  * map/
  * ├── README.md          索引：id ↔ tree ↔ 名字，每次保存重写（纯派生，删了没关系）
  * ├── .gone/<id>/        树里已经没有的节点，连文件夹带内容挪到这儿，**不删**
- * └── <id>/              节点的地盘。**刚建出来是空的**：一没 AGENTS.md，二没代码，
- *                        你写第一个字的时候才长出 AGENTS.md，那份从此归你，永不覆盖
+ * └── <id>/              节点的地盘。**刚建出来是空的**：一没文档，二没代码，
+ *                        你写第一个字的时候才长出第一份文档，那份从此归你，永不覆盖
  * ```
  *
  * 文件夹名就是 `id`（随机六位，出生即定型）。所以改名、搬爹、撤销都不碰文件系统 ——
@@ -16,21 +16,19 @@
  * 唯一堵不住的：人拿 `mv` 手动改了文件夹名，里面的 AGENTS.md 就和节点失联了。
  * 对账时会当成「缺」重建一个空的，旧内容留在改过名的目录里没人认领。认了吧。
  */
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { isSection, treeMap, type Node } from "../src/game.ts";
 
 const MAP = "map";
 const GONE = ".gone";
-const DOC = "AGENTS.md";
 const INDEX = "README.md";
 
 /** id 直接当目录名用，所以这里必须同时挡路径穿越和跨平台怪字符。 */
 const SAFE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
-/** 节点 id 同时是文件夹名，规则和 board id 一样。读写 AGENTS.md 之前必须过这一道。 */
+/** 节点 id 同时是文件夹名，规则和 board id 一样。读写文档之前必须过这一道。 */
 export const isNodeId = (id: string): boolean => SAFE_ID.test(id);
 
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
@@ -68,57 +66,8 @@ export const adoptNode = (v: unknown): Node | undefined => {
 export const hasNode = (node: Node, id: string): boolean =>
   node.id === id || (node.children?.some((c) => hasNode(c, id)) ?? false);
 
-/** `server/template/`：三份 `AGENTS.md` 的文案（根 / 组 / 块）。就这三份，没有脚手架。 */
-const TEMPLATE = path.join(path.dirname(fileURLToPath(import.meta.url)), "template");
-
 const exists = async (p: string): Promise<boolean> =>
   (await readdir(path.dirname(p)).catch(() => [] as string[])).includes(path.basename(p));
-
-/**
- * 建文件夹时写进 `AGENTS.md` 的那份说明。
- *
- * 名字必须是 `AGENTS.md`：这是所有 coding agent 进来时自动找的文件名。
- * 叫 `agent.md` 的话，人看着像，agent 却根本不会打开它 —— 那 40 行全白写。
- *
- * 模板是仓库里的两个文件（`server/template/AGENTS.block.md`、`AGENTS.group.md`），
- * 不是字符串常量 —— 改文案不该去翻 TypeScript。
- */
-const fill = (tpl: string, vars: Record<string, string>): string =>
-  tpl.replace(/\{\{(\w+)\}\}/g, (hit, key: string) => vars[key] ?? hit);
-
-export const intro = async (
-  node: Node,
-  board: string,
-  tree: string,
-  isRoot = false,
-): Promise<string> => {
-  // 根不是「块」也不是「组」：它删不掉、搬不走，是这盘的门面，文案得另写一份。
-  const which = isRoot ? "AGENTS.board.md" : isSection(node) ? "AGENTS.group.md" : "AGENTS.block.md";
-  const file = path.join(TEMPLATE, which);
-  const tpl = await readFile(file, "utf8").catch(() => "");
-  const vars = { id: node.id, name: node.name, tree, board };
-  // 模板读不到（被人删了、被搬走了）也不能让建文件夹失败 —— 降级成最朴素的那一版。
-  return tpl
-    ? fill(tpl, vars)
-    : `# ${node.name}\n\nid \`${node.id}\` · 位置 ${tree} · 地址 /p/${board}/${node.id}/\n`;
-};
-
-/**
- * 老块的迁移：`agent.md` → `AGENTS.md`。
- *
- * **只做一次，且只认「有旧的、没有新的」**。旧文件留着当影子？不删，
- * 万一哪次改名写一半崩了，下一次接着改 —— 幂等就是为这个。
- */
-const migrateDocName = async (folder: string): Promise<void> => {
-  const old = path.join(folder, "agent.md");
-  const next = path.join(folder, DOC);
-  if (await exists(next)) return;
-  if (!(await exists(old))) return;
-  await rename(old, next);
-};
-
-export const stub = (id: string): string =>
-  `# ${id}\n\n这个文件属于节点 \`${id}\`。写什么都行 —— 应用不会覆盖它。\n`;
 
 /** 索引是纯派生的，每次保存整份重写。**它是唯一同时写着 id 和 tree 的地方。** */
 const renderIndex = (root: Node | undefined, nodes: Node[]): string => {
@@ -178,29 +127,21 @@ export async function syncMap(boardDir: string, rawRoot: unknown): Promise<SyncR
   for (const n of nodes) {
     const live = path.join(dir, n.id);
     if (present.has(n.id)) {
-      // 已经有了就一个字节都不动 —— 包括用户删掉的 AGENTS.md。只做老名字的搬运。
-      await migrateDocName(live).catch(() => undefined);
+      // 已经有了就一个字节都不动 —— 包括用户删掉的 AGENTS.md。
       continue;
     }
     const buried = path.join(graveyard, n.id);
     if (await exists(buried)) {
       // 撤销把节点带回来了：连文件夹带里面的东西一起接回家。
       await rename(buried, live);
-      await migrateDocName(live).catch(() => undefined);
       out.restored++;
       continue;
     }
     // **只建文件夹，一个字节都不写。** 没有 AGENTS.md，没有脚手架，没有 README。
     // 新建的东西一出生就是空的，这是它能说真话的唯一前提。
-    // 说明书不丢：`doc()` 拿不到文件时会现渲染同一份（模板在 `server/template/`），
-    // 你写第一个字的时候它才落成磁盘上的文件 —— 那份从此是你的，永不覆盖。
+    // 文档也不预生成：列表里没有它，`doc()` 也不会现编一份。
     await mkdir(live, { recursive: true });
     out.created++;
-  }
-
-  // 坟场里躺着的也要改名：撤销把它带回来那天，它就已经是新的名字了。
-  for (const name of await listing(graveyard)) {
-    await migrateDocName(path.join(graveyard, name)).catch(() => undefined);
   }
 
   const wanted = new Set(nodes.map((n) => n.id));

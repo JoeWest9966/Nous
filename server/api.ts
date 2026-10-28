@@ -7,7 +7,7 @@
  *   POST /                       → 建项目 { name }
  *   GET  /:id                    → { root, moves, version, name }
  *   PUT  /:id                    → { root, moves, baseVersion } → { version } | 409
- *   GET  /:id/nodes/:node/doc    → { text, etag, stub }
+ *   GET  /:id/nodes/:node/doc    → { text, etag } | 404
  *   PUT  /:id/nodes/:node/doc    → { text, etag } → { etag } | 409 { etag, text }
  *
  * 路径按段读，不按整串读 —— 块自己的地址是 `/p/<board>/<id>/`，同一套 id 得能挂在
