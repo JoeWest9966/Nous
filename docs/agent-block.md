@@ -1,6 +1,6 @@
 # 块里的 agent：最小后端
 
-`templates/agent-block/` 是一个能拷进任何块的 agent 后端。四个文件、零依赖安装（见末尾的欠账），
+`templates/agent-block/` 是一个能拷进任何块的 agent 后端。三个文件、零依赖安装（见末尾的欠账），
 跑起来就是一个真能干活的东西：一个会话、`read`/`write`/`edit`/`bash` 四件套、SSE 推流。
 
 已经在 `new1 / new1.1`（id `cmqt66`）里跑通了，那份是活样本。
@@ -8,7 +8,7 @@
 ## 拷进一个块
 
 ```bash
-cp templates/agent-block/{server.js,index.html,package.json,AGENTS.md} \
+cp templates/agent-block/{server.js,index.html,package.json} \
    content/<board>/map/<nodeId>/
 ```
 
@@ -16,6 +16,47 @@ cp templates/agent-block/{server.js,index.html,package.json,AGENTS.md} \
 给四个环境变量，剩下的交给它自己。
 
 `data/` 不用建 —— `openNodeSqliteStorage()` 第一次落盘时 `mkdir -p` 自己长出来。
+
+## 界面：工具是过程，气泡是说话
+
+页面用**两种形状**区分两件事，这不是装饰，是判断：
+
+| | 长什么样 | 为什么 |
+|---|---|---|
+| 你说的话 | 左侧 2px 竖线 + 淡底 | 有框 = 「谁在说话」 |
+| agent 的话 | 通栏、无框、markdown | 它是主体，不需要被框起来 |
+| 工具调用 | 通栏细条：`▸ bash ls -la · 15ms` | **工具是过程，不是发言** —— 塞进气泡就永远乱 |
+
+工具卡片吃的是三个事件，一条不缺：
+
+| 事件 | 用在哪 |
+|---|---|
+| `tool_execution_start` | 建卡片，标题行 + 状态点开始呼吸 |
+| `tool_execution_update` | `output.set` 整段替换 / `trimStart`+`append` 掐头追加，流式往 `<pre>` 里推 |
+| `tool_execution_end` | 定状态（`durationMs` 直接来自结果），**短输出自动展开**（≤12 行），失败强制展开 |
+
+字段名容易踩：工具事件里是 **`toolName`** 不是 `name`。写成 `event.name` 会得到 `undefined(...)`。
+
+同一个调用会有两条路建卡（助手条目里的 `toolCall` 块、以及 `tool_execution_start`），
+所以卡片按 `toolCallId` 去重 —— 谁先到算谁。
+
+## markdown：够用的子集，不是 GFM
+
+没有引库。理由：块被反代在相对路径下，CDN 一挂整页白屏；而且模型输出直接进 `innerHTML` 就是 XSS。
+
+支持：标题、粗/斜体、行内码、围栏代码（语言角标 + 复制按钮）、有序/无序列表（真嵌套）、
+引用、表格、分隔线、链接（只放行 `http(s)`/相对/锚点，`javascript:` 当文本）。
+
+两条必须的容错：
+
+- **没闭合的围栏当已闭合** —— 流式到一半的半截代码块不该让整页乱掉
+- **每帧重渲整条**（`requestAnimationFrame` 节流），不拼增量 DOM —— 增量拼 markdown 必错
+
+还有三件容易忘的小事：
+
+- `navigator.clipboard` **只在安全上下文里有**。内网 `http://<ip>` 打开时要退回 `execCommand("copy")`。
+- 输入框必须是 `<textarea>`。`<input>` 会把换行**直接吃掉**（HTML 规范），贴不了代码。
+- 输入法的回车是选词不是发送 —— `event.isComposing` 时别抢。
 
 ## 它长什么样
 

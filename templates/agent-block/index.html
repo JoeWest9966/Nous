@@ -4,120 +4,759 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cmqt66</title>
+<link rel="icon" href="data:,">
 <style>
-  :root { color-scheme: dark; --bg:#0e0f11; --fg:#e6e6e6; --dim:#8a8f98; --line:#23262b; --accent:#7ee787; }
+  :root {
+    color-scheme: dark;
+    --bg: #0e0f11; --fg: #e6e6e6; --dim: #8a8f98; --faint: #5f6670;
+    --line: #23262b; --line-soft: #1b1e22;
+    --accent: #7ee787; --warn: #e3b341; --err: #ff7b72;
+    --surface: #14171a; --surface-2: #111315;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
-  header { display:flex; gap:12px; align-items:baseline; padding:14px 18px; border-bottom:1px solid var(--line); }
-  header b { font-size:15px; letter-spacing:.02em; }
-  header span { color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums; }
-  main { max-width:760px; margin:0 auto; padding:18px; display:flex; flex-direction:column; gap:10px; min-height:calc(100dvh - 110px); }
-  #log { display:flex; flex-direction:column; gap:10px; flex:1; }
-  .m { border:1px solid var(--line); border-radius:10px; padding:10px 12px; white-space:pre-wrap; word-break:break-word; }
-  .m.user { border-color:#2b3138; background:#14171a; }
-  .m.bot { background:#111315; }
-  .m.tool { border-style:dashed; color:var(--dim); font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
-  .m .who { display:block; color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.08em; margin-bottom:4px; }
-  .m.err { border-color:#5a2a2a; color:#ffb4b4; }
-  form { display:flex; gap:8px; position:sticky; bottom:0; background:var(--bg); padding:10px 0 16px; }
-  input { flex:1; background:#16191c; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:10px 12px; font:inherit; }
-  input:focus { outline:2px solid #2f6f3f; outline-offset:-1px; }
-  button { background:#1d2126; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:0 14px; font:inherit; cursor:pointer; }
-  button:hover { border-color:#3a4149; }
-  button:disabled { opacity:.5; cursor:default; }
-  .hint { color:var(--dim); font-size:12px; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg); overflow: hidden;
+    font: 14px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  code, pre, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  /* ── 顶栏 ─────────────────────────────────────────────── */
+  header {
+    flex: none; display: flex; gap: 12px; align-items: baseline;
+    padding: 12px 18px; border-bottom: 1px solid var(--line);
+  }
+  header b { font-size: 15px; letter-spacing: .02em; }
+  header .meta { color: var(--dim); font-size: 12px; }
+  header .right { margin-left: auto; display: flex; gap: 14px; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+  header .right .live { color: var(--accent); }
+
+  /* ── 对话区 ───────────────────────────────────────────── */
+  #log {
+    flex: 1; overflow-y: auto; overscroll-behavior: contain;
+    padding: 18px max(18px, calc((100% - 860px) / 2)) 22px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  #log::-webkit-scrollbar { width: 10px; }
+  #log::-webkit-scrollbar-thumb { background: #2a2e34; border-radius: 6px; border: 3px solid var(--bg); }
+
+  .empty { color: var(--faint); font-size: 13px; }
+
+  /* 一条消息。气泡是「谁在说话」，所以只有用户有框 */
+  .msg { display: flex; flex-direction: column; gap: 2px; }
+  .msg .who { color: var(--faint); font-size: 11px; letter-spacing: .06em; }
+  .msg .body { min-width: 0; overflow-wrap: anywhere; }
+  .msg.user .body {
+    border-left: 2px solid #2f6f3f; background: var(--surface);
+    border-radius: 0 8px 8px 0; padding: 8px 12px; white-space: pre-wrap;
+  }
+  .msg.agent .body { line-height: 1.7; }
+  .msg.err .body {
+    border: 1px solid #5a2a2a; background: #1a1213; color: #ffb4b4;
+    border-radius: 8px; padding: 8px 12px; white-space: pre-wrap;
+  }
+
+  /* markdown */
+  .body > *:first-child { margin-top: 0; }
+  .body > *:last-child { margin-bottom: 0; }
+  .body h1, .body h2, .body h3, .body h4, .body h5, .body h6 { margin: 18px 0 8px; line-height: 1.35; }
+  .body h1 { font-size: 20px; } .body h2 { font-size: 17px; } .body h3 { font-size: 15px; }
+  .body h4, .body h5, .body h6 { font-size: 14px; color: var(--dim); }
+  .body p { margin: 10px 0; }
+  .body ul, .body ol { margin: 10px 0; padding-left: 22px; }
+  .body li { margin: 3px 0; }
+  .body blockquote {
+    margin: 10px 0; padding: 2px 12px; border-left: 3px solid var(--line);
+    color: var(--dim);
+  }
+  .body hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+  .body a { color: #79c0ff; text-decoration: none; }
+  .body a:hover { text-decoration: underline; }
+  .body code {
+    background: #1c2024; border-radius: 4px; padding: 1px 5px; font-size: 12.5px;
+  }
+  .body table { border-collapse: collapse; margin: 12px 0; font-size: 13px; display: block; overflow-x: auto; }
+  .body th, .body td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; }
+  .body th { background: #171a1e; font-weight: 600; }
+
+  /* 代码块 */
+  .code { margin: 12px 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #0b0c0e; }
+  .code .bar {
+    display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+    background: #131518; border-bottom: 1px solid var(--line-soft);
+    color: var(--faint); font-size: 11px; letter-spacing: .04em;
+  }
+  .code .bar .lang { text-transform: lowercase; }
+  .code .bar button {
+    margin-left: auto; background: none; border: 0; color: var(--faint);
+    font: inherit; cursor: pointer; padding: 2px 4px; border-radius: 4px;
+  }
+  .code .bar button:hover { color: var(--fg); background: #1e2227; }
+  .code pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; }
+  .code pre code { background: none; padding: 0; }
+
+  /* ── 工具卡片：通栏、不是气泡 ─────────────────────────── */
+  .tool { border-top: 1px solid var(--line-soft); margin-left: 0; }
+  .tool > summary {
+    display: flex; align-items: center; gap: 8px; padding: 7px 2px;
+    color: var(--dim); font-size: 12.5px; cursor: pointer; list-style: none;
+    min-width: 0;
+  }
+  .tool > summary::-webkit-details-marker { display: none; }
+  .tool > summary:hover { color: var(--fg); }
+  .tool .dot {
+    flex: none; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--faint); box-shadow: 0 0 0 0 rgba(126, 231, 135, 0);
+  }
+  .tool[data-state="running"] .dot { background: var(--accent); animation: pulse 1.4s ease-out infinite; }
+  .tool[data-state="done"] .dot { background: #3f7f4a; }
+  .tool[data-state="error"] .dot { background: var(--err); }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(126, 231, 135, .45); }
+    70% { box-shadow: 0 0 0 6px rgba(126, 231, 135, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(126, 231, 135, 0); }
+  }
+  .tool .tname { color: var(--fg); font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+  .tool .sum {
+    color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; min-width: 0;
+  }
+  .tool .right { margin-left: auto; flex: none; display: flex; gap: 8px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .tool .chev { transition: transform .12s ease; display: inline-block; }
+  .tool[open] .chev { transform: rotate(90deg); }
+  .tool[data-state="error"] > summary { color: #ffb4b4; }
+  .tool[data-state="error"] > summary .sum { color: #d9908c; }
+  .tbody { padding: 0 0 10px 15px; display: flex; flex-direction: column; gap: 8px; }
+  .tbody .args { color: var(--faint); font-size: 11.5px; }
+  .tbody .args summary { cursor: pointer; list-style: none; }
+  .tbody .args summary::-webkit-details-marker { display: none; }
+  .tbody .out {
+    margin: 0; background: #0b0c0e; border: 1px solid var(--line-soft); border-radius: 6px;
+    padding: 8px 10px; overflow-x: auto; font-size: 12px; line-height: 1.5;
+    max-height: 420px; overflow-y: auto; white-space: pre;
+  }
+  .tbody .out:empty { display: none; }
+  .tbody .cmd { color: var(--faint); font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+  .tbody .cmd::before { content: "$ "; color: #3f7f4a; }
+  .tbody .diag { color: var(--warn); font-size: 12px; }
+
+  /* diff */
+  .diff { margin: 0; background: #0b0c0e; border: 1px solid var(--line-soft); border-radius: 6px; overflow-x: auto; font-size: 12px; }
+  .diff div { padding: 0 10px; white-space: pre; }
+  .diff .del { background: #2a1416; color: #ffb4b4; }
+  .diff .add { background: #10251a; color: #a5e6b4; }
+  .diff .ctx { color: var(--faint); }
+
+  /* 轮次分隔 */
+  .turn { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 11px; margin: 6px 0 -2px; }
+  .turn i { flex: 1; border-top: 1px dashed var(--line); }
+  .turn .meta { font-variant-numeric: tabular-nums; }
+
+  /* ── 输入区 ───────────────────────────────────────────── */
+  .composer { flex: none; padding: 10px max(18px, calc((100% - 860px) / 2)) 14px; border-top: 1px solid var(--line); }
+  form { display: flex; gap: 8px; }
+  textarea {
+    flex: 1; background: #16191c; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 12px; font: inherit; line-height: 1.5;
+    resize: none; overflow-y: auto; max-height: 220px;
+  }
+  textarea:focus { outline: 2px solid #2f6f3f; outline-offset: -1px; }
+  button.act {
+    background: #1d2126; color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 0 14px; font: inherit; cursor: pointer;
+  }
+  button.act:hover { border-color: #3a4149; }
+  button.act:disabled { opacity: .45; cursor: default; }
+  .hint { color: var(--faint); font-size: 11.5px; margin: 8px 0 0; }
+  .hint code { background: #1c2024; border-radius: 4px; padding: 1px 4px; }
 </style>
 </head>
 <body>
-<header><b>cmqt66</b><span id="meta">连接中…</span></header>
-<main>
-  <div id="log"></div>
-  <p class="hint">试试 <code>!ls -la</code> —— 假 provider 会真的调一次 bash。</p>
+<header>
+  <b>cmqt66</b>
+  <span class="meta" id="meta">连接中…</span>
+  <span class="right">
+    <span id="tokens"></span>
+    <span id="state">空闲</span>
+  </span>
+</header>
+
+<div id="log"><p class="empty">还没有对话。说句话，或者试试 <code>!ls -la</code>。</p></div>
+
+<div class="composer">
   <form id="say">
-    <input id="q" autocomplete="off" placeholder="说点什么…" autofocus>
-    <button id="go" type="submit">发送</button>
-    <button id="stop" type="button" title="停掉手头的活">停</button>
+    <textarea id="q" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）" autofocus></textarea>
+    <button class="act" id="go" type="submit">发送</button>
+    <button class="act" id="stop" type="button" title="停掉手头的活">停</button>
   </form>
-</main>
+  <p class="hint"><code>!</code> 开头直接跑一条 shell —— 假 provider 会真的调一次 bash 工具。Enter 发送，Shift+Enter 换行。</p>
+</div>
+
 <script type="module">
 // 相对地址：宿主把 /p/<board>/<id>/ 反代进来，绝对路径会逃出前缀。
 const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
 const $ = (id) => document.getElementById(id);
 const log = $("log");
 
-const add = (role, text) => {
-  const el = document.createElement("div");
-  el.className = "m " + role;
-  const who = document.createElement("span");
-  who.className = "who";
-  who.textContent = role === "user" ? "你" : role === "tool" ? "工具" : "agent";
-  el.append(who, document.createTextNode(text));
-  log.append(el);
-  el.scrollIntoView({ block: "end" });
-  return el;
+// ── DOM 小工具（全程 textContent，不拼 innerHTML）─────────────────────
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  return node;
 };
 
+// ── Markdown：一个够用的子集，不是 GFM ────────────────────────────────
+// 为什么不用库：宿主把块反代在相对路径下，CDN 一挂整页白屏。
+// 为什么不用 innerHTML：模型输出直接进 DOM 就是 XSS —— 这里全程建节点。
+
+const LINK = /^(https?:\/\/|\.?\/|#)/;
+
+function inlineInto(parent, text) {
+  const pattern = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(\*[^*\n]+\*)|(\[[^\]\n]+\]\([^)\s]+\))/g;
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > last) parent.append(document.createTextNode(text.slice(last, match.index)));
+    const token = match[0];
+    if (token.startsWith("`")) {
+      parent.append(el("code", null, token.slice(1, -1)));
+    } else if (token.startsWith("**")) {
+      const b = el("strong");
+      inlineInto(b, token.slice(2, -2));
+      parent.append(b);
+    } else if (token.startsWith("*")) {
+      const i = el("em");
+      inlineInto(i, token.slice(1, -1));
+      parent.append(i);
+    } else {
+      const [, label, href] = token.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
+      // 只放行 http(s) / 相对 / 锚点 —— javascript: 一律当文本
+      if (!LINK.test(href)) parent.append(document.createTextNode(token));
+      else {
+        const a = el("a", null, label);
+        a.href = href;
+        if (/^https?:/.test(href)) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
+        parent.append(a);
+      }
+    }
+    last = match.index + token.length;
+  }
+  if (last < text.length) {
+    // 段落里的换行就是换行，别让浏览器把两行吞成一行
+    const rest = text.slice(last).split("\n");
+    rest.forEach((chunk, i) => {
+      if (i) parent.append(el("br"));
+      if (chunk) parent.append(document.createTextNode(chunk));
+    });
+  }
+}
+
+const copyText = async (text, button) => {
+  const done = () => { button.textContent = "已复制"; setTimeout(() => (button.textContent = "复制"), 1400); };
+  try {
+    // navigator.clipboard 只在安全上下文里有 —— 内网 http 下退回老办法
+    if (navigator.clipboard && window.isSecureContext) await navigator.clipboard.writeText(text);
+    else {
+      const area = el("textarea");
+      area.value = text;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.append(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    done();
+  } catch {
+    button.textContent = "复制失败";
+  }
+};
+
+function codeBlock(lang, code) {
+  const box = el("div", "code");
+  const bar = el("div", "bar");
+  bar.append(el("span", "lang", lang || "text"));
+  const copy = el("button", null, "复制");
+  copy.onclick = () => copyText(code, copy);
+  bar.append(copy);
+  const pre = el("pre");
+  pre.append(el("code", null, code));
+  box.append(bar, pre);
+  return box;
+}
+
+function tableBlock(rows) {
+  const table = el("table");
+  const head = el("thead");
+  const hrow = el("tr");
+  const cells = rows[0];
+  for (const cell of cells) {
+    const th = el("th");
+    inlineInto(th, cell.trim());
+    hrow.append(th);
+  }
+  head.append(hrow);
+  const body = el("tbody");
+  for (const row of rows.slice(1)) {
+    const tr = el("tr");
+    const normalized = row.slice(0, cells.length);
+    while (normalized.length < cells.length) normalized.push("");
+    for (const cell of normalized) {
+      const td = el("td");
+      inlineInto(td, cell.trim());
+      tr.append(td);
+    }
+    body.append(tr);
+  }
+  table.append(head, body);
+  return table;
+}
+
+const FENCE = /^\s*```(\w*)\s*$/;
+const HEADING = /^(#{1,6})\s+(.*)$/;
+const BULLET = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
+const QUOTE = /^\s*>\s?/;
+const RULE = /^\s*([-*_])\s*(\1\s*){2,}$/;
+const TABLE_SEP = /^\s*\|?[\s:|-]*-[\s:|-]*\|?[\s:|-]*$/;
+
+export function renderMarkdown(text) {
+  const frag = document.createDocumentFragment();
+  const lines = text.split("\n");
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // 围栏代码：没闭合也当已闭合 —— 流式过程中半个块不该让整页乱掉
+    const fence = line.match(FENCE);
+    if (fence) {
+      const lang = fence[1] || "";
+      const buf = [];
+      i++;
+      while (i < lines.length && !FENCE.test(lines[i])) buf.push(lines[i++]);
+      i++;                                   // 跳过收尾（可能在，也可能还没到）
+      frag.append(codeBlock(lang, buf.join("\n")));
+      continue;
+    }
+
+    if (!line.trim()) { i++; continue; }
+
+    const heading = line.match(HEADING);
+    if (heading) {
+      const node = el("h" + heading[1].length);
+      inlineInto(node, heading[2]);
+      frag.append(node);
+      i++;
+      continue;
+    }
+
+    if (RULE.test(line)) { frag.append(el("hr")); i++; continue; }
+
+    if (QUOTE.test(line)) {
+      const buf = [];
+      while (i < lines.length && QUOTE.test(lines[i])) buf.push(lines[i++].replace(QUOTE, ""));
+      const quote = el("blockquote");
+      quote.append(renderMarkdown(buf.join("\n")));
+      frag.append(quote);
+      continue;
+    }
+
+    // 表格：本行有 |、下一行是 |---| 这种分隔
+    if (line.includes("|") && i + 1 < lines.length && TABLE_SEP.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+      const rows = [];
+      rows.push(line.replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|"));
+      i += 2;
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) {
+        rows.push(lines[i].replace(/^\s*\|/, "").replace(/\|\s*$/, "").split("|"));
+        i++;
+      }
+      frag.append(tableBlock(rows));
+      continue;
+    }
+
+    // 列表：按缩进叠嵌套（不靠 CSS，靠真正的嵌套结构）
+    if (BULLET.test(line)) {
+      const stack = [];                       // {indent, node}
+      while (i < lines.length && BULLET.test(lines[i])) {
+        const [, spaces, marker, content] = lines[i].match(BULLET);
+        const indent = spaces.length;
+        const ordered = /^\d/.test(marker);
+        while (stack.length && indent < stack[stack.length - 1].indent) stack.pop();
+        const top = stack[stack.length - 1];
+        if (!top || indent > top.indent) {
+          const list = el(ordered ? "ol" : "ul");
+          if (top) top.node.lastElementChild.append(list);
+          else frag.append(list);
+          stack.push({ indent, node: list });
+        }
+        const list = stack[stack.length - 1].node;
+        const li = el("li");
+        inlineInto(li, content);
+        list.append(li);
+        i++;
+      }
+      continue;
+    }
+
+    // 段落
+    const buf = [line];
+    i++;
+    while (
+      i < lines.length && lines[i].trim() &&
+      !FENCE.test(lines[i]) && !HEADING.test(lines[i]) && !BULLET.test(lines[i]) &&
+      !QUOTE.test(lines[i]) && !RULE.test(lines[i])
+    ) buf.push(lines[i++]);
+    const p = el("p");
+    inlineInto(p, buf.join("\n"));
+    frag.append(p);
+  }
+  return frag;
+}
+
+// ── 对话区 ────────────────────────────────────────────────────────────
+let stick = true;                            // 贴底就跟随，往上翻了就别抢
+const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+log.addEventListener("scroll", () => { stick = nearBottom(); });
+const follow = () => { if (stick) log.scrollTop = log.scrollHeight; };
+
+const clearLog = () => {
+  log.replaceChildren();
+  cards.clear();
+  live = null;
+  turn = null;
+  turns = 0;
+};
+
+const addMessage = (kind, text) => {
+  const msg = el("div", "msg " + kind);
+  if (kind === "user") msg.append(el("div", "who", "你"));
+  const body = el("div", "body");
+  if (kind === "agent") body.append(renderMarkdown(text));
+  else body.textContent = text;
+  msg.append(body);
+  log.append(msg);
+  follow();
+  return { msg, body };
+};
+
+// 在飞的助手气泡：增量先攒字符串，每个动画帧重渲一次（流式 markdown 才不会抖）
+let live = null;
+let frame = 0;
+const scheduleRender = () => {
+  if (frame) return;
+  frame = requestAnimationFrame(() => {
+    frame = 0;
+    if (!live) return;
+    live.body.replaceChildren(renderMarkdown(live.raw));
+    follow();
+  });
+};
+const liveBubble = () => {
+  if (live) return live;
+  const { msg, body } = addMessage("agent", "");
+  live = { msg, body, raw: "" };
+  return live;
+};
+
+// ── 工具卡片 ──────────────────────────────────────────────────────────
+const cards = new Map();                     // toolCallId → card
+
+const summarize = (name, args) => {
+  if (!args || typeof args !== "object") return "";
+  if (name === "bash" && typeof args.command === "string") return args.command.split("\n")[0];
+  if (typeof args.path === "string") return args.path;
+  if (typeof args.query === "string") return args.query;
+  const keys = Object.keys(args);
+  return keys.length ? keys.join(", ") : "";
+};
+
+const argsText = (name, args) => {
+  if (name === "bash" && args && typeof args.command === "string") return null;  // 命令已经在标题里
+  if (name === "write" && args && typeof args.content === "string") {
+    const { content, ...others } = args;
+    return JSON.stringify(others, null, 2);
+  }
+  return JSON.stringify(args ?? {}, null, 2);
+};
+
+const diffBlock = (before, after) => {
+  const box = el("div", "diff");
+  const oldLines = before.replace(/\n$/, "").split("\n");
+  const newLines = after.replace(/\n$/, "").split("\n");
+  for (const line of oldLines) box.append(el("div", "del", "-" + line));
+  for (const line of newLines) box.append(el("div", "add", "+" + line));
+  return box;
+};
+
+const ensureCard = (id, name, args) => {
+  const existing = cards.get(id);
+  if (existing) {
+    // 两条路都会建卡（assistant 的 toolCall 块 / tool_execution_start），谁先到算谁
+    if (args && !existing.hasArgs) {
+      existing.hasArgs = true;
+      existing.sum.textContent = summarize(name, args);
+      const text = argsText(name, args);
+      if (text && !existing.args.isConnected) {
+        const box = el("details", "args");
+        box.append(el("summary", null, "参数"), el("pre", "out", text));
+        existing.body.prepend(box);
+        existing.args = box;
+      }
+    }
+    return existing;
+  }
+
+  const root = el("details", "tool");
+  root.dataset.state = "running";
+  const summary = el("summary");
+  const dot = el("span", "dot");
+  const chev = el("span", "chev", "▸");
+  const tname = el("span", "tname", name);
+  const sum = el("span", "sum", summarize(name, args));
+  const right = el("span", "right");
+  const dur = el("span", "dur", "");
+  right.append(dur);
+  summary.append(chev, dot, tname, sum, right);
+
+  const body = el("div", "tbody");
+  const argsBox = el("details", "args");
+  const text = argsText(name, args);
+  // 参数已经摆在标题里（比如 bash 的整条命令）就不再多一行空的「参数」
+  if (text) {
+    argsBox.append(el("summary", null, "参数"), el("pre", "out", text));
+    body.append(argsBox);
+  }
+
+  if (name === "bash" && args && typeof args.command === "string") {
+    const cmd = el("div", "cmd", args.command);
+    body.append(cmd);
+  }
+  // edit 这类工具有前后文本 —— 直接画 diff，比看 JSON 有用得多
+  if (name === "edit" && args && typeof args.oldText === "string" && typeof args.newText === "string") {
+    body.append(diffBlock(args.oldText, args.newText));
+  }
+
+  const out = el("pre", "out");
+  const diag = el("div", "diag");
+  body.append(out, diag);
+
+  root.append(summary, body);
+  log.append(root);
+  follow();
+
+  const card = { root, body, sum, dur, out, diag, args: argsBox, hasArgs: Boolean(args), startedAt: performance.now() };
+  cards.set(id, card);
+  if (turn) turn.tools++;
+  return card;
+};
+
+// 短输出就别藏了 —— 折叠是为了不淹掉对话，不是为了藏证据
+const settle = (card, failed) => {
+  card.root.dataset.state = failed ? "error" : "done";
+  const lines = card.out.textContent.split("\n").length;
+  if (failed || lines <= 12) card.root.open = true;
+};
+
+const appendOutput = (card, chunk) => {
+  if (!chunk) return;
+  card.out.append(document.createTextNode(chunk));
+  if (card.out.textContent.length > 60000) card.out.textContent = card.out.textContent.slice(-40000);
+  follow();
+};
+
+// ── 轮次分隔 ──────────────────────────────────────────────────────────
+let turn = null;
+let turns = 0;
+const openTurn = () => {
+  closeTurn();
+  turns++;
+  const node = el("div", "turn");
+  const label = el("span", null, `第 ${turns} 轮`);
+  const meta = el("span", "meta", "");
+  node.append(label, el("i"), meta);
+  log.append(node);
+  turn = { node, meta, t0: performance.now(), tools: 0 };
+  follow();
+};
+const closeTurn = () => {
+  if (!turn) return;
+  const seconds = ((performance.now() - turn.t0) / 1000).toFixed(1);
+  const parts = [`${seconds}s`];
+  if (turn.tools) parts.push(`${turn.tools} 次工具`);
+  turn.meta.textContent = parts.join(" · ");
+  turn = null;
+};
+
+// ── 从条目重建整页（刷新 / 重连）────────────────────────────────────────
 const textOf = (content) => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.filter((b) => b?.type === "text").map((b) => b.text ?? "").join("");
 };
 
-// 一条在飞的对话气泡：message_update 的增量都并进它。
-let live = null;
-const liveBubble = () => (live ??= add("bot", ""));
+const rebuild = (entries) => {
+  clearLog();
+  if (!entries?.length) {
+    log.append(el("p", "empty", "还没有对话。说句话，或者试试 !ls -la。"));
+    return;
+  }
+  let lastAgent = null;
+  for (const entry of entries) {
+    const model = entry.model?.[0];
+    if (!model) continue;
+
+    if (entry.kind === "pi.user") {
+      addMessage("user", textOf(model.content));
+      lastAgent = null;
+      continue;
+    }
+
+    if (entry.kind === "pi.assistant") {
+      const text = textOf(model.content);
+      if (text.trim()) lastAgent = addMessage("agent", text);
+      for (const block of model.content ?? []) {
+        if (block?.type === "toolCall") ensureCard(block.id, block.name, block.arguments);
+      }
+      continue;
+    }
+
+    if (entry.kind === "pi.tool-result") {
+      const card = ensureCard(model.toolCallId, model.toolName, null);
+      card.out.textContent = textOf(model.content);
+      card.dur.textContent = model.durationMs != null ? `${model.durationMs}ms` : "";
+      settle(card, Boolean(model.isError));
+      continue;
+    }
+  }
+};
+
+// ── 事件流 ────────────────────────────────────────────────────────────
+const setState = (text, live) => {
+  const node = $("state");
+  node.textContent = text;
+  node.className = live ? "live" : "";
+};
 
 const stream = new EventSource(base + "v1/events");
 stream.onmessage = (message) => {
   const event = JSON.parse(message.data);
 
-  if (event.type === "snapshot") {
-    log.replaceChildren();
-    live = null;
-    for (const entry of event.entries ?? []) {
-      const text = (entry.model ?? []).map((m) => textOf(m.content)).join("").trim();
-      if (!text) continue;
-      const role = entry.kind === "pi.user" ? "user" : entry.kind === "pi.assistant" ? "bot" : "tool";
-      add(role, text);
-    }
-    return;
-  }
+  switch (event.type) {
+    case "snapshot":
+      rebuild(event.entries);
+      setState("空闲");
+      break;
 
-  if (event.type === "message_start") {
-    if (event.message?.role === "assistant") liveBubble();
-    return;
-  }
+    // 一轮 = 一次提问 + 它引起的一切。所以按 run 划，不按 turn ——
+    // 模型每再问一次自己都算一个 turn，那样屏幕上全是分隔线。
+    case "run_start":
+      openTurn();
+      break;
 
-  if (event.type === "message_update") {
-    for (const change of event.changes ?? []) {
-      if (change.type === "text_delta") {
+    case "run_end":
+      closeTurn();
+      setState("空闲");
+      $("go").disabled = false;
+      break;
+
+    case "message_start":
+      if (event.message?.role === "assistant") liveBubble();
+      break;
+
+    case "message_update":
+      for (const change of event.changes ?? []) {
+        if (change.type !== "text_delta") continue;
         const bubble = liveBubble();
-        bubble.lastChild.textContent += change.delta;
-        bubble.scrollIntoView({ block: "end" });
+        bubble.raw += change.delta;
+        scheduleRender();
       }
+      break;
+
+    case "message_end": {
+      const entry = event.entry;
+      const model = entry?.model?.[0];
+      if (!model) break;
+
+      if (entry.kind === "pi.user") {
+        // 自己发的已经画过了（乐观渲染），以条目为准重画一次就够了 —— 不重复加
+        break;
+      }
+
+      if (entry.kind === "pi.assistant") {
+        const text = textOf(model.content);
+        const bubble = liveBubble();
+        bubble.raw = text;
+        bubble.body.replaceChildren(renderMarkdown(text));
+        live = null;
+        for (const block of model.content ?? []) {
+          if (block?.type === "toolCall") ensureCard(block.id, block.name, block.arguments);
+        }
+      }
+
+      if (entry.kind === "pi.tool-result") {
+        // 工具任务自己写的条目 —— 结果以它为准
+        const card = ensureCard(model.toolCallId, model.toolName, null);
+        card.dur.textContent = model.durationMs != null ? `${model.durationMs}ms` : "";
+        const text = textOf(model.content);
+        if (text && !card.out.textContent) card.out.textContent = text;
+        settle(card, Boolean(model.isError));
+        for (const d of entry.data?.diagnostics ?? []) {
+          card.diag.textContent = `${d.severity}: ${d.message ?? d.code ?? ""}`;
+        }
+      }
+      break;
     }
-    return;
-  }
 
-  if (event.type === "message_end") {
-    live = null;
-    return;
-  }
+    case "tool_execution_start": {
+      live = null;
+      ensureCard(event.toolCallId, event.toolName, event.args);
+      break;
+    }
 
-  if (event.type === "tool_execution_start") {
-    live = null;
-    add("tool", `${event.name}(${JSON.stringify(event.args ?? {})})`);
-    return;
-  }
+    case "tool_execution_update": {
+      const card = cards.get(event.toolCallId);
+      if (!card) break;
+      const output = event.output;
+      if (output) {
+        // 两种形态：整段替换 set，或「掐头 + 追加」trimStart/append
+        if (typeof output.set === "string") card.out.textContent = output.set;
+        else {
+          if (output.trimStart) card.out.textContent = card.out.textContent.slice(output.trimStart);
+          appendOutput(card, output.append);
+        }
+      }
+      for (const d of event.diagnostics ?? []) {
+        card.diag.textContent = `${d.severity}: ${d.message ?? d.code ?? ""}`;
+      }
+      break;
+    }
 
-  if (event.type === "run_end") {
-    live = null;
-    $("go").disabled = false;
-    $("meta").textContent = "空闲";
+    case "tool_execution_end": {
+      const card = cards.get(event.toolCallId);
+      if (!card) break;
+      const result = event.entry?.model?.[0];
+      card.dur.textContent = result?.durationMs != null
+        ? `${result.durationMs}ms`
+        : `${Math.round(performance.now() - card.startedAt)}ms`;
+      settle(card, Boolean(result?.isError));
+      break;
+    }
+
+    case "usage_changed": {
+      const models = event.usage?.models ?? {};
+      const total = Object.values(models).reduce((sum, u) => sum + (u.totalTokens ?? 0), 0);
+      $("tokens").textContent = total ? `${total.toLocaleString()} tok` : "";
+      break;
+    }
+
+    case "submission":
+      setState("想…", true);
+      $("go").disabled = true;
+      break;
   }
 };
 
-stream.onerror = () => { $("meta").textContent = "断流了，正在重连…"; };
+stream.onerror = () => setState("断流了，正在重连…");
 
 fetch(base + "v1/device")
   .then((r) => r.json())
@@ -126,30 +765,45 @@ fetch(base + "v1/device")
   })
   .catch(() => { $("meta").textContent = "拿不到设备信息"; });
 
-$("say").onsubmit = async (event) => {
-  event.preventDefault();
+// ── 发送 ──────────────────────────────────────────────────────────────
+const submit = async () => {
   const input = $("q");
   const content = input.value.trim();
   if (!content) return;
   input.value = "";
-  add("user", content);
+  input.style.height = "auto";
   live = null;
+  addMessage("user", content);           // 乐观渲染，服务端条目回来不会再画一遍
   $("go").disabled = true;
-  $("meta").textContent = "想…";
+  setState("想…", true);
   try {
     const res = await fetch(base + "v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content }),
     });
-    if (!res.ok) add("err", `HTTP ${res.status} ${await res.text()}`);
+    if (!res.ok) addMessage("err", `发送失败：HTTP ${res.status}\n${await res.text()}`);
   } catch (error) {
-    add("err", String(error));
+    // 这是页面自己的错，不是工具的 —— 别顶着「工具」的皮出现
+    addMessage("err", `发送失败：${error.message ?? error}`);
   } finally {
     $("go").disabled = false;
   }
 };
 
+const input = $("q");
+const grow = () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 220) + "px";
+};
+input.addEventListener("input", grow);
+input.addEventListener("keydown", (event) => {
+  // Enter 发送，Shift+Enter 换行。isComposing 是输入法正在选词，这时候的回车是选词不是发送。
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  void submit();
+});
+$("say").onsubmit = (event) => { event.preventDefault(); void submit(); };
 $("stop").onclick = () => fetch(base + "v1/abort", { method: "POST" }).catch(() => {});
 </script>
 </body>
