@@ -57,6 +57,9 @@
                      border-radius:8px; padding:9px 12px; font:inherit; }
   input[type=text]:focus { outline:2px solid #2f6f3f; outline-offset:-1px; }
   .hint { color:var(--dim); font-size:12px; }
+  select { background:#16191c; color:var(--fg); border:1px solid var(--line); border-radius:7px;
+           padding:4px 8px; font:inherit; font-size:12px; max-width:280px; }
+  select:focus { outline:2px solid #2f6f3f; outline-offset:-1px; }
   .tag { font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:20px; padding:0 7px; }
   .tag.ro { color:#ffd28a; border-color:#4a3c22; }
 </style>
@@ -66,6 +69,7 @@
   <b>qrd3wh</b>
   <span class="meta" id="model">…</span>
   <span class="grow"></span>
+  <select id="pick" title="新对话用哪个模型"></select>
   <span class="tag" id="ro" hidden>只读</span>
   <button id="rotoggle" title="切到只读：不给模型会写的工具">只读</button>
   <span class="meta" id="state"></span>
@@ -281,7 +285,32 @@ $("new").onclick = async () => {
   await select(made.id);
 };
 
-api("v1/device").then((d) => { $("model").textContent = `${d.model.provider}/${d.model.modelId}${d.faux ? " · 假" : ""}`; });
+// 新对话用哪个模型：默认值落在这块自己的 data/default-model.json 里。
+const loadModels = async () => {
+  try {
+    const data = await api("v1/models");
+    const pick = $("pick");
+    pick.replaceChildren();
+    for (const item of data.items) {
+      const option = document.createElement("option");
+      option.value = `${item.provider}/${item.modelId}`;
+      option.textContent = `${item.provider}/${item.modelId}`;
+      option.selected = item.provider === data.default.provider && item.modelId === data.default.modelId;
+      pick.append(option);
+    }
+    pick.onchange = async () => {
+      const at = pick.value.indexOf("/");
+      await api("v1/default", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: pick.value.slice(0, at), modelId: pick.value.slice(at + 1) }),
+      });
+      refresh();
+    };
+  } catch (error) {
+    $("model").textContent = String(error.message ?? error);
+  }
+};
+await loadModels();
 await refresh();
 if (current !== null) await select(current);
 // 树上的忙闲是派生量，轮询就够 —— 不值得为它再开一条流。

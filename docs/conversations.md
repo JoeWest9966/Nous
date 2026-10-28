@@ -93,6 +93,29 @@ Harness.open(storage, {
 `harness.inspect(ctx)` 一次拿全（tasks + submissions），别按会话一个个问。页面上 3 秒轮询一次就够 ——
 不值得为「谁在跑」再开一条 SSE。
 
+## 接真模型：models.json → provider
+
+`models-json.js` 把 pi 那份 `~/.pi/agent/models.json` 装进 pi-ai（`PI_MODELS` 可改路径）。
+块启动时先装它，再决定默认模型：
+
+```
+AGENT_MODEL=provider/modelId       ← 显式指定，最强
+data/default-model.json            ← 上次在页面上选的
+models.json 里第一个有密钥的 provider
+内置 provider 里环境有凭据的
+都没有 → faux（回声，能跑通链路）
+```
+
+默认模型是**这块的状态**，落 `data/default-model.json`，跟着文件夹一起被拷走。
+
+| 接口 | 作用 |
+|---|---|
+| `GET /v1/models` | 只报「这台机器真能打的」：models.json 里配了的 + 环境里有凭据的（35 个，不是内置目录的 1634 个） |
+| `PUT /v1/default` | `{provider, modelId}`，写进 `data/default-model.json` |
+| `POST /v1/sessions` | 建会话时可选 `model`，不选就用默认 |
+
+页面上就是右上角那个下拉框：换了它，下一个新对话就用那个模型。
+
 ## 记录
 
 实测（`qrd3wh`，faux provider）：
@@ -105,3 +128,5 @@ Harness.open(storage, {
 | 只读 | `!ls` → `[error] Tool bash is not available` |
 | SSE | `snapshot → run_start → turn_start → message_* → turn_end → run_end` |
 | 经宿主 | `http://<host>:4790/p/new1/qrd3wh/` 全通 |
+| 真模型 | `volc-ark/deepseek-v4-flash` → 答「收到」；带 bash 工具跑出 `pi-ok` |
+| 真模型 | `suanli/z-ai/glm-5.3-flash` → 同上（带 thinking） |

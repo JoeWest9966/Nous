@@ -70,23 +70,30 @@ await rename(tmp, FILE)                        // 原子替换
 
 前两个是能用的。后三个得换 key —— 这页就是干这个的。
 
-## 还没做：让块真的用上这些 provider
+## 已接上：块真的跑在这些 provider 上了
 
-现在这页只管文件。要让 agent 真跑在 `volc-ark` 上，得把这份 json 喂给 `createProvider`：
+`content/new1/map/qrd3wh/models-json.js`（模板里也有一份）把这份 json 变成 pi-ai 的 provider：
 
 ```js
-import { createProvider } from "@earendil-works/pi-ai/models"
-import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions"
-
-const provider = createProvider({
-  id: "volc-ark",
-  baseUrl: cfg.baseUrl,
-  auth: { … apiKey … },         // ProviderAuth：还没接，下一步的事
-  models: cfg.models,
-  api: openaiCompletions,        // { stream, streamSimple } —— api 字段就是走到这里
+createProvider({
+  id, name: id, baseUrl,
+  auth: { apiKey: { name, resolve: async () => ({ auth: { apiKey: await readKey() }, source: "models.json" }) } },
+  models: 每条补上 { type:"chat", api, provider, baseUrl, reasoning, input, cost, contextWindow, maxTokens, compat },
+  api: { stream, streamSimple },   // ← 来自 pi-ai/api/<那个 api 名字>
 })
-models.setProvider(provider)
 ```
 
-`api` 字段（`openai-completions` / `anthropic-messages` / `openai-responses`）对应
-`pi-ai/api/<那个名字>` 导出的 `{ stream, streamSimple }`，一一对得上。这是下一刀。
+三个关键点：
+
+- **`api` 字符串直接就是模块名**：`openai-completions` → `pi-ai/api/openai-completions` 的 `{ stream, streamSimple }`。一一对得上，不用自己写传输层。
+- **`compat` 是模型级的**：provider 上写一份，模型上再覆盖，最后并进 model 条目。
+- **密钥每次 resolve 重读文件**：页面上刚换的 key，下一次请求就生效，不用重启块。
+
+实测（真花钱的那种调用）：
+
+| 试了什么 | 结果 |
+|---|---|
+| `volc-ark/deepseek-v4-flash-260425` | 答「收到」 |
+| `suanli/z-ai/glm-5.3-flash` | 答「收到」（带 thinking） |
+| `volc-ark` + bash 工具「跑 echo pi-ok」 | 工具真跑了，答 `pi-ok` |
+| 经宿主 `4790/p/new1/qrd3wh/` 说话 | 会话 14 → 答「我是AI助手Claude」 |

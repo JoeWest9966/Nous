@@ -18,7 +18,7 @@
 //
 // 所有地址都写相对的：宿主把 /p/<board>/<id>/ 反代进来。
 
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,6 +29,7 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 import { contentText } from "@earendil-works/pi-ai/utils/text";
 import { AssistantEntry, Harness, createRegistry, defineDoc, watchEvents } from "@earendil-works/pi-durable";
 import { CodingTools, createBashTool, createEditTool, createWriteTool } from "@earendil-works/pi-durable/tools";
+import { installProviders } from "./models-json.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -89,13 +90,19 @@ const installFaux = (models) => {
   models.setProvider(handle.provider);
 };
 
-const pickModel = async (models) => {
+const pickModel = async (models, custom) => {
   const wanted = process.env.AGENT_MODEL?.trim();
   if (wanted?.includes("/")) {
     const at = wanted.indexOf("/");
     const provider = wanted.slice(0, at);
     const modelId = wanted.slice(at + 1);
     if (models.getModel(provider, modelId)) return { model: { provider, modelId }, faux: false };
+  }
+  // models.json 里配好密钥的，优先 —— 那才是这台机器真在用的模型。
+  for (const provider of custom.installed) {
+    if (!provider.hasKey) continue;
+    const first = models.getModels(provider.id)[0];
+    if (first) return { model: { provider: provider.id, modelId: first.id }, faux: false };
   }
   const available = await models.getAvailable();
   if (available.length > 0) return { model: { provider: available[0].provider, modelId: available[0].id }, faux: false };
@@ -105,8 +112,32 @@ const pickModel = async (models) => {
 // ── 开机 ─────────────────────────────────────────────────────────────────
 
 const models = builtinModels();
-const { model: defaultModel, faux } = await pickModel(models);
-if (faux) installFaux(models);
+// 先把 ~/.pi/agent/models.json 里的 provider 装进来（PI_MODELS 可改路径）。
+const custom = await installProviders(models);
+if (custom.installed.length) {
+  console.log(`[qrd3wh] models.json 装了 ${custom.installed.length} 个 provider：${custom.installed.map((p) => p.id).join(" ")}`);
+}
+for (const skip of custom.skipped) console.warn(`[qrd3wh] 跳过 ${skip.id}：${skip.reason}`);
+
+const picked = await pickModel(models, custom);
+if (picked.faux) installFaux(models);
+
+// 默认模型是这块的状态，不是代码：放 data/ 里，跟会话一起被拷走。
+const DEFAULT_FILE = path.join(DATA, "default-model.json");
+const readDefault = async () => {
+  try {
+    const saved = JSON.parse(await readFile(DEFAULT_FILE, "utf8"));
+    if (saved?.provider && saved?.modelId && models.getModel(saved.provider, saved.modelId)) return saved;
+  } catch {}
+  return null;
+};
+let defaultModel = (await readDefault()) ?? picked.model;
+const faux = picked.faux && defaultModel.provider === "faux";
+const setDefault = async (next) => {
+  defaultModel = next;
+  await mkdir(DATA, { recursive: true });
+  await writeFile(DEFAULT_FILE, JSON.stringify(next, null, 2) + "\n");
+};
 
 const storage = await openNodeSqliteStorage(path.join(DATA, "agent.sqlite"));
 const registry = createRegistry();
@@ -222,6 +253,31 @@ const route = async (req, res, url) => {
 
   if (req.method === "GET" && parts[0] === "healthz") return json(res, 200, { ok: true });
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "device") return json(res, 200, await device());
+
+  if (req.method === "GET" && parts[0] === "v1" && parts[1] === "models") {
+    // 只报「这台机器真能打的」：models.json 里配了的 + 环境里配好凭据的。
+    // 内置目录有一千多个静态条目，全列出来选择框就没法用了。
+    const list = [];
+    const seen = new Set();
+    const add = (m) => {
+      const key = `${m.provider}/${m.id}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      list.push({ provider: m.provider, modelId: m.id, name: m.name ?? m.id });
+    };
+    for (const provider of custom.installed) for (const m of models.getModels(provider.id)) add(m);
+    for (const m of await models.getAvailable()) add(m);
+    return json(res, 200, { default: defaultModel, items: list });
+  }
+
+  if (req.method === "PUT" && parts[0] === "v1" && parts[1] === "default") {
+    const body = JSON.parse((await readBody(req)) || "{}");
+    const provider = String(body.provider ?? "");
+    const modelId = String(body.modelId ?? "");
+    if (!models.getModel(provider, modelId)) return json(res, 400, { error: `没有这个模型：${provider}/${modelId}` });
+    await setDefault({ provider, modelId });
+    return json(res, 200, { default: defaultModel });
+  }
 
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "sessions" && !parts[2]) {
     return json(res, 200, { items: await tree() });
