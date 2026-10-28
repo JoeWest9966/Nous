@@ -12,6 +12,10 @@ export type Move =
   | { t: "addSection"; parent: string; id: string }
   | { t: "remove"; id: string }
   | { t: "rename"; id: string; name: string }
+  // 「块 → 组」：结构变了，但 id 没变。记下新长出来的那个孩子，日志才读得懂。
+  | { t: "toSection"; id: string; child: string }
+  // 「组 → 块」：埋掉的那一整枝记下来 —— 哪天要翻 `.gone/`，就靠这串 id 才找得回来。
+  | { t: "toLeaf"; id: string; value: number; lost: string[] }
   // 只记事实，不记结果：撤销靠 App 的 past 栈（快照），不靠重放，所以没有反向操作。
   | { t: "move"; id: string; to: string; before?: string }
   | { t: "undo" };
@@ -172,15 +176,15 @@ export async function saveBoard(
  * 落一手棋也不该让文档变成 409。所以每份文档有自己的 etag（内容哈希），
  * 不走 board 的 baseVersion。
  *
- * 名字是身份，id 不是：`AGENTS.md` 永远在、永远第一、只能改不能删；
- * 其余的名字就是文件名，能建、能改、能删（进 `.trash/`）。
+ * 名字是身份，id 不是：`AGENTS.md` 只是名字特殊 —— 它在的时候永远第一、只能改不能删；
+ * 它不在的时候也不会凭空出现。其余的名字就是文件名，能建、能改、能删（进 `.trash/`）。
  * ------------------------------------------------------------------ */
 
 export type DocFile = {
   name: string;
   size: number;
   at: string;
-  /** `AGENTS.md` —— 入口，禁止删除。界面上那个删除入口根本不生成。 */
+  /** `AGENTS.md` —— 入口，存在时禁止删除。界面上那个删除入口根本不生成。 */
   protected: boolean;
   trashed: boolean;
   /** 搜索命中时那一行的上下文。 */
@@ -197,8 +201,6 @@ export type Doc = {
   text: string;
   /** 内容哈希。写回时带上它，磁盘被改过就是 409。 */
   etag: string;
-  /** true = 磁盘上还没有这个文件，text 是程序给的 stub。 */
-  stub: boolean;
   hasApp: boolean;
 };
 
@@ -297,7 +299,7 @@ export async function createDoc(board: string, node: string, name: string): Prom
   });
 }
 
-/** 删一份 —— 实际是挪进 `.trash/`。`AGENTS.md` 会拿到 403。 */
+/** 删一份 —— 实际是挪进 `.trash/`。`AGENTS.md` 存在时会拿到 403。 */
 export async function trashDoc(board: string, node: string, name: string): Promise<{ name: string }> {
   return editCall(docUrl(board, node, name), { method: "DELETE" });
 }
@@ -378,7 +380,7 @@ export function clearDocDraft(board: string, node: string, name: string): void {
   }
 }
 
-/** 上次在看哪一份。打开文档页时从那篇接着看，不然每次都落回 AGENTS.md。 */
+/** 上次在看哪一份。打开文档页时从那篇接着看，不然每次都落回第一份。 */
 const lastDocKey = (board: string, node: string): string => `nous-doc-last:${board}:${node}`;
 
 export function readLastDoc(board: string, node: string): string | null {
@@ -393,7 +395,16 @@ export function writeLastDoc(board: string, node: string, name: string): void {
   try {
     localStorage.setItem(lastDocKey(board, node), name);
   } catch {
-    // 记不住就记不住，回 AGENTS.md。
+    // 记不住就记不住，下次从第一份开始。
+  }
+}
+
+/** 一份都不剩了：把「上次在看」也抹掉，否则下次会去追一个不存在的名字。 */
+export function clearLastDoc(board: string, node: string): void {
+  try {
+    localStorage.removeItem(lastDocKey(board, node));
+  } catch {
+    // 同上。
   }
 }
 

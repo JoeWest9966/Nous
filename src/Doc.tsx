@@ -6,6 +6,7 @@ import {
   DocConflictError,
   DocEditError,
   clearDocDraft,
+  clearLastDoc,
   createDoc,
   listDocs,
   loadDoc,
@@ -29,8 +30,8 @@ import "./doc.css";
  *   正文也能搜 —— 这是唯一一个「不占地方又能找到东西」的列表。
  * - **新建 / 删除 / 恢复在 `⋯` 里。** 三个动词都在那儿，和「找文档」分开：
  *   找是高频、随手；删是低频、要停一下。
- * - **`AGENTS.md` 只能改。** 它是 coding agent 进目录时自动找的文件名，删了整块就没人读得懂。
- *   界面上那个删除入口根本不生成 —— 真拦在服务端（403）。
+ * - **`AGENTS.md` 只是名字特殊。** 它存在时能改、不能删 —— 它是 coding agent 进目录时
+ *   自动找的文件名，删了整块就没人读得懂。但它不预生成：没有就是没有。
  * - **它盖在盘面上面，不卸载盘面。** 卸载会丢掉树的展开状态、滚动位置和撤销栈。
  *
  * 每份文档有自己的 etag 和自己的本地草稿：写一篇不该把别的文档顶成 409。
@@ -66,7 +67,6 @@ function useDocFile(board: string, node: string, name: string, enabled: boolean)
   const [theirs, setTheirs] = useState<{ text: string; etag: string } | null>(null);
   /** 本地草稿，但它基于的是旧版本 —— 不能无感补写。 */
   const [orphan, setOrphan] = useState<{ text: string; etag: string } | null>(null);
-  const [stubFile, setStubFile] = useState(false);
   const [msg, setMsg] = useState("");
 
   /** 还没发出去的那一版。`null` = 干净。 */
@@ -100,7 +100,6 @@ function useDocFile(board: string, node: string, name: string, enabled: boolean)
           baseEtag.current = etag;
           lastSaved.current = body;
           clearDocDraft(board, node, name);
-          setStubFile(false);
           setStatus("saved");
         } catch (err) {
           if (err instanceof DocConflictError) {
@@ -162,7 +161,6 @@ function useDocFile(board: string, node: string, name: string, enabled: boolean)
         baseEtag.current = doc.etag;
         lastSaved.current = doc.text;
         latest.current = doc.text;
-        setStubFile(doc.stub);
         setText(doc.text);
         setPhase("ready");
         setStatus("saved");
@@ -273,7 +271,6 @@ function useDocFile(board: string, node: string, name: string, enabled: boolean)
     status,
     theirs,
     orphan,
-    stubFile,
     msg,
     edit,
     saveNow,
@@ -311,7 +308,9 @@ export function DocPage({
 
   const [files, setFiles] = useState<DocFile[]>([]);
   const [hasApp, setHasApp] = useState(false);
-  const [cur, setCur] = useState<string>(() => readLastDoc(board, id) ?? ENTRY);
+  /** 清单至少载过一次。没载完不说「没有文档」—— 那是在猜。 */
+  const [listed, setListed] = useState(false);
+  const [cur, setCur] = useState<string>(() => readLastDoc(board, id) ?? "");
 
   /* 浮层：命令面板 / ⋯ 菜单 / 新建输入 / 删除确认。一次只开一个。 */
   const [pal, setPal] = useState(false);
@@ -349,13 +348,14 @@ export function DocPage({
     return () => window.clearTimeout(t);
   }, [note]);
 
-  const doc = useDocFile(board, id, cur, ready && !!node);
+  const doc = useDocFile(board, id, cur, ready && !!node && !!cur);
 
   const refresh = useCallback(async () => {
     const list = await listDocs(board, id);
     if (!list) return null;
     setFiles(list.files);
     setHasApp(list.hasApp);
+    setListed(true);
     return list.files;
   }, [board, id]);
 
@@ -376,16 +376,26 @@ export function DocPage({
     setTitleEdit(false);
   }, [cur]);
 
-  /* —— 当前在看哪一份 → 记住；那份不在了（别处删了）→ 退回 AGENTS.md —— */
+  /* —— 当前在看哪一份 → 记住；一份都没有就把记忆也抹掉 —— */
   useEffect(() => {
     if (!ready || !node) return;
-    writeLastDoc(board, id, cur);
+    if (cur) writeLastDoc(board, id, cur);
+    else clearLastDoc(board, id);
   }, [board, id, cur, ready, node]);
 
   const live = useMemo(() => files.filter((f) => !f.trashed), [files]);
   const gone = useMemo(() => files.filter((f) => f.trashed), [files]);
 
   const current = useMemo(() => files.find((f) => f.name === cur), [files, cur]);
+
+  /* —— 载完清单才定「在看哪一份」：上次那份没了就退到第一份；一份都没有就什么都不开。 —— */
+  useEffect(() => {
+    if (!ready || !node || !listed) return;
+    if (cur && live.some((f) => f.name === cur)) return;
+    const last = readLastDoc(board, id);
+    const next = live.find((f) => f.name === last) ?? live[0];
+    setCur(next ? next.name : "");
+  }, [ready, node, listed, live, cur, board, id]);
 
   /* —— 命令面板：空查询给全部，有查询就交给服务端搜（正文不上网） —— */
   useEffect(() => {
@@ -457,10 +467,11 @@ export function DocPage({
   };
 
   const newDoc = async (raw: string) => {
-    const name = normalizeDocName(raw);
-    if (!name) return setAddErr("名字空了 —— 至少给一个字");
-    if (name === ENTRY.toLowerCase()) return setAddErr("AGENTS.md 是入口，本来就有一份");
-    if (files.some((f) => f.name.toLowerCase() === name)) {
+    const typed = normalizeDocName(raw);
+    if (!typed) return setAddErr("名字空了 —— 至少给一个字");
+    // 入口名大小写归一：`agents.md` 也建到 `AGENTS.md` 上，别在盘上留下两份。
+    const name = typed.toLowerCase() === ENTRY.toLowerCase() ? ENTRY : typed;
+    if (files.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
       return setAddErr(`${name} 已经在了，换一个`);
     }
     try {
@@ -486,7 +497,7 @@ export function DocPage({
       setNote(`${name} 已移到最近删除 —— ⋯ 里能恢复`);
       if (cur === name) {
         const next = list?.find((f) => !f.trashed);
-        setCur(next?.name ?? ENTRY);
+        setCur(next?.name ?? "");
       }
     } catch (err) {
       setNote(
@@ -686,21 +697,43 @@ export function DocPage({
         }}
       >
         <div className="dp-column">
-          {doc.phase === "loading" && (
+          {doc.phase === "loading" && !!cur && (
             <p className="pt-1 text-[13px] text-muted/70">载入中…</p>
           )}
 
-          {doc.phase === "missing" && (
+          {listed && live.length === 0 && (
+            <div className="dp-empty">
+              <p>
+                {gone.length > 0
+                  ? "正文档都进最近删除了 —— 在那儿恢复，或者重新写一份。"
+                  : "这个文件夹还是空的 —— 一份文档都没有。想有，就从第一句开始。"}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setRenaming(null);
+                  setAddErr("");
+                  setAdding(gone.length === 0);
+                  setMenu(true);
+                }}
+                className="h-8 rounded-lg bg-surface px-3 text-[12px] text-text/90 transition-[background,scale] hover:bg-raised active:scale-[0.97]"
+              >
+                {gone.length > 0 ? "打开最近删除" : "新建一份"}
+              </button>
+            </div>
+          )}
+
+          {doc.phase === "missing" && live.length > 0 && (
             <div className="dp-empty">
               <p>
                 <span className="font-mono text-text">{cur}</span> 不在磁盘上了 —— 可能刚被别处删掉。
               </p>
               <button
                 type="button"
-                onClick={() => setCur(ENTRY)}
+                onClick={() => setCur(live[0].name)}
                 className="h-8 rounded-lg bg-surface px-3 text-[12px] text-text/90 transition-[background,scale] hover:bg-raised active:scale-[0.97]"
               >
-                回到 AGENTS.md
+                打开 {live[0].name}
               </button>
             </div>
           )}
@@ -795,7 +828,9 @@ export function DocPage({
                   <a
                     className="dp-link"
                     href={`/p/${encodeURIComponent(board)}/${encodeURIComponent(id)}/`}
-                    title="这一块在自己跑（文件夹里有 scripts.start）"
+                    target="_blank"
+                    rel="noopener"
+                    title="这一块在自己跑（文件夹里有 scripts.start）—— 在新标签页打开"
                   >
                     打开它的页面 ›
                   </a>
@@ -827,12 +862,6 @@ export function DocPage({
               {doc.status === "error" && (
                 <p className="mb-3 text-[11.5px] text-danger">
                   没连上。字已经存成本地草稿了，下次进来先看它。
-                </p>
-              )}
-
-              {doc.stubFile && (
-                <p className="mb-2 text-[11.5px] text-muted/70">
-                  磁盘上还没有这个文件 —— 开始打字才会建它。
                 </p>
               )}
 
