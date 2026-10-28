@@ -203,6 +203,51 @@ export function addSection(root: Node, parent: string): Node {
   });
 }
 
+/**
+ * 块 → 组。**「转」在这套模型里就是让它长出 `children`** —— 没有类型字段，
+ * 所以 id 不动、名字不动、文件夹不动、文档不动、锁不动、地址不动。
+ *
+ * 原值交给唯一那个孩子：面积守恒。不这么做的话，一块 24 的块变成组就塌成一粒 0，
+ * 看着像被偷了。孩子名字走 `nextChildName`（`<name>.1`），和「往组里加一块」同一套。
+ *
+ * 根不转（它是门面，必须是容器），已经是组的不转。不成立就返回原树本身 ——
+ * `play()` 靠「引用没变」早退，返回新对象会白记一手。
+ */
+export function toSection(root: Node, id: string): Node {
+  const node = findNode(root, id);
+  if (!node || isSection(node) || node.id === root.id) return root;
+  const bare: Node = { id: node.id, name: node.name, children: [] };
+  const kid = makeLeaf(nextChildName(bare), node.value ?? 1, newId(takenIds(root)));
+  return replaceNode(root, id, { id: node.id, name: node.name, children: [kid] });
+}
+
+/**
+ * 组 → 块：把这一枝收成一块，值 = 底下之和（面积守恒，和 `toSection` 正好互逆）。
+ *
+ * **这是全盘唯一会「让东西离开盘面」的操作。** id 不动（文件夹、文档、锁、地址都还在），
+ * 但孩子连同它们的 `map/<id>/` 会从树里掉出去 —— 对账时整枝塞进 `.gone/`，不删。
+ * 所以撤销栈在本次会话里能把它们原样接回来（同 id → 文件夹从坟场回家），
+ * **刷新之后就没有回头路了**：调用方必须先说清这一点（菜单那条确认就是为这个）。
+ *
+ * 根不转，块不转，空组不转。
+ */
+export function toLeaf(root: Node, id: string): Node {
+  const node = findNode(root, id);
+  if (!node || !isSection(node) || node.id === root.id || !node.children!.length) return root;
+  return replaceNode(root, id, { id: node.id, name: node.name, value: valueOf(node) });
+}
+
+/** 一棵子树上所有节点的 id（含自己）。组转块时要把「谁被埋了」记进日志。 */
+export function subtreeIds(node: Node): string[] {
+  const out: string[] = [];
+  const walk = (n: Node): void => {
+    out.push(n.id);
+    n.children?.forEach(walk);
+  };
+  walk(node);
+  return out;
+}
+
 /** id 顺序一模一样？用来判「这一手其实没动」。 */
 const sameIds = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((v, i) => v === b[i]);
@@ -298,67 +343,62 @@ export function renameNode(root: Node, id: string, name: string): Node {
 
 export type Box = { x: number; y: number; w: number; h: number };
 
-/** 越小越接近正方形。squarified 的核心判据。 */
-function worst(row: number[], side: number): number {
-  const sum = row.reduce((a, b) => a + b, 0);
-  const max = Math.max(...row);
-  const min = Math.min(...row);
-  return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
+/**
+ * 一格的底线尺寸。低于它，「进入 ›」和「•••」就挤没了 —— 这是列数的真正约束。
+ * 140 宽：名字 + 进入按钮；84 高：内缩 2px 后还剩 80，组的标题带才够得着 24px 那一档
+ * （`hat()` 要求 h > 76）—— 24 以下「N 块」就隐了。
+ */
+export const MIN_CELL_W = 140;
+export const MIN_CELL_H = 84;
+
+/** 一行最多几个 —— 天花板，不是目标。地板是 MIN_CELL_W，两个一起决定列数。 */
+export const maxCols = (width: number): number => (width < 640 ? 2 : width < 1100 ? 4 : 8);
+
+/** 这一层铺成网格是几列、几行。列数只由宽度算，所以内层格子窄，列数自动就少 —— 不用特判。 */
+export function grid(count: number, width: number): { cols: number; rows: number } {
+  const cap = Math.min(Math.floor(width / MIN_CELL_W) || 1, maxCols(width));
+  const rows = Math.max(1, Math.ceil(count / cap));
+  // 再摊一次：4+2 这种“首行满、末行只剩两个”的岔子，压成 3+3。摊完列数只会更少，不会破地板。
+  const cols = Math.max(1, Math.ceil(count / rows));
+  return { cols, rows };
 }
 
 /**
- * squarified treemap：沿着短边一行一行地铺，每加一块都算一次「变得更方还是更扁」。
- * 换来的是块接近正方形 —— 面积一样，但看起来像砖墙，不像竖条。
+ * 这一层铺成网格要占多高：装得下就是给它的高，装不下就往下长。
+ * 只有最外层该用它 —— 内层长出去会被自己的格子裁掉，那是 bug 不是滚动。
  */
-export function squarify(values: number[], into: Box): Box[] {
-  const total = values.reduce((a, b) => a + b, 0) || 1;
-  const scaled = values.map((v) => (v / total) * into.w * into.h);
-  const out: Box[] = [];
-  const free: Box = { ...into };
-  let row: number[] = [];
-
-  const flush = () => {
-    if (!row.length) return;
-    const sum = row.reduce((a, b) => a + b, 0);
-    if (free.w >= free.h) {
-      const w = sum / free.h;
-      let y = free.y;
-      for (const v of row) {
-        const h = v / w;
-        out.push({ x: free.x, y, w, h });
-        y += h;
-      }
-      free.x += w;
-      free.w -= w;
-    } else {
-      const h = sum / free.w;
-      let x = free.x;
-      for (const v of row) {
-        const w = v / h;
-        out.push({ x, y: free.y, w, h });
-        x += w;
-      }
-      free.y += h;
-      free.h -= h;
-    }
-    row = [];
-  };
-
-  for (const v of scaled) {
-    const side = Math.min(free.w, free.h);
-    if (!row.length || worst([...row, v], side) <= worst(row, side)) row.push(v);
-    else {
-      flush();
-      row.push(v);
-    }
-  }
-  flush();
-  return out;
+export function gridHeight(count: number, box: Box): number {
+  return Math.max(box.h, grid(count, box.w).rows * MIN_CELL_H);
 }
 
-/** 一个组（section）的子节点在这个矩形里怎么摆。 */
-export function layout(node: Node, box: Box, depth = 0): { node: Node; box: Box; depth: number }[] {
+/**
+ * 一个组（section）的子节点在这个矩形里怎么摆：等大的格子，最后一行平分剩下的宽度。
+ *
+ * 面积不再等于值 —— 列数一管，面积就归网格了。值改由两样东西说：块中间那个数字，
+ * 和底部那条 `share`（同组内按最大值归一化）比例条。
+ */
+export function layout(
+  node: Node,
+  box: Box,
+  depth = 0,
+): { node: Node; box: Box; depth: number; share: number }[] {
   const kids = node.children;
   if (!kids?.length) return [];
-  return squarify(kids.map(valueOf), box).map((b, i) => ({ node: kids[i]!, box: b, depth: depth + 1 }));
+  const { cols, rows } = grid(kids.length, box.w);
+  const cellH = box.h / rows;
+  const values = kids.map(valueOf);
+  const max = Math.max(...values) || 1;
+  return kids.map((node, i) => {
+    const row = Math.floor(i / cols);
+    const left = kids.length - row * cols;
+    // 末行要么补满整行（左边不留沟），要么就按原宽度摆着 ——
+    // 但只剩两三个时一律不拉：那会把一块拉成别人的两倍宽，看起来像“它比旁边大”。
+    const cellW = box.w / (row === rows - 1 && left > cols / 2 ? left : cols);
+    return {
+      node,
+      box: { x: box.x + (i - row * cols) * cellW, y: box.y + row * cellH, w: cellW, h: cellH },
+      depth: depth + 1,
+      share: values[i]! / max,
+    };
+  });
 }

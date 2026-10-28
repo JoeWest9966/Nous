@@ -118,7 +118,7 @@ export function Tree({
                 if ((e.target as HTMLElement).closest("[data-no-rename]")) return;
                 onBeginRename(node.id, e.currentTarget);
               }}
-              className={`group relative flex h-8 items-center rounded-md pr-[30px] outline-none transition-colors duration-150 ${
+              className={`group relative flex h-8 items-center rounded-md outline-none transition-colors duration-150 ${
                 here ? "bg-accent/15" : "hover:bg-white/[0.045]"
               }`}
               style={{ paddingLeft: depth * INDENT + 4 }}
@@ -172,7 +172,7 @@ export function Tree({
                 </Row>
               )}
 
-              {/* 原来那颗 × 让位给 •••：一行里挂两个删除没道理，删除进菜单。 */}
+              {/* 原来那颗 × 让位给了 •••（现在只在触屏上）：一行里挂两个删除没道理，删除进菜单。 */}
               {!isRoot && editingId !== node.id && (
                 <NodeMenuTrigger nodeId={node.id} kind="row" />
               )}

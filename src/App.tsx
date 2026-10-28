@@ -16,6 +16,7 @@ import {
   findNode,
   treeMap,
   initialState,
+  gridHeight,
   isSection,
   layout,
   lockMap,
@@ -23,6 +24,9 @@ import {
   pathTo,
   removeNode,
   renameNode,
+  subtreeIds,
+  toLeaf,
+  toSection,
   valueOf,
 } from "./game";
 import {
@@ -46,6 +50,14 @@ const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
 const SIDE_KEY = "nous-sidebar-open";
 /** 上次开着的是哪个项目。这个存在浏览器里无所谓 —— 丢了只是回到默认那一盘。 */
 const PROJECT_KEY = "nous-project";
+/**
+ * 「组都画成一块实心块」—— 这是**看的方式**，不是盘上的事实。
+ *
+ * 所以它不进 `tree.json`：那四个字段是语义唯一真相，塞一个视图开关进去会让 `version`
+ * 跟着涨（另一个标签页立刻 409），还会在 `log.json` 里多出不是「手」的「手」。
+ * 和左栏开合、`nous-path:<id>` 同一档 —— 住在这台浏览器里。
+ */
+const SOLID_KEY = "nous-solid";
 
 /**
  * 你在哪一层：`content/<id>` 里的项目文件不该记这个 ——
@@ -161,6 +173,20 @@ const tint = (hex: string, alpha: number): string => {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 };
 
+/**
+ * 实心组的底色：depth 1 就是 series 原色。
+ *
+ * 内层组继承的是外层那一支的 color，所以**同一支里的实心组颜色一定一样**。真出现
+ * 组套组的那一天（规则一旦放宽成「只收外一层」），不压档就是一块糊成一片的色 ——
+ * 所以每深一层往 text 色掺一档：既分得开，又不会把字压没（块的字是 canvas 色，
+ * 底色越亮越好读；light 主题反过来也一样，因为 text 和 canvas 永远是彼此的对面）。
+ * 今天实心模式下最深的组就是第 1 层（父组不画子块），所以这条梯子还没轮到上场。
+ */
+const solidFill = (hex: string, depth: number): string =>
+  depth <= 1
+    ? hex
+    : `color-mix(in srgb, ${hex} ${Math.max(100 - (depth - 1) * 26, 30)}%, var(--n-color-text))`;
+
 export function App() {
   const [root, setRoot] = useState<Node>(() => initialState());
   const [path, setPath] = useState<string[]>([]);
@@ -207,6 +233,8 @@ export function App() {
   /** 「移动到…」捧着的是源 id + 触发它的那颗按钮的位置 —— 面板从那儿长出来，也从那儿缩回去。 */
   const [moving, setMoving] = useState<{ id: string; rect: DOMRect } | null>(null);
   const [side, setSide] = useState<boolean>(() => localStorage.getItem(SIDE_KEY) === "1");
+  /** 组都画成一块实心块（子块暂时不显示）。纯粹的看的方式，见 `SOLID_KEY`。 */
+  const [solid, setSolid] = useState<boolean>(() => localStorage.getItem(SOLID_KEY) === "1");
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 819px)").matches);
   const board = useRef<HTMLDivElement | null>(null);
@@ -225,6 +253,12 @@ export function App() {
     if (side) localStorage.setItem(SIDE_KEY, "1");
     else localStorage.removeItem(SIDE_KEY);
   }, [side]);
+
+  /* —— 合并 / 展开：刷新、开新标签页都得还是那个样子，所以它必须落地（本浏览器内）。 —— */
+  useEffect(() => {
+    if (solid) localStorage.setItem(SOLID_KEY, "1");
+    else localStorage.removeItem(SOLID_KEY);
+  }, [solid]);
 
   /* —— 记住你在哪一层。刷新后回到刚才钻进去的那个组，不用重新点。 —— */
   useEffect(() => {
@@ -382,21 +416,68 @@ export function App() {
   }, [root, moves, projectId]);
 
   /* —— 关页面 / 切后台时补一刀：beforeunload 在移动端不可靠，pagehide 才是那个能信的。 —— */
+  /**
+   * 这一刀也是**一次真写盘**，所以它得和 `drain` 走同一本账。
+   *
+   * 从前它写完就把回报扔了：`version.current` 不动、`lastWritten` 不动。于是
+   * 「落一手 → 400ms 内切走」这条路上，flush 用 base=v 写成功（盘上变 v+1），
+   * 定时器到点后 drain 拿 v 再写一次 → 409 → 冲突 → ＋块／＋组 全灰，而且不自愈。
+   * 盘上什么冲突都没有，是它自己跟自己撞的。三条都得记住：
+   *
+   * 1. **不并发**：drain 在飞就不发第二条 —— 两条 PUT 拿同一个 baseVersion，必有一条 409。
+   *    （草稿先写，那一份不依赖网络。）
+   * 2. **认回报**：成功就更新 version / lastWritten / 清草稿。drain 到点看见这份已写，
+   *    自己就跳过了（它开头那句 `key === lastWritten` 一直在等这个值）。
+   * 3. **收尾再叫 drain**：藏起来的这几百毫秒里要真落过一手，pending 还躺着，得有人接着写。
+   */
   useEffect(() => {
     const flush = () => {
       if (!ready.current || !projectId || blocked.current) return;
       const snap = { root, moves };
-      if (JSON.stringify(snap) === lastWritten.current) return;
+      const key = JSON.stringify(snap);
+      if (key === lastWritten.current) return;
       writeDraft(projectId, snap.root, snap.moves, version.current);
-      void saveBoard(projectId, snap.root, snap.moves, version.current, true).catch(() => {});
+      // 正在写的那一份和这一份是同一份：它的 while 会写完，别插一脚。
+      if (writing.current) return;
+      writing.current = true;
+      void saveBoard(projectId, snap.root, snap.moves, version.current, true)
+        .then((out) => {
+          version.current = out.version;
+          lastWritten.current = key;
+          if (out.root) {
+            lastWritten.current = JSON.stringify({ root: out.root, moves: snap.moves });
+            setRoot(out.root);
+          }
+          clearDraft(projectId);
+          setStatus("saved");
+        })
+        .catch((err: unknown) => {
+          // 真的撞了（别的窗口写了这一盘）就照 drain 那套停手；网络抖一下就留着草稿下次再说。
+          if (err instanceof ConflictError) {
+            version.current = err.version;
+            blocked.current = true;
+            setStatus("conflict");
+          } else if (!pending.current) {
+            // 发失败了：pending 是唯一会被下一次落子／drain 捡起来重试的坑。
+            pending.current = snap;
+            setStatus("error");
+          }
+        })
+        .finally(() => {
+          writing.current = false;
+          // 这一刀期间真落过新的一手：pending 不会自己动，得把它叫醒。
+          if (pending.current) void drain(projectId);
+        });
     };
     const onHide = () => {
       if (document.hidden) flush();
     };
-    window.addEventListener("pagehide", flush);
+    // pagehide 的回调会拿到一个 Event —— 包一层，别让它顺着参数位溜进去。
+    const onPageHide = () => flush();
+    window.addEventListener("pagehide", onPageHide);
     document.addEventListener("visibilitychange", onHide);
     return () => {
-      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("pagehide", onPageHide);
       document.removeEventListener("visibilitychange", onHide);
     };
   }, [root, moves, projectId]);
@@ -435,12 +516,36 @@ export function App() {
   };
 
   /**
-   * 开一块的页面。**整页跳走**，不是盖一层：那一页是它自己的进程端出来的，
-   * 壳管不着它长什么样（没开发的块就停在一张空白页上）。后退键回盘面。
+   * 开一块的页面。**开一个新标签页**，不在当前页跳走：那一页是它自己的进程端出来的，
+   * 壳管不着它长什么样（没开发的块就停在一张空白页上）。
+   *
+   * 为什么不是 `window.location.assign`：跳走会丢掉整个 SPA —— 树的展开状态、滚动位置、
+   * 撤销栈全没了，回到盘面还得重跑一次载入。新标签页里盘面原封不动，关掉就回来。
+   * 块的页面本来也不该和盘面共用一个标签：两块要对着看的时候，跳走就是只能看一块。
+   *
+   * `noopener` 是必带的：不带的话新页拿得到 `window.opener`，能反向操作盘面。
+   * 这里同域、互信，但那是一条不需要存在的口子。
+   */
+  const blockUrl = (id: string): string | null =>
+    projectId ? `/p/${encodeURIComponent(projectId)}/${encodeURIComponent(id)}/` : null;
+
+  /**
+   * 点一颗临时 `<a target="_blank" rel="noopener">`，不用 `window.open`。
+   *
+   * 两个理由，第一个是坑：**带 `noopener` 的 `window.open` 按规范返回 `null`**，
+   * 所以「返回 null = 被弹窗拦截了」这个判断永远成立 —— 上一版就是这么同时开了新标签
+   * 又把当前页跳走的。第二个：真链接走的是导航那条路，不吃弹窗拦截，还留着 `noopener`。
    */
   const openBlock = (id: string) => {
-    if (!projectId) return;
-    window.location.assign(`/p/${encodeURIComponent(projectId)}/${encodeURIComponent(id)}/`);
+    const href = blockUrl(id);
+    if (!href) return;
+    const a = document.createElement("a");
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    document.body.append(a);
+    a.click();
+    a.remove();
   };
 
   /**
@@ -491,6 +596,46 @@ export function App() {
   };
 
   const addBlock = () => addBlockTo(here.id);
+
+  /**
+   * 块 → 组。**锁不管这一下** —— 锁管的是「消失」，跟改名、搬家、往里加东西一样，
+   * 转换不动 id，块本身没消失。新长出来的那个孩子会跟着继承这把锁（锁是子树），
+   * 那是派生出来的，不是第二份事实。
+   */
+  const toGroup = (id: string) => {
+    const next = toSection(root, id);
+    const child = childIds(next, id)[0];
+    if (!child) return;
+    play(next, { t: "toSection", id, child });
+  };
+
+  /**
+   * 组 → 块。**全盘唯一会让东西离开盘面的操作**：孩子连同 `map/<id>/` 会整枝进 `.gone/`，
+   * 撤销能在本次会话里原样接回来（同 id 的文件夹从坟场回家），刷新之后就没路。
+   *
+   * 所以这里弹一下。这是「确认只留给真不可逆的事」里那个「真」——
+   * 其余的手（移动、改名、块转组）都是滑得回来的，给它们弹确认等于训练人闭眼按确定。
+   * 用原生 confirm 而不是自画弹窗：一句话、两个按钮，所以不值得一套组件。
+   */
+  const toBlock = (id: string) => {
+    const node = findNode(root, id);
+    if (!node?.children?.length) return;
+    const lost = subtreeIds(node).length - 1;
+    const name = node.name;
+    const ok = window.confirm(
+      `把「${name}」转成块？\n\n` +
+        `底下 ${lost} 个节点的文件夹会被挪进 map/.gone/（不删，但它不再是盘面的一部分）。\n` +
+        `这一手在本次会话里可以撤销；刷新页面之后就找不回来了。\n\n` +
+        `块的值 = 底下之和（${valueOf(node)}）。`,
+    );
+    if (!ok) return;
+    const next = toLeaf(root, id);
+    if (next === root) return;
+    play(next, { t: "toLeaf", id, value: valueOf(node), lost: subtreeIds(node).slice(1) });
+    setFlash(id);
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFlash(null), 1100);
+  };
 
   const addGroup = () => {
     const next = addSection(root, here.id);
@@ -566,15 +711,18 @@ export function App() {
   const cancelRename = () => endRename();
 
   /**
-   * 07 号菜单里那几条。删除已经收进菜单了（行上、块上只留一颗 •••），
-   * 所以「重命名 / 复制名字 / 复制路径 / 删除」这套动作得在这儿接住。
+   * 07 号菜单里那几条。菜单是右键开出来的（触屏上那颗 •••），
+   * 所以「重命名 / 复制名字 / 复制路径 / 复制 id / 删除」这套动作得在这儿接住。
    */
   const menuItems = (id: string, host: HTMLElement): MenuItem[] => {
     const node = findNode(root, id);
     if (!node) return [];
     // 输入框就长在这一行 / 这一块里面 —— 行和块都有一层 [data-node-id]。
-    const target =
-      host.querySelector<HTMLElement>("[data-node-id]") ?? host.closest<HTMLElement>("[data-node-id]");
+    // 宿主自己就是那一层时（盘面上的块）用它；否则往下一层找（左列的行是 li）。
+    const target = host.matches("[data-node-id]")
+      ? host
+      : (host.querySelector<HTMLElement>("[data-node-id]") ??
+        host.closest<HTMLElement>("[data-node-id]"));
     const items: MenuItem[] = [
       {
         key: "open",
@@ -612,6 +760,14 @@ export function App() {
         icon: <IconLink />,
         run: () => void copyText(trees.get(id) ?? node.name),
       },
+      // id 是块和组都有的那个 6 位码（改名、换爹都不动它）。要贴给别人 / 写进脚本时，
+      // 路径会变、名字会重，只有它不会 —— 所以单独给一条。
+      {
+        key: "copy-id",
+        label: "复制 id",
+        icon: <IconHash />,
+        run: () => void copyText(id),
+      },
       // 只给块给：组没有「进终端看看」的自然场景，真要看也是看组里某一块。
       // 路径由服务器随盘一起发下来（dir 字段）—— 前端不硬编码部署位置，换机器都还对。
       ...(isSection(node)
@@ -634,6 +790,28 @@ export function App() {
         icon: <IconEnter />,
         // 「进入」= 去它那儿，不是「再往下钻一层」：已经在里面时这一下就该什么都不动。
         run: () => setPath(pathTo(root, id)),
+      });
+    }
+    // 结构上的那两个方向，摆在「进入」后面、锁前面。
+    // 根上两个都不给 —— 它是门面，必须是容器。
+    if (!isSection(node) && id !== root.id) {
+      items.push({
+        key: "to-group",
+        label: "转成组",
+        icon: <IconGroup />,
+        // 锁不管这一下：块本身没消失，和改名、搬家、往里加东西同一档。
+        run: () => toGroup(id),
+      });
+    }
+    // 组 → 块。被锁时**整个不摆**，不是摆个按不动的：锁是子树，服务端会把掉下去的孩子
+    // 原样接回来（`restoreLocked`），这一手会被静默撤销，只留一条 audit 日志。
+    // 下面的锁那一条已经说清了是谁锁的，不用在这儿再说一遍。
+    if (isSection(node) && node.children!.length && id !== root.id && !locked.has(id)) {
+      items.push({
+        key: "to-block",
+        label: "转成块",
+        icon: <IconBlock />,
+        run: () => toBlock(id),
       });
     }
     // 锁是子树：锁住一个组，里面每一块都跟着锁上 —— 和锁一个块是同一件事，只是范围大一号。
@@ -751,6 +929,15 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  /**
+   * 盘面这一层要占多高：装得下就是视口高，装不下就往下长，由容器滚。
+   * 只有最外层会长 —— 内层长出去只会被自己的格子裁掉。
+   */
+  const contentH = useMemo(() => {
+    if (!size.w || !size.h) return 0;
+    return gridHeight(here.children?.length ?? 0, { x: 0, y: 0, w: size.w, h: size.h });
+  }, [here, size]);
+
   const placed = useMemo(() => {
     if (!size.w || !size.h) return [];
 
@@ -759,13 +946,18 @@ export function App() {
         // 只有最外一层按分支分色；里面的块都继承自己那一支的颜色（pele 就是这么做的）。
         const kidColor = depth === 0 ? SERIES[i % SERIES.length]! : color;
         const box = shrink(kid.box, GAP);
-        if (!kid.node.children) return { node: kid.node, box, depth: kid.depth, color: kidColor, kids: [] };
+        if (!kid.node.children)
+          return { node: kid.node, box, depth: kid.depth, color: kidColor, share: kid.share, kids: [] };
+        // 合并模式下组不摊开，内层就别算了 —— 算出来也没人画。
+        if (solid)
+          return { node: kid.node, box, depth: kid.depth, color: kidColor, share: kid.share, kids: [] };
         const head = hat(box, kid.depth);
         return {
           node: kid.node,
           box,
           depth: kid.depth,
           color: kidColor,
+          share: kid.share,
           kids: build(
             kid.node,
             {
@@ -780,8 +972,8 @@ export function App() {
         };
       });
 
-    return build(here, { x: 0, y: 0, w: size.w, h: size.h }, 0, SERIES[0]!);
-  }, [here, size]);
+    return build(here, { x: 0, y: 0, w: size.w, h: contentH }, 0, SERIES[0]!);
+  }, [here, size, contentH, solid]);
 
   return (
     <NodeMenuProvider items={menuItems}>
@@ -903,6 +1095,18 @@ export function App() {
               <Pill onClick={undo} disabled={!past.length} title="⌘Z / Ctrl+Z">
                 撤销
               </Pill>
+              {/* 按钮上不写「切换」：那颗按钮说了不算。开的时候写「展开」—— 说的是按下去会发生什么。 */}
+              <Pill
+                onClick={() => setSolid((s) => !s)}
+                pressed={solid}
+                title={
+                  solid
+                    ? "把组还原成容器，露出里面的块"
+                    : "把组都画成一块实心块，子块暂时不显示（只是看的方式，不动盘上的树）"
+                }
+              >
+                {solid ? "展开" : "合并"}
+              </Pill>
               <Pill onClick={addBlock} disabled={status === "conflict"}>
                 ＋ 块
               </Pill>
@@ -912,7 +1116,15 @@ export function App() {
             </div>
           </header>
 
-          <div ref={board} className="relative min-h-0 flex-1 bg-board p-2" aria-label="盘面">
+          {/*
+            盘面装不下就滚 —— 只有这一层滚，内层格子 overflow-hidden。
+            嵌套滚动在触屏上没有好下场，想看内层就「进入」钻下去。
+          */}
+          <div
+            ref={board}
+            className="relative min-h-0 flex-1 overflow-y-auto bg-board p-2"
+            aria-label="盘面"
+          >
             {orphan && (
               <div className="absolute inset-x-2 top-2 z-30 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] shadow-lg">
                 <span className="min-w-0 flex-1 text-muted">
@@ -930,13 +1142,14 @@ export function App() {
                 <Pill onClick={() => addBlockTo(root.id)}>＋ 块</Pill>
               </div>
             )}
-            <div className="relative h-full w-full">
+            <div className="relative w-full" style={{ height: contentH || undefined }}>
               {placed.map((p) => (
                 <Piece
                   key={p.node.id}
                   piece={p}
                   origin={{ x: 0, y: 0 }}
                   isSection={isSection}
+                  solid={solid}
                   trees={trees}
                   locked={locked}
                   lockTitle={lockTitle}
@@ -989,6 +1202,8 @@ type Placed = {
   box: Box;
   depth: number;
   color: string;
+  /** 同组内按最大值归一化的值 —— 底部那条比例条就画它。网格里面积不再等于值。 */
+  share: number;
   kids: Placed[];
 };
 
@@ -1000,6 +1215,7 @@ function Piece({
   piece,
   origin,
   isSection,
+  solid,
   trees,
   locked,
   lockTitle,
@@ -1014,6 +1230,8 @@ function Piece({
   piece: Placed;
   origin: { x: number; y: number };
   isSection: (n: Node) => boolean;
+  /** 合并模式：组自己当一块画，子块一个不画。 */
+  solid: boolean;
   trees: Map<string, string>;
   /** 生效中的锁（含从祖先继承的）：盘上得看得见，不然删不掉的块跟别的块没法区分。 */
   locked: ReadonlyMap<string, string>;
@@ -1022,13 +1240,13 @@ function Piece({
   flashId: string | null;
   editingId: string | null;
   onEnter: (id: string) => void;
-  /** 开这一块的页面。组和块都有 —— 正文不长在树上，长在 map/<id>/AGENTS.md 里。 */
+  /** 开这一块的页面。组和块都有 —— 正文不长在树上，长在 map/<id>/ 里。 */
   onOpen: (id: string) => void;
   onBeginRename: (id: string, el: HTMLElement | null) => void;
   onCommitRename: (id: string, name: string) => void;
   onCancelRename: () => void;
 }) {
-  const { node, box, depth, color, kids } = piece;
+  const { node, box, depth, color, share, kids } = piece;
   const place = { left: box.x - origin.x, top: box.y - origin.y, width: box.w, height: box.h };
   const section = isSection(node);
   const value = valueOf(node);
@@ -1041,9 +1259,60 @@ function Piece({
   // 双击改名的规矩：名字画得出来的地方才能双击它。名字没地方站，就回左列去改。
   const noRename = (e: React.MouseEvent) =>
     (e.target as HTMLElement).closest("[data-no-rename]") !== null;
+  /** 触屏那颗 ••• 比原来那颗 × 略小一号，所以 30px 见方的块也容得下 —— 但 30px 以下就真没了。 */
+  const dots = Math.min(box.w, box.h) < 40 ? "xs" : Math.min(box.w, box.h) < 64 ? "s" : "m";
+
   if (section) {
+    /*
+     * 合并：组自己涂满，子块一个不画。「长得像块」就该用块的画法，所以下面那副正面
+     * 和真块是同一份 `Face` —— 两套阈值早晚会漂。
+     *
+     * 几何一点没动（`layout` 照旧算全套）：切换时格子不跳，你脑子里那张地图还在。
+     */
+    if (solid) {
+      return (
+        <div
+          className={`group/sec nm-host nm-host--block absolute overflow-hidden rounded-[4px] transition-[left,top,width,height,background-color] duration-300 ${EASE}`}
+          style={{
+            ...place,
+            background: solidFill(color, depth),
+            color: "var(--n-color-canvas)",
+            boxShadow: ring ? "0 0 0 2px var(--n-color-accent)" : undefined,
+          }}
+        >
+          <Face
+            node={node}
+            box={box}
+            value={value}
+            tree={tree}
+            editing={editing}
+            share={share}
+            reveal="group-hover/sec:opacity-100"
+            /* 子块被藏起来了，不给个数人会以为组是空的，然后去加出第四个。 */
+            badge={`${node.children!.length} 块`}
+            action={{
+              label: "进入 ›",
+              title: `进入 ${node.name}`,
+              onClick: () => onEnter(node.id),
+            }}
+            onBeginRename={onBeginRename}
+            onCommitRename={onCommitRename}
+            onCancelRename={onCancelRename}
+          />
+          {!editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
+          {lock && (
+            <span
+              className="pointer-events-none absolute left-[3px] top-[3px] opacity-55"
+              title={lock}
+            >
+              <LockIcon className="h-[10px] w-[10px]" />
+            </span>
+          )}
+        </div>
+      );
+    }
+
     const strip = hat(box, depth);
-    const dots = Math.min(box.w, box.h) < 40 ? "xs" : Math.min(box.w, box.h) < 64 ? "s" : "m";
     return (
       <div
         data-node-id={node.id}
@@ -1128,6 +1397,7 @@ function Piece({
             piece={k}
             origin={box}
             isSection={isSection}
+            solid={solid}
             trees={trees}
             locked={locked}
             lockTitle={lockTitle}
@@ -1144,18 +1414,7 @@ function Piece({
     );
   }
 
-  const big = Math.min(box.w, box.h);
-  // 编辑中先把名字的位置腾出来，再小的块也得看得见自己在打什么。
-  const showName = (box.w > 56 && box.h > 30) || editing;
-  const showValue = big > 24;
-  // tree 比名字还挑地方：它是给人抄走的，画一半还不如不画。
-  const showTree = box.w > 62 && box.h > 48;
-  // id 是 tree 下面再加一行，所以门槛比 tree 还严一档。
-  const showId = showTree && box.h > 62;
-  const valueSize = Math.max(12, Math.min(40, Math.round(big / 3)));
   const roomForDelete = box.w > 34 && box.h > 26;
-  /** ••• 比原来那颗 × 略小一号，所以 30px 见方的块也容得下 —— 但 30px 以下就真没了。 */
-  const dots = Math.min(box.w, box.h) < 40 ? "xs" : Math.min(box.w, box.h) < 64 ? "s" : "m";
 
   return (
     <div
@@ -1167,67 +1426,20 @@ function Piece({
         boxShadow: ring ? "0 0 0 2px var(--n-color-accent)" : undefined,
       }}
     >
-      <div
-        tabIndex={0}
-        aria-label={`${node.name} ${value}`}
-        data-node-id={node.id}
-        onDoubleClick={(e) => {
-          if (noRename(e)) return;
-          onBeginRename(node.id, e.currentTarget);
-        }}
-        className="flex h-full w-full flex-col items-center justify-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black/40"
-      >
-        {editing ? (
-          <NameInput
-            value={node.name}
-            onCommit={(name) => onCommitRename(node.id, name)}
-            onCancel={onCancelRename}
-            className="w-full px-1 text-center text-[10px]"
-          />
-        ) : (
-          showName && (
-            <span className="pointer-events-none max-w-full truncate px-1.5 text-[10px] leading-none opacity-65">
-              {node.name}
-            </span>
-          )
-        )}
-        {showValue && (
-          <span
-            className="pointer-events-none font-semibold tabular-nums leading-none"
-            style={{ fontSize: valueSize, letterSpacing: "-0.02em" }}
-          >
-            {value}
-          </span>
-        )}
-        {showTree && !editing && (
-          <>
-            <Tag
-              value={tree}
-              title={`${tree} —— 点一下复制（${node.name} 的 tree）`}
-              className="max-w-full opacity-55 hover:opacity-90"
-            />
-            {showId && (
-              <Tag
-                value={node.id}
-                title={`${node.id} —— 点一下复制（${node.name} 的 id）`}
-                className="max-w-full opacity-40 hover:opacity-80"
-              />
-            )}
-          </>
-        )}
-      </div>
+      <Face
+        node={node}
+        box={box}
+        value={value}
+        tree={tree}
+        editing={editing}
+        share={share}
+        reveal="group-hover/leaf:opacity-100"
+        action={{ label: "打开 ›", title: `打开 ${tree}（新标签页）`, onClick: () => onOpen(node.id) }}
+        onBeginRename={onBeginRename}
+        onCommitRename={onCommitRename}
+        onCancelRename={onCancelRename}
+      />
       {roomForDelete && !editing && <NodeMenuTrigger nodeId={node.id} kind="block" size={dots} />}
-      {roomForDelete && !editing && (
-        <button
-          type="button"
-          data-no-rename
-          onClick={() => onOpen(node.id)}
-          title={`打开 ${tree}（新页面）`}
-          className="absolute bottom-[3px] right-[3px] rounded-[3px] bg-black/35 px-1.5 py-[1px] text-[10px] leading-[1.3] text-white/90 opacity-0 backdrop-blur-sm transition-opacity duration-150 hover:bg-black/55 group-hover/leaf:opacity-100"
-        >
-          打开 ›
-        </button>
-      )}
       {/* 锁标记：块一直是底色 + 深字，用 `color` 跟着走的那一档就够显了。 */}
       {lock && (
         <span
@@ -1235,6 +1447,130 @@ function Piece({
           title={lock}
         >
           <LockIcon className="h-[10px] w-[10px]" />
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 一格里的那一副「正面」：名字、值、tree/id 两枚标签、底部那条 share、右下角一个动作。
+ *
+ * 真块和实心模式下的组共用它 —— 合并之后组就该长得像块，分成两套画法（两套阈值）早晚会漂：
+ * 一处改了另一处忘了，实心组和旁边的真块就对不上了。
+ *
+ * 位置不在这里：这个正面是个 `h-full w-full` 的块，底下的 share 和右下角那颗按钮都靠
+ * 外面的格子定位（这里不 positioned），和原来一样。
+ */
+function Face({
+  node,
+  box,
+  value,
+  tree,
+  editing,
+  share,
+  reveal,
+  badge,
+  action,
+  onBeginRename,
+  onCommitRename,
+  onCancelRename,
+}: {
+  node: Node;
+  box: Box;
+  value: number;
+  tree: string;
+  editing: boolean;
+  share: number;
+  /** hover 才浮出来的那颗按钮归哪个 `group/` 管 —— 块和组各是一个 group。 */
+  reveal: string;
+  /** 藏在里面的那一层有多少块。只有实心组给，块没有。 */
+  badge?: string;
+  action: { label: string; title: string; onClick: () => void };
+  onBeginRename: (id: string, el: HTMLElement | null) => void;
+  onCommitRename: (id: string, name: string) => void;
+  onCancelRename: () => void;
+}) {
+  const big = Math.min(box.w, box.h);
+  // 编辑中先把名字的位置腾出来，再小的块也得看得见自己在打什么。
+  const showName = (box.w > 56 && box.h > 30) || editing;
+  const showValue = big > 24;
+  // tree 比名字还挑地方：它是给人抄走的，画一半还不如不画。
+  const showTree = box.w > 62 && box.h > 48;
+  // id 是 tree 下面再加一行，所以门槛比 tree 还严一档。
+  const showId = showTree && box.h > 62;
+  const valueSize = Math.max(12, Math.min(40, Math.round(big / 3)));
+  const roomForAction = box.w > 34 && box.h > 26;
+
+  return (
+    <div
+      tabIndex={0}
+      aria-label={`${node.name} ${value}`}
+      data-node-id={node.id}
+      onDoubleClick={(e) => {
+        // 折叠箭头和 × 有自己一摊事，双击它们不该顺手开个输入框。
+        if ((e.target as HTMLElement).closest("[data-no-rename]")) return;
+        onBeginRename(node.id, e.currentTarget);
+      }}
+      className="flex h-full w-full flex-col items-center justify-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-black/40"
+    >
+      {editing ? (
+        <NameInput
+          value={node.name}
+          onCommit={(name) => onCommitRename(node.id, name)}
+          onCancel={onCancelRename}
+          className="w-full px-1 text-center text-[10px]"
+        />
+      ) : (
+        showName && (
+          <span className="pointer-events-none flex max-w-full items-baseline gap-1.5 px-1.5 text-[10px] leading-none opacity-65">
+            <span className="truncate">{node.name}</span>
+            {badge !== undefined && <span className="shrink-0 opacity-80">{badge}</span>}
+          </span>
+        )
+      )}
+      {showValue && (
+        <span
+          className="pointer-events-none font-semibold tabular-nums leading-none"
+          style={{ fontSize: valueSize, letterSpacing: "-0.02em" }}
+        >
+          {value}
+        </span>
+      )}
+      {showTree && !editing && (
+        <>
+          <Tag
+            value={tree}
+            title={`${tree} —— 点一下复制（${node.name} 的 tree）`}
+            className="max-w-full opacity-55 hover:opacity-90"
+          />
+          {showId && (
+            <Tag
+              value={node.id}
+              title={`${node.id} —— 点一下复制（${node.name} 的 id）`}
+              className="max-w-full opacity-40 hover:opacity-80"
+            />
+          )}
+        </>
+      )}
+      {roomForAction && !editing && (
+        <button
+          type="button"
+          data-no-rename
+          onClick={action.onClick}
+          title={action.title}
+          className={`absolute bottom-[5px] right-[3px] rounded-[3px] bg-black/35 px-1.5 py-[1px] text-[10px] leading-[1.3] text-white/90 opacity-0 backdrop-blur-sm transition-opacity duration-150 hover:bg-black/55 ${reveal}`}
+        >
+          {action.label}
+        </button>
+      )}
+      {/* 面积让给网格了，值靠这条比例条说 —— 一眼能扫出谁大谁小，比估面积准。 */}
+      {!editing && box.h > 30 && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] bg-black/15">
+          <span
+            className="block h-full bg-black/40"
+            style={{ width: `${Math.round(share * 100)}%` }}
+          />
         </span>
       )}
     </div>
@@ -1286,12 +1622,15 @@ function Pill({
   onClick,
   disabled,
   muted,
+  pressed,
   title,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   disabled?: boolean;
   muted?: boolean;
+  /** 开合按钮用：按着的那个状态得看得见，不要靠猜。 */
+  pressed?: boolean;
   title?: string;
 }) {
   return (
@@ -1299,11 +1638,14 @@ function Pill({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      aria-pressed={pressed}
       title={title}
       className={`h-7 rounded-lg px-2.5 text-[12px] transition-colors duration-150 disabled:opacity-25 ${
         muted
           ? "text-muted hover:bg-surface hover:text-text"
-          : "bg-surface text-text/90 hover:bg-raised"
+          : pressed
+            ? "bg-accent/20 text-text hover:bg-accent/25"
+            : "bg-surface text-text/90 hover:bg-raised"
       }`}
     >
       {children}
@@ -1365,6 +1707,13 @@ const IconTerminal = () => (
   </svg>
 );
 
+/** “复制 id”：一枚井号。id 是 `7kq2md` 这种 6 位码，没有比 `#` 更省字的招牌。 */
+const IconHash = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M5.6 2.6 4.4 11.4M9.6 2.6 8.4 11.4M2.6 5.4h9M2 8.6h9" />
+  </svg>
+);
+
 const IconLink = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <path d="M5.8 8.2a2.5 2.5 0 0 0 3.5 0l1.9-1.9a2.5 2.5 0 0 0-3.5-3.5l-.5.5" />
@@ -1384,6 +1733,22 @@ const IconEnter = () => (
   <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
     <path d="M3 3v5.2c0 .9.7 1.6 1.6 1.6H11" />
     <path d="M8.8 6.6 11 9.8l-2.2 3.2" transform="translate(0 -3)" />
+  </svg>
+);
+
+/** “转成组”：框里再长出一格 —— 从一块变成一层容器。和「进入」那枚不一样，那是钻下去。 */
+const IconGroup = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M1.9 1.9h10.2v10.2H1.9z" />
+    <path d="M5.2 5.2h3.6v3.6H5.2z" />
+  </svg>
+);
+
+/** “转成块”：外面那圈收起来，只剩中间那一格 —— 和上面那枚正好互为反事。 */
+const IconBlock = () => (
+  <svg viewBox="0 0 14 14" aria-hidden="true" {...stroke}>
+    <path d="M1.9 1.9h10.2v10.2H1.9z" strokeDasharray="1.6 2" opacity=".55" />
+    <path d="M4.6 4.6h4.8v4.8H4.6z" />
   </svg>
 );
 
