@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>k5411g · 模型</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#0e0f11; --fg:#e6e6e6; --dim:#7f858e; --line:#23262b; --card:#121417;
+    --ok:#7ee787; --warn:#ffd28a; --bad:#ff9b9b; --accent:#8ab4f8;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.6 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:12px 18px; border-bottom:1px solid var(--line); }
+  header b { font-size:15px; }
+  .file { color:var(--dim); font-family:var(--mono); font-size:11.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .grow { flex:1; }
+  button { background:#1d2126; color:var(--fg); border:1px solid var(--line); border-radius:7px;
+           padding:4px 10px; font:inherit; font-size:12.5px; cursor:pointer; white-space:nowrap; }
+  button:hover { border-color:#3a4149; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { border-color:#2f6f3f; color:#d9ffe3; }
+  button.danger:hover { border-color:#5a2a2a; color:#ffb4b4; }
+  main { max-width:900px; margin:0 auto; padding:18px; display:flex; flex-direction:column; gap:12px; }
+  .card { border:1px solid var(--line); border-radius:11px; background:var(--card); padding:12px 14px; }
+  .card .top { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
+  .card .id { font-family:var(--mono); font-size:14px; }
+  .badge { font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:20px; padding:0 8px; }
+  .badge.on { color:var(--ok); border-color:#2f6f3f; }
+  .badge.off { color:var(--warn); border-color:#4a3c22; }
+  .url { color:var(--dim); font-family:var(--mono); font-size:11.5px; }
+  .row { display:flex; align-items:center; gap:8px; margin-top:9px; flex-wrap:wrap; }
+  .key { font-family:var(--mono); font-size:12.5px; color:#cfe3ff; }
+  input[type=text], input[type=password] { background:#16191c; color:var(--fg); border:1px solid var(--line);
+    border-radius:7px; padding:6px 10px; font:inherit; font-family:var(--mono); font-size:12.5px; min-width:0; }
+  input:focus { outline:2px solid #2f6f3f; outline-offset:-1px; }
+  input.keyin { flex:1; min-width:200px; }
+  .models { margin-top:9px; border-top:1px dashed var(--line); padding-top:8px; }
+  .models summary { cursor:pointer; color:var(--dim); font-size:12.5px; }
+  .mlist { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+  .m { font-family:var(--mono); font-size:11.5px; border:1px solid var(--line); border-radius:6px;
+       padding:1px 7px; cursor:pointer; color:#cfd6dd; }
+  .m:hover { border-color:#3a4149; background:#171b1f; }
+  .m.copied { border-color:#2f6f3f; color:var(--ok); }
+  .msg { font-size:12px; color:var(--dim); }
+  .msg.ok { color:var(--ok); }
+  .msg.bad { color:var(--bad); }
+  .empty { color:var(--dim); padding:10px 0; }
+  footer { max-width:900px; margin:0 auto 40px; padding:0 18px; color:var(--dim); font-size:12px; }
+  .env { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+  h2 { font-size:12.5px; color:var(--dim); font-weight:500; letter-spacing:.06em; text-transform:uppercase; margin:14px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <b>k5411g</b>
+  <span class="file" id="file">…</span>
+  <span class="grow"></span>
+  <button id="reload">↻</button>
+  <button id="create" class="primary">＋ 新建 provider</button>
+</header>
+
+<main>
+  <div id="cards"></div>
+  <h2>内置 provider（环境里有凭据的）</h2>
+  <div class="env" id="env"><span class="empty">—</span></div>
+</main>
+
+<footer>
+  密钥只以掩码出现在页面上，点「复制」才向本机后端要明文。写盘是先备份 <code>models.json.bak</code> 再 tmp+rename。
+  pi 在启动时读这份文件 —— 改完要让它重读（重启那个 pi 实例）才生效，本页不替你重启。
+</footer>
+
+<script type="module">
+const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const $ = (id) => document.getElementById(id);
+
+const api = (p, init) => fetch(base + p, init).then(async (r) => {
+  const body = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+  return body;
+});
+const post = (p, body) => api(p, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+const put = (p, body) => api(p, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+
+const say = (el, text, kind) => {
+  el.textContent = text;
+  el.className = "msg" + (kind ? " " + kind : "");
+};
+
+// 剪贴板在 http（非 localhost）下会被浏览器拦：失败就退回「框已聚焦，按 Ctrl+V」。
+const readClipboard = async () => {
+  try { return await navigator.clipboard.readText(); } catch { return null; }
+};
+const copyText = async (text) => {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed"; area.style.opacity = "0";
+    document.body.append(area); area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+};
+
+const el = (tag, props = {}, ...kids) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") node.className = v;
+    else if (k === "text") node.textContent = v;
+    else if (k.startsWith("on")) node[k] = v;
+    else node.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid) node.append(kid);
+  return node;
+};
+
+// ── 一张卡片 ────────────────────────────────────────────────────────────
+const card = (provider) => {
+  const box = el("div", { class: "card" });
+  const msg = el("span", { class: "msg" });
+
+  const top = el("div", { class: "top" },
+    el("span", { class: "id", text: provider.id }),
+    el("span", { class: "badge", text: provider.api || "—" }),
+    el("span", { class: "badge " + (provider.hasKey ? "on" : "off"), text: provider.hasKey ? "有密钥" : "没密钥" }),
+    el("span", { class: "url", text: provider.baseUrl }),
+  );
+
+  // ── 密钥 ──
+  const keyRow = el("div", { class: "row" });
+  const keyText = el("span", { class: "key", text: provider.keyMasked || "（空）" });
+  const input = el("input", { class: "keyin", type: "password", placeholder: "粘贴密钥，或点「粘贴」" });
+
+  const reveal = async (into) => {
+    try {
+      const { apiKey } = await api(`v1/providers/${provider.id}/key`);
+      if (!apiKey) { say(msg, "这个 provider 还没有密钥", "bad"); return; }
+      if (into) { into.value = apiKey; into.type = "text"; into.focus(); into.select(); return; }
+      const copied = await copyText(apiKey);
+      say(msg, copied ? "密钥已复制到剪贴板" : "复制失败，用「换」看明文", copied ? "ok" : "bad");
+    } catch (error) { say(msg, String(error.message), "bad"); }
+  };
+
+  keyRow.append(
+    keyText,
+    el("button", { text: "复制", onclick: () => reveal(null) }),
+    el("button", { text: "换", onclick: () => { input.value = ""; input.type = "password"; input.placeholder = "新密钥…"; input.focus(); } }),
+    el("button", {
+      text: "粘贴",
+      onclick: async () => {
+        const text = await readClipboard();
+        if (text === null) { input.focus(); say(msg, "浏览器不让读剪贴板，按 Ctrl+V", "bad"); return; }
+        input.value = text.trim();
+        say(msg, "已粘进来，点「保存」", "ok");
+      },
+    }),
+    input,
+    el("button", {
+      class: "primary",
+      text: "保存",
+      onclick: async (event) => {
+        const button = event.target;
+        button.disabled = true;
+        try {
+          const value = input.value.trim();
+          if (!value) { say(msg, "输入框是空的 —— 想删掉密钥就用左边的「删」", "bad"); return; }
+          await put(`v1/providers/${provider.id}/key`, { apiKey: value });
+          input.value = "";
+          say(msg, "存好了，顺手测一下？", "ok");
+          await refresh();
+        } catch (error) { say(msg, String(error.message), "bad"); }
+        finally { button.disabled = false; }
+      },
+    }),
+    el("button", {
+      class: "danger",
+      text: "删",
+      onclick: async () => {
+        if (!confirm(`删掉 ${provider.id} 的密钥？`)) return;
+        try { await put(`v1/providers/${provider.id}/key`, { apiKey: "" }); await refresh(); }
+        catch (error) { say(msg, String(error.message), "bad"); }
+      },
+    }),
+  );
+
+  // ── 模型 ──
+  const modelRow = el("div", { class: "row" });
+  const list = el("div", { class: "mlist" });
+  for (const m of provider.models) {
+    list.append(el("span", {
+      class: "m", text: m.id, title: "点一下复制模型 id",
+      onclick: async (event) => {
+        const ok = await copyText(m.id);
+        event.target.classList.toggle("copied", ok);
+        say(msg, ok ? `复制了 ${m.id}` : `复制失败：${m.id}`, ok ? "ok" : "bad");
+      },
+    }));
+  }
+  const details = el("details", { class: "models" },
+    el("summary", { text: `${provider.models.length} 个模型` }),
+    list,
+  );
+
+  modelRow.append(
+    el("button", {
+      text: "刷新模型",
+      onclick: async (event) => {
+        const button = event.target;
+        button.disabled = true;
+        say(msg, "问上游要列表…");
+        try {
+          const result = await post(`v1/providers/${provider.id}/refresh`);
+          say(msg, `上游回了 ${result.ms}ms：共 ${result.total} 个，新增 ${result.added.length} 个`, "ok");
+          await refresh();
+        } catch (error) { say(msg, String(error.message), "bad"); }
+        finally { button.disabled = false; }
+      },
+    }),
+    el("button", {
+      text: "测一下",
+      onclick: async (event) => {
+        const button = event.target;
+        button.disabled = true;
+        say(msg, "试连通…");
+        try {
+          const result = await post(`v1/providers/${provider.id}/ping`);
+          if (result.ok) say(msg, `通 · ${result.ms}ms · ${result.models} 个模型`, "ok");
+          else say(msg, result.error, "bad");
+        } catch (error) { say(msg, String(error.message), "bad"); }
+        finally { button.disabled = false; }
+      },
+    }),
+    el("button", {
+      class: "danger",
+      text: "删掉这个 provider",
+      onclick: async () => {
+        if (!confirm(`删掉 ${provider.id} 整条？`)) return;
+        try { await api(`v1/providers/${provider.id}`, { method: "DELETE" }); await refresh(); }
+        catch (error) { say(msg, String(error.message), "bad"); }
+      },
+    }),
+    msg,
+  );
+
+  box.append(top, keyRow, modelRow, details);
+  return box;
+};
+
+// ── 整页 ────────────────────────────────────────────────────────────────
+const refresh = async () => {
+  try {
+    const state = await api("v1/state");
+    $("file").textContent = state.file;
+    const cards = $("cards");
+    cards.replaceChildren();
+    if (!state.providers.length) cards.append(el("p", { class: "empty", text: "还没有 provider。点右上「＋ 新建 provider」。" }));
+    for (const provider of state.providers) cards.append(card(provider));
+
+    const env = $("env");
+    env.replaceChildren();
+    if (!state.env.length) env.append(el("span", { class: "empty", text: "环境变量里一个都没有" }));
+    for (const item of state.env) env.append(el("span", { class: "badge on", text: `${item.id} · ${item.models}` }));
+  } catch (error) {
+    $("cards").replaceChildren(el("p", { class: "msg bad", text: String(error.message ?? error) }));
+  }
+};
+
+$("reload").onclick = () => refresh();
+$("create").onclick = async () => {
+  const id = prompt("provider id（小写字母数字，如 stepfun）");
+  if (!id?.trim()) return;
+  const baseUrl = prompt("baseUrl（到 /v1 为止，别带 /models）");
+  if (!baseUrl?.trim()) return;
+  const apiName = prompt("api（openai-completions / anthropic-messages / openai-responses）", "openai-completions");
+  if (!apiName?.trim()) return;
+  const apiKey = prompt("密钥（可以先空着）") ?? "";
+  try {
+    await post("v1/providers", { id: id.trim(), baseUrl: baseUrl.trim(), api: apiName.trim(), apiKey: apiKey.trim() });
+    await refresh();
+  } catch (error) { alert(String(error.message ?? error)); }
+};
+
+await refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "name": "k5411g",
+  "private": true,
+  "type": "module",
+  "description": "模型管家：看 provider、填/换密钥、从上游刷新模型列表。",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
