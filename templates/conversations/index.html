@@ -51,6 +51,7 @@
   .m .who { display:block; color:var(--dim); font-size:11px; letter-spacing:.08em; text-transform:uppercase; margin-bottom:3px; }
   .m .forkbtn { float:right; opacity:0; font-size:11px; padding:1px 7px; }
   .m:hover .forkbtn { opacity:1; }
+  .m.failed { border-color:#5a2a2a; color:#ffb4b4; background:#1a1213; }
   .m.tool { border-style:dashed; color:var(--dim); font-family:var(--mono); font-size:12px; }
   form { display:flex; gap:8px; padding:10px 16px 16px; border-top:1px solid var(--line); }
   input[type=text] { flex:1; background:#16191c; color:var(--fg); border:1px solid var(--line);
@@ -106,6 +107,16 @@ const api = (p, init) => fetch(base + p, init).then(async (r) => {
 const post = (p, body) => api(p, {
   method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}),
 });
+
+// crypto.randomUUID 只在安全上下文（https / localhost）里有。
+// 从 http://<内网IP>:4790 打开它时它是 undefined —— 发一句话不该靠运气。
+const newRequestId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+};
 
 let sessions = [];
 let current = null;   // 选中的会话 id
@@ -261,9 +272,10 @@ $("say").onsubmit = async (event) => {
   $("state").textContent = "想…";
   try {
     // requestId 让重发变成同一次提交，而不是第二次干活。
-    await post(`v1/sessions/${current}/messages`, { content, requestId: crypto.randomUUID() });
+    await post(`v1/sessions/${current}/messages`, { content, requestId: newRequestId() });
   } catch (error) {
-    add("tool", String(error.message ?? error));
+    // 这是页面自己的错，不是工具的 —— 别顶着「工具」的皮出现。
+    add("user", `发送失败：${error.message ?? error}`).classList.add("failed");
   } finally {
     $("go").disabled = false;
   }
