@@ -98,17 +98,25 @@ export default defineConfig(({ mode }) => {
           background_color: "#0b0d11",
           icons: [{ src: "icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" }],
         },
+        /**
+         * **不预缓存 HTML，也不接导航。**
+         *
+         * 缓存 index.html 等于把「某一刻的界面」钉死在浏览器里：装过老 sw 的浏览器会
+         * 一直拿缓存里那份壳去糊 `/p/…` 的导航，代码改多少遍都看不见 —— 2026-10 就撞
+         * 过一次，新建的块还显示 `AGENTS.md`，而服务器上它早没了。`/p/` 的 denylist
+         * 只治得了那一刻之后的 sw，治不了已经装上的那个。
+         *
+         * 所以这里只缓存**哈希过的**静态资源（同一个 URL 永远同一份内容），所有导航
+         * 都走网络，打开就是最新的包。代价是离线打不开 —— 这是内网面板，认。
+         */
         workbox: {
+          globPatterns: ["**/*.{js,css,svg,woff2}"],
           // demo 不进 PWA 预缓存：它们是给人看的实验页，不是 app 的一部分，
-          // 而且每个都带着一整份 src/App。
-          globPatterns: ["**/*.{js,css,html,svg,woff2}"],
-          // demo 的 chunk 落在 assets/demo/ 下（入口在 demo/ 下），两处都得挡。
+          // 而且每个都带着一整份 src/App（chunk 落在 assets/demo/ 下，两处都挡）。
           globIgnores: ["demo/**", "assets/demo/**"],
-          navigateFallback: "index.html",
-          // 这两个前缀下的页面**不是壳**，SW 别拿 index.html 去糊：
-          // - /demo/xxx/   demo 自己是一个入口
-          // - /p/…        那是块的进程端出来的页面（可能是一张空白页）
-          navigateFallbackDenylist: [/^\/demo\//, /^\/p\//],
+          // vite-plugin-pwa 默认给 `index.html` 挂一条导航兜底 —— 显式写 undefined 把它
+          // 摘掉：导航一律走网络，不存在「SW 拿旧壳糊你」这条路。
+          navigateFallback: undefined,
         },
       }),
     ],
