@@ -116,10 +116,16 @@ const placeOf = (cur: Opened, height: number): Layout =>
 
 export function NodeMenuProvider({
   items,
+  attr = "data-node-id",
   children,
 }: {
   /** 菜单里有哪些条 —— 由调用方决定，它才知道这些动作真去干嘛。 */
   items: (nodeId: string, host: HTMLElement) => MenuItem[];
+  /**
+   * 菜单认哪个标记。**文档页里嵌了第二层 provider** —— 两层都认 `data-node-id` 的话，
+   * 一行文件右键会同时弹出盘面的那张菜单和文档的那张。所以属性名是参数，一个 id 空间一个。
+   */
+  attr?: string;
   children: ReactNode;
 }) {
   const [opened, setOpened] = useState<Opened | null>(null);
@@ -188,8 +194,8 @@ export function NodeMenuProvider({
       const t = e.target as HTMLElement | null;
       if (!t?.closest) return;
       if (t.closest("input, textarea, [contenteditable=''], [contenteditable='true']")) return;
-      const el = t.closest("[data-node-id]") as HTMLElement | null;
-      const nodeId = el?.dataset.nodeId;
+      const el = t.closest(`[${attr}]`) as HTMLElement | null;
+      const nodeId = el?.getAttribute(attr);
       if (!el || !nodeId) return;
       e.preventDefault();
       const r = el.getBoundingClientRect();
@@ -202,7 +208,7 @@ export function NodeMenuProvider({
     };
     document.addEventListener("contextmenu", onCtx);
     return () => document.removeEventListener("contextmenu", onCtx);
-  }, [openAt]);
+  }, [openAt, attr]);
 
   // 先量高度再摆位置，量完下一帧才允许它亮 —— 同一帧改位置和 data-open 等于没有进场动效。
   useLayoutEffect(() => {

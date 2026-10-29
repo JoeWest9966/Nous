@@ -3,9 +3,10 @@
  * 三条规矩和别处一样：只动 transform / scale / opacity，颜色走 token，一个色值都不发明。
  * 弹簧是 demo/doc-editor 里那条（k=420 c=30，418ms，回弹 3.2%），退场 140ms 无过冲。
  *
- * 这一页的形状是「一张纸 + 一层浮起来的工具条」：
- * 工具条是**材质**（半透明 + 模糊），正文从它底下滚过去 —— 不是一条吃掉 52px 的实心眼。
- * 所以工具条没有下边框；滚起来了才浮起来（`data-lifted`），阴影替掉那根线。
+ * 这一页的形状是「一条头 + 左列文件 + 右边一张纸」：
+ * 头是盘面那条（返回 / 左列开关 / 位置 / ＋ 文档），高度和节奏都对齐；
+ * 左列是 `surface`（比纸亮一档，是「目录」不是「内容」），可收起 —— 宽 `248 → 0`，窄屏是一张抽屉；
+ * 纸上没有工具条 —— 文件名、字数、保存状态都贴在标题附近，正文就是这一页。
  */
 
 :root {
@@ -18,9 +19,7 @@
     0.9993 100%
   );
   --dp-in: 260ms;
-  --dp-out: 140ms;
   --dp-ease-out: cubic-bezier(0.32, 0.72, 0, 1);
-  --dp-toolbar-h: 52px;
 }
 
 /* ── 材质 ─────────────────────────────────────────────────────────────────── */
@@ -45,29 +44,260 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
-/* 工具条：比正文轻、比正文凉。正文滚到它底下时能看见一点点形，但读不清 —— 那是刻意的。 */
-.dp-toolbar {
-  position: absolute;
-  inset: 0 0 auto 0;
-  z-index: 10;
+/* ── 左列：就是这个文件夹 ─────────────────────────────────────────────────── */
+
+/* 开合、宽度、过渡在 JSX 里（和盘面左列同一套 Tailwind 写法）；这里只管列里面的东西。
+   `surface` 比纸亮一档 —— 它是「目录」，不是「内容」。 */
+
+/* 搜索框：凹进去一格（比左列底色更深），左图标右快捷键 —— 和正文里的输入框不是一个东西。 */
+.dp-side-search {
+  position: relative;
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 2px;
-  height: var(--dp-toolbar-h);
-  padding: 0 10px;
-  background: color-mix(in oklab, var(--n-color-canvas) 68%, transparent);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  /* 没有下边框。滚起来了才浮起来 —— 见 `data-lifted`。 */
-  box-shadow: 0 0 0 0 rgba(0, 0, 0, 0);
-  transition: box-shadow 220ms var(--dp-ease-out), background 220ms var(--dp-ease-out);
+  height: 28px;
+  margin: 10px 8px 8px;
+  padding: 0 6px;
+  gap: 5px;
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--n-color-canvas) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-color-text) 7%, transparent);
+  transition: box-shadow 120ms var(--dp-ease-out);
 }
 
-.dp-toolbar[data-lifted="true"] {
-  background: color-mix(in oklab, var(--n-color-canvas) 82%, transparent);
-  box-shadow:
-    0 1px 0 color-mix(in oklab, var(--n-color-text) 8%, transparent),
-    0 6px 16px -12px rgba(0, 0, 0, 0.9);
+.dp-side-search:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-color-accent) 55%, transparent);
+}
+
+.dp-side-search-icon {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  color: color-mix(in oklab, var(--n-color-muted) 80%, transparent);
+}
+
+.dp-side-search-input {
+  min-width: 0;
+  flex: 1;
+  background: transparent;
+  outline: none;
+  font-size: 12px;
+  color: var(--n-color-text);
+}
+
+.dp-side-search-input::placeholder {
+  color: color-mix(in oklab, var(--n-color-muted) 70%, transparent);
+}
+
+.dp-side-search-x,
+.dp-side-kbd {
+  flex: none;
+  color: color-mix(in oklab, var(--n-color-muted) 70%, transparent);
+}
+
+.dp-side-search-x {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  transition: background 120ms var(--dp-ease-out), color 120ms var(--dp-ease-out);
+}
+
+.dp-side-search-x:hover {
+  background: var(--n-color-raised);
+  color: var(--n-color-text);
+}
+
+.dp-side-kbd {
+  font-family: var(--n-font-mono);
+  font-size: 9.5px;
+}
+
+/* 清单：自己滚，不带着正文一起滚（左列和正文是两条独立的滚动条）。 */
+.dp-side-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 6px 8px;
+}
+
+/* 一行 = 一个名字 + （只在触屏上）一颗 •••。菜单不在行里 —— 它 portal 到 body 上。 */
+.dp-row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 7px;
+  transition: background 110ms var(--dp-ease-out);
+}
+
+.dp-row:hover {
+  background: var(--n-color-raised);
+}
+
+/* 选中：一整块底色。不做「只换字色」—— 一列二十行里那样认不出来。 */
+.dp-row[data-on="true"] {
+  background: color-mix(in oklab, var(--n-color-accent) 15%, transparent);
+}
+
+.dp-row[data-on="true"] .dp-row-stem {
+  color: var(--n-color-text);
+  font-weight: 560;
+}
+
+.dp-row-pick {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 1px;
+  padding: 0 6px;
+  min-height: 28px;
+  text-align: left;
+}
+
+.dp-row-stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--n-font-mono);
+  font-size: 12px;
+  color: color-mix(in oklab, var(--n-color-text) 84%, transparent);
+}
+
+/* 尾巴（`.md`）比名字暗两档：它天天都在、从不变，眼睛不该先读到它。 */
+.dp-row-ext {
+  flex: none;
+  font-family: var(--n-font-mono);
+  font-size: 10.5px;
+  color: color-mix(in oklab, var(--n-color-muted) 62%, transparent);
+}
+
+.dp-row-stem--gone {
+  color: var(--n-color-muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--n-color-muted) 45%, transparent);
+}
+
+.dp-row-tag {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--n-color-accent) 18%, transparent);
+  color: color-mix(in oklab, var(--n-color-accent) 80%, var(--n-color-text));
+  font-family: var(--n-font-sans);
+  font-size: 9px;
+  line-height: 15px;
+  letter-spacing: 0.02em;
+}
+
+/* 搜到正文里时的上下文：一行，暗一档，压在名字下面。 */
+.dp-row-snip {
+  flex: 1 1 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px 6px;
+  font-size: 10.5px;
+  color: color-mix(in oklab, var(--n-color-muted) 85%, transparent);
+}
+
+/* 触屏那颗 ••• 是绝对定位的（menu.css 的 `.nm-host--row .nm-dots`），
+   名字得给它让出右边那 26px，不然长名字会被那颗圆盖住。 */
+@media (hover: none) {
+  .dp-row-pick {
+    padding-right: 30px;
+  }
+
+  .dp-row {
+    min-height: 44px;
+  }
+
+  .dp-row-pick {
+    min-height: 44px;
+  }
+}
+
+/* 键盘走位时的焦点：一列文件里得看得见自己停在哪一行。 */
+.dp-row-pick:focus-visible,
+.dp-trash-toggle:focus-visible {
+  outline: 2px solid var(--n-color-accent);
+  outline-offset: -2px;
+}
+
+.dp-side-hint {
+  padding: 6px 8px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--n-color-muted);
+}
+
+/* 新建 / 改名：就长在列表里那个位置，不用跳到浮层去。 */
+.dp-line {
+  padding: 1px 3px;
+}
+
+.dp-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 7px;
+  background: var(--n-color-canvas);
+  outline: none;
+  font-family: var(--n-font-mono);
+  font-size: 12px;
+  color: var(--n-color-text);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-color-accent) 60%, transparent);
+}
+
+.dp-input::placeholder {
+  color: color-mix(in oklab, var(--n-color-muted) 70%, transparent);
+}
+
+/* 最近删除：贴在左列底部，一条线隔开。展开的清单往上长，搜索框不动。 */
+.dp-side-foot {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 6px 6px;
+  border-top: 1px solid var(--n-color-border);
+}
+
+.dp-trash-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--n-color-muted);
+  transition: background 110ms var(--dp-ease-out), color 110ms var(--dp-ease-out);
+}
+
+.dp-trash-toggle:hover {
+  background: var(--n-color-raised);
+  color: var(--n-color-text);
+}
+
+/* iOS 在 16px 以下的输入框上会自动把页面放大一下 —— 那不是「生动」，那是 bug。 */
+@media (max-width: 819px) {
+  .dp-side-search-input,
+  .dp-input {
+    font-size: 16px;
+  }
+
+  .dp-side-search,
+  .dp-input {
+    height: 36px;
+  }
 }
 
 /* 工具条上的按钮：28px 的方，按下立刻缩一下 —— 反馈在 pointer-down，不等 click。 */
@@ -107,53 +337,7 @@
   border-radius: 10px;
 }
 
-/* ── 面包屑 / 小标签 ─────────────────────────────────────────────────────── */
-
-.dp-crumbs {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 1px;
-  font-size: 12.5px;
-  color: var(--n-color-muted);
-}
-
-.dp-crumb {
-  max-width: 12rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 4px 6px;
-  border-radius: 7px;
-  transition: color 120ms var(--dp-ease-out), background 120ms var(--dp-ease-out);
-}
-
-.dp-crumb:hover {
-  color: var(--n-color-text);
-  background: var(--n-color-surface);
-}
-
-.dp-crumb--here {
-  color: var(--n-color-text);
-  font-weight: 550;
-}
-
-.dp-crumb-sep {
-  flex: none;
-  color: color-mix(in oklab, var(--n-color-text) 26%, transparent);
-  font-size: 11px;
-}
-
-.dp-chip {
-  flex: none;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: var(--n-color-surface);
-  color: var(--n-color-muted);
-  font-family: var(--n-font-mono);
-  font-size: 10px;
-  letter-spacing: 0.02em;
-}
+/* ── 小标签 ───────────────────────────────────────────────────────────────── */
 
 .dp-pill {
   flex: none;
@@ -181,16 +365,22 @@
   flex-direction: column;
   min-height: 100%;
   width: 100%;
-  max-width: 46rem;
+  max-width: 44rem;
   margin: 0 auto;
-  /* 上面给浮着的工具条让路，下面给那颗提示留口气。 */
-  padding: calc(var(--dp-toolbar-h) + 28px) 20px 96px;
+  /* 上面留一口气，下面给那颗提示留位置。纸上没有工具条，不用给它让路。 */
+  padding: 36px 20px 96px;
 }
 
 @media (min-width: 640px) {
   .dp-column {
     padding-left: 32px;
     padding-right: 32px;
+  }
+}
+
+@media (max-width: 819px) {
+  .dp-column {
+    padding-top: 28px;
   }
 }
 
@@ -372,32 +562,6 @@
   }
 }
 
-/* 手机上的 ⋯ 菜单：从底下升上来的 sheet，顶部一道抓手 —— 它说的话是「能拖、能关」。 */
-.dp-sheet {
-  animation: dp-sheet var(--dp-in) var(--dp-spring);
-  border-radius: 20px 20px 0 0;
-  padding-bottom: env(safe-area-inset-bottom, 0px);
-}
-
-@keyframes dp-sheet {
-  from {
-    opacity: 0.001;
-    translate: 0 12px;
-  }
-  to {
-    opacity: 1;
-    translate: 0 0;
-  }
-}
-
-.dp-grabber {
-  width: 32px;
-  height: 4px;
-  margin: 6px auto 2px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--n-color-muted) 45%, transparent);
-}
-
 /* 回执：一颗浮起来的胶囊，3.4 秒后自己走。不该占一行正文的位置。 */
 .dp-toast {
   position: absolute;
@@ -427,19 +591,12 @@
   }
 }
 
-/* 搜索命中那一行的高亮：底色就是 accent 的一层，不动字色。 */
-.dp-hit {
-  background: color-mix(in oklab, var(--n-color-accent) 22%, transparent);
-  border-radius: 2px;
-}
-
 /* ── 三档偏好 ─────────────────────────────────────────────────────────────── */
 
 /* 少动一点 ≠ 没有反馈：滑动、缩放、弹簧全换成短淡入，颜色和透明度照旧。 */
 @media (prefers-reduced-motion: reduce) {
   .dp-pop,
   .dp-fade,
-  .dp-sheet,
   .dp-toast {
     animation: dp-fade 160ms ease;
   }
@@ -448,8 +605,8 @@
     scale: 1;
   }
 
-  .dp-toolbar,
   .dp-icon,
+  .dp-row,
   .dp-status {
     transition-duration: 120ms;
   }
@@ -462,19 +619,17 @@
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
-
-  .dp-toolbar {
-    background: var(--n-color-canvas);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
 }
 
 /* 要高对比：该有一根边的地方就给一根真的边。 */
 @media (prefers-contrast: more) {
-  .dp-toolbar {
-    background: var(--n-color-canvas);
-    box-shadow: 0 1px 0 var(--n-color-border);
+  .dp-side {
+    border-right-color: color-mix(in oklab, var(--n-color-text) 45%, transparent);
+  }
+
+  .dp-row[data-on="true"] {
+    background: color-mix(in oklab, var(--n-color-accent) 26%, transparent);
+    box-shadow: inset 2px 0 0 var(--n-color-accent);
   }
 
   .dp-glass {

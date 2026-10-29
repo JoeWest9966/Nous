@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Node, findNode, isSection, pathTo, treeMap } from "./game";
+import { type Node, findNode, treeMap } from "./game";
 import { normalizeDocName } from "./docname";
+import { copyText } from "./clipboard";
+import { NodeMenuProvider, NodeMenuTrigger, type MenuItem } from "./NodeMenu";
 import {
   type DocFile,
   DocConflictError,
@@ -24,20 +26,34 @@ import "./doc.css";
 /**
  * 一块的文档页。**真实路径**：`/p/<board>/<nodeId>/__nous/doc`。
  *
- * 这是 `demo/doc-editor/` 的 10 号方案（命令面板）落地后的样子，四条是刻意的：
+ * 形状是「左列文件 + 右边一张纸」，和盘面同一套规矩：
  *
- * - **列表默认不存在。** 屏幕上只有正文。切文档按 `⌘K`，敲两个字母就到；
- *   正文也能搜 —— 这是唯一一个「不占地方又能找到东西」的列表。
- * - **新建 / 删除 / 恢复在 `⋯` 里。** 三个动词都在那儿，和「找文档」分开：
- *   找是高频、随手；删是低频、要停一下。
- * - **`AGENTS.md` 只是名字特殊。** 它存在时能改、不能删 —— 它是 coding agent 进目录时
- *   自动找的文件名，删了整块就没人读得懂。但它不预生成：没有就是没有。
- * - **它盖在盘面上面，不卸载盘面。** 卸载会丢掉树的展开状态、滚动位置和撤销栈。
+ * - **左列可以收起。** 和盘面那颗一模一样的按钮（一个框、中间一条竖线），同一个手感：
+ *   宽 `248 → 0` 的宽度过渡，窄屏是一张盖在正文上的抽屉。状态记在这台浏览器里。
+ * - **左列就是这个文件夹。** `map/<id>/` 里有什么就列什么 —— 列表是 `readdir` 的结果，
+ *   不是宿主另存的一份清单。盘上多一个文件，这里就多一行。
+ * - **鼠标端的一切入口都是右键。** 行上不放悬停才浮出来的小图标：一张菜单里有
+ *   打开 / 重命名 / 复制名字 / 移到最近删除。触屏没有右键，那颗 ••• 才出现（和盘面共用）。
+ * - **右边只放当前这份。** 换文件只换右边，左列的滚动位置和选中都不跳。
+ * - **`AGENTS.md` 只是名字特殊**：它在的时候能改、不能删、不能改名 —— 它是 coding agent
+ *   进目录时自动找的文件名，删了整块就没人读得懂。但它不预生成：没有就是没有。
  *
+ * 它盖在盘面上面、不卸载盘面：卸载会丢掉树的展开状态、滚动位置和撤销栈。
  * 每份文档有自己的 etag 和自己的本地草稿：写一篇不该把别的文档顶成 409。
  */
 const SAVE_DELAY = 400;
 const ENTRY = "AGENTS.md";
+/** 窄到这个宽度以下，左列就是一张抽屉而不是一列。 */
+const NARROW = "(max-width: 819px)";
+/** 左列开着没有：住在这台浏览器里（和盘面那个 `nous-sidebar-open` 同一档，不进 tree.json）。 */
+const SIDE_KEY = "nous-doc-side";
+/** 左列是 248px —— 和盘面一样宽，两边切来切去不该有第二个宽度。 */
+const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
+/**
+ * 右键落在清单的空白处 = 想新建。它不是一份文档，所以借一个不会和文件名撞的 id：
+ * 文件名都带 `.md`（`normalizeDocName` 保证），`__padding` 撞不上。
+ */
+const NEW_ID = "__padding";
 
 type Phase = "loading" | "ready" | "missing" | "error";
 type Status = "idle" | "saving" | "saved" | "conflict" | "error";
@@ -52,6 +68,23 @@ const STATUS_TEXT: Record<Status, string> = {
 
 const words = (t: string): number => t.replace(/\s/g, "").length;
 const lines = (t: string): number => t.split("\n").length;
+
+/** 名字拆成「干」和「尾巴」：干能截断，尾巴不截 —— `能…md` 比 `能…` 好认得多。 */
+const splitName = (name: string): [string, string] => {
+  const stem = name.replace(/\.md$/i, "");
+  return [stem, name.slice(stem.length)];
+};
+
+/** 左列默认开着 —— 这是文档页的主导航。只有你亲手收起来过、或者屏幕窄，它才是关的。 */
+const readSide = (): boolean => {
+  try {
+    const v = localStorage.getItem(SIDE_KEY);
+    if (v === null) return !window.matchMedia(NARROW).matches;
+    return v === "1";
+  } catch {
+    return !window.matchMedia(NARROW).matches;
+  }
+};
 
 /* ------------------------------------------------------------------ *
  * 一份文档的读写。按名字分：切文档 = 换一份 state + 换一把 etag。
@@ -290,7 +323,6 @@ export function DocPage({
   root,
   ready,
   onClose,
-  onOpenGroup,
 }: {
   board: string;
   id: string;
@@ -298,13 +330,13 @@ export function DocPage({
   /** 树载完了没有。没载完就说「载入中」，别急着喊「查无此块」。 */
   ready: boolean;
   onClose: () => void;
-  /** 回到它所在的组 —— 面包屑上那一段。 */
-  onOpenGroup: (ids: string[]) => void;
 }) {
   const node = findNode(root, id);
   const tree = useMemo(() => treeMap(root).get(id) ?? node?.name ?? id, [root, id, node]);
 
-  const [narrow, setNarrow] = useState(() => window.matchMedia("(max-width: 819px)").matches);
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
+  /** 左列开着吗。宽屏决定那一列在不在，窄屏决定那张抽屉在不在 —— 一个开关，和盘面一样。 */
+  const [side, setSide] = useState(() => (window.matchMedia(NARROW).matches ? false : readSide()));
 
   const [files, setFiles] = useState<DocFile[]>([]);
   const [hasApp, setHasApp] = useState(false);
@@ -312,33 +344,27 @@ export function DocPage({
   const [listed, setListed] = useState(false);
   const [cur, setCur] = useState<string>(() => readLastDoc(board, id) ?? "");
 
-  /* 浮层：命令面板 / ⋯ 菜单 / 新建输入 / 删除确认。一次只开一个。 */
-  const [pal, setPal] = useState(false);
-  const [palQ, setPalQ] = useState("");
-  const [palRows, setPalRows] = useState<DocFile[]>([]);
-  const [palCur, setPalCur] = useState(0);
-  const [menu, setMenu] = useState(false);
+  /** 列表顶上那个输入框。新建和改名共用它，一次只开一个。 */
   const [adding, setAdding] = useState(false);
-  const [addErr, setAddErr] = useState("");
-  const [confirm, setConfirm] = useState<string | null>(null);
   /** 正在改名的那一份。`null` = 没在改。 */
   const [renaming, setRenaming] = useState<string | null>(null);
-  /** 一句给眼睛看的回执（「建好了」「改名了」）。浮起来，几秒后自己走。 */
+  const [confirm, setConfirm] = useState<string | null>(null);
+  /** 一句给眼睛看的回执（「建好了」「改名了」「没删成」）。浮起来，几秒后自己走。 */
   const [note, setNote] = useState("");
-  /** 正文滚起来没有。滚起来了工具条才浮起来 —— 用阴影替掉那根硬边框。 */
-  const [scrolled, setScrolled] = useState(false);
-  /** 标题就地改名：点标题换成一个输入框。 */
+  /** 左边那条搜索框。空着就是全量列表，有字就交给服务端搜（名字 + 正文）。 */
+  const [q, setQ] = useState("");
+  /** 搜出来的那一拨。`null` = 没在搜。 */
+  const [found, setFound] = useState<DocFile[] | null>(null);
+  const [trashOpen, setTrashOpen] = useState(false);
+  /** 正文里那个标题：点一下就地改名。 */
   const [titleEdit, setTitleEdit] = useState(false);
   const skipBlur = useRef(false);
   const renamed = useRef(false);
+  const search = useRef<HTMLInputElement | null>(null);
 
-  const closeAll = useCallback(() => {
-    setPal(false);
-    setMenu(false);
+  const closeInputs = useCallback(() => {
     setAdding(false);
     setRenaming(null);
-    setAddErr("");
-    setConfirm(null);
   }, []);
 
   /* 回执不占地方：3.4 秒，够看完一句话。 */
@@ -365,7 +391,7 @@ export function DocPage({
   }, [ready, node, refresh]);
 
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 819px)");
+    const mq = window.matchMedia(NARROW);
     const on = () => setNarrow(mq.matches);
     mq.addEventListener("change", on);
     return () => mq.removeEventListener("change", on);
@@ -375,6 +401,16 @@ export function DocPage({
   useEffect(() => {
     setTitleEdit(false);
   }, [cur]);
+
+  /* 左列的开合记在这台浏览器里。手机上那一下不动桌面上的偏好 —— 屏幕小不是「我收起来了」。 */
+  useEffect(() => {
+    if (narrow) return;
+    try {
+      localStorage.setItem(SIDE_KEY, side ? "1" : "0");
+    } catch {
+      // 隐私模式下写不进去就算了，开合本身照样能用。
+    }
+  }, [side, narrow]);
 
   /* —— 当前在看哪一份 → 记住；一份都没有就把记忆也抹掉 —— */
   useEffect(() => {
@@ -397,55 +433,65 @@ export function DocPage({
     setCur(next ? next.name : "");
   }, [ready, node, listed, live, cur, board, id]);
 
-  /* —— 命令面板：空查询给全部，有查询就交给服务端搜（正文不上网） —— */
+  /* —— 搜：名字和正文都问服务端（正文不上网，只回来命中那一行） —— */
   useEffect(() => {
-    if (!pal) return;
+    const needle = q.trim();
+    if (!needle) {
+      setFound(null);
+      return;
+    }
     let alive = true;
-    const run = () => {
-      if (!palQ.trim()) {
-        setPalRows(live);
-        setPalCur(0);
-        return;
-      }
-      void listDocs(board, id, palQ).then((out) => {
-        if (!alive || !out) return;
-        setPalRows(out.files.filter((f) => !f.trashed));
-        setPalCur(0);
-      });
-    };
     // 每敲一个字都问一次太吵：压 140ms，比一格键盘的重复还快。
-    const t = window.setTimeout(run, 140);
+    const t = window.setTimeout(() => {
+      void listDocs(board, id, needle).then((out) => {
+        if (!alive || !out) return;
+        setFound(out.files.filter((f) => !f.trashed));
+      });
+    }, 140);
     return () => {
       alive = false;
       window.clearTimeout(t);
     };
-  }, [pal, palQ, live, board, id]);
+  }, [q, board, id, files]);
 
-  /* —— Esc 从最上面那层往下关。⌘K 开关面板，⌘S 立刻写。 —— */
+  const startAdd = useCallback(() => {
+    setRenaming(null);
+    setAdding(true);
+    setQ("");
+    setSide(true);
+  }, []);
+
+  const startRename = useCallback((name: string) => {
+    setAdding(false);
+    setRenaming(name);
+    setQ("");
+    setSide(true);
+  }, []);
+
+  /* —— Esc 从最上面那层往下关。⌘K 展开左列去搜索，⌘S 立刻写。 —— */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (e.key === "Escape") {
+        // 右键菜单开着的时候 Esc 归它：那张菜单 portal 在 body 上（它得能浮在块上面），
+        // 拿不到上面那行 state，只好在 DOM 里问一句。
+        if (document.querySelector(".nm-menu")) return;
         e.preventDefault();
         e.stopPropagation();
         if (confirm) return setConfirm(null);
-        if (pal) return setPal(false);
-        if (menu) return setMenu(false);
-        if (adding || renaming) {
-          setAdding(false);
-          setRenaming(null);
-          setAddErr("");
-          return;
-        }
+        if (adding || renaming) return closeInputs();
+        if (narrow && side) return setSide(false);
         onClose();
         return;
       }
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setMenu(false);
-        setConfirm(null);
-        setPalQ("");
-        setPal((p) => !p);
+        setSide(true);
+        // 抽屉 / 输入框都在这一帧之后才落位，等它们摆好再抢焦点。
+        requestAnimationFrame(() => {
+          search.current?.focus();
+          search.current?.select();
+        });
         return;
       }
       if (mod && e.key.toLowerCase() === "s") {
@@ -455,36 +501,36 @@ export function DocPage({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [confirm, pal, menu, adding, renaming, onClose, doc]);
+  }, [confirm, adding, renaming, narrow, side, onClose, doc, closeInputs]);
 
+  /** 换一份：窄屏把左列收回去（那儿它是盖在正文上的），搜索清掉、输入框关掉。 */
   const open = (name: string) => {
-    if (name === cur) {
-      closeAll();
-      return;
-    }
     setCur(name);
-    closeAll();
+    setQ("");
+    closeInputs();
+    if (narrow) setSide(false);
   };
 
   const newDoc = async (raw: string) => {
     const typed = normalizeDocName(raw);
-    if (!typed) return setAddErr("名字空了 —— 至少给一个字");
+    if (!typed) return setNote("名字空了 —— 至少给一个字");
     // 入口名大小写归一：`agents.md` 也建到 `AGENTS.md` 上，别在盘上留下两份。
     const name = typed.toLowerCase() === ENTRY.toLowerCase() ? ENTRY : typed;
     if (files.some((f) => f.name.toLowerCase() === name.toLowerCase())) {
-      return setAddErr(`${name} 已经在了，换一个`);
+      return setNote(`${name} 已经在了，换一个`);
     }
     try {
       const out = await createDoc(board, id, name);
       await refresh();
-      setAdding(false);
-      setAddErr("");
-      setMenu(false);
+      closeInputs();
       setCur(out.name);
+      if (narrow) setSide(false);
       setNote(`${out.name} 建好了 —— 直接写`);
-    } catch (err) {
-      setAddErr(
-        err instanceof DocEditError && err.reason === "exists" ? `${name} 已经在了` : "没建成，名字可能不合规矩",
+    } catch (e) {
+      setNote(
+        e instanceof DocEditError && e.reason === "exists"
+          ? `${name} 已经在了`
+          : "没建成，名字可能不合规矩",
       );
     }
   };
@@ -494,16 +540,15 @@ export function DocPage({
     try {
       await trashDoc(board, id, name);
       const list = await refresh();
-      setNote(`${name} 已移到最近删除 —— ⋯ 里能恢复`);
+      setNote(`${name} 已移到最近删除 —— 左列底下能恢复`);
       if (cur === name) {
         const next = list?.find((f) => !f.trashed);
         setCur(next?.name ?? "");
       }
-    } catch (err) {
+      if (list?.every((f) => f.trashed)) setTrashOpen(true);
+    } catch (e) {
       setNote(
-        err instanceof DocEditError && err.reason === "protected"
-          ? "AGENTS.md 只能改，删不掉"
-          : "没删成",
+        e instanceof DocEditError && e.reason === "protected" ? "AGENTS.md 只能改，删不掉" : "没删成",
       );
     }
   };
@@ -526,21 +571,18 @@ export function DocPage({
    */
   const doRename = async (from: string, raw: string) => {
     const to = normalizeDocName(raw);
-    if (!to) return setAddErr("名字空了 —— 至少给一个字");
-    if (to === from) {
-      closeAll();
-      return;
-    }
-    if (files.some((f) => f.name.toLowerCase() === to)) return setAddErr(`${to} 已经在了，换一个`);
+    if (!to) return setNote("名字空了 —— 至少给一个字");
+    if (to === from) return closeInputs();
+    if (files.some((f) => f.name.toLowerCase() === to)) return setNote(`${to} 已经在了，换一个`);
     try {
       const out = await renameDoc(board, id, from, to);
       await refresh();
       if (cur === from) setCur(out.name);
-      closeAll();
+      closeInputs();
       setNote(`${from} → ${out.name}`);
-    } catch (err) {
-      const reason = err instanceof DocEditError ? err.reason : "other";
-      setAddErr(
+    } catch (e) {
+      const reason = e instanceof DocEditError ? e.reason : "other";
+      setNote(
         reason === "exists"
           ? `${to} 已经在了`
           : reason === "protected"
@@ -556,827 +598,567 @@ export function DocPage({
     try {
       const out = await restoreDoc(board, id, name);
       await refresh();
-      setMenu(false);
-      setCur(out.name);
+      setTrashOpen(false);
+      open(out.name);
       setNote(`${out.name} 回来了`);
-    } catch (err) {
-      setNote(err instanceof DocEditError && err.reason === "exists" ? "同名的那份还在，先删它" : "没恢复成");
+    } catch (e) {
+      setNote(
+        e instanceof DocEditError && e.reason === "exists" ? "同名的那份还在，先删它" : "没恢复成",
+      );
     }
   };
 
+  /**
+   * 右键菜单里的条目。鼠标端的一切入口都在这里 —— 行上没有悬停才浮出来的小图标，
+   * 一张菜单就够：打开 / 重命名 / 复制名字 / 移到最近删除。
+   *
+   * 入口那份把「重命名」「移到最近删除」摆出来但按不动（`disabled`）：
+   * 「没这功能」和「这份文件不给用」是两件事，界面得说清是哪一件。
+   */
+  const menuFor = (docId: string): MenuItem[] => {
+    if (docId === NEW_ID) {
+      return [{ key: "new", label: "新建文档", icon: <IconPage />, run: startAdd }];
+    }
+    const file = files.find((f) => f.name === docId);
+    if (!file) return [];
+    if (file.trashed) {
+      return [
+        {
+          key: "restore",
+          label: "恢复",
+          icon: <IconRestore />,
+          run: () => void doRestore(file.name),
+        },
+      ];
+    }
+    return [
+      ...(file.name === cur
+        ? []
+        : [{ key: "open", label: "打开", icon: <IconPage />, run: () => open(file.name) }]),
+      {
+        key: "rename",
+        // 入口那份把动词换成理由：按不动的按钮得说清是谁不让按，别让人猜。
+        label: file.protected ? "入口文件：不能改名" : "重命名",
+        icon: <IconPencil />,
+        separatorBefore: true,
+        disabled: file.protected,
+        run: () => startRename(file.name),
+      },
+      {
+        key: "copy",
+        label: "复制文件名",
+        icon: <IconCopy />,
+        run: () => void copyText(file.name),
+      },
+      {
+        key: "trash",
+        label: file.protected ? "入口文件：删不掉" : "移到最近删除",
+        icon: <IconTrash />,
+        danger: true,
+        separatorBefore: true,
+        disabled: file.protected,
+        run: () => setConfirm(file.name),
+      },
+    ];
+  };
+
   if (!ready) {
-    return <Shell onClose={onClose} crumbs={[id]} title={id}>{null}</Shell>;
+    return (
+      <Shell onClose={onClose} title={id}>
+        {null}
+      </Shell>
+    );
   }
 
   if (!node) {
     return (
-      <Shell onClose={onClose} crumbs={[id]} title={id}>
-        <p className="text-[13px] text-muted">
+      <Shell onClose={onClose} title={id}>
+        <p className="text-[13px] leading-relaxed text-muted">
           树里没有这个节点。可能已经被删了 —— 它的文件夹还躺在 map/.gone/ 里，撤销回来就接得上。
         </p>
       </Shell>
     );
   }
 
-  const crumbs = tree.split("/");
-  const title = cur.replace(/\.md$/, "");
+  const title = cur.replace(/\.md$/i, "");
+  const rows = found ?? live;
+  const searching = q.trim().length > 0;
+  const empty = listed && live.length === 0 && !searching;
 
   return (
-    <div
-      role="dialog"
-      aria-label={`${node.name} 的文档`}
-      className="absolute inset-0 z-40 flex flex-col bg-canvas text-text"
-    >
-      {/* 一条头：返回、位置、当前是哪一份、状态、⌘K、⋯。 */}
-      <header className="dp-toolbar" data-lifted={scrolled}>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="返回盘面"
-          title="返回盘面（Esc）"
-          className={`dp-icon ${narrow ? "dp-icon--touch" : ""}`}
-        >
-          <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
-            <path
-              d="M9.5 3.5 5 8l4.5 4.5"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-
-        <nav className="dp-crumbs ml-1" aria-label="这个块在树里的位置">
-          {crumbs.map((name, i) => {
-            const last = i === crumbs.length - 1;
-            return (
-              <span key={`${name}-${i}`} className="flex min-w-0 items-center">
-                {i > 0 && (
-                  <span className="dp-crumb-sep" aria-hidden="true">
-                    ›
-                  </span>
-                )}
-                {last ? (
-                  <span className="dp-crumb dp-crumb--here">{name}</span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => onOpenGroup(pathTo(root, id))}
-                    className="dp-crumb"
-                  >
-                    {name}
-                  </button>
-                )}
-              </span>
-            );
-          })}
-        </nav>
-
-        <div className="ml-auto flex shrink-0 items-center gap-1">
-          {!narrow && (
-            <span
-              className="dp-chip mr-0.5"
-              title="这一块的 id 同时是它在 map/ 里的文件夹名"
-            >
-              {isSection(node) ? "组" : "块"} · {id}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setMenu(false);
-              setPalQ("");
-              setPal((p) => !p);
-            }}
-            aria-label="找文档（⌘K）"
-            title="找文档（⌘K）"
-            aria-expanded={pal}
-            className={`flex items-center gap-1 rounded-lg text-[11.5px] text-muted transition-[background,color,scale] duration-150 hover:bg-surface hover:text-text active:scale-[0.96] ${
-              narrow ? "h-11 min-w-11 justify-center" : "h-7 px-2"
-            }`}
-          >
-            <svg viewBox="0 0 14 14" className="h-3.5 w-3.5" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <circle cx="6.3" cy="6.3" r="3.5" />
-              <path d="M9 9 11.6 11.6" />
-            </svg>
-            {!narrow && <kbd className="font-mono text-[10.5px] text-muted/70">⌘K</kbd>}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPal(false);
-              setAddErr("");
-              setAdding(false);
-              setRenaming(null);
-              setMenu((m) => !m);
-            }}
-            aria-label="更多操作"
-            title="更多操作"
-            aria-expanded={menu}
-            /* 别加 `nm-dots`：那套样式是给浮在块/行上的那些用的 ——
-               position:absolute + opacity:0 + pointer-events:none，只在 `.nm-host:hover`
-               里复活。这里没有 nm-host，套上去这颗 ••• 在桌面上就是一块点不到的空气。 */
-            className={`dp-icon ${narrow ? "dp-icon--touch" : ""}`}
-          >
-            <svg viewBox="0 0 14 14" className="h-3.5 w-3.5" aria-hidden="true" fill="currentColor">
-              <circle cx="3" cy="7" r="1.25" />
-              <circle cx="7" cy="7" r="1.25" />
-              <circle cx="11" cy="7" r="1.25" />
-            </svg>
-          </button>
-        </div>
-      </header>
-
+    <NodeMenuProvider attr="data-doc-id" items={(docId) => menuFor(docId)}>
       <div
-        className="dp-scroll"
-        onScroll={(e) => {
-          const v = e.currentTarget.scrollTop > 4;
-          setScrolled((s) => (s === v ? s : v));
-        }}
+        role="dialog"
+        aria-label={`${node.name} 的文档`}
+        className="absolute inset-0 z-40 flex flex-col bg-canvas text-text"
       >
-        <div className="dp-column">
-          {doc.phase === "loading" && !!cur && (
-            <p className="pt-1 text-[13px] text-muted/70">载入中…</p>
-          )}
+        {/* 一条头：返回、左列开合、位置、当前是哪一份、新建。和盘面那条一个高度、一种节奏。 */}
+        <header className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-3">
+          <IconBtn label="返回盘面（Esc）" onClick={onClose}>
+            <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
+              <path
+                d="M9.5 3.5 5 8l4.5 4.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </IconBtn>
 
-          {listed && live.length === 0 && (
-            <div className="dp-empty">
-              <p>
-                {gone.length > 0
-                  ? "正文档都进最近删除了 —— 在那儿恢复，或者重新写一份。"
-                  : "这个文件夹还是空的 —— 一份文档都没有。想有，就从第一句开始。"}
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setRenaming(null);
-                  setAddErr("");
-                  setAdding(gone.length === 0);
-                  setMenu(true);
-                }}
-                className="h-8 rounded-lg bg-surface px-3 text-[12px] text-text/90 transition-[background,scale] hover:bg-raised active:scale-[0.97]"
-              >
-                {gone.length > 0 ? "打开最近删除" : "新建一份"}
-              </button>
-            </div>
-          )}
+          {/* 左列的开关。**和盘面那颗一模一样**：一个框，中间一条竖线 —— 说的是「这一列」，
+              不是一个抽象的箭头。开的时候字色亮着，关着的时候是暗的。 */}
+          <IconBtn
+            label={side ? "收起左列" : "展开左列"}
+            onClick={() => setSide(!side)}
+            className={side ? "text-text/80" : "text-muted"}
+          >
+            <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
+              <rect
+                x="1.5"
+                y="2.5"
+                width="13"
+                height="11"
+                rx="2.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.2"
+              />
+              <path d="M6 2.5v11" stroke="currentColor" strokeWidth="1.2" />
+            </svg>
+          </IconBtn>
 
-          {doc.phase === "missing" && live.length > 0 && (
-            <div className="dp-empty">
-              <p>
-                <span className="font-mono text-text">{cur}</span> 不在磁盘上了 —— 可能刚被别处删掉。
-              </p>
-              <button
-                type="button"
-                onClick={() => setCur(live[0].name)}
-                className="h-8 rounded-lg bg-surface px-3 text-[12px] text-text/90 transition-[background,scale] hover:bg-raised active:scale-[0.97]"
-              >
-                打开 {live[0].name}
-              </button>
-            </div>
-          )}
+          {/* 位置：块名 / 当前这一份。都是字，不是按钮 —— 想回去就按左上角那颗。 */}
+          <div className="flex min-w-0 items-baseline gap-1.5 px-1 text-[13px]">
+            <span className="truncate font-medium text-text/90" title={tree}>
+              {node.name}
+            </span>
+            <span className="text-text/25" aria-hidden="true">
+              /
+            </span>
+            <span className="truncate font-mono text-[11.5px] text-muted">{cur || "文档"}</span>
+            {current?.protected && <span className="dp-pill">入口</span>}
+          </div>
 
-          {doc.phase === "error" && (
-            <p className="pt-1 text-[13px] text-muted">
-              读不到这份文件（<span className="text-danger">{doc.msg}</span>）。
-            </p>
-          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <Pill onClick={startAdd} title="在这个文件夹里新建一份文档">
+              ＋ 文档
+            </Pill>
+          </div>
+        </header>
 
-          {doc.phase === "ready" && (
-            <>
-              <p className="dp-eyebrow" title={`content/${board}/map/${id}/${cur}`}>
-                map/{id}/{cur}
-              </p>
-              <div className="dp-title-row">
-                {/* 标题就是名字。**点一下就地改**，不用绕到 ⋯ 里去 —— 名字在哪儿，就在哪儿改。
-                    和 Finder / Notes 一个手感：回车或失焦交，Esc 退。AGENTS.md 不能改，
-                    那就不是一颗按钮（不装一个假的可点击）。 */}
-                {titleEdit ? (
-                  <input
-                    key={cur}
-                    autoFocus
-                    defaultValue={title}
-                    aria-label="文档名"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className="dp-title dp-title-input min-w-0"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        commitTitle(e.currentTarget.value);
-                      }
-                      if (e.key === "Escape") {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        skipBlur.current = true;
-                        setTitleEdit(false);
-                      }
-                    }}
-                    onBlur={(e) => {
-                      if (skipBlur.current) {
-                        skipBlur.current = false;
-                        return;
-                      }
-                      commitTitle(e.currentTarget.value);
-                    }}
-                  />
-                ) : current?.protected ? (
-                  <h1 className="dp-title min-w-0 break-words">{title}</h1>
-                ) : (
+        <div className="relative flex min-h-0 flex-1">
+          {/* ── 左列：就是这个文件夹 ─────────────────────────────────── */}
+          <aside
+            className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-300 ${EASE} ${
+              narrow
+                ? `absolute inset-y-0 left-0 z-20 shadow-[0_0_60px_rgba(0,0,0,0.6)] ${side ? "w-[248px]" : "w-0 border-r-0"}`
+                : `relative ${side ? "w-[248px]" : "w-0 border-r-0"}`
+            }`}
+            aria-label="文档列表"
+            inert={!side || undefined}
+          >
+            <div
+              className={`flex h-full w-[248px] flex-col ${side ? "opacity-100" : "opacity-0"} transition-opacity duration-200`}
+            >
+              <div className="dp-side-search mt-2.5">
+                <svg
+                  viewBox="0 0 14 14"
+                  className="dp-side-search-icon"
+                  aria-hidden="true"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                >
+                  <circle cx="6.3" cy="6.3" r="3.5" />
+                  <path d="M9 9 11.6 11.6" />
+                </svg>
+                <input
+                  ref={search}
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder="筛选 / 搜正文"
+                  aria-label="筛选或搜正文"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  className="dp-side-search-input"
+                  onKeyDown={(e) => {
+                    // 回车就开第一行：搜完不用把手从键盘上拿开去摸鼠标。
+                    if (e.key === "Enter" && rows[0]) {
+                      e.preventDefault();
+                      open(rows[0].name);
+                    }
+                  }}
+                />
+                {searching ? (
                   <button
                     type="button"
-                    onClick={() => setTitleEdit(true)}
-                    title="点一下改名字"
-                    className="dp-title-btn min-w-0"
+                    onClick={() => {
+                      setQ("");
+                      setFound(null);
+                    }}
+                    aria-label="清空搜索"
+                    className="dp-side-search-x"
                   >
-                    <span className="break-words">{title}</span>
                     <svg
                       viewBox="0 0 14 14"
-                      className="dp-title-pencil h-4 w-4 shrink-0"
+                      className="h-3 w-3"
                       aria-hidden="true"
                       fill="none"
                       stroke="currentColor"
-                      strokeWidth="1.4"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    >
+                      <path d="M3.8 3.8l6.4 6.4M10.2 3.8l-6.4 6.4" />
+                    </svg>
+                  </button>
+                ) : (
+                  !narrow && <kbd className="dp-side-kbd">⌘K</kbd>
+                )}
+              </div>
+
+              {/* 空白处右键 = 新建。整块清单带一个 `data-doc-id`，行在它里面 ——
+                  `closest` 先找到行，所以行上是行的菜单，空白处才是新建。 */}
+              <div className="dp-side-list" data-doc-id={NEW_ID}>
+                {adding && (
+                  <div className="dp-line">
+                    <input
+                      autoFocus
+                      placeholder="新文件的名字，回车确认"
+                      aria-label="新文档名"
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className="dp-input"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void newDoc(e.currentTarget.value);
+                        }
+                      }}
+                      onBlur={closeInputs}
+                    />
+                  </div>
+                )}
+
+                {rows.map((f) =>
+                  renaming === f.name ? (
+                    <div className="dp-line" key={f.name}>
+                      <input
+                        autoFocus
+                        defaultValue={splitName(f.name)[0]}
+                        aria-label="新文档名"
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        className="dp-input"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void doRename(f.name, e.currentTarget.value);
+                          }
+                        }}
+                        onBlur={closeInputs}
+                      />
+                    </div>
+                  ) : (
+                    <SideDoc key={f.name} file={f} on={f.name === cur} onPick={() => open(f.name)} />
+                  ),
+                )}
+
+                {searching && rows.length === 0 && (
+                  <p className="dp-side-hint">搜了 {live.length} 份，没有命中「{q.trim()}」。</p>
+                )}
+
+                {empty && (
+                  <p className="dp-side-hint">
+                    这个文件夹还是空的 —— 一份文档都没有。右键这里，或者按上面的「＋ 文档」。
+                  </p>
+                )}
+
+                {!listed && !searching && <p className="dp-side-hint">载入中…</p>}
+              </div>
+
+              {gone.length > 0 && (
+                <div className="dp-side-foot">
+                  <button
+                    type="button"
+                    onClick={() => setTrashOpen((o) => !o)}
+                    aria-expanded={trashOpen}
+                    className="dp-trash-toggle"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-left">最近删除</span>
+                    <span className="tabular-nums">{gone.length}</span>
+                    <svg
+                      viewBox="0 0 14 14"
+                      className={`h-3 w-3 shrink-0 transition-transform duration-150 ${trashOpen ? "rotate-90" : ""}`}
+                      aria-hidden="true"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     >
-                      <path d="M9.4 2.6 11.4 4.6 5.1 10.9 2.6 11.4 3.1 8.9z" />
-                      <path d="M8.4 3.6 10.4 5.6" />
+                      <path d="M5.6 3.4 9.2 7l-3.6 3.6" />
                     </svg>
                   </button>
-                )}
-                {current?.protected && <span className="dp-pill">agent 入口</span>}
-              </div>
+                  {trashOpen &&
+                    gone.map((t) => (
+                      <SideDoc
+                        key={t.name}
+                        file={t}
+                        on={false}
+                        onPick={() => void doRestore(t.name)}
+                        gone
+                      />
+                    ))}
+                </div>
+              )}
+            </div>
+          </aside>
 
-              {/* 一行小字：多大、存没存下、它是不是自己跑起来了。都在这一行，不占第二行正文。 */}
-              <div className="dp-meta">
-                <span className="dp-stat">
-                  {words(doc.text)} 字 · {lines(doc.text)} 行
-                </span>
-                {STATUS_TEXT[doc.status] && (
+          {narrow && side && (
+            <button
+              type="button"
+              aria-label="关闭左列浮层"
+              onClick={() => setSide(false)}
+              className="absolute inset-0 z-10 bg-black/40"
+            />
+          )}
+
+          {/* ── 右边：当前这一份 ───────────────────────────────────── */}
+          <div className="relative flex min-w-0 flex-1 flex-col">
+            <div className="dp-scroll">
+              <div className="dp-column">
+                {!cur && !listed && <p className="pt-1 text-[13px] text-muted/70">载入中…</p>}
+
+                {!cur && empty && (
+                  <div className="dp-empty">
+                    <p>
+                      {gone.length > 0
+                        ? "正文档都进最近删除了 —— 在左列底下恢复，或者重新写一份。"
+                        : "这个文件夹还是空的 —— 一份文档都没有。想有，就从第一句开始。"}
+                    </p>
+                    <Pill onClick={startAdd}>新建一份</Pill>
+                  </div>
+                )}
+
+                {!cur && listed && !empty && (
+                  <p className="pt-1 text-[13px] text-muted/70">从左列挑一份。</p>
+                )}
+
+                {doc.phase === "missing" && (
+                  <div className="dp-empty">
+                    <p>
+                      <span className="font-mono text-text">{cur}</span> 不在磁盘上了 ——
+                      可能刚被别处删掉。
+                    </p>
+                    {live.length > 0 && <Pill onClick={() => open(live[0].name)}>打开 {live[0].name}</Pill>}
+                  </div>
+                )}
+
+                {doc.phase === "error" && (
+                  <p className="pt-1 text-[13px] text-muted">
+                    读不到这份文件（<span className="text-danger">{doc.msg}</span>）。
+                  </p>
+                )}
+
+                {doc.phase === "ready" && (
                   <>
-                    <span className="dp-dot" aria-hidden="true" />
-                    <span key={doc.status} className="dp-status" data-s={doc.status} aria-live="polite">
-                      {STATUS_TEXT[doc.status]}
-                    </span>
+                    <p className="dp-eyebrow" title={`content/${board}/map/${id}/${cur}`}>
+                      map/{id}/{cur}
+                    </p>
+                    <div className="dp-title-row">
+                      {/* 标题就是名字。**点一下就地改**，不用绕到菜单里去 —— 名字在哪儿，就在哪儿改。
+                          和 Finder / Notes 一个手感：回车或失焦交，Esc 退。AGENTS.md 不能改名，
+                          那就不是一颗按钮（不装一个假的可点击）。 */}
+                      {titleEdit ? (
+                        <input
+                          key={cur}
+                          autoFocus
+                          defaultValue={title}
+                          aria-label="文档名"
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                          className="dp-title dp-title-input min-w-0"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitTitle(e.currentTarget.value);
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              skipBlur.current = true;
+                              setTitleEdit(false);
+                            }
+                          }}
+                          onBlur={(e) => {
+                            if (skipBlur.current) {
+                              skipBlur.current = false;
+                              return;
+                            }
+                            commitTitle(e.currentTarget.value);
+                          }}
+                        />
+                      ) : current?.protected ? (
+                        <h1 className="dp-title min-w-0 break-words">{title}</h1>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setTitleEdit(true)}
+                          title="点一下改名字"
+                          className="dp-title-btn dp-title min-w-0"
+                        >
+                          <span className="break-words">{title}</span>
+                          <svg
+                            viewBox="0 0 14 14"
+                            className="dp-title-pencil h-4 w-4 shrink-0"
+                            aria-hidden="true"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M9.4 2.6 11.4 4.6 5.1 10.9 2.6 11.4 3.1 8.9z" />
+                            <path d="M8.4 3.6 10.4 5.6" />
+                          </svg>
+                        </button>
+                      )}
+                      {current?.protected && <span className="dp-pill">agent 入口</span>}
+                    </div>
+
+                    {/* 一行小字：多大、存没存下、它是不是自己跑起来了。都在这一行，不占第二行正文。 */}
+                    <div className="dp-meta">
+                      <span className="dp-stat">
+                        {words(doc.text)} 字 · {lines(doc.text)} 行
+                      </span>
+                      {STATUS_TEXT[doc.status] && (
+                        <>
+                          <span className="dp-dot" aria-hidden="true" />
+                          <span
+                            key={doc.status}
+                            className="dp-status"
+                            data-s={doc.status}
+                            aria-live="polite"
+                          >
+                            {STATUS_TEXT[doc.status]}
+                          </span>
+                        </>
+                      )}
+                      {hasApp && (
+                        <a
+                          className="dp-link"
+                          href={`/p/${encodeURIComponent(board)}/${encodeURIComponent(id)}/`}
+                          target="_blank"
+                          rel="noopener"
+                          title="这一块在自己跑（文件夹里有 scripts.start）—— 在新标签页打开"
+                        >
+                          打开它的页面 ›
+                        </a>
+                      )}
+                    </div>
+
+                    {doc.theirs && (
+                      <div className="dp-glass mb-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-[12px]">
+                        <span className="min-w-0 flex-1 text-muted">
+                          磁盘上这份被别处改过了。两边都还在，你选。
+                        </span>
+                        <Banner onClick={doc.takeTheirs}>用磁盘的</Banner>
+                        <Banner onClick={doc.keepMine} muted>
+                          用我的覆盖
+                        </Banner>
+                      </div>
+                    )}
+
+                    {doc.orphan && (
+                      <div className="dp-glass mb-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-[12px]">
+                        <span className="min-w-0 flex-1 text-muted">
+                          本地有一份没发出去的草稿，但它基于的是旧版本。两边都还在，你选。
+                        </span>
+                        <Banner onClick={doc.useOrphan}>用草稿的</Banner>
+                        <Banner onClick={doc.dropOrphan} muted>
+                          丢掉草稿
+                        </Banner>
+                      </div>
+                    )}
+
+                    {doc.status === "error" && (
+                      <p className="mb-3 text-[11.5px] text-danger">
+                        没连上。字已经存成本地草稿了，下次进来先看它。
+                      </p>
+                    )}
+
+                    <textarea
+                      value={doc.text}
+                      onChange={(e) => doc.edit(e.target.value)}
+                      autoFocus
+                      spellCheck={false}
+                      aria-label={`${cur} 正文`}
+                      placeholder="写点什么。改了就自己存。"
+                      className="dp-text w-full flex-1 resize-none bg-transparent outline-none"
+                    />
                   </>
                 )}
-                {hasApp && (
-                  <a
-                    className="dp-link"
-                    href={`/p/${encodeURIComponent(board)}/${encodeURIComponent(id)}/`}
-                    target="_blank"
-                    rel="noopener"
-                    title="这一块在自己跑（文件夹里有 scripts.start）—— 在新标签页打开"
-                  >
-                    打开它的页面 ›
-                  </a>
-                )}
               </div>
+            </div>
 
-              {doc.theirs && (
-                <div className="dp-glass mb-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-[12px]">
-                  <span className="min-w-0 flex-1 text-muted">磁盘上这份被别处改过了。两边都还在，你选。</span>
-                  <Banner onClick={doc.takeTheirs}>用磁盘的</Banner>
-                  <Banner onClick={doc.keepMine} muted>
-                    用我的覆盖
-                  </Banner>
-                </div>
-              )}
-
-              {doc.orphan && (
-                <div className="dp-glass mb-3 flex flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-[12px]">
-                  <span className="min-w-0 flex-1 text-muted">
-                    本地有一份没发出去的草稿，但它基于的是旧版本。两边都还在，你选。
-                  </span>
-                  <Banner onClick={doc.useOrphan}>用草稿的</Banner>
-                  <Banner onClick={doc.dropOrphan} muted>
-                    丢掉草稿
-                  </Banner>
-                </div>
-              )}
-
-              {doc.status === "error" && (
-                <p className="mb-3 text-[11.5px] text-danger">
-                  没连上。字已经存成本地草稿了，下次进来先看它。
-                </p>
-              )}
-
-              <textarea
-                value={doc.text}
-                onChange={(e) => doc.edit(e.target.value)}
-                autoFocus
-                spellCheck={false}
-                aria-label={`${cur} 正文`}
-                placeholder="写点什么。改了就自己存。"
-                className="dp-text w-full flex-1 resize-none bg-transparent outline-none"
-              />
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* 回执：一颗浮起来的胶囊，3.4 秒后自己走。 */}
-      {note && (
-        <div className="dp-glass dp-toast" role="status">
-          {note}
-        </div>
-      )}
-
-      {pal && (
-        <Palette
-          narrow={narrow}
-          q={palQ}
-          onQ={(v) => {
-            setPalQ(v);
-          }}
-          rows={palRows}
-          cur={palCur}
-          onCur={setPalCur}
-          onPick={open}
-          onClose={() => setPal(false)}
-          onDelete={setConfirm}
-          total={live.length}
-        />
-      )}
-
-      {menu && (
-        <Menu
-          narrow={narrow}
-          docs={live}
-          trash={gone}
-          current={cur}
-          mode={renaming ? "rename" : adding ? "add" : "idle"}
-          initial={renaming ? renaming.replace(/\.md$/i, "") : ""}
-          err={addErr}
-          onStartAdd={() => {
-            setRenaming(null);
-            setAdding(true);
-            setAddErr("");
-          }}
-          onStartRename={(n) => {
-            setAdding(false);
-            setRenaming(n);
-            setAddErr("");
-          }}
-          onCancelInput={() => {
-            setAdding(false);
-            setRenaming(null);
-            setAddErr("");
-          }}
-          onSubmit={(v) => (renaming ? void doRename(renaming, v) : void newDoc(v))}
-          onDelete={(n) => {
-            setMenu(false);
-            setConfirm(n);
-          }}
-          onRestore={(n) => void doRestore(n)}
-          onClose={() => setMenu(false)}
-        />
-      )}
-
-      {confirm && (
-        <Confirm
-          name={confirm}
-          onCancel={() => setConfirm(null)}
-          onYes={() => void doTrash(confirm)}
-        />
-      )}
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * 命令面板：桌面是一张小浮层（贴着顶边，像 Spotlight），
- * 手机是一整页（搜索页 —— 那儿没有「浮层」这回事，键盘一起就是全屏）。
- * ------------------------------------------------------------------ */
-function Palette({
-  narrow,
-  q,
-  onQ,
-  rows,
-  cur,
-  onCur,
-  onPick,
-  onClose,
-  onDelete,
-  total,
-}: {
-  narrow: boolean;
-  q: string;
-  onQ: (v: string) => void;
-  rows: DocFile[];
-  cur: number;
-  onCur: (n: number) => void;
-  onPick: (name: string) => void;
-  onClose: () => void;
-  onDelete: (name: string) => void;
-  total: number;
-}) {
-  const input = useRef<HTMLInputElement | null>(null);
-  const list = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    input.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    list.current?.querySelector<HTMLElement>('[data-cur="1"]')?.scrollIntoView({ block: "nearest" });
-  }, [cur, rows]);
-
-  const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      if (!rows.length) return;
-      onCur(Math.max(0, Math.min(rows.length - 1, cur + (e.key === "ArrowDown" ? 1 : -1))));
-      return;
-    }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      const hit = rows[cur];
-      if (hit) onPick(hit.name);
-      return;
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === "Backspace") {
-      e.preventDefault();
-      const hit = rows[cur];
-      if (hit && !hit.protected) onDelete(hit.name);
-    }
-  };
-
-  const panel = (
-    <div
-      className={`${narrow ? "flex min-h-0 flex-1 flex-col" : "dp-glass dp-pop w-[min(420px,calc(100vw-32px))] overflow-hidden rounded-xl"}`}
-      onKeyDown={onKey}
-    >
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <svg viewBox="0 0 14 14" className="h-3.5 w-3.5 shrink-0 text-muted" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-          <circle cx="6.3" cy="6.3" r="3.5" />
-          <path d="M9 9 11.6 11.6" />
-        </svg>
-        <input
-          ref={input}
-          value={q}
-          onChange={(e) => onQ(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              e.stopPropagation();
-              onClose();
-            }
-          }}
-          placeholder="搜名字或正文"
-          aria-label="搜文档"
-          autoCapitalize="off"
-          autoCorrect="off"
-          spellCheck={false}
-          className="min-w-0 flex-1 bg-transparent font-mono text-[16px] text-text outline-none placeholder:text-muted/60 sm:text-[13px]"
-        />
-        {!narrow && (
-          <kbd className="shrink-0 rounded-[3px] bg-surface px-1 py-0.5 font-mono text-[10px] text-muted/70">
-            esc
-          </kbd>
-        )}
-      </div>
-
-      <div
-        ref={list}
-        className={`overflow-y-auto overscroll-contain p-1.5 ${narrow ? "min-h-0 flex-1" : "max-h-[46vh]"}`}
-        role="listbox"
-        aria-label="文档"
-      >
-        {rows.length === 0 && (
-          <p className="px-2 py-3 text-[12px] leading-relaxed text-muted">
-            {q.trim() ? `搜了 ${total} 份，没有命中「${q.trim()}」。` : "这一块还没有文档。"}
-          </p>
-        )}
-        {rows.map((f, i) => (
-          <div
-            key={f.name}
-            data-cur={i === cur ? "1" : undefined}
-            className={`flex w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-[12.5px] transition-colors duration-100 ${
-              narrow ? "min-h-[46px]" : "min-h-[34px]"
-            } ${
-              i === cur ? "bg-accent text-on-accent" : "text-text/90 hover:bg-surface"
-            }`}
-            role="option"
-            aria-selected={i === cur}
-            tabIndex={-1}
-            onPointerDown={(e) => {
-              // 只防焦点被抢走，不在这里选 —— 选在 onClick。两处都选会打开两次。
-              e.preventDefault();
-            }}
-            onKeyDown={(e) => {
-              // 触屏 / 键盘也能走：只有 pointer 的话，Enter 选不中。
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onPick(f.name);
-              }
-            }}
-            onClick={() => onPick(f.name)}
-            onMouseEnter={() => onCur(i)}
-          >
-            {f.protected ? (
-              <span
-                className={`shrink-0 rounded-[3px] px-1 text-[9.5px] ${
-                  i === cur ? "bg-on-accent/20 text-on-accent" : "bg-surface text-muted"
-                }`}
-              >
-                入口
-              </span>
-            ) : (
-              <span
-                className={`h-1.5 w-1.5 shrink-0 rounded-full ${i === cur ? "bg-on-accent/60" : "bg-muted/40"}`}
-                aria-hidden="true"
-              />
-            )}
-            <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{f.name}</span>
-            {f.snippet && (
-              <span
-                className={`max-w-[45%] shrink-0 truncate text-[10.5px] ${
-                  i === cur ? "text-on-accent/75" : "text-muted"
-                }`}
-              >
-                {f.snippet}
-              </span>
+            {/* 回执：一颗浮起来的胶囊，3.4 秒后自己走。挂在正文这一格上，所以它是「纸」的中心，
+                不是「整个窗口」的中心 —— 左边还剩一列文件呢。 */}
+            {note && (
+              <div className="dp-glass dp-toast" role="status">
+                {note}
+              </div>
             )}
           </div>
-        ))}
-      </div>
 
-      {!narrow && (
-        <div className="flex items-center gap-3 border-t border-border px-3 py-1.5 text-[10px] text-muted/60">
-          <span>↑↓ 选</span>
-          <span>⏎ 打开</span>
-          <span>⌘⌫ 删除</span>
-          <span className="ml-auto tabular-nums">{rows.length} / {total}</span>
+          {confirm && (
+            <Confirm
+              name={confirm}
+              onCancel={() => setConfirm(null)}
+              onYes={() => void doTrash(confirm)}
+            />
+          )}
         </div>
-      )}
-    </div>
-  );
-
-  if (narrow) {
-    return (
-      <div className="dp-fade absolute inset-0 z-30 flex flex-col bg-canvas">
-        <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-7 items-center gap-1 rounded-lg px-1.5 text-[13px] text-accent"
-          >
-            <svg viewBox="0 0 14 14" className="h-4 w-4" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M8.4 3.4 4.8 7l3.6 3.6" />
-            </svg>
-            返回
-          </button>
-          <span className="ml-auto font-mono text-[10.5px] text-muted/60">{total} 份</span>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col p-2">{panel}</div>
       </div>
-    );
-  }
-
-  return (
-    <div className="absolute inset-0 z-30" role="presentation">
-      <div
-        className="absolute inset-0 bg-black/25"
-        onPointerDown={onClose}
-        aria-hidden="true"
-      />
-      <div className="pointer-events-none absolute inset-x-0 top-3 flex justify-center px-4">
-        <div className="pointer-events-auto">{panel}</div>
-      </div>
-    </div>
+    </NodeMenuProvider>
   );
 }
 
 /* ------------------------------------------------------------------ *
- * ⋯ 菜单：新建 / 改名 / 删 / 恢复。
+ * 列表里的一行：一个名字，右键归菜单管。
  *
- * 桌面是贴着那颗按钮弹出来的小面板（`transform-origin` 在按钮上，所以它看起来是
- * 「从 ⋯ 里长出来的」，不是凭空出现在屏幕中间）；手机是从底上升起来的 sheet，
- * 顶部一道抓手——那是在说「能拖、能关」。
+ * **鼠标端行上没有任何按钮** —— 悬停才浮出来的小图标是「求你别用」的按钮，还会跟右键抢位置。
+ * 触屏没有右键，所以那颗 ••• 只在 `(hover: none)` 的设备上才存在（`NodeMenuTrigger` 自己判断）。
  * ------------------------------------------------------------------ */
-function Menu({
-  narrow,
-  docs,
-  trash,
-  current,
-  mode,
-  initial,
-  err,
-  onStartAdd,
-  onStartRename,
-  onCancelInput,
-  onSubmit,
-  onDelete,
-  onRestore,
-  onClose,
+function SideDoc({
+  file,
+  on,
+  onPick,
+  gone,
 }: {
-  narrow: boolean;
-  docs: DocFile[];
-  trash: DocFile[];
-  current: string;
-  mode: "idle" | "add" | "rename";
-  initial: string;
-  err: string;
-  onStartAdd: () => void;
-  onStartRename: (name: string) => void;
-  onCancelInput: () => void;
-  onSubmit: (v: string) => void;
-  onDelete: (name: string) => void;
-  onRestore: (name: string) => void;
-  onClose: () => void;
+  file: DocFile;
+  on: boolean;
+  onPick: () => void;
+  /** 最近删除里那一行：名字划掉，左键点它就恢复。 */
+  gone?: boolean;
 }) {
-  const input = useRef<HTMLInputElement | null>(null);
-  const cur = docs.find((d) => d.name === current);
-  const editing = mode !== "idle";
-
-  useEffect(() => {
-    if (!editing) return;
-    const el = input.current;
-    if (!el) return;
-    el.focus();
-    // 改名时把光标停在名字上、不带扩展名：敲两个字就换完，不用先选中一截。
-    el.setSelectionRange(0, el.value.length);
-  }, [editing, mode]);
-
+  const [stem, ext] = splitName(file.name);
   return (
-    <div className="absolute inset-0 z-30" role="presentation">
-      <div
-        className={`absolute inset-0 ${narrow ? "bg-black/30" : "bg-black/20"} dp-fade`}
-        onPointerDown={onClose}
-        aria-hidden="true"
-      />
-      <div
-        className={`dp-glass absolute overflow-hidden ${
-          narrow
-            ? "dp-sheet inset-x-0 bottom-0"
-            : "dp-pop right-3 top-[46px] w-[248px] rounded-[14px]"
-        }`}
-        style={{ transformOrigin: narrow ? "50% 100%" : "100% 0" }}
-        role="menu"
-        aria-label="文档操作"
-      >
-        {narrow && <div className="dp-grabber" aria-hidden="true" />}
-
-        <div className={narrow ? "p-2 pb-[max(8px,env(safe-area-inset-bottom))]" : "p-1.5"}>
-          {editing ? (
-            <div className="p-1">
-              <input
-                ref={input}
-                key={mode}
-                defaultValue={mode === "rename" ? initial : ""}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    onSubmit(e.currentTarget.value);
-                  }
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onCancelInput();
-                  }
-                }}
-                placeholder={mode === "rename" ? "新名字，回车确认" : "名字，回车确认"}
-                aria-label={mode === "rename" ? "新文档名" : "新文档名"}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                className="h-8 w-full rounded-md bg-canvas px-2 font-mono text-[16px] text-text outline-none ring-1 ring-border placeholder:text-muted/60 focus-visible:ring-accent sm:text-[12.5px]"
-              />
-              {err && <p className="px-1 pt-1 text-[11px] text-danger">{err}</p>}
-            </div>
-          ) : (
-            <Row onClick={onStartAdd} icon="plus" label="新建文档" narrow={narrow} />
-          )}
-
-          {/* AGENTS.md 这儿两个动词都不给。**照样把它俩列出来、置灰** ——
-              「没这功能」和「这份文件不给用」是两件事，界面得说清楚是哪一件。 */}
-          {cur?.protected ? (
-            <div className={narrow ? "mt-1" : "mt-1 border-t border-border/70 pt-1"}>
-              <Row onClick={() => {}} disabled icon="pencil" label="重命名" narrow={narrow} />
-              <Row
-                onClick={() => {}}
-                disabled
-                icon="trash"
-                label="移到最近删除"
-                danger
-                narrow={narrow}
-              />
-              <p className="px-2 pb-1 pt-1.5 text-[10.5px] leading-relaxed text-muted/70">
-                AGENTS.md 是 agent 进目录时自动读的那一份：能改内容，改不了名字、删不掉。
-              </p>
-            </div>
-          ) : (
-            cur && (
-              <div className={narrow ? "mt-1" : "mt-1 border-t border-border/70 pt-1"}>
-                <Row
-                  onClick={() => onStartRename(cur.name)}
-                  icon="pencil"
-                  label="重命名"
-                  narrow={narrow}
-                />
-                <Row
-                  onClick={() => onDelete(cur.name)}
-                  icon="trash"
-                  label="移到最近删除"
-                  danger
-                  narrow={narrow}
-                />
-              </div>
-            )
-          )}
-
-          {trash.length > 0 && (
-            <div className={narrow ? "mt-1" : "mt-1 border-t border-border/70 pt-1"}>
-              <p className="px-2 pb-1 pt-1 text-[10px] tracking-[0.02em] text-muted/60">最近删除</p>
-              {trash.map((t) => (
-                <Row
-                  key={t.name}
-                  onClick={() => onRestore(t.name)}
-                  icon="restore"
-                  label={t.name}
-                  mono
-                  muted
-                  narrow={narrow}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+    <div className="dp-row nm-host nm-host--row" data-on={on} data-doc-id={file.name}>
+      <button type="button" onClick={onPick} className="dp-row-pick" title={file.name}>
+        <span className={`dp-row-stem ${gone ? "dp-row-stem--gone" : ""}`}>{stem}</span>
+        <span className="dp-row-ext">{ext}</span>
+        {file.protected && <span className="dp-row-tag">入口</span>}
+      </button>
+      <NodeMenuTrigger nodeId={file.name} kind="row" />
+      {file.snippet && <p className="dp-row-snip">{file.snippet}</p>}
     </div>
-  );
-}
-
-function Row({
-  onClick,
-  icon,
-  label,
-  mono,
-  danger,
-  muted,
-  disabled,
-  narrow,
-}: {
-  onClick: () => void;
-  icon: "plus" | "trash" | "restore" | "page" | "pencil";
-  label: string;
-  mono?: boolean;
-  narrow?: boolean;
-  danger?: boolean;
-  muted?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      disabled={disabled}
-      aria-disabled={disabled || undefined}
-      className={`flex w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px] transition-[background,color,scale] duration-100 ${
-        narrow ? "min-h-[46px]" : "min-h-[34px]"
-      } ${
-        disabled
-          ? "cursor-default text-muted/40"
-          : `hover:bg-surface active:scale-[0.985] ${
-              danger ? "text-danger" : muted ? "text-muted" : "text-text/90"
-            }`
-      }`}
-    >
-      <svg viewBox="0 0 14 14" className="h-3.5 w-3.5 shrink-0" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        {icon === "plus" && <path d="M7 2.8v8.4M2.8 7h8.4" />}
-        {icon === "trash" && (
-          <>
-            <path d="M2.6 4h8.8M5.6 4V2.9c0-.2.2-.4.4-.4h2c.2 0 .4.2.4.4V4" />
-            <path d="M4.1 4l.5 7.1c0 .3.3.5.6.5h3.6c.3 0 .6-.2.6-.5L9.9 4" />
-          </>
-        )}
-        {icon === "restore" && (
-          <>
-            <path d="M3.2 7a3.9 3.9 0 1 1 1.3 2.9" />
-            <path d="M3.2 3.6V7h3.4" />
-          </>
-        )}
-        {icon === "pencil" && (
-          <>
-            <path d="M9.4 2.6 11.4 4.6 5.1 10.9 2.6 11.4 3.1 8.9z" />
-            <path d="M8.4 3.6 10.4 5.6" />
-          </>
-        )}
-        {icon === "page" && (
-          <>
-            <path d="M3.4 2.2h4.6l2.6 2.6v7H3.4z" />
-            <path d="M7.8 2.2v2.6h2.6" />
-          </>
-        )}
-      </svg>
-      <span className={`min-w-0 flex-1 truncate ${mono ? "font-mono text-[12px]" : ""}`}>{label}</span>
-    </button>
   );
 }
 
@@ -1400,7 +1182,7 @@ function Confirm({
   }, []);
 
   return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center p-5" role="presentation">
+    <div className="absolute inset-0 z-50 flex items-center justify-center p-5" role="presentation">
       <div className="absolute inset-0 bg-black/30" onPointerDown={onCancel} aria-hidden="true" />
       <div
         className="dp-glass dp-pop w-[272px] overflow-hidden rounded-[20px]"
@@ -1411,11 +1193,14 @@ function Confirm({
         <p className="px-4 pb-1 pt-4 text-center text-[13.5px] font-semibold tracking-[-0.01em]">
           移到最近删除？
         </p>
-        <p id="dp-confirm-body" className="px-4 pb-4 pt-1 text-center text-[11.5px] leading-relaxed text-muted">
+        <p
+          id="dp-confirm-body"
+          className="px-4 pb-4 pt-1 text-center text-[11.5px] leading-relaxed text-muted"
+        >
           <b className="font-mono font-medium text-text">{name}</b> 会挪进{" "}
           <b className="font-mono font-medium text-text">map/&lt;id&gt;/.trash/</b>，
           <br />
-          没有真的删掉 —— ⋯ 里能恢复。
+          没有真的删掉 —— 左列的「最近删除」里能恢复。
         </p>
         <div className="flex border-t border-border">
           <button
@@ -1461,28 +1246,124 @@ function Banner({
   );
 }
 
-/** 没载完 / 查无此块时的那一层空壳 —— 和真页面同一个形，不会闪。 */
+/** 头里那颗图标按钮 —— 和盘面那颗同一个尺寸、同一种悬停。 */
+function IconBtn({
+  children,
+  onClick,
+  label,
+  className = "",
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg transition-colors duration-150 hover:bg-surface hover:text-text ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** 头里那颗胶囊 —— 和盘面的「＋ 块」「＋ 组」同一副样子。 */
+function Pill({
+  children,
+  onClick,
+  title,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className="h-7 shrink-0 rounded-lg bg-surface px-2.5 text-[12px] text-text/90 transition-[background,scale] duration-150 hover:bg-raised active:scale-[0.97]"
+    >
+      {children}
+    </button>
+  );
+}
+
+/* 菜单里那几枚图标：一张纸、一支笔、一只垃圾桶、一个回头的箭头、两张叠起来的纸。 */
+const stroke = {
+  viewBox: "0 0 14 14",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 1.4,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+  "aria-hidden": true,
+} as const;
+
+const IconPage = () => (
+  <svg {...stroke}>
+    <path d="M3.2 1.8h5.2l2.4 2.4v8H3.2z" />
+    <path d="M8.4 1.8v2.5h2.4" />
+  </svg>
+);
+
+const IconPencil = () => (
+  <svg {...stroke}>
+    <path d="M9.2 2.4 11.6 4.8 5.4 11H3V8.6z" />
+  </svg>
+);
+
+const IconTrash = () => (
+  <svg {...stroke}>
+    <path d="M2.6 4h8.8M5.6 4V2.9c0-.2.2-.4.4-.4h2c.2 0 .4.2.4.4V4" />
+    <path d="M4.1 4l.5 7.1c0 .3.3.5.6.5h3.6c.3 0 .6-.2.6-.5L9.9 4" />
+  </svg>
+);
+
+const IconRestore = () => (
+  <svg {...stroke}>
+    <path d="M3.2 7a3.9 3.9 0 1 1 1.3 2.9" />
+    <path d="M3.2 3.6V7h3.4" />
+  </svg>
+);
+
+const IconCopy = () => (
+  <svg {...stroke}>
+    <rect x="2.5" y="2.5" width="7" height="7" rx="1.6" />
+    <path d="M5.5 11.5h4.4a1.6 1.6 0 0 0 1.6-1.6V5.5" />
+  </svg>
+);
+
+/** 载入中 / 查无此块时的那一层空壳 —— 和真页面同一个形（一条头 + 版心），不会闪。 */
 function Shell({
   onClose,
-  crumbs,
   title,
   children,
 }: {
   onClose: () => void;
-  crumbs: string[];
   title: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="absolute inset-0 z-40 flex flex-col bg-canvas text-text">
-      <header className="dp-toolbar" data-lifted="false">
-        <button type="button" onClick={onClose} aria-label="返回盘面" className="dp-icon">
+      <header className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-3">
+        <IconBtn label="返回盘面" onClick={onClose}>
           <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
-            <path d="M9.5 3.5 5 8l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M9.5 3.5 5 8l4.5 4.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
-        </button>
-        <span className="dp-crumb ml-1 truncate">{crumbs.join(" › ")}</span>
-        <span className="dp-chip ml-auto mr-1">{title}</span>
+        </IconBtn>
+        <span className="truncate px-1 font-mono text-[12px] text-muted">{title}</span>
       </header>
       <div className="dp-scroll">
         <div className="dp-column">{children}</div>

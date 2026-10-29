@@ -1186,10 +1186,6 @@ export function App() {
             root={root}
             ready={status !== "loading"}
             onClose={closeDoc}
-            onOpenGroup={(ids) => {
-              setPath(ids);
-              closeDoc();
-            }}
           />
         )}
       </main>
