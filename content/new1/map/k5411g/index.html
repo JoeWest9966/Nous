@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>模型编目 · Nous Warehouse</title>
+<style>
+  :root {
+    --bg:#0d0f13; --panel:#14171d; --panel2:#191d25; --line:#242a34; --line2:#2f3644;
+    --fg:#dfe3ea; --dim:#8b93a1; --dimmer:#5d6470;
+    --ledger:#c9a2ff; --ok:#7fd18b; --warn:#e8c15a; --bad:#e2796f; --chip:#1d222b;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:14px/1.55 -apple-system, "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif; }
+  a { color:var(--ledger); text-decoration:none; }
+  code, .mono { font-family:var(--mono); font-size:12.5px; }
+
+  header { position:sticky; top:0; z-index:10; display:flex; align-items:center; gap:12px;
+    padding:12px 20px; background:rgba(13,15,19,.92); border-bottom:1px solid var(--line);
+    backdrop-filter:blur(8px); }
+  .brand { font-weight:650; letter-spacing:.02em; }
+  .where { color:var(--dim); font-size:12.5px; display:flex; gap:8px; align-items:center; min-width:0; }
+  .where .mono { color:var(--ledger); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .spacer { flex:1; }
+  button { font:inherit; color:var(--fg); background:var(--panel2); border:1px solid var(--line2);
+    border-radius:7px; padding:5px 11px; cursor:pointer; transition:background .12s, border-color .12s, opacity .12s; }
+  button:hover { background:#212836; border-color:#3c465a; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.primary { border-color:#4a3a68; background:#241d33; }
+  button.primary:hover { background:#2f2542; }
+  button.danger { border-color:#5a2a2a; color:#f0b3ad; background:#20161a; }
+  button.danger:hover { background:#2c1a1d; }
+
+  main { padding:16px 20px 60px; max-width:1500px; }
+
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+    background:var(--chip); border:1px solid var(--line); color:var(--dim); font-size:12.5px; }
+  .chip b { color:var(--fg); font-weight:600; }
+  .chip.bad { border-color:#4a2a2a; color:#e8a9a2; }
+
+  .tools { display:flex; gap:10px; align-items:center; margin-bottom:14px; }
+  input[type=search] { flex:1; max-width:420px; font:inherit; color:var(--fg); background:var(--panel);
+    border:1px solid var(--line2); border-radius:7px; padding:6px 10px; }
+  input[type=search]::placeholder { color:var(--dimmer); }
+
+  .card { border:1px solid var(--line); border-radius:10px; background:var(--panel); margin-bottom:10px; overflow:hidden; }
+  .card > .head { display:flex; flex-wrap:wrap; gap:10px; align-items:center;
+    padding:10px 14px; background:var(--panel2); border-bottom:1px solid var(--line); }
+  .name { font-size:15px; font-weight:650; cursor:pointer; }
+  .name:hover { color:var(--ledger); }
+  .base { color:var(--ledger); font-family:var(--mono); font-size:12.5px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:52vw; }
+  .grow { flex:1; }
+  .acts { display:flex; gap:6px; flex-wrap:wrap; }
+
+  .body { display:grid; grid-template-columns:minmax(230px, 300px) 1fr; gap:14px; padding:12px 14px 14px; }
+  @media (max-width:860px) { .body { grid-template-columns:1fr; } .base { max-width:100%; } }
+  .kv { display:flex; flex-direction:column; gap:7px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:13px; }
+  .row .lab { color:var(--dimmer); font-size:12px; }
+  .k { font-family:var(--mono); font-size:12px; padding:1px 7px; border-radius:5px;
+    background:#1b2029; border:1px solid var(--line2); color:var(--dim); }
+  .k.ref { color:#9ecbff; border-color:#2c4260; }
+  .k.literal { color:#e8c15a; border-color:#4a3f22; }
+  .k.cmd { color:#c9a2ff; border-color:#42325c; }
+  .k.none { color:#e2796f; border-color:#4a2a2a; }
+  .tagchip { font-size:12px; padding:1px 8px; border-radius:999px; background:#1c2430; border:1px solid #2b3746; color:#9fb3c8; }
+
+  .mbar { display:flex; flex-wrap:wrap; gap:5px; align-content:flex-start; }
+  .m { font-family:var(--mono); font-size:12px; padding:2px 8px; border-radius:6px;
+    background:#171d26; border:1px solid #232c39; color:#b9c4d3; cursor:pointer; }
+  .m:hover { border-color:#3b4a5f; color:#eaf0f8; }
+  .m.more { color:var(--dim); border-style:dashed; }
+  .none { color:var(--dimmer); font-size:12.5px; }
+
+  .msg { font-size:12.5px; padding:4px 10px; border-radius:6px; }
+  .msg:empty { display:none; }
+  .msg.ok { color:var(--ok); background:#12211700; }
+  .msg.warn { color:var(--warn); }
+  .msg.bad { color:var(--bad); }
+
+  .drift { margin-top:8px; font-size:12.5px; display:flex; flex-direction:column; gap:3px; }
+  .drift .d { color:var(--dim); }
+  .drift .d b { color:var(--warn); font-weight:600; }
+
+  footer { margin-top:26px; border-top:1px solid var(--line); padding-top:14px;
+    color:var(--dim); font-size:12.5px; }
+  footer ul { margin:8px 0 0; padding-left:18px; }
+  footer li { margin-bottom:5px; }
+  footer code { color:#c3cbd8; }
+  .hidden { display:none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">k5411g</span>
+  <span class="where">
+    <span>Nous Warehouse 模型编目</span>
+    <span class="mono" id="nwbase">…</span>
+  </span>
+  <span class="spacer"></span>
+  <button id="reload" title="重新拉一遍编目">↻ 刷新</button>
+</header>
+
+<main>
+  <div class="chips" id="chips"></div>
+
+  <div class="tools">
+    <input type="search" id="q" placeholder="筛：名字 / baseUrl / 模型 id / 用它的配方">
+  </div>
+
+  <section id="list"></section>
+
+  <footer>
+    <b>这一页只认编目。</b>编目 = Nous Warehouse 的 <code>models.json</code>（<code>j1900:/opt/Data-001</code>），REST 面 <code>/api/model</code>。本机 <code>~/.pi/agent/models.json</code> 不在这里，也不从这里读。
+    <ul>
+      <li><b>名字是唯一键。</b><code>nw model register</code> 同名同 baseUrl = 覆盖写，同名不同 baseUrl = 硬拒。想换 baseUrl 只能删了再登记。</li>
+      <li><b>密钥形状有三种：</b><span class="k ref">$ENV</span> 引用 / <span class="k literal">字面量</span> / <span class="k cmd">!命令</span>。列表里字面量永远是 <code>&lt;redacted:…&gt;</code>，真身只在点「密钥」时现拿一次。</li>
+      <li><b>推到编目的密钥是明文的</b>，落进 <code>/opt/Data-001/models.json</code>（这个文件在 git 里）。token 闸不展开 <code>$ENV</code>，所以推引用进去必然 401 —— 引用只能手写进文件。</li>
+      <li><b>自查 = <code>nw model recheck</code>：</b>编目自己跟上游 <code>/models</code> 比，报新增 / 下线 / 漂移。</li>
+      <li><b>删除不可逆，且没有「谁在用」的保护。</b>要删得手打名字；删掉一条还被配方引用的供应商不会拦你，破绽留到自查和 <code>nw doctor</code> 那层才露。删完会打一个 git commit。</li>
+    </ul>
+  </footer>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") node.className = v;
+    else if (k === "html") node.innerHTML = v;
+    else if (k === "text") node.textContent = v;
+    else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
+    else if (v === true) node.setAttribute(k, "");
+    else node.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid !== null && kid !== undefined && kid !== false) node.append(kid);
+  return node;
+};
+
+const state = { entries: [], summary: { entries: 0, models: 0 }, ledger: { ok: false, base: "" }, error: null };
+
+async function api(path, init) {
+  const response = await fetch(path, { ...init, headers: { "content-type": "application/json", ...(init?.headers || {}) } });
+  const text = await response.text();
+  let body;
+  try { body = JSON.parse(text); } catch { throw new Error(`回了非 JSON（${response.status}）：${text.slice(0, 140)}`); }
+  if (!response.ok || body.ok === false) throw new Error(body.error || `HTTP ${response.status}`);
+  return body;
+}
+
+const post = (path, data) => api(path, { method: "POST", body: JSON.stringify(data ?? {}) });
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch {
+    const ta = el("textarea", { style: "position:fixed;opacity:0" });
+    ta.value = text; document.body.append(ta); ta.select();
+    const ok = document.execCommand("copy"); ta.remove(); return ok;
+  }
+}
+
+async function busy(btn, label, fn) {
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = label;
+  try { return await fn(); }
+  catch (error) { throw error; }
+  finally { btn.disabled = false; btn.textContent = old; }
+}
+
+// ── 渲染 ────────────────────────────────────────────────────────────────
+const modelBar = (models) => {
+  const chip = (id) => el("span", {
+    class: "m", text: id, title: "点一下复制模型 id",
+    onclick: async (e) => { const ok = await copyText(id); e.target.style.borderColor = ok ? "#2f6f3f" : "#5a2a2a"; },
+  });
+  const bar = el("div", { class: "mbar" }, ...models.slice(0, 12).map(chip));
+  if (models.length > 12) {
+    bar.append(el("span", {
+      class: "m more", text: `+${models.length - 12}`, title: "展开全部",
+      onclick: () => bar.replaceChildren(...models.map(chip)),
+    }));
+  }
+  return bar;
+};
+
+function card(entry) {
+  const msg = el("div", { class: "msg" });
+  const driftBox = el("div", { class: "drift hidden" });
+  const acts = el("div", { class: "acts" });
+
+  acts.append(
+    el("button", {
+      text: "自查",
+      title: "POST /api/model/recheck —— 编目跟上游 /models 比，报新增 / 下线 / 漂移",
+      onclick: (e) => busy(e.target, "比上游…", async () => {
+        const r = await post("v1/recheck", { name: entry.name });
+        msg.className = r.drifts.length ? "msg warn" : "msg ok";
+        msg.textContent = r.drifts.length ? `${entry.name}：${r.drifts.length} 处漂移` : `${entry.name}：跟上游一致`;
+        driftBox.replaceChildren(...r.drifts.map((d) => {
+          const kind = { model_added: "上游多", model_removed: "上游下线", model_changed: "变了" }[d.kind] || d.kind;
+          return el("div", { class: "d", html: `<b>${kind}</b> · ${(d.model || d.name || "").replace(/[<>&]/g, "")}` });
+        }));
+        driftBox.classList.toggle("hidden", !r.drifts.length);
+      }),
+    }),
+    el("button", {
+      text: "密钥",
+      title: "GET /api/model/{名}/secret —— 只有在回环 / 信任面才给真身",
+      onclick: (e) => busy(e.target, "取…", async () => {
+        const r = await api(`v1/secret/${encodeURIComponent(entry.name)}`);
+        const ok = await copyText(r.key);
+        msg.className = r.key ? "msg ok" : "msg bad";
+        msg.textContent = r.key ? `已复制到剪贴板：${r.key.length > 24 ? r.key.slice(0, 10) + "…" + r.key.slice(-6) : r.key}` : "编目这条没有密钥";
+        if (!ok) msg.textContent += "（剪贴板不可用，真身已丢弃）";
+      }),
+    }),
+    el("button", {
+      class: "danger", text: "删除",
+      title: "DELETE /api/model/{名} —— 零确认直通 + git commit，不可逆",
+      onclick: async (e) => {
+        if (entry.usedBy.length && !confirm(`${entry.name} 还被这些配方引用：${entry.usedBy.join("、")}\n删了它们会指向一个不存在的供应商。\n\n继续？`)) return;
+        const typed = prompt(`删除 ${entry.name}？\n\n这一步会改 /opt/Data-001/models.json 并打一个 git commit，不可逆。\n输入名字确认：`);
+        if (typed === null) return;
+        if (typed.trim() !== entry.name) { msg.className = "msg bad"; msg.textContent = "名字没对上，没删"; return; }
+        await busy(e.target, "删…", async () => {
+          const r = await post("v1/delete", { name: entry.name });
+          msg.className = r.partial ? "msg warn" : "msg ok";
+          msg.textContent = r.partial
+            ? `已删（剩 ${r.remaining ?? "?"} 条），但 git push 没推上去：${r.warnings[0] ?? ""}`
+            : `已删：${r.name}（剩 ${r.remaining ?? "?"} 条）`;
+          await load();
+        });
+      },
+    }),
+  );
+
+  return el("article", { class: "card", "data-q": [entry.name, entry.baseUrl, entry.api, entry.key.text, ...entry.models, ...entry.usedBy].join(" ").toLowerCase() },
+    el("div", { class: "head" },
+      el("span", { class: "name", text: entry.name, title: "点一下复制名字", onclick: async () => { await copyText(entry.name); } }),
+      el("span", { class: "base", text: entry.baseUrl, title: "点一下复制 baseUrl", onclick: async () => { await copyText(entry.baseUrl); } }),
+      el("span", { class: "grow" }),
+      acts,
+    ),
+    el("div", { class: "body" },
+      el("div", { class: "kv" },
+        el("div", { class: "row" },
+          el("span", { class: "lab", text: "api" }),
+          el("span", { class: "k", text: entry.api || "—" }),
+        ),
+        el("div", { class: "row" },
+          el("span", { class: "lab", text: "密钥" }),
+          el("span", { class: `k ${entry.key.shape}`, text: entry.key.text || "没有" }),
+        ),
+        el("div", { class: "row" },
+          el("span", { class: "lab", text: "模型" }),
+          el("span", { class: "k", text: `${entry.models.length} 个` }),
+        ),
+        entry.usedBy.length
+          ? el("div", { class: "row" }, el("span", { class: "lab", text: "配方式子" }), ...entry.usedBy.map((u) => el("span", { class: "tagchip", text: u })))
+          : el("div", { class: "row" }, el("span", { class: "lab", text: "配方式子" }), el("span", { class: "none", text: "没有配方在用" })),
+        msg,
+        driftBox,
+      ),
+      entry.models.length ? modelBar(entry.models) : el("div", { class: "none", text: "（这条没有模型清单）" }),
+    ),
+  );
+}
+
+function render() {
+  const list = $("list");
+  list.replaceChildren(...state.entries.map(card));
+  if (!state.entries.length) {
+    list.append(el("div", { class: "none", text: state.ledger.ok ? "编目是空的。" : "编目连不上。点右上角刷新重试。" }));
+  }
+
+  $("nwbase").textContent = state.ledger.base.replace(/^https?:\/\//, "") + (state.ledger.ok ? "" : "（连不上）");
+  $("nwbase").title = state.ledger.ok ? `${state.ledger.base}/api/model` : (state.ledger.error || "");
+
+  const chips = [
+    el("span", { class: "chip", html: `条目 <b>${state.summary.entries}</b>` }),
+    el("span", { class: "chip", html: `模型 <b>${state.summary.models}</b>` }),
+  ];
+  if (!state.ledger.ok) chips.unshift(el("span", { class: "chip bad", text: `编目连不上：${state.ledger.error}` }));
+  $("chips").replaceChildren(...chips);
+
+  applyFilter();
+}
+
+function applyFilter() {
+  const q = $("q").value.trim().toLowerCase();
+  for (const node of $("list").children) {
+    const hay = node.getAttribute("data-q");
+    if (hay === null) continue;
+    node.classList.toggle("hidden", Boolean(q) && !hay.includes(q));
+  }
+}
+
+async function load() {
+  try {
+    const s = await api("v1/state");
+    state.entries = s.ledger.entries;
+    state.summary = s.summary;
+    state.ledger = s.ledger;
+    state.error = null;
+  } catch (error) {
+    state.ledger = { ok: false, base: state.ledger.base, error: String(error.message ?? error) };
+    state.entries = [];
+  }
+  render();
+}
+
+$("q").addEventListener("input", applyFilter);
+$("reload").addEventListener("click", (e) => busy(e.target, "拉…", load));
+load();
+</script>
+</body>
+</html>

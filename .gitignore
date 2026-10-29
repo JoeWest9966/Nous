@@ -14,4 +14,13 @@ content/*/*.tmp
 # content/ 是运行时数据，不是源码：
 # 块的删除语义在 map/.gone/ 里，git 再存一份就是第二个撤销系统 ——
 # 每次 checkout / stash 都会把删掉的块复活，跟坟场打架。备份用 tar/rsync。
-content/
+#
+# 写 content/* 而不是 content/ 是为了下面那两个例外能生效：git 不会穿过
+# 被忽略的父目录，想反白一个子路径，得逐层把父目录先放回来。
+content/*
+# 例外：这一轮人写的块代码进版本控制（别的块仍然全是运行时数据）。
+!content/new1/
+content/new1/*
+!content/new1/map/
+content/new1/map/*
+!content/new1/map/k5411g/

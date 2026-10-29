@@ -1,0 +1,9 @@
+{
+  "name": "k5411g",
+  "private": true,
+  "type": "module",
+  "description": "Nous Warehouse 模型编目：条目、模型清单、密钥形状、用它的配方；自查 / 取密钥 / 删除。",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
