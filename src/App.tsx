@@ -221,8 +221,8 @@ export function App() {
   /** 锁着的块：删不掉，前端连按钮都不画。真拦截在服务端（save 会把被删的锁块接回来）。 */
   const [locks, setLocks] = useState<ReadonlySet<string>>(() => new Set());
   /**
-   * 真正生效的锁：`locks` 里只有人亲手按下的 id，锁是**子树** —— 锁住一个组，
-   * 里面每一块跟着锁。这张表是派生的（`lockMap`），进盘的是原来那串 id。
+   * 真正生效的锁：`locks` 里那串 id，去掉树里已经没了的。
+   * **一把锁只管一个节点** —— 锁住一个组不等于锁住组里的块。
    * 两个用途：拦住本地的删除，和说清楚「这为什么删不掉」。
    */
   const locked = useMemo(() => lockMap(root, locks), [root, locks]);
@@ -599,8 +599,7 @@ export function App() {
 
   /**
    * 块 → 组。**锁不管这一下** —— 锁管的是「消失」，跟改名、搬家、往里加东西一样，
-   * 转换不动 id，块本身没消失。新长出来的那个孩子会跟着继承这把锁（锁是子树），
-   * 那是派生出来的，不是第二份事实。
+   * 转换不动 id，块本身没消失。新长出来的那个孩子也不归这把锁管：锁只管那一个 id。
    */
   const toGroup = (id: string) => {
     const next = toSection(root, id);
@@ -657,7 +656,7 @@ export function App() {
 
   const remove = (id: string) => {
     // 按钮不会画出来，这是兜底：万一从别的路径进来了（Delete 键、菜单、将来某处），
-    // 别把「删了又冒出来」演一遍。锁是子树，所以继承来的锁也在这里挡。
+    // 别把「删了又冒出来」演一遍。锁的只是这个 id 本身，它的孩子不跟着挡。
     if (locked.has(id)) return;
     play(removeNode(root, id), { t: "remove", id });
   };
@@ -672,18 +671,12 @@ export function App() {
   };
 
   /**
-   * 「这块为什么删不掉」。锁不只是一枚图标 —— 人看不到删除按钮的那一刻就需要一句话，
-   * 尤其当那锁其实在上一层（他只在那一个组里按过一次）。
+   * 「这块为什么删不掉」。锁不只是一枚图标 —— 人看不到删除按钮的那一刻就需要一句话。
    *
    * 只说「删不掉」：锁管的是**消失**，改名、搬家、往里加东西都还能做。
    * 别在提示里许一个实现没有的愿。
    */
-  const lockTitle = (id: string): string | undefined => {
-    const owner = locked.get(id);
-    if (!owner) return undefined;
-    if (owner === id) return "已锁定：删不掉";
-    return `被「${findNode(root, owner)?.name ?? owner}」锁住：删不掉`;
-  };
+  const lockTitle = (id: string): string | undefined => (locked.has(id) ? "已锁定：删不掉" : undefined);
 
   /** 开改名的那一刻，是谁被双击的 —— 改完把焦点还给它，别让人跟丢。 */
   const editAnchor = useRef<HTMLElement | null>(null);
@@ -803,9 +796,9 @@ export function App() {
         run: () => toGroup(id),
       });
     }
-    // 组 → 块。被锁时**整个不摆**，不是摆个按不动的：锁是子树，服务端会把掉下去的孩子
-    // 原样接回来（`restoreLocked`），这一手会被静默撤销，只留一条 audit 日志。
-    // 下面的锁那一条已经说清了是谁锁的，不用在这儿再说一遍。
+    // 组 → 块。被锁时**整个不摆**，不是摆个按不动的：这一手把组节点换成了叶子，
+    // 服务端会把掉下去的那个组原样接回来（`restoreLocked`），只留一条 audit 日志。
+    // 下面的锁那一条已经说清了这块锁着，不用在这儿再说一遍。
     if (isSection(node) && node.children!.length && id !== root.id && !locked.has(id)) {
       items.push({
         key: "to-block",
@@ -814,25 +807,18 @@ export function App() {
         run: () => toBlock(id),
       });
     }
-    // 锁是子树：锁住一个组，里面每一块都跟着锁上 —— 和锁一个块是同一件事，只是范围大一号。
+    // 锁只管这一个节点：锁一个组只锁那个组，里面的块不该跟着冻住。
     // 真正拦住机器的那一层在服务端的 `save()`，这里只负责不给人画一个按下去会弹回来的按钮。
-    const owner = locked.get(id);
-    const mine = locks.has(id);
+    const mine = locked.has(id);
     items.push({
       key: "lock",
-      // 继承来的锁不能从下往上解：要说清是谁锁的，并把人指向那一层。
-      label: !owner
-        ? "锁定"
-        : mine
-          ? "解锁"
-          : `已被「${findNode(root, owner)?.name ?? owner}」锁住`,
+      label: mine ? "解锁" : "锁定",
       icon: <LockIcon open={mine} />,
       separatorBefore: true,
-      disabled: !!owner && !mine,
       run: () => void toggleLock(id, !mine),
     });
     // 删不掉就把「删除」整个收起来 —— 理由就在上面那一条里，不另外解释一遍。
-    if (owner) return items;
+    if (mine) return items;
     items.push({
       key: "remove",
       label: "删除",

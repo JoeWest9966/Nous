@@ -5,11 +5,11 @@
  *
  * 1. **锁是宿主的状态，不是块的内容。** 所以它不住在 `map/<id>/`（那是 AI 和用户的地盘，
  *    一个 `rm` 就没了），而是住在 `content/<board>/.nous/locks.json`。`syncMap` 永远不碰它。
- * 2. **块和组都能锁，但锁的永远是「子树」。** 组是容器，`restoreLocked` 接回时本来就是整枝 clone，
- *    所以「锁组」天然等于「锁里面的东西」—— 想只锁组节点本身是做不到的，硬做出来只会让
- *    「从锁住的组里删一块」和「删掉整个组」给出两种结果。既然如此就把语义说白：
- *    锁住 A，A 底下任何节点都不许消失。`locks.json` 里只存人亲手按下的 id，
- *    继承那一层是**派生**的（`lockMap` 在 `src/game.ts` 里），不存第二份。
+ * 2. **锁只管它自己那一个节点。** 锁住一个组 = 这个组不许消失；组里的块**不**跟着锁，
+ *    从里面删一块、往里加一块都照旧。想保护里面的块就自己按上去。早先的规则是「锁是子树」，
+ *    结果是锁过的组每新建一块都删不掉，必须先解锁再加锁 —— 为了防一个误删，把日常操作
+ *    全塞进了绕路。锁要防的是「顺手删掉」，不是把容器冻住。
+ *    `locks.json` 里存的就是生效的全部，没有继承那一层。
  * 3. **锁由服务端强制。** 客户端发来的树里少了锁定的东西，这里把它接回最近的存活祖先。
  *    前端隐藏删除按钮只是防手滑；**防机器靠这一层** —— 所有树写入都必经 `save()`。
  *
@@ -95,23 +95,17 @@ const prune = (node: Node, live: ReadonlySet<string>): Node | undefined => {
 };
 
 /**
- * 锁是**子树**：人按下的是一个 id，扛事的是它底下整棵树。
- * 所以进 `restoreLocked` 之前先把 `locks.json` 里那串 id 摊开 —— 没有这一步，
- * 「锁住组」就只防住了「整个组被删」，而从组里抽走一块就静悄悄放过去了。
+ * 锁是**一个节点**：`locks.json` 里那串 id，去掉盘上已经不存在的（空头锁，什么也保护不了）。
  */
-const guard = (prev: Node, locked: ReadonlySet<string>): Set<string> => {
+const present = (prev: Node, locked: ReadonlySet<string>): Set<string> => {
   const out = new Set<string>();
-  for (const id of locked) {
-    const from = chain(prev, id);
-    // 盘上已经没有这把锁了：空头锁，什么也保护不了，但也不用报错。
-    if (!from) continue;
-    walk(from[from.length - 1]!).forEach((n) => out.add(n.id));
-  }
+  for (const id of locked) if (chain(prev, id)) out.add(id);
   return out;
 };
 
 /**
- * 把客户端弄丢的锁定玩意接回来。锁是子树，所以接回一枝就接回了它底下的全部。
+ * 把客户端弄丢的锁定节点接回来。只接**被锁的那一个** —— 它底下的东西跟着它回家，
+ * 因为它们和它一起消失了（整枝被删），不是因为有锁；单独被摘走的子块不在此列。
  *
  * 「最近的存活祖先」：沿它**原来**的位置往上找，第一个还在新树里的祖先就收留它；
  * 一路上一个都没活（比如整枝被删、连根都换了），就挂到根上。
@@ -125,7 +119,7 @@ const guard = (prev: Node, locked: ReadonlySet<string>): Set<string> => {
  */
 export function restoreLocked(next: Node, prev: Node, locked: ReadonlySet<string>): RestoreResult {
   if (!locked.size) return { root: next, restored: [] };
-  const guarded = guard(prev, locked);
+  const guarded = present(prev, locked);
 
   const root = next;
   const restored: string[] = [];

@@ -111,25 +111,23 @@ export const findNode = (root: Node, id: string): Node | undefined => {
 };
 
 /**
- * 锁是**子树**：锁住一个组，组里的东西也不许被删。
+ * 谁被锁了：`locks.json` 里那串 id，去掉树里已经没了的（那是解不开的空头锁）。
  *
- * 所以「谁被锁了」不能只看 `locks.json` —— 那里面只有人亲手按下的那几个 id，
- * 真正生效的是它连同底下整棵树。回一张 `节点 id → 握着这把锁的最近祖先 id`：
- * 值等于自己就是亲手锁的，不等就是继承来的。
+ * **锁只管它自己那一个节点。** 锁住一个组 = 这个组不许被删，不等于组里的块也被锁：
+ * 从锁住的组里删一块、往里加一块，都照旧。想保护里面的某一块，就自己按上去 ——
+ * 否则「锁了组以后新建的块删不掉」会变成常态，每加一块都得先解锁再加锁。
  *
- * 这张表是**派生**的，不进树、不进盘 —— 真相永远是那串 id。UI 要它只有一个用途：
- * 说清楚「为什么这块删不掉」，不然人只看到按钮没了。
+ * 这张表是**派生**的，不进树、不进盘 —— 真相永远是那串 id。值恒等于自己，
+ * UI 拿它当「这块删不掉」的集合看，`locks` 才是原始事实。
  */
 export function lockMap(root: Node, locks: ReadonlySet<string>): Map<string, string> {
   const out = new Map<string, string>();
   if (!locks.size) return out;
-  const walk = (node: Node, above: readonly string[]): void => {
-    const chain = [node.id, ...above];
-    const owner = chain.find((id) => locks.has(id));
-    if (owner !== undefined) out.set(node.id, owner);
-    node.children?.forEach((c) => walk(c, chain));
+  const walk = (node: Node): void => {
+    if (locks.has(node.id)) out.set(node.id, node.id);
+    node.children?.forEach(walk);
   };
-  walk(root, []);
+  walk(root);
   return out;
 }
 
