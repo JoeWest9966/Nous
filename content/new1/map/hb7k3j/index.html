@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>hb7k3j · 新对话</title>
+<style>
+  /* pele 的 dark 主题（Flexoki）—— 和 https://pele.run/examples/cynefin 同一套 */
+  :root {
+    color-scheme: dark;
+    --bg:#100f0f;          /* --ink，图的底色 */
+    --panel:#1c1b1a;       /* --pele-bg：节点填充 */
+    --surface:#282726;     /* --pele-surface */
+    --surface-2:#343331;   /* --pele-surface-alt */
+    --border:#403e3c;      /* --pele-border：节点和边界 */
+    --line:#cecdc3;        /* --pele-line：cliff / 正文 */
+    --fg:#cecdc3;          /* --pele-fg */
+    --muted:#878580;       /* --pele-muted */
+    --faint:#575653;
+    --accent:#4385be;      /* --pele-accent */
+    --s1:#d14d41; --s2:#da702c; --s3:#d0a215; --s4:#879a39; --s5:#3aa99f;
+    --font: -apple-system, BlinkMacSystemFont, "Inter Variable", Inter, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Code", "IBM Plex Mono", "Roboto Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Monaco, "Consolas", "Source Code Pro", monospace;
+    --radius: 6px;
+    --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  * { box-sizing:border-box; scrollbar-width:none; }
+  ::-webkit-scrollbar { display:none; }
+  html, body { height:100%; overflow:hidden; }     /* 一屏，永不滚动 */
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:var(--font);
+         font-size:clamp(12px,1.75vmin,16px); line-height:1.5;
+         display:grid; grid-template-rows:auto 1fr; }
+
+  /* ── 顶栏：一行，标题居中，像图上方那行 title ── */
+  header { position:relative; display:flex; align-items:center; justify-content:center;
+           padding:1.6vmin 2.4vmin 1vmin; }
+  header b { font-size:clamp(13px,1.9vmin,17px); font-weight:700; letter-spacing:-0.01em; }
+  header .aside { position:absolute; right:2.4vmin; display:flex; align-items:center; gap:1.4vmin; }
+  header .meta { color:var(--muted); font-size:clamp(10px,1.35vmin,12.5px); }
+  a { color:var(--muted); text-decoration:none; font-size:clamp(10px,1.35vmin,12.5px); }
+  a:hover { color:var(--line); }
+
+  main { min-height:0; padding:0 1.6vmin 1.6vmin; }
+  /* demo 的 figure 背景就是 --panel（#1c1b1a），域色叠加它上面才读得出那层淡色 */
+  .board { position:relative; width:100%; height:100%; background:var(--panel); container-type:size; }
+
+  /* 图本身：原路径，拉伸填满，线和虚线保持像素级不随拉伸变形 */
+  svg.frame { position:absolute; inset:0; width:100%; height:100%; display:block; z-index:0; }
+  svg.frame .b { fill:none; stroke:var(--border); stroke-dasharray:6 3; stroke-width:1; vector-effect:non-scaling-stroke; }
+  svg.frame .cliff { fill:none; stroke:var(--line); stroke-width:2; stroke-linecap:round; vector-effect:non-scaling-stroke; }
+
+  /* ── 四域：内容居中排在域里，跟 demo 的标题/副标题/节点一个节奏 ── */
+  .region { position:absolute; z-index:1; display:flex; flex-direction:column; align-items:center;
+            text-align:center; gap:0; padding:9% 6% 4%; }
+  .r1 { left:0;    top:0;    width:50%; height:50%; }
+  .r2 { left:50%;  top:0;    width:50%; height:50%; }
+  .r4 { left:0;    top:50%;  width:50%; height:50%; }
+  .r3 { left:50%;  top:50%;  width:50%; height:50%; }
+
+  .region h2 { margin:0; font-size:clamp(12px,1.85vmin,17px); font-weight:700; letter-spacing:-0.01em; }
+  .region .sub { margin:0; color:var(--muted); font-size:clamp(10px,1.5vmin,13px); font-style:italic; line-height:1.45; }
+  .region .nodes { margin-top:1.8vmin; display:flex; flex-direction:column; align-items:center; gap:1vmin; max-width:100%; }
+
+  /* 节点 = pele 的 node：面板底、1px 边框、6px 圆角 */
+  .node { display:inline-flex; align-items:center; gap:.7em; max-width:100%;
+          background:var(--panel); color:var(--fg); border:1px solid var(--border);
+          border-radius:var(--radius); padding:.42em .95em; cursor:pointer;
+          font-family:var(--mono); font-size:clamp(10px,1.55vmin,14px); line-height:1.4;
+          transition:border-color .12s ease, background .12s ease, transform .1s ease-out; }
+  .node:hover { border-color:var(--faint); }
+  .node:active { transform:scale(.985); }          /* 按下即响应 */
+  .node .id { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .node .tag { font-family:var(--font); font-size:.82em; color:var(--muted); flex:none; }
+  .node.cta { font-family:var(--font); font-size:clamp(11px,1.6vmin,14.5px); padding:.5em 1.6em; }
+  .node.cta:hover { border-color:var(--line); background:var(--surface); }
+  .node[disabled] { opacity:.45; cursor:default; transform:none; }
+
+  /* ── 中央 confusion 椭圆 ── */
+  .hub { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:2;
+         width:clamp(250px, 32%, 620px); height:clamp(170px, 27%, 330px);
+         border-radius:50%; background:var(--panel); border:1px dashed var(--border);
+         display:flex; flex-direction:column; align-items:center; justify-content:center;
+         gap:.7vmin; text-align:center; padding:3% 9%; }
+  .hub::before { content:""; position:absolute; inset:0; border-radius:50%; z-index:-1;
+                 background:var(--s5); opacity:.18; }
+  .hub h1 { margin:0; font-size:clamp(12px,1.85vmin,17px); font-weight:700; letter-spacing:-0.01em; }
+  .hub .sub { margin:-.2vmin 0 .6vmin; color:var(--muted); font-size:clamp(9px,1.4vmin,12.5px); font-style:italic; }
+  .hub input { width:100%; max-width:34vmin; background:var(--panel); color:var(--fg);
+               border:1px solid var(--border); border-radius:var(--radius);
+               padding:.45em 1em; font-family:var(--font); font-size:clamp(11px,1.5vmin,13.5px);
+               text-align:center; outline:none; }
+  .hub input:focus { border-color:var(--faint); }
+  .hub input::placeholder { color:var(--faint); }
+  #flash { color:var(--s4); font-size:clamp(9px,1.35vmin,12px); min-height:1.3em; font-family:var(--mono); }
+  #errbox { position:fixed; left:50%; bottom:2vmin; transform:translateX(-50%); z-index:6; max-width:92vw; }
+  .err { color:#efb7b3; background:#241718; border:1px solid #5a2a2a; border-radius:8px;
+         padding:.7em 1.1em; font-size:clamp(10px,1.4vmin,12.5px); }
+
+  /* ── 弹窗（苹果那套材料/压暗/从触发点长出）── 配色跟盘面同源 ── */
+  .scrim { position:fixed; inset:0; z-index:10; display:flex; align-items:center; justify-content:center;
+           background:rgba(16,15,15,.55); backdrop-filter:blur(2px);
+           opacity:0; transition:opacity .28s var(--ease); }
+  .scrim[hidden] { display:none; }
+  .scrim.on { opacity:1; }
+  .sheet { width:min(560px, 94vw); max-height:min(74dvh, 660px); display:flex; flex-direction:column;
+           background:color-mix(in srgb, var(--panel) 82%, transparent);
+           backdrop-filter:blur(24px) saturate(160%);
+           border:1px solid var(--border); border-top-color:var(--faint);
+           border-radius:14px; box-shadow:0 24px 60px -12px rgba(0,0,0,.75);
+           transform:scale(.93) translateY(10px); opacity:0;
+           transition:transform .32s var(--ease), opacity .28s var(--ease); overflow:hidden; }
+  .scrim.on .sheet { transform:none; opacity:1; }
+  .sheet > .shead { display:flex; align-items:center; gap:1vmin; padding:1.6vmin 1.8vmin 1.2vmin;
+                    border-bottom:1px solid var(--border); }
+  .sheet > .shead b { font-size:clamp(12px,1.7vmin,15px); font-weight:700; }
+  .sheet input { flex:1; min-width:0; background:var(--surface); color:var(--fg);
+                 border:1px solid transparent; border-radius:var(--radius); padding:.42em .9em;
+                 font-family:var(--font); font-size:clamp(11px,1.5vmin,13px); outline:none; }
+  .sheet input:focus { border-color:var(--border); }
+  .sheet input::placeholder { color:var(--faint); }
+  /* ── 弹窗正文：两列铁路图（pele railroad 的语法重绘）──
+     左列 = 供应商，每行一支药丸（choice 分支）；右列 = 当前供应商的模型，每行一支；
+     高度由最长一列的行数决定 —— 每行一支，不折行不扎堆 */
+  .diagram { flex:1; min-height:0; overflow-y:auto; padding:1vmin 1vmin .4vmin; overscroll-behavior:contain; }
+  .diagram svg { display:block; width:100%; margin:0 auto; height:auto; }
+  .diagram .rule > text { fill:var(--fg); }
+  .diagram path { fill:none; stroke:var(--muted); stroke-width:1.2; }
+  .diagram circle { fill:var(--muted); }
+  .pill { cursor:pointer; outline:none; }
+  .pill rect { fill:var(--surface); stroke:var(--border); stroke-width:1;
+               transition:stroke .12s ease, fill .12s ease; }
+  .pill:hover rect { stroke:var(--faint); }
+  .pill:focus-visible rect { stroke:var(--accent); }
+  .pill text { fill:var(--fg); }
+  .pill.sel rect { stroke:var(--accent); fill:color-mix(in srgb, var(--accent) 16%, var(--surface)); }
+  .pill.cur rect { stroke:var(--accent); }
+  .pill.pv:hover rect { stroke:var(--accent); fill:color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+  .pill.sel text { font-weight:700; }
+  .pill.dim rect { opacity:.45; }
+  .dfoot { flex:none; color:var(--muted); font-family:var(--mono); font-size:clamp(9px,1.25vmin,11px);
+           padding:.5vmin 1.8vmin 1.1vmin; border-top:1px solid var(--border); }
+  .dfoot .demo { color:var(--s4); }
+  .mnone { color:var(--muted); font-size:clamp(10px,1.4vmin,12.5px); padding:2.4vmin 1.2vmin; text-align:center; }
+
+  @media (max-width:640px) { .hub input, .sheet input { font-size:16px; } .sheet { width:96vw; } }  /* iOS 不缩放 */
+  /* 竖屏：椭圆收小，域的标题往外侧推，谁也不盖谁 */
+  @media (orientation:portrait) {
+    .region { padding:6% 3%; }
+    .r1, .r2 { justify-content:flex-start; padding-top:9%; }
+    .r4, .r3 { justify-content:flex-end; padding-bottom:9%; }
+    .hub { width:min(84%, 320px); height:clamp(148px, 24vh, 230px); padding:0 8%; gap:.4vmin; }
+    .hub input { max-width:none; width:100%; }
+    .hub .sub { margin-bottom:.4vmin; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .scrim, .sheet, .pill rect, .node { transition:opacity .2s ease !important; }
+    .sheet { transform:none !important; }
+    .node:active, .pill:active rect { transform:none; }
+  }
+  @media (prefers-reduced-transparency: reduce) { .sheet { background:var(--panel); backdrop-filter:none; } }
+  @media (prefers-contrast: more) { .sheet { background:var(--panel); border-color:var(--line); } }
+</style>
+</head>
+<body>
+<header>
+  <b>新对话</b>
+  <div class="aside">
+    <span class="meta" id="state"></span>
+    <a id="open" href="#" hidden>qrd3wh ›</a>
+  </div>
+</header>
+
+<main>
+  <div class="board">
+    <!-- pele 的 cynefin 原路径，平移到 viewBox 0 0 640 440 -->
+    <svg class="frame" viewBox="0 0 640 440" preserveAspectRatio="none" aria-hidden="true">
+      <path d="M0,0L314.04,0C315.06,27.5,322.13,27.5,323.15,55C315.14,82.5,335.41,82.5,327.39,110C328.99,137.5,322.51,137.5,324.11,165C319.92,192.5,324.19,192.5,320,220C280,225.07,280,210.71,240,215.78C200,204.86,200,227.13,160,216.22C120,223.83,120,218.6,80,226.21C40,222.27,40,221.52,0,217.58Z" fill="var(--s1)" fill-opacity="0.14"/>
+      <path d="M314.04,0L640,0L640,222.23C600,231.87,600,212.95,560,222.59C520,213.69,520,227.54,480,218.63C440,224.66,440,213.77,400,219.8C360,218.1,360,221.69,320,220C324.19,192.5,319.92,192.5,324.11,165C322.51,137.5,328.99,137.5,327.39,110C335.41,82.5,315.14,82.5,323.15,55C322.13,27.5,315.06,27.5,314.04,0Z" fill="var(--s2)" fill-opacity="0.14"/>
+      <path d="M0,217.58C40,221.52,40,222.27,80,226.21C120,218.6,120,223.83,160,216.22C200,227.13,200,204.86,240,215.78C280,210.71,280,225.07,320,220C339.2,264,291.2,341,329.6,385C300.8,407,325.76,429,320,440L0,440Z" fill="var(--s4)" fill-opacity="0.14"/>
+      <path d="M320,220C360,221.69,360,218.1,400,219.8C440,213.77,440,224.66,480,218.63C520,227.54,520,213.69,560,222.59C600,212.95,600,231.87,640,222.23L640,440L320,440C325.76,429,300.8,407,329.6,385C291.2,341,339.2,264,320,220Z" fill="var(--s3)" fill-opacity="0.14"/>
+      <g class="b">
+        <path d="M314.04,0C315.06,27.5,322.13,27.5,323.15,55C315.14,82.5,335.41,82.5,327.39,110C328.99,137.5,322.51,137.5,324.11,165C319.92,192.5,324.19,192.5,320,220"/>
+        <path d="M0,217.58C40,221.52,40,222.27,80,226.21C120,218.6,120,223.83,160,216.22C200,227.13,200,204.86,240,215.78C280,210.71,280,225.07,320,220"/>
+        <path d="M320,220C360,221.69,360,218.1,400,219.8C440,213.77,440,224.66,480,218.63C520,227.54,520,213.69,560,222.59C600,212.95,600,231.87,640,222.23"/>
+      </g>
+      <path class="cliff" d="M320,220C339.2,264,291.2,341,329.6,385C300.8,407,325.76,429,320,440"/>
+    </svg>
+
+    <!-- 四个域：今天只有左上那个（模型）是活的 -->
+    <section class="region r1">
+      <h2>模型</h2>
+      <div class="sub">选择 → 创建 → 落地</div>
+      <div class="sub" id="model-sub">已开放</div>
+      <div class="nodes">
+        <button class="node" id="choose" disabled>
+          <span class="id" id="cur-id">—</span>
+          <span class="tag" id="cur-tag">更换 ›</span>
+        </button>
+      </div>
+    </section>
+    <section class="region r2">
+      <h2>上下文</h2>
+      <div class="sub">还没排上</div>
+      <div class="sub">暂未开放</div>
+    </section>
+    <section class="region r4">
+      <h2>工具</h2>
+      <div class="sub">还没排上</div>
+      <div class="sub">暂未开放</div>
+    </section>
+    <section class="region r3">
+      <h2>权限</h2>
+      <div class="sub">还没排上</div>
+      <div class="sub">暂未开放</div>
+    </section>
+
+    <!-- 中央：confusion 椭圆，新对话从这里落子 -->
+    <div class="hub">
+      <h1>新对话</h1>
+      <div class="sub">Disorder · 落子之处</div>
+      <input type="text" id="name" placeholder="名字（留空自动「对话 N」）" maxlength="120" autocomplete="off">
+      <button class="node cta" id="create" disabled>创建</button>
+      <span id="flash"></span>
+    </div>
+  </div>
+</main>
+
+<div id="errbox"></div>
+
+<div class="scrim" id="scrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择模型">
+    <div class="shead">
+      <b>选择模型</b>
+      <input type="text" id="q" placeholder="筛选…" autocomplete="off">
+    </div>
+    <div class="diagram" id="diagram"></div>
+    <div class="dfoot">左列供应商 · 右列模型 · 点模型选中 · ✓ 当前 · <span class="demo">·默认</span> = 缺省 · Esc 关闭</div>
+  </div>
+</div>
+
+<script type="module">
+// 块之间只走 HTTP，地址只从宿主的 ctx 来 —— 这里一个 /p/... 都不拼。
+const self = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const $ = (id) => document.getElementById(id);
+const get = (url) => fetch(url).then(async (r) => {
+  const body = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+  return body;
+});
+const post = (url, body) => fetch(url, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}),
+}).then(async (r) => {
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
+  return data;
+});
+
+let tag = null;
+try {
+  const ctx = await get(self + "__nous/ctx");
+  tag = ctx.blocks.find((b) => b.id === "qrd3wh")
+     ?? ctx.blocks.find((b) => b.name === "session" && b.kind === "group")
+     ?? null;
+  if (!tag) throw new Error("这一盘里没有 qrd3wh，创建不知道往哪发");
+  $("open").href = tag.url;
+  $("open").hidden = false;
+} catch (error) {
+  $("errbox").innerHTML = `<div class="err">找不到对话那一边：${String(error.message ?? error)}</div>`;
+}
+
+const api = (p) => get(tag.url + "/" + p);
+let models = [];
+let defaultModel = null;
+let picked = null;
+const fmt = (m) => `${m.provider}/${m.modelId}`;
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ── 弹窗开合：从触发点长出，Esc / 点 scrim 原路收回 ──
+const openSheet = (from) => {
+  const scrim = $("scrim");
+  if (from && !reduceMotion) {
+    const r = from.getBoundingClientRect();
+    scrim.querySelector(".sheet").style.transformOrigin = `${r.left + r.width / 2}px ${r.top + r.height / 2}px`;
+  }
+  scrim.hidden = false;
+  requestAnimationFrame(() => scrim.classList.add("on"));
+  $("q").value = "";
+  renderDiagram();
+  $("q").focus();
+};
+const closeSheet = () => {
+  const scrim = $("scrim");
+  scrim.classList.remove("on");
+  setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);   // 原路返回
+};
+$("choose").onclick = (e) => openSheet(e.currentTarget);
+$("scrim").onclick = (e) => { if (e.target === $("scrim")) closeSheet(); };
+addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("scrim").hidden) closeSheet(); });
+
+// ── 弹窗内容：两列铁路图（pele.run/examples/railroad 的语法重绘）──
+//   左列规则「供应商」：每行一支药丸，choice 分支纵向排；
+//   右列规则「当前供应商 · 模型」：每行一支药丸，同一套轨道几何；
+//   搜索时右列跨供应商出「匹配」，左列整列压暗；
+//   高度 = max(两列行数) × PITCH —— 不折行不扎堆。
+// 轨道/弧线/起终点圆点照抄 pele 的几何：首行在主轨道，其余行汇入左右两根锚定竖线。
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const pillW = (t) => {
+  let w = 0;
+  for (const ch of String(t)) w += ch.charCodeAt(0) > 0x2e7f ? 13 : 7.8;   // 13px mono 的步进
+  return Math.max(34, Math.ceil(w) + 22);
+};
+const PH = 30, R = 10, PITCH = 40, GAP = 8;
+let pickProvider = null;      // 右列当前展开哪个供应商
+
+const renderDiagram = () => {
+  const box = $("diagram");
+  if (!models.length) { box.innerHTML = '<div class="mnone">这台机器还没有能用的模型。</div>'; return; }
+  const q = $("q").value.trim().toLowerCase();
+  const hit = (m) => !q || `${m.provider} ${m.modelId} ${m.name ?? ""}`.toLowerCase().includes(q);
+
+  const byProvider = new Map();
+  for (const m of models) {
+    if (!byProvider.has(m.provider)) byProvider.set(m.provider, []);
+    byProvider.get(m.provider).push(m);
+  }
+  const provs = [...byProvider.keys()];
+  if (!provs.includes(pickProvider)) pickProvider = picked?.provider ?? provs[0];
+
+  let left, right, rightName;
+  if (q) {
+    left = provs.map((p) => ({ m: { modelId: p, provider: p }, isProvider: true, dim: true }));
+    right = models.filter(hit).map((m) => ({ m }));
+    rightName = "匹配";
+    if (!right.length) { box.innerHTML = '<div class="mnone">没有匹配的模型。</div>'; return; }
+  } else {
+    left = provs.map((p) => ({ m: { modelId: p, provider: p }, isProvider: true }));
+    right = (byProvider.get(pickProvider) ?? []).map((m) => ({ m }));
+    rightName = `${pickProvider} · 模型`;
+  }
+
+  const W = Math.min(640, Math.max(480, box.clientWidth || 560));
+  const x0 = 28, xE = W - 28;
+  const colGap = 64;                              // 两列之间留足两个圆点的位置，不叠
+  const leftW = Math.max(...left.map((p) => pillW(p.m.modelId))) + 16;   // + 左对齐缩进
+  const leftX0 = x0;
+  const leftX1 = leftX0 + leftW;
+  const rightX0 = leftX1 + colGap;
+  const rightX1 = xE;
+
+  let y = 22, body = "";
+  const drawRule = (name, items, cx0, cx1) => {
+    const ty = y + 24;                         // 轨道在规则名下方 24px
+    const ws = items.map((it) => {
+      const isProvider = !!it.isProvider;
+      const sel = isProvider
+        ? picked?.provider === it.m.provider && !q
+        : !!picked && picked.provider === it.m.provider && picked.modelId === it.m.modelId;
+      const isDef = !isProvider && !!defaultModel && defaultModel.provider === it.m.provider && defaultModel.modelId === it.m.modelId;
+      return { ...it, isProvider, sel, isDef, w: pillW(it.m.modelId) + (sel ? 18 : 0) + (isDef ? 32 : 0) };
+    });
+    const rows = ws.map((p, i) => {
+      return { ...p, x: cx0 + 16, y: ty + i * PITCH };   // 列内左对齐 —— 一列清单，不是扎堆
+    });
+    const n = rows.length;
+    let d = `M16,${ty}H${cx0}M${cx1},${ty}H${cx1 + (cx1 === xE ? W - 16 - cx1 : 0)}`;
+    if (cx1 === xE) d = `M16,${ty}H${cx0}M${cx1},${ty}H${W - 16}`;
+    if (n === 1) {
+      d += `M${cx0},${ty}H${rows[0].x}M${rows[0].x + rows[0].w},${ty}H${cx1}`;
+    } else {
+      const first = rows[0], last = rows[n - 1];
+      const xR = cx1 - 2 * R;                            // 右竖线的 x：锚死，不跟药丸走
+      d += `M${cx0},${ty}H${first.x}M${first.x + first.w},${ty}H${cx1}`;   // 首行在主轨道上
+      d += `M${cx0},${ty}a${R},${R} 0 0 1 ${R},${R}V${last.y - R}a${R},${R} 0 0 0 ${R},${R}H${last.x}`;   // 左竖线，喂给每一行
+      d += `M${last.x + last.w},${last.y}H${xR - R}a${R},${R} 0 0 0 ${R},${-R}V${ty + R}a${R},${R} 0 0 1 ${R},${-R}`; // 右竖线，收回主轨道
+      for (const r of rows.slice(1, -1)) {                              // 中间行：左右各一条弧搭上竖线
+        d += `M${cx0 + R},${r.y - R}a${R},${R} 0 0 0 ${R},${R}H${r.x}`;
+        d += `M${r.x + r.w},${r.y}H${xR - R}a${R},${R} 0 0 0 ${R},${-R}`;
+      }
+    }
+    const pills = rows.map((p) => {
+      const spans = [];
+      if (p.sel) spans.push('<tspan fill="var(--accent)">✓ </tspan>');
+      spans.push(esc(p.m.modelId));
+      if (p.isDef) spans.push('<tspan fill="var(--s4)" font-size="10"> ·默认</tspan>');
+      const cls = `pill${p.sel ? " sel" : ""}${p.isProvider && pickProvider === p.m.provider ? " cur" : ""}${p.isProvider ? " pv" : ""}${p.dim ? " dim" : ""}`;
+      const label = p.isProvider ? `${p.m.provider}（切换）` : `${p.m.provider} / ${p.m.modelId}`;
+      return `<g class="${cls}" data-p="${esc(p.m.provider)}" data-m="${esc(p.m.modelId)}" role="button" tabindex="0" aria-label="${esc(label)}"><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${PH}" rx="${PH / 2}"/><text x="${p.x + p.w / 2}" y="${p.y + PH / 2 + 4.5}" text-anchor="middle" style="font-family:var(--mono)" font-size="13">${spans.join("")}</text></g>`;
+    }).join("");
+    body += `<g class="rule"><text x="${cx0}" y="${y + 4}" font-size="14" font-weight="700" text-anchor="start">${esc(name)}</text><path d="${d}"/><circle cx="${cx0 - 16}" cy="${ty}" r="4"/><circle cx="${cx1 + 16}" cy="${ty}" r="4"/>${pills}</g>`;
+    return Math.max(n - 1, 0);
+  };
+
+  drawRule("供应商", left, leftX0, leftX1);
+  drawRule(rightName, right, rightX0, rightX1);
+  const rows2 = Math.max(left.length, right.length);
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${Math.round(y + 24 + (rows2 - 1) * PITCH + PH + 16)}" role="img" aria-roledescription="railroad" aria-label="模型语法图">${body}</svg>`;
+  const sel = box.querySelector(".pill.sel");
+  if (sel) sel.scrollIntoView({ block:"nearest", behavior: reduceMotion ? "auto" : "smooth" });
+  return box;
+};
+
+const choose = (provider, modelId) => {
+  picked = { provider, modelId };
+  pickProvider = provider;
+  $("flash").textContent = "";
+  renderCurrent();
+  renderDiagram();
+  updateHub();
+  setTimeout(closeSheet, reduceMotion ? 0 : 220);   // 让选中那格先亮一下，再原路收回
+};
+$("diagram").addEventListener("click", (e) => {
+  const g = e.target.closest(".pill");
+  if (!g) return;
+  if (g.classList.contains("pv")) { pickProvider = g.dataset.p; renderDiagram(); return; }   // 供应商只切换视图，不关门
+  choose(g.dataset.p, g.dataset.m);
+});
+$("diagram").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const g = e.target.closest?.(".pill");
+  if (!g) return;
+  e.preventDefault();
+  if (g.classList.contains("pv")) { pickProvider = g.dataset.p; renderDiagram(); return; }
+  choose(g.dataset.p, g.dataset.m);
+});
+$("q").oninput = renderDiagram;
+$("q").onkeydown = (e) => { if (e.key === "Enter") $("diagram").querySelector(".pill")?.click(); };
+
+const renderCurrent = () => {
+  if (!picked) {
+    $("cur-id").textContent = "—";
+    $("cur-tag").textContent = models.length ? "选择 ›" : "无模型";
+    $("model-sub").textContent = models.length ? `已开放 · ${models.length} 款` : "没有可用模型";
+    return;
+  }
+  const m = models.find((x) => x.provider === picked.provider && x.modelId === picked.modelId);
+  $("cur-id").textContent = picked.modelId;
+  $("cur-tag").textContent = m?.provider ?? "";
+  const isDef = defaultModel && defaultModel.provider === picked.provider && defaultModel.modelId === picked.modelId;
+  $("model-sub").textContent = `已开放 · ${models.length} 款${isDef ? " · 默认" : ""}`;
+};
+
+const updateHub = () => {
+  $("create").disabled = !picked || !tag;
+  $("choose").disabled = !models.length;
+};
+
+$("create").onclick = commit;
+async function commit() {
+  if (!picked) return;
+  $("create").disabled = true;
+  $("flash").textContent = "";
+  try {
+    const name = $("name").value.trim();
+    const created = await post(tag.url + "/v1/sessions", { model: picked, ...(name ? { name } : {}) });
+    await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
+    $("flash").textContent = `✓ 对话 ${created.id} 已创建`;
+    $("name").value = "";
+    defaultModel = picked;
+    renderCurrent();
+    if (!$("scrim").hidden) closeSheet();
+  } catch (error) {
+    $("flash").textContent = "";
+    $("errbox").innerHTML = `<div class="err">创建失败：${String(error.message ?? error)}</div>`;
+  }
+  $("create").disabled = false;
+}
+
+if (tag) {
+  try {
+    const data = await api("v1/models");
+    models = data.items ?? [];
+    defaultModel = data.default ?? null;
+    picked = defaultModel;
+    $("state").textContent = models.length ? `${models.length} 款可用` : "";
+  } catch (error) {
+    $("errbox").innerHTML = `<div class="err">拿不到模型清单：${String(error.message ?? error)}</div>`;
+  }
+}
+renderCurrent();
+updateHub();
+</script>
+</body>
+</html>
