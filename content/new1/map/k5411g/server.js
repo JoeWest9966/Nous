@@ -7,8 +7,9 @@
 //      本机那半边已经整个拿掉了 —— 别再加回来，除非人明确要求「再对比本机」。
 //   2. 密钥只从 /api/model/{名}/secret 现拿，拿下就显示、不缓存、不落盘。
 //      列表里的 apiKeyRef 永远是引用或 <redacted:…>，那不是 bug。
-//   3. DELETE 是零确认直通 + 打一个 git commit，不可逆。所以前端要求手打名字，
-//      服务端再校验一遍 —— UI 挡手滑，真拦人的是那条名字比对。
+//   3. DELETE 是零确认直通 + 打一个 git commit，不可逆。所以前端用弹窗把后果摆清（列的
+//      是「改哪个文件、会打 commit、谁还在引用」），点确认才执行；服务端再核一次 name 非空。
+//      弹窗自己画，不用 window.confirm / prompt。
 //
 // 接口：
 //   GET    /                       这一页
@@ -16,7 +17,7 @@
 //   GET    /v1/state               编目全量（条目 + 模型 id + usedBy + 密钥形状）
 //   GET    /v1/secret/:name        明文，唯一出口（眼睛按钮才点）
 //   POST   /v1/recheck  {name?}    编目自己跟上游比；不带 name = 全量
-//   POST   /v1/delete   {name}     删一条（要 name 原样对上）
+//   POST   /v1/delete   {name}     删一条（服务端核 name 非空，其余交给面板）
 //
 // 环境：PORT（默认 4780）、NW_BASE（默认 tailnet 8443）、NW_TOKEN（走 panel-gate 时才要）
 

@@ -39,7 +39,10 @@
   .chip { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
     background:var(--chip); border:1px solid var(--line); color:var(--dim); font-size:12.5px; }
   .chip b { color:var(--fg); font-weight:600; }
-  .chip.bad { border-color:#4a2a2a; color:#e8a9a2; }
+  .chip.bad { border-color:#4a2a2a; color:#e8a9a2; max-width:100%;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:inline-block; line-height:1.5; padding:4px 10px; }
+  .chip.done { border-color:#2f5a38; color:#a7dfb2; cursor:pointer; max-width:100%;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:inline-block; line-height:1.5; padding:4px 10px; }
 
   .tools { display:flex; gap:10px; align-items:center; margin-bottom:14px; }
   input[type=search] { flex:1; max-width:420px; font:inherit; color:var(--fg); background:var(--panel);
@@ -86,6 +89,41 @@
   .drift .d { color:var(--dim); }
   .drift .d b { color:var(--warn); font-weight:600; }
 
+  /* ── 删除确认弹窗 ───────────────────────────────────────────── */
+  .backdrop { position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:22px;
+    background:rgba(6,8,11,.62); backdrop-filter:blur(2.5px); }
+  .dlg { width:min(440px, 100%); border-radius:13px; overflow:hidden; background:var(--panel);
+    border:1px solid #3c2a2e; box-shadow:0 28px 70px -20px #000, inset 0 1px 0 #ffffff0a; }
+  .dlg .top { display:flex; gap:12px; align-items:flex-start; padding:18px 18px 0; }
+  .dlg .icon { flex:0 0 auto; width:34px; height:34px; border-radius:10px; display:grid; place-items:center;
+    background:#2a171a; border:1px solid #5a2a2a; color:#ef9d94; }
+  .dlg h2 { margin:0; font-size:15.5px; font-weight:650; letter-spacing:.01em; }
+  .dlg .sub { margin-top:4px; color:var(--dim); font-size:12.5px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .dlg .sub .mono { color:#e6b9b2; background:#221619; border:1px solid #40262a; padding:1px 7px; border-radius:6px; }
+  .dlg .sub .base { font-family:var(--mono); font-size:11.5px; color:var(--dimmer);
+    max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dlg .facts { display:flex; flex-direction:column; gap:7px; padding:14px 18px 0; color:var(--dim); font-size:13px; }
+  .dlg .facts code { color:#c3cbd8; white-space:nowrap; padding:0 1px; }
+  .dlg .warnbox { margin:14px 18px 0; padding:10px 12px; border-radius:9px; font-size:12.5px; line-height:1.55;
+    color:#e8c15a; background:#241f12; border:1px solid #4a3f22; }
+  .dlg .warnbox b { color:#f0cb74; }
+  .dlg .warnbox .who { font-family:var(--mono); color:#f0cb74; }
+  .dlg .btns { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; padding:14px 18px;
+    border-top:1px solid var(--line); background:#12151b; }
+  .dlg .btns button { padding:8px 16px; }
+  @media (max-width:460px) { .dlg .btns button { flex:1; padding:10px 16px; } }
+  .dlg .btns .danger { border-color:#6a3030; }
+  button:focus-visible { outline:2px solid #6f7fc0; outline-offset:2px; }
+  .dlg .btns .danger:focus-visible { outline-color:#b8645c; }
+  @media (prefers-reduced-motion: no-preference) {
+    .backdrop { animation:veil .16s ease-out; }
+    .dlg { animation:rise .2s cubic-bezier(.16,1,.3,1); }
+    .backdrop.closing { animation:veil .13s ease-in forwards; }
+    .dlg.closing { animation:rise .13s ease-in forwards; }
+  }
+  @keyframes veil { from { opacity:0; } }
+  @keyframes rise { from { opacity:0; transform:translateY(10px) scale(.97); } }
+
   footer { margin-top:26px; border-top:1px solid var(--line); padding-top:14px;
     color:var(--dim); font-size:12.5px; }
   footer ul { margin:8px 0 0; padding-left:18px; }
@@ -122,7 +160,7 @@
       <li><b>密钥形状有三种：</b><span class="k ref">$ENV</span> 引用 / <span class="k literal">字面量</span> / <span class="k cmd">!命令</span>。列表里字面量永远是 <code>&lt;redacted:…&gt;</code>，真身只在点「密钥」时现拿一次。</li>
       <li><b>推到编目的密钥是明文的</b>，落进 <code>/opt/Data-001/models.json</code>（这个文件在 git 里）。token 闸不展开 <code>$ENV</code>，所以推引用进去必然 401 —— 引用只能手写进文件。</li>
       <li><b>自查 = <code>nw model recheck</code>：</b>编目自己跟上游 <code>/models</code> 比，报新增 / 下线 / 漂移。</li>
-      <li><b>删除不可逆，且没有「谁在用」的保护。</b>要删得手打名字；删掉一条还被配方引用的供应商不会拦你，破绽留到自查和 <code>nw doctor</code> 那层才露。删完会打一个 git commit。</li>
+      <li><b>删除不可逆，且没有「谁在用」的保护。</b>确认弹窗会先把「改哪个文件、会打 commit、谁还在引用」摆出来，点确认就执行；删掉一条还被配方引用的供应商仓库不会拦你，破绽留到自查和 <code>nw doctor</code> 那层才露。</li>
     </ul>
   </footer>
 </main>
@@ -144,7 +182,79 @@ const el = (tag, props = {}, ...kids) => {
   return node;
 };
 
-const state = { entries: [], summary: { entries: 0, models: 0 }, ledger: { ok: false, base: "" }, error: null };
+const state = { entries: [], summary: { entries: 0, models: 0 }, ledger: { ok: false, base: "" }, error: null, flash: null };
+let flashTimer = null;
+
+// flash:一次性的结果条,活 6 秒。删除成功后那张卡片会被 load() 换掉,
+// 把话说在卡片自己身上等于没说 —— 所以结果挂在顶部。
+function flash(text, kind = "ok") {
+  state.flash = { text, kind };
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { state.flash = null; render(); }, 6000);
+  render();
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// ── 删除确认:自己画的弹窗,不用 window.confirm / prompt ────────────────
+// 要点:Esc 和点遮罩都算取消;焦点默认落在「取消」上(危险动作不该是默认键);
+// Tab 只在两个键之间转;点确认立刻收起弹窗,进度交回卡片上的「删…」。
+function confirmDelete(entry) {
+  return new Promise((resolve) => {
+    const prev = document.activeElement;
+    const okBtn = el("button", { class: "danger", text: "确认删除" });
+    const cancelBtn = el("button", { text: "取消" });
+    const dlg = el("div", { class: "dlg", role: "dialog", "aria-modal": "true", "aria-labelledby": "dlg-title" },
+      el("div", { class: "top" },
+        el("span", { class: "icon", "aria-hidden": "true", html: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg>` }),
+        el("div", { class: "grow" },
+          el("h2", { id: "dlg-title", text: "删除这条编目？" }),
+          el("div", { class: "sub" },
+            el("span", { class: "mono", text: entry.name }),
+            el("span", { text: `· ${entry.models.length} 个模型` }),
+            el("span", { class: "base", text: entry.baseUrl, title: entry.baseUrl }),
+          ),
+        ),
+      ),
+      el("div", { class: "facts" },
+        el("div", { html: `会从 <code>models.json</code> 里去掉这一条，并打一个 git commit。` }),
+        el("div", { html: `不可逆 —— 这一页没有撤销，要用回来只能重新登记。` }),
+      ),
+      entry.usedBy.length
+        ? el("div", { class: "warnbox", html: `<b>还有 ${entry.usedBy.length} 条配方在用它</b>：${entry.usedBy.map((u) => `<span class="who">${esc(u)}</span>`).join("、")}<br>删了这些配方会指向一个不存在的供应商，仓库不会拦你。` })
+        : null,
+      el("div", { class: "btns" }, cancelBtn, okBtn),
+    );
+
+    const back = el("div", { class: "backdrop" }, dlg);
+    let done = false;
+
+    function onKey(e) {
+      if (e.key === "Escape") { e.preventDefault(); close(false); }
+      else if (e.key === "Tab") {
+        e.preventDefault();
+        (document.activeElement === cancelBtn ? okBtn : cancelBtn).focus();
+      } else if (e.key === "Enter" && document.activeElement === okBtn) { e.preventDefault(); close(true); }
+    }
+
+    function close(result) {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey, true);
+      back.classList.add("closing");
+      dlg.classList.add("closing");
+      setTimeout(() => { back.remove(); prev?.focus?.(); resolve(result); }, 130);
+    }
+
+    back.addEventListener("click", (e) => { if (e.target === back) close(false); });
+    cancelBtn.addEventListener("click", () => close(false));
+    okBtn.addEventListener("click", () => close(true));
+    document.addEventListener("keydown", onKey, true);
+
+    document.body.append(back);
+    cancelBtn.focus();
+  });
+}
 
 async function api(path, init) {
   const response = await fetch(path, { ...init, headers: { "content-type": "application/json", ...(init?.headers || {}) } });
@@ -166,12 +276,21 @@ async function copyText(text) {
   }
 }
 
-async function busy(btn, label, fn) {
+async function busy(btn, label, fn, { slowAfter = 8, onSlow = null } = {}) {
   const old = btn.textContent;
-  btn.disabled = true; btn.textContent = label;
+  const t0 = Date.now();
+  btn.disabled = true;
+  btn.textContent = label;
+  // 跑得久的按钮必须自己会走秒 —— 删除要打 commit 再 git push，j1900 到 GitHub
+  // 不通时能卡到 2 分钟上限，干册着「删…」人会以为卡死了。
+  const tick = setInterval(() => {
+    const sec = Math.round((Date.now() - t0) / 1000);
+    btn.textContent = `${label} ${sec}s`;
+    if (onSlow && sec >= slowAfter) { const f = onSlow; onSlow = null; f(); }
+  }, 1000);
   try { return await fn(); }
   catch (error) { throw error; }
-  finally { btn.disabled = false; btn.textContent = old; }
+  finally { clearInterval(tick); btn.disabled = false; btn.textContent = old; }
 }
 
 // ── 渲染 ────────────────────────────────────────────────────────────────
@@ -223,19 +342,25 @@ function card(entry) {
     }),
     el("button", {
       class: "danger", text: "删除",
-      title: "DELETE /api/model/{名} —— 零确认直通 + git commit，不可逆",
+      title: "DELETE /api/model/{名} —— 先看清楚后果，点确认才执行，不可逆",
       onclick: async (e) => {
-        if (entry.usedBy.length && !confirm(`${entry.name} 还被这些配方引用：${entry.usedBy.join("、")}\n删了它们会指向一个不存在的供应商。\n\n继续？`)) return;
-        const typed = prompt(`删除 ${entry.name}？\n\n这一步会改 /opt/Data-001/models.json 并打一个 git commit，不可逆。\n输入名字确认：`);
-        if (typed === null) return;
-        if (typed.trim() !== entry.name) { msg.className = "msg bad"; msg.textContent = "名字没对上，没删"; return; }
+        if (!(await confirmDelete(entry))) return;
         await busy(e.target, "删…", async () => {
-          const r = await post("v1/delete", { name: entry.name });
-          msg.className = r.partial ? "msg warn" : "msg ok";
-          msg.textContent = r.partial
-            ? `已删（剩 ${r.remaining ?? "?"} 条），但 git push 没推上去：${r.warnings[0] ?? ""}`
-            : `已删：${r.name}（剩 ${r.remaining ?? "?"} 条）`;
-          await load();
+          try {
+            const r = await post("v1/delete", { name: entry.name });
+            flash(r.partial
+              ? `已删 ${r.name}（剩 ${r.remaining ?? "?"} 条），但 git push 没推上去：${r.warnings[0] ?? ""}`
+              : `已删 ${r.name}（剩 ${r.remaining ?? "?"} 条）`, r.partial ? "warn" : "ok");
+            await load();
+          } catch (error) {
+            flash(`删 ${entry.name} 失败：${error.message ?? error}`, "bad");
+          }
+        }, {
+          slowAfter: 8,
+          onSlow: () => {
+            msg.className = "msg warn";
+            msg.textContent = "还在跑：编目那边要改完 models.json 再打 git commit + push，最长 2 分钟。";
+          },
         });
       },
     }),
@@ -288,6 +413,15 @@ function render() {
     el("span", { class: "chip", html: `模型 <b>${state.summary.models}</b>` }),
   ];
   if (!state.ledger.ok) chips.unshift(el("span", { class: "chip bad", text: `编目连不上：${state.ledger.error}` }));
+  if (state.flash) {
+    const full = state.flash.text;
+    chips.push(el("span", {
+      class: state.flash.kind === "ok" ? "chip done" : "chip bad",
+      text: full.length > 120 ? full.slice(0, 120) + "…" : full,
+      title: `${full}\n（点一下收掉）`,
+      onclick: () => { state.flash = null; render(); },
+    }));
+  }
   $("chips").replaceChildren(...chips);
 
   applyFilter();
