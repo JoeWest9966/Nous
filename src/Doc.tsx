@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Node, findNode, treeMap } from "./game";
 import { normalizeDocName } from "./docname";
 import { copyText } from "./clipboard";
@@ -35,6 +35,9 @@ import "./doc.css";
  * - **鼠标端的一切入口都是右键。** 行上不放悬停才浮出来的小图标：一张菜单里有
  *   打开 / 重命名 / 复制名字 / 移到最近删除。触屏没有右键，那颗 ••• 才出现（和盘面共用）。
  * - **右边只放当前这份。** 换文件只换右边，左列的滚动位置和选中都不跳。
+ * - **正文有两种看法**：源码（能改）和预览（渲染出来，像 GitHub 上看一份 `.md`）。
+ *   切的是「同一条内容怎么显示」，不是两份数据 —— 没存的字在两边都是同一份。预览器是懒加载的：
+ *   只看源码的人不为它付首包的体积。
  * - **`AGENTS.md` 只是名字特殊**：它在的时候能改、不能删、不能改名 —— 它是 coding agent
  *   进目录时自动找的文件名，删了整块就没人读得懂。但它不预生成：没有就是没有。
  *
@@ -54,6 +57,19 @@ const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
  * 文件名都带 `.md`（`normalizeDocName` 保证），`__padding` 撞不上。
  */
 const NEW_ID = "__padding";
+/**
+ * 正文用哪种看法。住在浏览器里：这是「这台机器上我怎么读字」，不是文档的属性，
+ * 不该跟着文件走、更不该进 `tree.json`。默认源码 —— 这一页本来就是来改东西的。
+ */
+const VIEW_KEY = "nous-doc-view";
+
+/**
+ * 渲染器是单独一包，第一次按「预览」才去拿。放在模块顶层（而不是 `Doc.tsx` 里 inline 一个
+ * `lazy`），换文档、切模式都不会重造一个 lazy 组件 —— 那会让 Suspense 每次都重新挂一次。
+ */
+const DocMarkdown = lazy(() => import("./Markdown"));
+
+type View = "source" | "preview";
 
 type Phase = "loading" | "ready" | "missing" | "error";
 type Status = "idle" | "saving" | "saved" | "conflict" | "error";
@@ -73,6 +89,15 @@ const lines = (t: string): number => t.split("\n").length;
 const splitName = (name: string): [string, string] => {
   const stem = name.replace(/\.md$/i, "");
   return [stem, name.slice(stem.length)];
+};
+
+/** 默认源码模式：只有你亲手切到预览、且它记下来了，才是渲染的。 */
+const readView = (): View => {
+  try {
+    return localStorage.getItem(VIEW_KEY) === "preview" ? "preview" : "source";
+  } catch {
+    return "source";
+  }
 };
 
 /** 左列默认开着 —— 这是文档页的主导航。只有你亲手收起来过、或者屏幕窄，它才是关的。 */
@@ -315,6 +340,146 @@ function useDocFile(board: string, node: string, name: string, enabled: boolean)
 }
 
 /* ------------------------------------------------------------------ *
+ * 手机上那张清单：往左推就送它回去。
+ *
+ * 规矩来自「手和纸一起动」：
+ *
+ * - **1:1 跟手。** 上手的那一帧起就把过渡关掉 —— 中间隔一层缓动，手指和纸之间就有水。
+ * - **10px 才分家。** 竖着先过 10px = 在滚清单，别再抢；横着过 10px 才认定是推纸。
+ * - **右边界是橡皮筋。** 往左推到顶就停住（那边是屏幕沿）；往右没有东西可露，就递减着走。
+ * - **松手看落点，不看当前位置。** 用速度把落点投出去一段（`project`），投过半张就关，
+ *   投不动就弹回来 —— 一把甩出去该比慢慢推更算数。
+ * - **一次 React 渲染都不发生。** 位置直接写进 DOM（这一页的正文可能有一千行，
+ *   每帧 setState 是真的会卡）。只有「到底关没关」最后进一次 state。
+ * ------------------------------------------------------------------ */
+const DECEL = 0.998;
+/** 速度 → 还会滑多远（px）。苹果那条指数衰减，不是物理课本上的 v²/2a。 */
+const project = (v: number): number => ((v / 1000) * DECEL) / (1 - DECEL);
+
+function useSheetDrag(onDismiss: () => void) {
+  const box = useRef<HTMLElement | null>(null);
+  const scrim = useRef<HTMLElement | null>(null);
+  const g = useRef({
+    id: -1,
+    x0: 0,
+    y0: 0,
+    x: 0,
+    w: 1,
+    grab: false,
+    dead: false,
+    pts: [] as { x: number; t: number }[],
+  });
+  const timer = useRef(0);
+
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const down = (e: React.PointerEvent) => {
+    const el = box.current;
+    if (!el || (e.pointerType === "mouse" && e.button !== 0)) return;
+    // 在输入框里横着拖是在选字，不是推纸。
+    if ((e.target as HTMLElement).closest("input, textarea")) return;
+    window.clearTimeout(timer.current);
+    g.current = {
+      id: e.pointerId,
+      x0: e.clientX,
+      y0: e.clientY,
+      x: 0,
+      w: el.offsetWidth || 1,
+      grab: false,
+      dead: false,
+      pts: [{ x: e.clientX, t: performance.now() }],
+    };
+  };
+
+  const move = (e: React.PointerEvent) => {
+    const el = box.current;
+    const s = g.current;
+    if (!el || e.pointerId !== s.id || s.dead) return;
+    const dx = e.clientX - s.x0;
+    const dy = e.clientY - s.y0;
+
+    if (!s.grab) {
+      if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+        s.dead = true;
+        return;
+      }
+      if (Math.abs(dx) < 10 || Math.abs(dx) <= Math.abs(dy)) return;
+      s.grab = true;
+      el.style.transition = "none";
+      el.style.willChange = "transform";
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        // 拿不到捕获也照样拖（手在纸里面就够）；只是手滑出去会断。
+      }
+    }
+
+    s.pts.push({ x: e.clientX, t: performance.now() });
+    if (s.pts.length > 6) s.pts.shift();
+
+    // 往左跟着手指直到顶到屏幕沿；往右没有东西可露，只给一点软阻力。
+    s.x = dx < 0 ? Math.max(dx, -s.w) : (dx * s.w * 0.55) / (s.w + 0.55 * Math.abs(dx));
+    el.style.transform = `translate3d(${s.x}px, 0, 0)`;
+    // 幕布跟着手指一起淡 —— 连续反馈，不是松手才变。只认往左那一段：
+    // 往上拉橡皮筋不该把幕布又提亮（那是「往回走」，不是「接着走」）。
+    if (scrim.current) {
+      scrim.current.style.opacity = String(Math.max(0, 1 - 0.75 * (Math.max(0, -s.x) / s.w)));
+    }
+  };
+
+  const end = (e: React.PointerEvent, cancelled = false) => {
+    const el = box.current;
+    const s = g.current;
+    if (!el || e.pointerId !== s.id) return;
+    s.id = -1;
+    if (!s.grab) return;
+    s.grab = false;
+    el.style.willChange = "";
+
+    // 速度只看最后 110ms：一把甩出去的话，只有尾巴算数。
+    const now = performance.now();
+    const tail = s.pts.filter((p) => now - p.t < 110);
+    const a = tail[0];
+    const b = tail[tail.length - 1];
+    const v = !cancelled && a && b && b.t > a.t ? ((b.x - a.x) / (b.t - a.t)) * 1000 : 0;
+
+    if (s.x + project(v) < -s.w * 0.4) {
+      el.style.transition = "transform 240ms var(--dp-ease-out)";
+      el.style.transform = "translate3d(-100%, 0, 0)";
+      if (scrim.current) scrim.current.style.opacity = "0";
+      // 动画走完再翻状态 —— 那时候 class 也是 -100%，接手不跳。
+      timer.current = window.setTimeout(() => {
+        if (box.current) {
+          box.current.style.transition = "";
+          box.current.style.transform = "";
+        }
+        if (scrim.current) scrim.current.style.opacity = "";
+        onDismiss();
+      }, 250);
+    } else {
+      // 投不动：弹簧把它拾回去。从**现在这个位置**开始，不是从 0 开始。
+      el.style.transition = "transform 420ms var(--dp-spring)";
+      el.style.transform = "";
+      if (scrim.current) scrim.current.style.opacity = "";
+      timer.current = window.setTimeout(() => {
+        if (box.current) box.current.style.transition = "";
+      }, 460);
+    }
+  };
+
+  return {
+    box,
+    scrim,
+    handlers: {
+      onPointerDown: down,
+      onPointerMove: move,
+      onPointerUp: (e: React.PointerEvent) => end(e),
+      onPointerCancel: (e: React.PointerEvent) => end(e, true),
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * 页面
  * ------------------------------------------------------------------ */
 export function DocPage({
@@ -358,14 +523,39 @@ export function DocPage({
   const [trashOpen, setTrashOpen] = useState(false);
   /** 正文里那个标题：点一下就地改名。 */
   const [titleEdit, setTitleEdit] = useState(false);
+  /** 正文是源码还是渲染出来的那份。 */
+  const [view, setView] = useState<View>(readView);
+  /** 正文滚开了没有。滚开了，顶上那条才长出一条发丝边 —— 没滚的时候它是透明的。 */
+  const [scrolled, setScrolled] = useState(false);
+  /** 纸上的大标题已经滑到条子底下了没有。滑过去了，条子上才把名字拿出来（iOS 的大标题）。 */
+  const [past, setPast] = useState(false);
+  const body = useRef<HTMLTextAreaElement | null>(null);
+  const scroll = useRef<HTMLDivElement | null>(null);
+  const bar = useRef<HTMLElement | null>(null);
+  const pageTitle = useRef<HTMLDivElement | null>(null);
   const skipBlur = useRef(false);
   const renamed = useRef(false);
   const search = useRef<HTMLInputElement | null>(null);
+  const sheet = useSheetDrag(() => setSide(false));
 
   const closeInputs = useCallback(() => {
     setAdding(false);
     setRenaming(null);
   }, []);
+
+  const pickView = useCallback((v: View) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* 记不住就记不住，这一次照样切。 */
+    }
+  }, []);
+
+  /* 切回源码 = 想动手了。光标直接落回纸上，不用再点一下正文。 */
+  useEffect(() => {
+    if (view === "source") body.current?.focus();
+  }, [view]);
 
   /* 回执不占地方：3.4 秒，够看完一句话。 */
   useEffect(() => {
@@ -397,9 +587,13 @@ export function DocPage({
     return () => mq.removeEventListener("change", on);
   }, []);
 
-  /* 换了一份：标题回到「看的」状态，别把上一份的输入框留在那儿。 */
+  /* 换了一份：标题回到「看的」状态，别把上一份的输入框留在那儿；
+     纸回到顶上 —— 从一份的第 800 行跳到另一份，落点不该是它的第 800 行。 */
   useEffect(() => {
     setTitleEdit(false);
+    setScrolled(false);
+    setPast(false);
+    scroll.current?.scrollTo({ top: 0 });
   }, [cur]);
 
   /* 左列的开合记在这台浏览器里。手机上那一下不动桌面上的偏好 —— 屏幕小不是「我收起来了」。 */
@@ -692,8 +886,15 @@ export function DocPage({
         aria-label={`${node.name} 的文档`}
         className="absolute inset-0 z-40 flex flex-col bg-canvas text-text"
       >
-        {/* 一条头：返回、左列开合、位置、当前是哪一份、新建。和盘面那条一个高度、一种节奏。 */}
-        <header className="flex h-[52px] shrink-0 items-center gap-1.5 border-b border-border px-3">
+        {/* 一条头。宽屏就是盘面那条：返回 / 左列开关 / 位置 / ＋ 文档。
+            手机上它矮一半、半透明、盖在正文上 —— 正文从它底下滚过去。上面只留三样：
+            回去、这是哪份、（看一眼 / 新建）。左列开关在手机上没了：标题自己就是那颗开关。 */}
+        <header
+          ref={bar}
+          data-narrow={narrow}
+          data-scrolled={scrolled}
+          className="dp-bar flex shrink-0 items-center gap-1.5 px-3"
+        >
           <IconBtn label="返回盘面（Esc）" onClick={onClose}>
             <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
               <path
@@ -708,7 +909,8 @@ export function DocPage({
           </IconBtn>
 
           {/* 左列的开关。**和盘面那颗一模一样**：一个框，中间一条竖线 —— 说的是「这一列」，
-              不是一个抽象的箭头。开的时候字色亮着，关着的时候是暗的。 */}
+              不是一个抽象的箭头。开的时候字色亮着，关着的时候是暗的。
+              手机上它也在，因为这个列在手机上真的存在（只是盖在纸上了）。 */}
           <IconBtn
             label={side ? "收起左列" : "展开左列"}
             onClick={() => setSide(!side)}
@@ -729,38 +931,71 @@ export function DocPage({
             </svg>
           </IconBtn>
 
-          {/* 位置：块名 / 当前这一份。都是字，不是按钮 —— 想回去就按左上角那颗。 */}
-          <div className="flex min-w-0 items-baseline gap-1.5 px-1 text-[13px]">
-            <span className="truncate font-medium text-text/90" title={tree}>
-              {node.name}
+          {narrow ? (
+            /* 大标题：手机上中间就是一块空，等纸上的名字滑到条子底下，它才浮上来。
+               不早一步（明明下面刚写过一遍）、也不晚一步（那时候名字已经在屏外了）。 */
+            <span data-past={past} className="dp-bar-name" aria-hidden={!past}>
+              {cur.replace(/\.md$/i, "") || node.name}
             </span>
-            <span className="text-text/25" aria-hidden="true">
-              /
-            </span>
-            <span className="truncate font-mono text-[11.5px] text-muted">{cur || "文档"}</span>
-            {current?.protected && <span className="dp-pill">入口</span>}
-          </div>
+          ) : (
+            /* 位置：块名 / 当前这一份。都是字，不是按钮 —— 想回去就按左上角那颗。 */
+            <div className="flex min-w-0 items-baseline gap-1.5 px-1 text-[13px]">
+              <span className="truncate font-medium text-text/90" title={tree}>
+                {node.name}
+              </span>
+              <span className="text-text/25" aria-hidden="true">
+                /
+              </span>
+              <span className="truncate font-mono text-[11.5px] text-muted">{cur || "文档"}</span>
+              {current?.protected && <span className="dp-pill">入口</span>}
+            </div>
+          )}
 
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            <Pill onClick={startAdd} title="在这个文件夹里新建一份文档">
-              ＋ 文档
-            </Pill>
+            {/* 有正文可看才有「怎么看」这回事。空文件夹、载入中不摆一个管不了任何东西的开关。
+                宽屏是那颗两格滑块；手机上它收成一颗图标 —— 标题要地方，而手机上只有三格。 */}
+            {doc.phase === "ready" &&
+              (narrow ? (
+                <IconBtn
+                  label={view === "preview" ? "切回源码" : "预览（渲染出来）"}
+                  onClick={() => pickView(view === "preview" ? "source" : "preview")}
+                  className={view === "preview" ? "text-text/80" : "text-muted"}
+                >
+                  {view === "preview" ? <IconCode /> : <IconEye />}
+                </IconBtn>
+              ) : (
+                <ViewSwitch view={view} onChange={pickView} />
+              ))}
+
+            {narrow ? (
+              <IconBtn label="新建文档" onClick={startAdd}>
+                <IconPlus />
+              </IconBtn>
+            ) : (
+              <Pill onClick={startAdd} title="在这个文件夹里新建一份文档">
+                ＋ 文档
+              </Pill>
+            )}
           </div>
         </header>
 
         <div className="relative flex min-h-0 flex-1">
           {/* ── 左列：就是这个文件夹 ─────────────────────────────────── */}
           <aside
-            className={`shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-300 ${EASE} ${
+            ref={sheet.box as React.RefObject<HTMLElement>}
+            {...(narrow ? sheet.handlers : {})}
+            className={
               narrow
-                ? `absolute inset-y-0 left-0 z-20 shadow-[0_0_60px_rgba(0,0,0,0.6)] ${side ? "w-[248px]" : "w-0 border-r-0"}`
-                : `relative ${side ? "w-[248px]" : "w-0 border-r-0"}`
-            }`}
+                ? `dp-sheet absolute left-0 z-20 ${side ? "dp-sheet--open" : ""}`
+                : `relative shrink-0 overflow-hidden border-r border-border bg-surface transition-[width] duration-300 ${EASE} ${
+                    side ? "w-[248px]" : "w-0 border-r-0"
+                  }`
+            }
             aria-label="文档列表"
             inert={!side || undefined}
           >
             <div
-              className={`flex h-full w-[248px] flex-col ${side ? "opacity-100" : "opacity-0"} transition-opacity duration-200`}
+              className={`flex h-full flex-col ${narrow ? "w-full" : "w-[248px]"} ${side ? "opacity-100" : "opacity-0"} transition-opacity duration-200`}
             >
               <div className="dp-side-search mt-2.5">
                 <svg
@@ -920,18 +1155,32 @@ export function DocPage({
             </div>
           </aside>
 
-          {narrow && side && (
+          {narrow && (
             <button
+              ref={sheet.scrim as React.RefObject<HTMLButtonElement>}
               type="button"
-              aria-label="关闭左列浮层"
+              aria-label="关闭清单"
+              tabIndex={-1}
               onClick={() => setSide(false)}
-              className="absolute inset-0 z-10 bg-black/40"
+              data-open={side}
+              className="dp-scrim absolute inset-0 z-10"
             />
           )}
 
           {/* ── 右边：当前这一份 ───────────────────────────────────── */}
           <div className="relative flex min-w-0 flex-1 flex-col">
-            <div className="dp-scroll">
+            <div
+              ref={scroll}
+              className="dp-scroll"
+              onScroll={(e) => {
+                const s = e.currentTarget;
+                setScrolled(s.scrollTop > 2);
+                // 纸上的名字跑到条子底下去了没有：条子的高度是量的，不是写死的（上面还有安全区）。
+                const head = pageTitle.current;
+                const barH = bar.current?.offsetHeight ?? 48;
+                setPast(!!head && head.getBoundingClientRect().top < barH);
+              }}
+            >
               <div className="dp-column">
                 {!cur && !listed && <p className="pt-1 text-[13px] text-muted/70">载入中…</p>}
 
@@ -971,7 +1220,7 @@ export function DocPage({
                     <p className="dp-eyebrow" title={`content/${board}/map/${id}/${cur}`}>
                       map/{id}/{cur}
                     </p>
-                    <div className="dp-title-row">
+                    <div className="dp-title-row" ref={pageTitle}>
                       {/* 标题就是名字。**点一下就地改**，不用绕到菜单里去 —— 名字在哪儿，就在哪儿改。
                           和 Finder / Notes 一个手感：回车或失焦交，Esc 退。AGENTS.md 不能改名，
                           那就不是一颗按钮（不装一个假的可点击）。 */}
@@ -1094,15 +1343,30 @@ export function DocPage({
                       </p>
                     )}
 
-                    <textarea
-                      value={doc.text}
-                      onChange={(e) => doc.edit(e.target.value)}
-                      autoFocus
-                      spellCheck={false}
-                      aria-label={`${cur} 正文`}
-                      placeholder="写点什么。改了就自己存。"
-                      className="dp-text w-full flex-1 resize-none bg-transparent outline-none"
-                    />
+                    {/* 同一条 `doc.text`，两种看法。预览看的就是「你会存下去的那一版」——
+                        没存的字也已经在里面了，不用先保存再看。 */}
+                    {view === "preview" ? (
+                      doc.text.trim() ? (
+                        <Suspense fallback={<p className="dp-prose-quiet">渲染中…</p>}>
+                          <DocMarkdown text={doc.text} />
+                        </Suspense>
+                      ) : (
+                        <p className="dp-prose-quiet">
+                          这份还是空的 —— 切回源码写点东西，这里就出东西。
+                        </p>
+                      )
+                    ) : (
+                      <textarea
+                        ref={body}
+                        value={doc.text}
+                        onChange={(e) => doc.edit(e.target.value)}
+                        autoFocus
+                        spellCheck={false}
+                        aria-label={`${cur} 正文`}
+                        placeholder="写点什么。改了就自己存。"
+                        className="dp-text w-full flex-1 resize-none bg-transparent outline-none"
+                      />
+                    )}
                   </>
                 )}
               </div>
@@ -1272,6 +1536,40 @@ function IconBtn({
 }
 
 /** 头里那颗胶囊 —— 和盘面的「＋ 块」「＋ 组」同一副样子。 */
+/* ------------------------------------------------------------------ *
+ * 正文怎么看：源码 / 预览。
+ *
+ * 一颗两格的开关，滑块是一块**真的矩形**（不是两套底色换着上）—— 所以切的那一下可以
+ * 只动 `transform`，整个过渡只有一个合成层。开着的固定在左边：默认是源码，那一格不该会跑。
+ *
+ * 没有键盘快捷键：⌘E、⌘⇧P 在浏览器里各自有主，抢过来比省一下鼠标更贵。
+ * ------------------------------------------------------------------ */
+function ViewSwitch({ view, onChange }: { view: View; onChange: (v: View) => void }) {
+  return (
+    <div className="dp-view" role="group" aria-label="正文显示方式">
+      <span className="dp-view-thumb" data-i={view === "preview" ? 1 : 0} aria-hidden="true" />
+      <button
+        type="button"
+        aria-pressed={view === "source"}
+        onClick={() => onChange("source")}
+        title="源码模式：直接改 markdown"
+        className="dp-view-btn"
+      >
+        源码
+      </button>
+      <button
+        type="button"
+        aria-pressed={view === "preview"}
+        onClick={() => onChange("preview")}
+        title="预览模式：渲染出来读，像 GitHub 上看一份 .md"
+        className="dp-view-btn"
+      >
+        预览
+      </button>
+    </div>
+  );
+}
+
 function Pill({
   children,
   onClick,
@@ -1339,6 +1637,27 @@ const IconCopy = () => (
 );
 
 /** 载入中 / 查无此块时的那一层空壳 —— 和真页面同一个形（一条头 + 版心），不会闪。 */
+/* 手机工具条上的三枚：一只眼（看渲染）、两个尖括号（回去改）、一个加号。 */
+const IconEye = () => (
+  <svg {...stroke}>
+    <path d="M1.5 7s2.2-3.9 5.5-3.9S12.5 7 12.5 7s-2.2 3.9-5.5 3.9S1.5 7 1.5 7Z" />
+    <circle cx="7" cy="7" r="1.6" />
+  </svg>
+);
+
+const IconCode = () => (
+  <svg {...stroke}>
+    <path d="M4.9 4.2 2.2 7l2.7 2.8" />
+    <path d="M9.1 4.2 11.8 7l-2.7 2.8" />
+  </svg>
+);
+
+const IconPlus = () => (
+  <svg {...stroke}>
+    <path d="M7 2.8v8.4M2.8 7h8.4" />
+  </svg>
+);
+
 function Shell({
   onClose,
   title,

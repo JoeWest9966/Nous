@@ -7,6 +7,9 @@
  * 头是盘面那条（返回 / 左列开关 / 位置 / ＋ 文档），高度和节奏都对齐；
  * 左列是 `surface`（比纸亮一档，是「目录」不是「内容」），可收起 —— 宽 `248 → 0`，窄屏是一张抽屉；
  * 纸上没有工具条 —— 文件名、字数、保存状态都贴在标题附近，正文就是这一页。
+ *
+ * 正文有两种看法：源码（等宽的 textarea，改的）和预览（`.dp-prose`，读的）。
+ * 开关是那颗两格的滑块，只动 `transform`；两边看的是同一条 `doc.text`。
  */
 
 :root {
@@ -20,6 +23,13 @@
   );
   --dp-in: 260ms;
   --dp-ease-out: cubic-bezier(0.32, 0.72, 0, 1);
+  /* 幕布：暗色主题用画布色压过去（就是「黑」，但它是 token 里的那个黑）；
+     浅色主题换成字色的一层淡雾 —— 白底上再盖一层白，等于没盖。 */
+  --dp-scrim: color-mix(in oklab, var(--n-color-canvas) 72%, transparent);
+}
+
+:root[data-theme="light"] {
+  --dp-scrim: color-mix(in oklab, var(--n-color-text) 32%, transparent);
 }
 
 /* ── 材质 ─────────────────────────────────────────────────────────────────── */
@@ -350,6 +360,77 @@
   letter-spacing: 0.01em;
 }
 
+/* 源码 / 预览：一颗两格的开关。滑块是一块**真矩形**（不是两套底色换着上），
+   切的那一下只动 `transform` —— 整个过渡只有一个合成层，不碰漆。 */
+.dp-view {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 28px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--n-color-surface);
+}
+
+.dp-view-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 2);
+  border-radius: 6px;
+  background: var(--n-color-raised);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 color-mix(in oklab, var(--n-color-text) 10%, transparent);
+  transform: translateX(0);
+  transition: transform 260ms var(--dp-ease-out);
+}
+
+.dp-view-thumb[data-i="1"] {
+  transform: translateX(100%);
+}
+
+:root[data-theme="light"] .dp-view-thumb {
+  /* 浅色下 `raised` 比 `surface` 只深 4 级 —— 白底上几乎看不见，押一格到 border 那边去。 */
+  background: color-mix(in oklab, var(--n-color-raised) 58%, var(--n-color-border));
+  box-shadow:
+    0 1px 2px rgba(16, 20, 26, 0.09),
+    inset 0 0 0 1px rgba(16, 20, 26, 0.045);
+}
+
+.dp-view-btn {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  color: var(--n-color-muted);
+  transition: color 160ms var(--dp-ease-out);
+}
+
+.dp-view-btn:hover,
+.dp-view-btn[aria-pressed="true"] {
+  color: var(--n-color-text);
+}
+
+.dp-view-btn:focus-visible {
+  outline: 2px solid var(--n-color-accent);
+  outline-offset: 1px;
+}
+
+@media (max-width: 819px) {
+  .dp-view-btn {
+    min-width: 40px;
+  }
+}
+
 /* ── 版心 ─────────────────────────────────────────────────────────────────── */
 
 .dp-scroll {
@@ -519,6 +600,235 @@
   background: color-mix(in oklab, var(--n-color-accent) 26%, transparent);
 }
 
+/* ── 渲染出来的那份（预览模式） ───────────────────────────────────────────── */
+
+/* 纸还是同一张纸：位置、标题、字数、保存状态都不动，换的只是正文「怎么看」。
+   源码用等宽（那是要动手改的），预览用无村线（那是要读的）—— 同一段字，两种活。
+   版式照着 GitHub 那份：标题递减、引用带一根竖线、代码块自己横滚、表格自己横滚。 */
+.dp-prose {
+  font-family: var(--n-font-sans);
+  font-size: 14.5px;
+  line-height: 1.72;
+  color: color-mix(in oklab, var(--n-color-text) 94%, transparent);
+  /* 长 URL、长行内代码不该把版心顶宽 —— 断在哪儿都行，就是不能溢出。 */
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.dp-prose > :first-child {
+  margin-top: 0;
+}
+
+.dp-prose > :last-child {
+  margin-bottom: 0;
+}
+
+.dp-prose ::selection {
+  background: color-mix(in oklab, var(--n-color-accent) 26%, transparent);
+}
+
+/* 标题：一级比一级小，字距跟着收 —— 大字号收、小字号不收，这是同一条规矩。 */
+.dp-prose h1,
+.dp-prose h2,
+.dp-prose h3,
+.dp-prose h4,
+.dp-prose h5,
+.dp-prose h6 {
+  margin: 1.9em 0 0.7em;
+  line-height: 1.28;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+  color: var(--n-color-text);
+}
+
+.dp-prose h1 {
+  font-size: 1.5rem;
+  letter-spacing: -0.022em;
+}
+
+.dp-prose h2 {
+  font-size: 1.2rem;
+  letter-spacing: -0.018em;
+  padding-bottom: 0.28em;
+  border-bottom: 1px solid var(--n-color-border);
+}
+
+.dp-prose h3 {
+  font-size: 1.05rem;
+}
+
+.dp-prose h4 {
+  font-size: 1rem;
+}
+
+.dp-prose h5,
+.dp-prose h6 {
+  font-size: 0.92rem;
+  color: var(--n-color-muted);
+}
+
+.dp-prose p {
+  margin: 0.85em 0;
+}
+
+.dp-prose a {
+  color: color-mix(in oklab, var(--n-color-accent) 86%, var(--n-color-text));
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--n-color-accent) 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  transition: text-decoration-color 120ms var(--dp-ease-out);
+}
+
+.dp-prose a:hover {
+  text-decoration-color: currentColor;
+}
+
+.dp-prose strong {
+  font-weight: 620;
+  color: var(--n-color-text);
+}
+
+.dp-prose del {
+  color: color-mix(in oklab, var(--n-color-muted) 92%, transparent);
+}
+
+/* Preflight 把 list-style 洗白了，这里得一间一间要回来。 */
+.dp-prose ul,
+.dp-prose ol {
+  margin: 0.8em 0;
+  padding-left: 1.45em;
+}
+
+.dp-prose ul {
+  list-style: disc;
+}
+
+.dp-prose ol {
+  list-style: decimal;
+}
+
+.dp-prose li {
+  margin: 0.28em 0;
+}
+
+.dp-prose li > ul,
+.dp-prose li > ol {
+  margin: 0.3em 0;
+}
+
+.dp-prose li::marker {
+  color: var(--n-color-muted);
+}
+
+/* GFM 的任务列表：勾选框是**看得见、点不动**的 —— 这里是预览，改它等于改文件，
+   而改文件的入口只有一个（源码模式）。 */
+.dp-prose li:has(> input[type="checkbox"]) {
+  list-style: none;
+  margin-left: -1.2em;
+}
+
+.dp-prose input[type="checkbox"] {
+  margin: 0 0.5em 0 0;
+  vertical-align: -1px;
+  accent-color: var(--n-color-accent);
+  /* 点不动，但不像坏掉：没有禁用态那层灰，也没有焦点框。 */
+  pointer-events: none;
+}
+
+.dp-prose blockquote {
+  margin: 1em 0;
+  padding: 0.05em 0 0.05em 0.95em;
+  border-left: 2px solid color-mix(in oklab, var(--n-color-accent) 50%, var(--n-color-border));
+  color: color-mix(in oklab, var(--n-color-muted) 96%, transparent);
+}
+
+.dp-prose blockquote > :first-child {
+  margin-top: 0;
+}
+
+.dp-prose blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.dp-prose code {
+  font-family: var(--n-font-mono);
+  font-size: 0.86em;
+  padding: 0.1em 0.36em;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--n-color-raised) 55%, transparent);
+}
+
+.dp-prose pre {
+  margin: 1em 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--n-color-surface) 86%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--n-color-text) 8%, transparent);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  font-size: 12.5px;
+  line-height: 1.62;
+  tab-size: 2;
+}
+
+.dp-prose pre code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+/* 表格和代码块各自横滚，页面本身不跟着横着跑。 */
+.dp-prose-scroll {
+  margin: 1em 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.dp-prose table {
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.dp-prose th,
+.dp-prose td {
+  padding: 6px 12px;
+  border: 1px solid var(--n-color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.dp-prose th {
+  background: color-mix(in oklab, var(--n-color-surface) 82%, transparent);
+  font-weight: 600;
+}
+
+.dp-prose tbody tr:nth-child(2n) {
+  background: color-mix(in oklab, var(--n-color-surface) 45%, transparent);
+}
+
+.dp-prose hr {
+  margin: 2em 0;
+  border: 0;
+  border-top: 1px solid var(--n-color-border);
+}
+
+.dp-prose img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+/* 没东西渲染的时候也留一句人话 —— 空白的预览看不出是「空文件」还是「坏了」。 */
+.dp-prose-quiet {
+  padding-top: 2px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--n-color-muted);
+}
+
 /* 空状态：一句人话，一颗按钮。别用插画，别用大图标。 */
 .dp-empty {
   display: flex;
@@ -591,6 +901,137 @@
   }
 }
 
+/* ── 手机 ─────────────────────────────────────────────────────────────── */
+
+/* 这一页在手机上只做一件事：把这伤文档读完、改完。所以三件事 ——
+ *
+ * 1. **条子退到后面去。** 48 高、半透明、带模糊，正文从它底下滚过去；
+ *    没滚的时候它连缝都没有，滚起来了才长出一根发丝。
+ * 2. **清单是一张纸，不是一个面板。** 它从左边推进来、能用手推回去 ——
+ *    跟手、有边界、有速度，那套逻辑在 `useSheetDrag` 里。
+ * 3. **能按的地方至少 44。** 手机上 28px 的图标不是「克制」，是点不中。
+ */
+
+.dp-bar {
+  height: 52px;
+  border-bottom: 1px solid var(--n-color-border);
+}
+
+/* 条子中间那个名字：一上一下只动 transform / opacity —— 它每滚一下都要重算状态。 */
+.dp-bar-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--n-color-text);
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 180ms var(--dp-ease-out),
+    transform 180ms var(--dp-ease-out);
+}
+
+.dp-bar-name[data-past="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+@media (max-width: 819px) {
+  .dp-bar {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 15;
+    height: calc(48px + env(safe-area-inset-top, 0px));
+    padding-top: env(safe-area-inset-top, 0px);
+    background: color-mix(in oklab, var(--n-color-canvas) 74%, transparent);
+    /* 前缀写在前：Lightning CSS 只留最后一条，写反了 Chrome 就一条都不认。 */
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    border-bottom-color: transparent;
+    transition: border-color 180ms var(--dp-ease-out);
+  }
+
+  /* 只有正文真的从底下过去了，才需要一条线把两层分开。 */
+  .dp-bar[data-scrolled="true"] {
+    border-bottom-color: var(--n-color-border);
+  }
+
+  .dp-bar .dp-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+  }
+
+  /* 顶上给条子让出 48，底下给 Home 指示条让出一格。 */
+  .dp-column {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 64px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+  }
+
+  /* 盘上的路径是给桌面的问题（「这份文件到底在哪」）。手机上它只是一行灰字在挡路。 */
+  .dp-eyebrow {
+    display: none;
+  }
+
+  .dp-meta {
+    margin-top: 10px;
+    margin-bottom: 22px;
+  }
+
+  /* 一张从左边推进来的纸。它的位置只在 transform 上 —— 拖的时候直接写 DOM，不走 React。 */
+  .dp-sheet {
+    width: min(84vw, 320px);
+    /* 从条子底下开始，不盖它：系统条是常亮的，被一张半透明的纸蒙住就废了。 */
+    top: calc(48px + env(safe-area-inset-top, 0px));
+    bottom: 0;
+    overflow: hidden;
+    border-radius: 0 16px 16px 0;
+    background: color-mix(in oklab, var(--n-color-surface) 86%, transparent);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    backdrop-filter: blur(30px) saturate(180%);
+    box-shadow:
+      1px 0 0 color-mix(in oklab, var(--n-color-text) 9%, transparent),
+      18px 0 50px -24px rgba(0, 0, 0, 0.75);
+    transform: translate3d(-100%, 0, 0);
+    /* 竖着滚归浏览器，横着推归我们。 */
+    touch-action: pan-y;
+    transition: transform 240ms var(--dp-ease-out);
+  }
+
+  /* 进来带一点过冲（弹簧尾巴上那 3%），出去不带 —— 走的时候弹一下像舍不得。 */
+  .dp-sheet--open {
+    transform: translate3d(0, 0, 0);
+    transition: transform 420ms var(--dp-spring);
+  }
+
+  .dp-scrim {
+    background: var(--dp-scrim);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 220ms var(--dp-ease-out);
+  }
+
+  .dp-scrim[data-open="true"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* 触屏上没有悬停，那「按住」这一下就是全部反馈。 */
+  @media (hover: none) {
+    .dp-row:active {
+      background: var(--n-color-raised);
+    }
+
+    .dp-trash-toggle:active {
+      background: var(--n-color-raised);
+      color: var(--n-color-text);
+    }
+  }
+}
+
 /* ── 三档偏好 ─────────────────────────────────────────────────────────────── */
 
 /* 少动一点 ≠ 没有反馈：滑动、缩放、弹簧全换成短淡入，颜色和透明度照旧。 */
@@ -610,6 +1051,19 @@
   .dp-status {
     transition-duration: 120ms;
   }
+
+  /* 位置照样得跳到该在的那一格，只是不滑 —— 少动一点，不是少了一个状态。 */
+  .dp-view-thumb {
+    transition: none;
+  }
+
+  /* 手拖的时候是 1:1（那不算动效，那是手本身）；松手后的那段走 140ms 直線 —— 不再溜冰。 */
+  .dp-sheet,
+  .dp-sheet--open {
+    transition-duration: 140ms !important;
+    transition-timing-function: var(--dp-ease-out) !important;
+  }
+
 }
 
 /* 少透明：玻璃变瓷。抬高不透明度、砍掉模糊，读得清比好看重要。 */
@@ -619,12 +1073,31 @@
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
+
+  .dp-bar,
+  .dp-sheet {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .dp-bar {
+    background: var(--n-color-canvas);
+  }
+
+  .dp-sheet {
+    background: var(--n-color-surface);
+  }
 }
 
 /* 要高对比：该有一根边的地方就给一根真的边。 */
 @media (prefers-contrast: more) {
-  .dp-side {
-    border-right-color: color-mix(in oklab, var(--n-color-text) 45%, transparent);
+  .dp-sheet {
+    border-right: 1px solid color-mix(in oklab, var(--n-color-text) 45%, transparent);
+  }
+
+  .dp-bar[data-narrow="true"] {
+    background: var(--n-color-canvas);
+    border-bottom-color: var(--n-color-text);
   }
 
   .dp-row[data-on="true"] {
@@ -635,6 +1108,11 @@
   .dp-glass {
     background: var(--n-color-raised);
     border-color: var(--n-color-text);
+  }
+
+  .dp-view,
+  .dp-prose pre {
+    box-shadow: inset 0 0 0 1px var(--n-color-text);
   }
 
   .dp-status,
