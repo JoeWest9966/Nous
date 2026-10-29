@@ -24,6 +24,8 @@
 //   POST   /v1/delete   {name}     删一条（服务端核 name 非空，其余交给面板）
 //   POST   /v1/register {baseUrl, api, key, name?}   登记一条，回闸簿（ok:false 也回 200，
 //                                  带着 data.gates 让前端把哪道闸没过摆出来）
+//   POST   /v1/rescan   {name}     用编目里现有的密钥重扫一遍（覆盖写；引用形态直接拒）
+//   GET    /v1/recipe/:name/source 配方 recipe.yaml 原文（回答「谁在用它」）
 //
 // 环境：PORT（默认 4780）、NW_BASE（默认 tailnet 8443）、NW_TOKEN（走 panel-gate 时才要）
 
@@ -156,6 +158,25 @@ const gateRows = (list) =>
 
 // 登记：把面板的 POST /api/model 包一层。这里**不复刻五道闸**，只挡住「注定白跑一趟
 // 上游 + 打一次 commit」的明显错；真闸的结论（含跳过的那几道）从 data.gates[] 回来。
+const shapeRegister = (data, fallback) => {
+  const models = Array.isArray(data.models) ? data.models : [];
+  return {
+    ok: true,
+    name: String(data.name ?? fallback.name),
+    baseUrl: String(data.baseUrl ?? fallback.baseUrl),
+    api: String(data.api ?? fallback.api),
+    written: Boolean(data.written),
+    updated: Boolean(data.updated),
+    action: data.action ?? null,
+    catalogPath: data.catalogPath ?? null,
+    modelCount: models.length,
+    modelIds: models.map((m) => String(m?.id ?? m)).slice(0, 8),
+    gates: gateRows(data.gates),
+    partial: Boolean(data.partial),
+    warnings: data.warnings ?? [],
+  };
+};
+
 async function doRegister(input) {
   const baseUrl = String(input.baseUrl ?? "").trim();
   const api = String(input.api ?? "").trim();
@@ -176,26 +197,44 @@ async function doRegister(input) {
 
   try {
     const data = await nw("/api/model", { method: "POST", body: payload, timeout: WRITE_MS });
-    const models = Array.isArray(data.models) ? data.models : [];
-    return {
-      ok: true,
-      name: String(data.name ?? name),
-      baseUrl: String(data.baseUrl ?? baseUrl),
-      api: String(data.api ?? api),
-      written: Boolean(data.written),
-      updated: Boolean(data.updated),
-      action: data.action ?? null,
-      catalogPath: data.catalogPath ?? null,
-      modelCount: models.length,
-      modelIds: models.map((m) => String(m?.id ?? m)).slice(0, 8),
-      gates: gateRows(data.gates),
-      partial: Boolean(data.partial),
-      warnings: data.warnings ?? [],
-    };
+    return shapeRegister(data, { name, baseUrl, api });
   } catch (error) {
     // 闸没过 = data.gates 里那道 fail，其余 skip —— 原样带回，前端照着摆
     return { ok: false, error: String(error.message ?? error), gates: gateRows(error.data?.gates) };
   }
+}
+
+// 重扫：用**编目里现有的密钥**把同一条重登一遍（同名同 baseUrl = 覆盖写）。
+// 密钥只在这台服务器的内存里拐一道 —— 它从不进浏览器，所以页面不需要为了一次重扫
+// 逼人把密钥再贴一遍。但 `$ENV` / `!cmd` 引用这条走不通：register 不展开引用，
+// 拿引用字面量去扫上游必 401（`internal/modelcatalog/register.go` 的已知缺口），
+// 所以直接拒，并让人去表单里手动填一次真身。
+async function doRescan(name) {
+  const clean = String(name ?? "").trim();
+  if (!clean) throw new Error("没给名字");
+  const ls = await nw("/api/model");
+  const row = (Array.isArray(ls.models) ? ls.models : []).find((m) => String(m.name ?? "") === clean);
+  if (!row) throw new Error(`编目里没有 ${clean}`);
+  const shape = keyShape(row.apiKeyRef).shape;
+  if (shape !== "literal")
+    throw new Error(`这条的密钥是 ${shape === "none" ? "空的" : `引用（${row.apiKeyRef}）`}：register 不展开引用，拿它扫上游必 401。得手动填一次真身。`);
+  const secret = await nw(`/api/model/${encodeURIComponent(clean)}/secret`);
+  const key = String(secret.key ?? secret.apiKey ?? "");
+  if (!key) throw new Error("编目这条没有密钥本体");
+  const data = await nw("/api/model", {
+    method: "POST",
+    timeout: WRITE_MS,
+    body: { baseUrl: String(row.baseUrl ?? ""), api: String(row.api ?? ""), name: clean, key },
+  });
+  return shapeRegister(data, { name: clean, baseUrl: String(row.baseUrl ?? ""), api: String(row.api ?? "") });
+}
+
+// 配方源码：面板自己读文件（不 spawn nw）。用来回答「这条编目到底被哪一行指着」。
+async function doRecipeSource(name) {
+  const clean = String(name ?? "").trim();
+  if (!clean || clean.includes("/") || clean.startsWith("-")) throw new Error(`配方名不合法：${clean}`);
+  const data = await nw(`/api/recipe/${encodeURIComponent(clean)}/source`);
+  return { ok: true, name: data.name ?? clean, path: data.path ?? "", source: String(data.source ?? "") };
 }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -269,6 +308,18 @@ async function route(req, res) {
     // 200 也用于 ok:false：前端要的是闸簿，不是一个状态码
     return send(res, 200, await doRegister(body));
   }
+
+  if (path === "/v1/rescan" && req.method === "POST") {
+    const body = await readBody(req);
+    try {
+      return send(res, 200, await doRescan(body.name));
+    } catch (error) {
+      return send(res, 200, { ok: false, error: String(error?.data ? (error.data.warnings?.[0] ?? error.message) : error.message ?? error), gates: gateRows(error?.data?.gates) });
+    }
+  }
+
+  const recipe = path.match(/^\/v1\/recipe\/(.+)\/source$/);
+  if (recipe && req.method === "GET") return send(res, 200, await doRecipeSource(decodeURIComponent(recipe[1])));
 
   const secret = path.match(/^\/v1\/secret\/(.+)$/);
   if (secret && req.method === "GET") return send(res, 200, await doSecret(decodeURIComponent(secret[1])));

@@ -71,6 +71,9 @@
   .k.cmd { color:#c9a2ff; border-color:#42325c; }
   .k.none { color:#e2796f; border-color:#4a2a2a; }
   .tagchip { font-size:12px; padding:1px 8px; border-radius:999px; background:#1c2430; border:1px solid #2b3746; color:#9fb3c8; }
+  .tagchip.click { cursor:pointer; transition:border-color .12s, color .12s, background .12s; }
+  .tagchip.click:hover { border-color:#4b6b8c; color:#dbe7f3; background:#222c3a; }
+  .tagchip.click::after { content:" ›"; color:var(--dimmer); }
 
   .mbar { display:flex; flex-wrap:wrap; gap:5px; align-content:flex-start; }
   .m { font-family:var(--mono); font-size:12px; padding:2px 8px; border-radius:6px;
@@ -165,6 +168,19 @@
   @media (prefers-reduced-motion: reduce) { .dlg .spin .dot { animation:none; opacity:.8; } }
   @keyframes pulse { 50% { opacity:.2; } }
 
+  /* ── 配方源码（谁在用它）────────────────────────────────────── */
+  .dlg .code { margin-top:14px; max-height:52vh; overflow:auto; background:#0b0e12;
+    border-top:1px solid var(--line); border-bottom:1px solid var(--line);
+    font-family:var(--mono); font-size:12px; line-height:1.65; padding:8px 0; }
+  .dlg .code .ln { display:flex; gap:12px; padding:0 14px; white-space:pre; width:max-content; min-width:100%; }
+  .dlg .code .n { flex:0 0 34px; text-align:right; color:#3b4453; user-select:none; }
+  .dlg .code .c { color:#9aa5b4; }
+  .dlg .code .ln.hit { background:#1d2431; box-shadow:inset 2px 0 0 var(--ledger); }
+  .dlg .code .ln.hit .c { color:#f0e6ff; }
+  .dlg .code .ln.hit .n { color:#7a6a93; }
+  .dlg .note.bad-note { color:var(--bad); border-color:#4a2a2a; background:#1b1417; }
+  .field input[readonly] { color:var(--dim); background:#0b0e12; cursor:default; border-style:dashed; }
+
   footer { margin-top:26px; border-top:1px solid var(--line); padding-top:14px;
     color:var(--dim); font-size:12.5px; }
   footer ul { margin:8px 0 0; padding-left:18px; }
@@ -202,7 +218,8 @@
       <li><b>名字是唯一键。</b><code>nw model register</code> 同名同 baseUrl = 覆盖写，同名不同 baseUrl = 硬拒。想换 baseUrl 只能删了再登记。</li>
       <li><b>密钥形状有三种：</b><span class="k ref">$ENV</span> 引用 / <span class="k literal">字面量</span> / <span class="k cmd">!命令</span>。列表里字面量永远是 <code>&lt;redacted:…&gt;</code>，真身只在点「密钥」时现拿一次。</li>
       <li><b>推到编目的密钥是明文的</b>，落进 <code>/opt/Data-001/models.json</code>（这个文件在 git 里）。token 闸不展开 <code>$ENV</code>，所以推引用进去必然 401 —— 引用只能手写进文件。</li>
-      <li><b>自查 = <code>nw model recheck</code>：</b>编目自己跟上游 <code>/models</code> 比，报新增 / 下线 / 漂移。</li>
+      <li><b>重扫 = 同名同 baseUrl 重跑 register（覆盖写）：</b>模型清单换成本次扫到的，密钥留空就用编目里那把 —— 密钥不进浏览器，服务器自己取。想改名字或链接，那是另一条记录，只能删了重登。</li>
+      <li><b>自查 = <code>nw model recheck</code>：</b>编目自己跟上游 <code>/models</code> 比，报新增 / 下线 / 漂移 —— 只报告，一个字节都不改。真要把清单换掉，用「重扫」。</li>
       <li><b>删除不可逆，且没有「谁在用」的保护。</b>确认弹窗会先把「改哪个文件、会打 commit、谁还在引用」摆出来，点确认就执行；删掉一条还被配方引用的供应商仓库不会拦你，破绽留到自查和 <code>nw doctor</code> 那层才露。</li>
     </ul>
   </footer>
@@ -299,13 +316,18 @@ function confirmDelete(entry) {
   });
 }
 
-// ── 登记（新增条目）：表单 → 五道闸 → 落账 ─────────────────────────
+// ── 登记（新增 / 重扫）：表单 → 五道闸 → 落账 ────────────────────
 // 跟删除不一样：登记不是一按就没的事，它要扫上游、过五道闸、打 commit、推一下。
 // 所以弹窗不关，进度和闸簿就在原地长 —— 关掉再飘一个结果条，等于让人凭记忆对账。
 // 密钥读出后立刻从输入框抹掉：它只活在那一次请求的 body 里。
-function registerDialog() {
+//
+// `opts.entry` = 重扫模式：名字和 baseUrl 定死（改了就是另一条记录，不是编辑），
+// 密钥可以留空 —— 留空就走 /v1/rescan，密钥在服务器那边拐一道，从不进浏览器。
+function registerDialog(opts = {}) {
   return new Promise((resolve) => {
     const prev = document.activeElement;
+    const target = opts.entry || null;
+    const isUpdate = Boolean(target);
     let done = false;
     let running = false;
 
@@ -316,21 +338,34 @@ function registerDialog() {
       el("option", { value: "anthropic-messages", text: "anthropic-messages —— x-api-key" }));
     const fKey = el("input", { class: "mono", type: "password", placeholder: "密钥真身，只往编目送这一次", autocomplete: "new-password" });
 
+    if (isUpdate) {
+      fBase.value = target.baseUrl;
+      fName.value = target.name;
+      fBase.readOnly = true;
+      fName.readOnly = true;
+      if (target.api === "openai-completions" || target.api === "anthropic-messages") fAPI.value = target.api;
+      fKey.placeholder = "留空 = 用编目里现有的密钥重扫";
+    }
+
     const field = (label, node, hint, opt) => el("div", { class: "field" },
       el("label", {}, el("span", { text: label }), opt ? el("span", { class: "opt", text: opt }) : null),
       node,
       hint ? el("div", { class: "hint", text: hint }) : null);
 
     const form = el("div", { class: "form" },
-      field("供应商根 baseUrl", fBase, "只做 URL 语法校验，不联网；尾斜杠由 nw 归一。"),
-      field("条目名", fName, "唯一键：非空 / 无空白 / 无斜杠。同名同 baseUrl = 覆盖写，同名不同 baseUrl = 硬拒。", "可留空"),
+      field("供应商根 baseUrl", fBase, isUpdate ? "定死的：改了就是另一条记录，不是编辑。" : "只做 URL 语法校验，不联网；尾斜杠由 nw 归一。"),
+      field("条目名", fName, isUpdate ? "唯一键，定死的。要换名字 = 删了重登。" : "唯一键：非空 / 无空白 / 无斜杠。同名同 baseUrl = 覆盖写，同名不同 baseUrl = 硬拒。", isUpdate ? null : "可留空"),
       field("方言", fAPI, "手选，不探测 —— 探测错一个头，供应商回的错误形态千奇百怪。"),
-      field("密钥", fKey, "提交后输入框立刻清空；页面不缓存、不回显，真身只进这一次请求。"),
+      field("密钥", fKey, isUpdate
+        ? "留空就行：服务器会用编目里存的那把（只对字面量密钥有效）；`$ENV` / `!cmd` 引用必须在这里填一次真身 —— register 不展开引用，拿引用扫上游必 401。"
+        : "提交后输入框立刻清空；页面不缓存、不回显，真身只进这一次请求。"),
     );
 
     // 这块 note 是「描述文案」的常驻节点。跑起来时换成转圈、出结果时换成闸簿；
     // 点「返回改」要能换回这张原样的——所以换的时候只 swap，不就地改内容。
-    const note = el("div", { class: "note", html: `登记 = <b>nw model register</b>：先扫上游 <code>GET /models</code>（全收，不做勾选），再写 <code>models.json</code> 并打一个 git commit。<br>五道闸哪道没过，<b>编目一个字节都不会动</b>。慢的时候能到 2 分钟 —— 卡在最后那步 git push。` });
+    const note = el("div", { class: "note", html: isUpdate
+      ? `重扫 = <b>同名同 baseUrl 重跑 nw model register</b>：上游 <code>GET /models</code> 扫到什么，这条的 <code>models[]</code> 就换成什么。<br><b>旧清单整个被替掉</b>（上游下线的也会从这条里消失），密钥一并换成这次的。要的是「拿回一条已删的供应商」，走「+ 新增条目」。`
+      : `登记 = <b>nw model register</b>：先扫上游 <code>GET /models</code>（全收，不做勾选），再写 <code>models.json</code> 并打一个 git commit。<br>五道闸哪道没过，<b>编目一个字节都不会动</b>。慢的时候能到 2 分钟 —— 卡在最后那步 git push。` });
     let noteSlot = note;
     const swapNote = (node) => { noteSlot.replaceWith(node); noteSlot = node; };
 
@@ -341,8 +376,11 @@ function registerDialog() {
       el("div", { class: "top" },
         el("span", { class: "icon", "aria-hidden": "true", html: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>` }),
         el("div", { class: "grow" },
-          el("h2", { id: "reg-title", text: "往编目里加一个供应商" }),
-          el("div", { class: "sub" }, el("span", { text: "Nous Warehouse · /opt/Data-001/models.json" })),
+          el("h2", { id: "reg-title", text: isUpdate ? "重扫 / 换密钥" : "往编目里加一个供应商" }),
+          el("div", { class: "sub" }, isUpdate
+            ? el("span", { class: "mono", text: target.name })
+            : null,
+            el("span", { text: isUpdate ? target.baseUrl : "Nous Warehouse · /opt/Data-001/models.json", class: isUpdate ? "base" : null })),
         ),
       ),
       form, note, btns);
@@ -414,10 +452,18 @@ function registerDialog() {
       const api = fAPI.value;
       const key = fKey.value.trim();
       for (const n of [fBase, fName, fKey]) n.classList.remove("bad");
-      const bad = !/^https?:\/\/[^\s/]+/i.test(baseUrl) ? fBase
-        : (name && (/\s|\//.test(name) || name === "." || name === "..")) ? fName
-        : !key ? fKey : null;
-      if (bad) { bad.classList.add("bad"); bad.focus(); return; }
+      if (!isUpdate) {
+        const bad = !/^https?:\/\/[^\s/]+/i.test(baseUrl) ? fBase
+          : (name && (/\s|\//.test(name) || name === "." || name === "..")) ? fName
+          : !key ? fKey : null;
+        if (bad) { bad.classList.add("bad"); bad.focus(); return; }
+      }
+
+      // 重扫且没填密钥 = 把那把密钥的事交给服务器（它自己从 /secret 取）。
+      // 这样「让模型清单跟上上游」不用先把密钥贴回浏览器一遍。
+      const reuseKey = isUpdate && !key;
+      const endpoint = reuseKey ? "v1/rescan" : "v1/register";
+      const payload = reuseKey ? { name: target.name } : { baseUrl, api, name, key };
 
       fKey.value = "";                       // 密钥只活在这次请求的 body 里
       const prog = startRunning();
@@ -431,10 +477,10 @@ function registerDialog() {
       let r;
       try {
         // 这条路不走 api()：它 ok:false 也要把闸簿给回来看，而 api() 见 ok:false 就抛
-        const response = await fetch("v1/register", {
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ baseUrl, api, name, key }),
+          body: JSON.stringify(payload),
         });
         r = await response.json();
       } catch (error) {
@@ -500,6 +546,82 @@ function registerDialog() {
     document.body.append(back);
     fBase.focus();
   });
+}
+
+// ── 谁在用它：把 recipe.yaml 摊开，标出指到这一条的那几行 ────────────────
+// `usedBy` 只给名字，等于说「有人在用，自己找去」。配方源码面板就能读（不 spawn nw），
+// 所以直接摊开，把命中的行亮出来。命中的判据：这一条的 name / baseUrl / 任一模型 id。
+async function recipeDialog(recipeName, entry) {
+  const needles = [entry.name, entry.baseUrl, ...entry.models].filter((s) => s && s.length > 3);
+  const hitOf = (line) => needles.some((n) => line.includes(n));
+
+  const prev = document.activeElement;
+  let done = false;
+  const head = el("div", { class: "grow" },
+    el("h2", { id: "rcp-title", text: recipeName }),
+    el("div", { class: "sub" }, el("span", { text: "正在读 recipe.yaml…" })));
+  const bodySlot = el("div", { class: "note" }, el("div", { class: "spin" }, el("span", { class: "dot" }), el("span", { text: "拉源码…" })));
+  const closeBtn = el("button", { text: "关掉" });
+  const dlg = el("div", { class: "dlg wide", role: "dialog", "aria-modal": "true", "aria-labelledby": "rcp-title" },
+    el("div", { class: "top" },
+      el("span", { class: "icon", "aria-hidden": "true", html: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M8 7h7M8 11h7"/></svg>` }),
+      head,
+    ),
+    bodySlot,
+    el("div", { class: "btns" }, closeBtn));
+  const back = el("div", { class: "backdrop" }, dlg);
+
+  const close = () => {
+    if (done) return;
+    done = true;
+    document.removeEventListener("keydown", onKey, true);
+    back.classList.add("closing");
+    dlg.classList.add("closing");
+    setTimeout(() => { back.remove(); prev?.focus?.(); }, 130);
+  };
+  function onKey(e) {
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "Tab") { e.preventDefault(); closeBtn.focus(); }
+  }
+
+  closeBtn.addEventListener("click", close);
+  back.addEventListener("click", (e) => { if (e.target === back) close(); });
+  document.addEventListener("keydown", onKey, true);
+  document.body.append(back);
+  closeBtn.focus();
+
+  let data;
+  try {
+    data = await api(`v1/recipe/${encodeURIComponent(recipeName)}/source`);
+  } catch (error) {
+    bodySlot.replaceWith(el("div", { class: "note bad-note", text: `读不到这份 recipe.yaml：${error.message ?? error}` }));
+    head.querySelector(".sub").replaceChildren(el("span", { text: "\/v1\/recipe\/" + recipeName + "\/source" }));
+    return;
+  }
+  if (done) return; // 人已经把它关了
+
+  const lines = String(data.source || "").split("\n");
+  const LIMIT = 2000;
+  const shown = lines.slice(0, LIMIT);
+  let hits = 0;
+  const code = el("div", { class: "code" });
+  shown.forEach((line, i) => {
+    const hit = hitOf(line);
+    if (hit) hits += 1;
+    code.append(el("div", { class: "ln" + (hit ? " hit" : "") },
+      el("span", { class: "n", text: String(i + 1) }),
+      el("span", { class: "c", text: line || " " })));
+  });
+
+  head.querySelector(".sub").replaceChildren(
+    el("span", { class: "base", text: data.path || `recipes/${recipeName}/recipe.yaml`, title: data.path || "" }),
+    el("span", { text: hits ? `· ${hits} 行指到 ${entry.name}（按 name / baseUrl / 模型 id 找的）` : `· 一行都没指到 ${entry.name}` }),
+  );
+  const warn = hits ? null : el("div", { class: "note", html: `没一行能对到 <b>${esc(entry.name)}</b>（拿 name / baseUrl / 模型 id 找的）。可能它引的是这条里已经不存在的模型 —— 也可能是拼写不一致，值得看一眼。` });
+  bodySlot.replaceWith(...[warn, code].filter(Boolean));
+  const first = code.querySelector(".ln.hit");
+  if (first) first.scrollIntoView({ block: "center" });
+  if (lines.length > LIMIT) code.append(el("div", { class: "ln" }, el("span", { class: "n", text: "…" }), el("span", { class: "c", text: `还有 ${lines.length - LIMIT} 行没画（太长，不一次塞进 DOM）` })));
 }
 
 async function api(path, init) {
@@ -576,6 +698,11 @@ function card(entry) {
       }),
     }),
     el("button", {
+      text: "重扫",
+      title: "同名同 baseUrl 重跑 register = 覆盖写：模型清单换成本次扫到的，密钥可换可不换",
+      onclick: () => registerDialog({ entry }),
+    }),
+    el("button", {
       text: "密钥",
       title: "GET /api/model/{名}/secret —— 只有在回环 / 信任面才给真身",
       onclick: (e) => busy(e.target, "取…", async () => {
@@ -634,7 +761,8 @@ function card(entry) {
           el("span", { class: "k", text: `${entry.models.length} 个` }),
         ),
         entry.usedBy.length
-          ? el("div", { class: "row" }, el("span", { class: "lab", text: "配方式子" }), ...entry.usedBy.map((u) => el("span", { class: "tagchip", text: u })))
+          ? el("div", { class: "row" }, el("span", { class: "lab", text: "配方式子" }),
+              ...entry.usedBy.map((u) => el("button", { class: "tagchip click", text: u, title: "看它在 recipe.yaml 里怎么指这一条", onclick: () => recipeDialog(u, entry) })))
           : el("div", { class: "row" }, el("span", { class: "lab", text: "配方式子" }), el("span", { class: "none", text: "没有配方在用" })),
         msg,
         driftBox,
