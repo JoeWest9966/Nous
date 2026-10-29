@@ -10,6 +10,10 @@
 //   3. DELETE 是零确认直通 + 打一个 git commit，不可逆。所以前端用弹窗把后果摆清（列的
 //      是「改哪个文件、会打 commit、谁还在引用」），点确认才执行；服务端再核一次 name 非空。
 //      弹窗自己画，不用 window.confirm / prompt。
+//   4. 登记（POST /v1/register）= 面板的 POST /api/model，薄壳一根：只做「明显的错不值得
+//      跑一趟上游」那种本地校验（baseUrl 语法 / 方言值域 / 名字字符 / 密钥非空），
+//      其余全交给 nw 的五道闸 —— 别在这里复刻闸的语义，复刻的那份迟早跟闸漂。
+//      闸簿（data.gates[]）原样回给前端，失败也回（失败时 gates 里那道是 fail）。
 //
 // 接口：
 //   GET    /                       这一页
@@ -18,6 +22,8 @@
 //   GET    /v1/secret/:name        明文，唯一出口（眼睛按钮才点）
 //   POST   /v1/recheck  {name?}    编目自己跟上游比；不带 name = 全量
 //   POST   /v1/delete   {name}     删一条（服务端核 name 非空，其余交给面板）
+//   POST   /v1/register {baseUrl, api, key, name?}   登记一条，回闸簿（ok:false 也回 200，
+//                                  带着 data.gates 让前端把哪道闸没过摆出来）
 //
 // 环境：PORT（默认 4780）、NW_BASE（默认 tailnet 8443）、NW_TOKEN（走 panel-gate 时才要）
 
@@ -44,6 +50,7 @@ const unwrap = (body, status) => {
     if (data.written === true) return { ...data, partial: true, warnings: errors };
     const err = new Error(errors[0] || `编目回了 HTTP ${status}`);
     err.status = status;
+    err.data = data; // 失败时那道 fail 的闸在 data.gates[] 里，别半路扔掉
     throw err;
   }
   return { ...data, warnings: errors };
@@ -140,6 +147,57 @@ async function doSecret(name) {
   return { ok: true, name, key: String(key), shape: keyShape(key).shape };
 }
 
+const gateRows = (list) =>
+  (Array.isArray(list) ? list : []).map((g) => ({
+    id: String(g?.id ?? ""),
+    status: String(g?.status ?? "skip"),
+    message: String(g?.message ?? ""),
+  }));
+
+// 登记：把面板的 POST /api/model 包一层。这里**不复刻五道闸**，只挡住「注定白跑一趟
+// 上游 + 打一次 commit」的明显错；真闸的结论（含跳过的那几道）从 data.gates[] 回来。
+async function doRegister(input) {
+  const baseUrl = String(input.baseUrl ?? "").trim();
+  const api = String(input.api ?? "").trim();
+  const name = String(input.name ?? "").trim();
+  const key = String(input.key ?? "").trim();
+  const fail = (error) => ({ ok: false, error, gates: [] });
+
+  if (!baseUrl) return fail("没给 baseUrl");
+  if (!/^https?:\/\/[^\s/]+/i.test(baseUrl)) return fail(`baseUrl 要 http(s)://<host>…：${baseUrl.slice(0, 80)}`);
+  if (api !== "openai-completions" && api !== "anthropic-messages")
+    return fail(`方言 ${api || "(空)"} 不认：只有 openai-completions / anthropic-messages（手选，不探测）`);
+  if (name && (/\s|\//.test(name) || name === "." || name === ".."))
+    return fail(`条目名不合法：${name.slice(0, 40)}（非空、无空白、无斜杠、不是 . 或 ..）`);
+  if (!key) return fail("没给密钥：register 只从 stdin 收，这一页就是那根 stdin");
+
+  const payload = { baseUrl, api, key };
+  if (name) payload.name = name;
+
+  try {
+    const data = await nw("/api/model", { method: "POST", body: payload, timeout: WRITE_MS });
+    const models = Array.isArray(data.models) ? data.models : [];
+    return {
+      ok: true,
+      name: String(data.name ?? name),
+      baseUrl: String(data.baseUrl ?? baseUrl),
+      api: String(data.api ?? api),
+      written: Boolean(data.written),
+      updated: Boolean(data.updated),
+      action: data.action ?? null,
+      catalogPath: data.catalogPath ?? null,
+      modelCount: models.length,
+      modelIds: models.map((m) => String(m?.id ?? m)).slice(0, 8),
+      gates: gateRows(data.gates),
+      partial: Boolean(data.partial),
+      warnings: data.warnings ?? [],
+    };
+  } catch (error) {
+    // 闸没过 = data.gates 里那道 fail，其余 skip —— 原样带回，前端照着摆
+    return { ok: false, error: String(error.message ?? error), gates: gateRows(error.data?.gates) };
+  }
+}
+
 // ── HTTP ──────────────────────────────────────────────────────────────────
 const readBody = (req) =>
   new Promise((resolve, reject) => {
@@ -204,6 +262,12 @@ async function route(req, res) {
   if (path === "/v1/delete" && req.method === "POST") {
     const body = await readBody(req);
     return send(res, 200, await doDelete(body.name));
+  }
+
+  if (path === "/v1/register" && req.method === "POST") {
+    const body = await readBody(req);
+    // 200 也用于 ok:false：前端要的是闸簿，不是一个状态码
+    return send(res, 200, await doRegister(body));
   }
 
   const secret = path.match(/^\/v1\/secret\/(.+)$/);
