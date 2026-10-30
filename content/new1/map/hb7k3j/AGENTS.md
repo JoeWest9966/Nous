@@ -36,6 +36,13 @@
   不是另一套版面）；思考列只在这个模型有得选（档位 > 1）时才出。
 - 点「创建」→ `POST qrd3wh /v1/sessions`，带 `{model, thinkingLevel, name?}`，成功后
   `POST /v1/selection` 把盘上的选中切到新对话。
+- **键盘流**：焦点是**列**不是项。`↑↓` 列内移动（到头就停，不绕圈）、`←→` 换列、
+  `↵` 就是「点它」（走同一个 `actOn`，不写第二套判断）、`Esc` 收回、
+  在药丸上直接打字 = 回搜索框接着打、从最顶上再 `↑` = 回搜索框。
+  焦点存 `kb`（`{on,col,row}`）而不是靠 `document.activeElement`：`renderDiagram()`
+  每次都把整个 `<svg>` 重建，真焦点会跟着旧节点一起消失 —— 换个模型列表就「键盘失忆」。
+  重画后 `paintKb()` 把环钉回同一个格子并 `scrollIntoView({block:"nearest"})`。
+  视觉上键盘环比 hover 重一档（`stroke-width:2` + 一圈光），暗底上分得出「我刚按到哪儿」。
 
 ### 「面板上写的 = 实际跑的」
 
