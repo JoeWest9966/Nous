@@ -11,11 +11,14 @@
 //   GET  /v1/models                   编目里登记过的模型（含档位表、窗口、输出上限）
 //   POST /v1/catalog/refresh          重拉编目（换了密钥 / 编目里加了供应商之后用）
 //   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、最后一句）
-//   POST /v1/sessions                 {name, model, thinkingLevel} → 新对话
+//   POST /v1/sessions                 {name, model, thinkingLevel, skills} → 新对话
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
-//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel} 只读 = 不给会写的工具
-//   GET  /v1/sessions/:id/entries     历史（新的在前）
+//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills} 只读 = 不给会写的工具
+//   GET  /v1/skills                   已装技能 + 编目里能装的（skills.js）
+//   POST /v1/skills/install           {source, entry} → 拉下来落到 data/skills/
+//   POST /v1/skills/uninstall         {name}
+//   GET  /v1/sessions/:id/entries     历史（新的在前；?system=1 把 pi.system 也放出来）
 //   POST /v1/sessions/:id/messages    {content, requestId?, waitMs?}
 //   GET  /v1/sessions/:id/events      SSE
 //   POST /v1/sessions/:id/abort
@@ -32,9 +35,10 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { contentText } from "@earendil-works/pi-ai/utils/text";
-import { AssistantEntry, Harness, createRegistry, defineDoc, watchEvents } from "@earendil-works/pi-durable";
+import { AssistantEntry, Harness, createRegistry, defineDoc, defineExtension, section, watchEvents } from "@earendil-works/pi-durable";
 import { CodingTools, createBashTool, createEditTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { installCatalog } from "./catalog.js";
+import { createSkills, skillExtension, skillNamesOf } from "./skills.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -220,13 +224,43 @@ const storage = await openNodeSqliteStorage(path.join(DATA, "agent.sqlite"));
 const registry = createRegistry();
 registry.install(CodingTools);
 
+// ── 提示词 ───────────────────────────────────────────────────────────────
+//
+// 到这一版之前 `registry` 里只有 CodingTools，**一条 section 都没有** —— 系统提示词是空的，
+// agent 不知道自己是谁、在哪个目录。技能清单要是挂在这上面，会像「一个不知道自己是谁的家伙
+// 手里拿着一张技能表」。所以先有这两段，再有 skills。
+const Nous = defineExtension({
+  name: "nous",
+  sections: [
+    section(
+      "preamble",
+      () =>
+        [
+          "You are an agent inside Nous, a board whose units are folders called blocks. You are one of the board's conversations.",
+          "Blocks live under the board's map/ folder. A block's AGENTS.md is its entry document: read it before changing that block.",
+          "A block's data/ folder is that block's own state. Work through the tools; they see the working directory below.",
+        ].join("\n"),
+      { tag: false },
+    ),
+    // cwd 每次现算：会话的 agent.cwd 可以改，改了下一轮就吃到。
+    section("cwd", ({ env }) => env?.cwd),
+  ],
+});
+
+const skills = await createSkills({ dir: path.join(DATA, "skills"), registry });
+registry.install(Nous);
+registry.install(skills.extension);
+await skills.load();
+
 const harness = await Harness.open(
   storage,
   {
     models,
     registry,
     env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? HERE }),
-    settings: { extensions: [CodingTools] },
+    // 默认选择只放**真扩展**：空名牌（skill:<名>）装了但不默认选 —— 否则每条新会话
+    // 一出生就吃 38 条描述，progressive disclosure 当场作废。
+    settings: { extensions: [CodingTools, Nous, skills.extension] },
     // 新会话一出生就带一张自己的名字卡片，省得后面到处判空。
     conversationCreated: async (tx, conversation) => {
       const doc = await tx.doc(Sessions);
@@ -279,6 +313,9 @@ const tree = async () => {
       // 面板该拿这个去画，所以列表里就得有它 —— 少一个字段，前端就只能自己猜。
       thinkingLevel: agent.thinkingLevel ?? null,
       thinkingLevels: levelsOf(model),
+      // 生效的技能（从 durable 存的扩展名里读回来，不是从我们的表里读）——
+      // 面板该拿这个去画勾，所以列表里就得有它。
+      skills: skillNamesOf(agent),
       readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       busy: busy.get(key(record.id)) ?? null,
       last: last.items[0] ? { id: last.items[0].id, kind: last.items[0].kind, text: textOfEntry(last.items[0]) } : null,
@@ -411,6 +448,44 @@ const route = async (req, res, url) => {
     return json(res, 200, { default: defaultModel });
   }
 
+  // ── 技能 ────────────────────────────────────────────────────────────────
+  if (parts[0] === "v1" && parts[1] === "skills") {
+    if (req.method === "GET" && !parts[2]) {
+      // 编目没拉过就先拉一次：列表页第一次打开不该看见「什么都没有」。
+      const cached = skills.catalog();
+      const loaded = cached.at ? cached : await skills.refreshCatalog();
+      return json(res, 200, {
+        dir: skills.dir,
+        installed: skills.list(),
+        items: loaded.items,
+        // 编目通不通跟着清单一起报，跟 /v1/models 一个道理。
+        catalog: { base: loaded.base, at: loaded.at, error: loaded.error },
+      });
+    }
+    if (req.method === "POST" && parts[2] === "refresh") {
+      const next = await skills.refreshCatalog();
+      return json(res, 200, { ok: !next.error, ...next });
+    }
+    if (req.method === "POST" && parts[2] === "install") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      try {
+        const installed = await skills.install({ source: body.source, entry: body.entry, repo: body.repo, path: body.path });
+        return json(res, 200, { ok: true, installed });
+      } catch (error) {
+        // 装失败要说清楚到哪一步了（编目？版本号？tarball？目录里没这条路径？），
+        // 不然页面上只有一个红条，人得自己猜。
+        return json(res, 400, { error: String(error?.message ?? error) });
+      }
+    }
+    if (req.method === "POST" && parts[2] === "uninstall") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      const name = String(body.name ?? "");
+      if (!name) return json(res, 400, { error: "name 是空的" });
+      return json(res, 200, { ok: true, ...(await skills.uninstall(name)) });
+    }
+    return json(res, 404, { error: "skills 没有这条路" });
+  }
+
   if (parts[0] === "v1" && parts[1] === "selection") {
     if (req.method === "GET") {
       // 那个对话被删了就当没选过：别让一条死指针把两边的页面都卡在 404 上。
@@ -444,10 +519,18 @@ const route = async (req, res, url) => {
     // 档位在建会话的**同一个 commit** 里落定（AgentChange 的 thinkingLevel），
     // 不是先建再 configure —— 后者中间那一下，第一条消息可能已经跑出去了。
     const thinkingLevel = fitLevel(models.getModel(model.provider, model.modelId), body.thinkingLevel);
+    // 技能也在这个 commit 里落 —— 跟 thinkingLevel 一条纪律：先建再 configure，中间那一下
+    // 第一条消息可能已经跑出去了。没装的技能名直接丢（选了也不生效，不存一个幽灵）。
+    const wanted = [...new Set((Array.isArray(body.skills) ? body.skills : []).map(String))].filter((name) => skills.has(name));
     const created = await harness.createConversation(
       {
         ownership: { kind: "ownerless" },
-        agent: { cwd: HERE, model, ...(thinkingLevel ? { thinkingLevel } : {}) },
+        agent: {
+          cwd: HERE,
+          model,
+          ...(thinkingLevel ? { thinkingLevel } : {}),
+          ...(wanted.length ? { extensions: { add: wanted.map(skillExtension) } } : {}),
+        },
       },
       ctx,
     );
@@ -458,6 +541,8 @@ const route = async (req, res, url) => {
       name: (await names())[key(created.id)],
       model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
       thinkingLevel: agent.thinkingLevel ?? null,
+      skills: skillNamesOf(agent),
+      missing: skills.missing(wanted),
     });
   }
 
@@ -491,12 +576,25 @@ const route = async (req, res, url) => {
         // 夹不成（模型认不出、或发来的不是字符串）就当没收到，绝不把没验证的值落盘。
         if (fit) await conversation.configure({ thinkingLevel: fit }, ctx);
       }
+      // 技能：**相对改法**，不是把完整数组写回去 —— 完整数组会把这条会话的扩展选择
+      // 冻住，宿主以后往默认选择里加东西就再也进不来了。
+      if (Array.isArray(body.skills)) {
+        const current = skillNamesOf(await conversation.agent(ctx));
+        const wanted = [...new Set(body.skills.map(String))].filter((name) => skills.has(name));
+        await conversation.configure(
+          {
+            extensions: { remove: current.map(skillExtension), add: wanted.map(skillExtension) },
+          },
+          ctx,
+        );
+      }
       // 回的是**生效值**，不是请求值：前端拿它重画，面板和真相就不会分叉。
       const agent = await conversation.agent(ctx);
       return json(res, 200, {
         id,
         model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
         thinkingLevel: agent.thinkingLevel ?? null,
+        skills: skillNamesOf(agent),
         readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       });
     }
@@ -517,11 +615,27 @@ const route = async (req, res, url) => {
     if (req.method === "GET" && rest === "entries") {
       const limit = Math.min(Number(url.searchParams.get("limit") ?? 200) || 200, 1000);
       const page = await conversation.entries({}, limit, undefined, ctx);
+      // pi.system 是工具目录 + 提示词增量：界面上不收它（一整屏噪音），但调试要看得见 ——
+      // `?system=1` 把它的 sections 原样放出来，一个人能直接看出这一轮提示词里到底有什么。
+      const withSystem = url.searchParams.get("system") === "1";
       return json(res, 200, {
         items: page.items
-          // system 那条是工具目录和提示词，一整屏噪音，界面上没收它的位置。
-          .filter((entry) => entry.kind !== "pi.system")
-          .map((entry) => ({ id: entry.id, kind: entry.kind, text: textOfEntry(entry), parent: entry.head ?? null })),
+          .filter((entry) => withSystem || entry.kind !== "pi.system")
+          .map((entry) =>
+            entry.kind === "pi.system"
+              ? (() => {
+                  // SystemEntry 的正文在 `model[0]`（一个 SystemMessage，content 是空的），
+                  // 不在 entry 自己身上 —— 写成 entry.sections 会永远拿到 null。
+                  const message = entry.model?.[0] ?? {};
+                  return {
+                    id: entry.id,
+                    kind: entry.kind,
+                    sections: message.sections ?? null,
+                    tools: (message.toolsAdded ?? []).map((tool) => tool.name),
+                  };
+                })()
+              : { id: entry.id, kind: entry.kind, text: textOfEntry(entry), parent: entry.head ?? null },
+          ),
         next: page.next ?? null,
       });
     }

@@ -48,6 +48,35 @@ pi-ai provider（内存）                                        ← 运行时�
 非 reasoning 只有 `["off"]`；reasoning 的上 `low..high` 默认都在。服务端收档位时用
 `fitLevel()` 夹回模型真有的那一档再落盘（客户端发的值不可信）—— 面板显示 A、库里存 B 是要防的病。
 
+## 技能：内容在盘上，选择在会话里
+
+`skills.js`。跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read`
+去读正文、同样按 SKILL.md 所在目录展开相对路径），所以给 pi 写的技能直接能用。
+
+**三层，只有第三层跟代码有关系：**
+
+| 层 | 是什么 | 在哪 |
+|---|---|---|
+| 内容 | `SKILL.md` + `scripts/` + `references/` | `data/skills/<名>/` 真文件（模型 `read` 它，`bash` 也能跑它） |
+| 名册 | `{name, description, 路径}` + 来源收据 | 内存 Map（启动/装卸时扫一次）+ `data/skills/<名>/.nw.json` |
+| 钩子 | `defineExtension({ name: "skill:<名>" })` | **空名牌**，不含一个字的技能文本，只为在 `agent.extensions` 里占个名字 |
+
+为什么不自己建一张「哪条会话会哪些技能」的表：`pi.agent.extensions` 就是那张表，而且
+durable 白送 fork 继承、重启存活、热替换、**加一条只追加一行 `pi.system` 增量**（不重写历史，
+provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork 不继承、重启要迁移的轮子。
+
+三条不许踩：
+
+1. **`render()` 每轮请求都跑**，所以它只查内存 Map —— 不碰文件系统、不碰网络、不看时间、
+   顺序按名字排。漏一样进去，就是每轮追加一条 `pi.system` 并打掉提示词缓存。
+2. **空名牌装了但不许进默认选择**（`settings.extensions`）。进了 = 每条新会话一出生就吃
+   38 条描述，progressive disclosure 当场作废。默认只放真扩展（`CodingTools` / `Nous` / `skills`）。
+3. **装失败要说清到哪一步**（编目 / 版本号 / tarball / 仓库里没这条路径）。只回一个红条，
+   人得自己猜。
+
+按 sha 记收据（编目**没有版本层**，nw 自己说的：不含 ref/@tag —— 所以「上次跑的是哪一版」
+只有我们记）。已经装过同一版就不重拉。
+
 ## 接口
 
 ```
@@ -55,11 +84,16 @@ GET  /                            那棵树
 GET  /v1/device                   我是谁、模型、编目状态
 GET  /v1/models                   items[]（含档位表/窗口/输出上限）+ catalog{base,at,error,providers[],skipped[]}
 POST /v1/catalog/refresh          重拉编目与密钥（换密钥 / 编目里加了供应商之后）
+GET  /v1/skills                   已装 + 编目里能装的（按 repo 去重后的 38 条）+ catalog{base,at,error}
+POST /v1/skills/install           {source, entry}（或 {repo, path}）→ 拉到 data/skills/
+POST /v1/skills/uninstall         {name}（会话还选着它的，静默失效，不报错）
+POST /v1/skills/refresh           重拉技能编目
 GET  /v1/sessions                 会话树
-POST /v1/sessions                 {name, model, thinkingLevel}
-POST /v1/sessions/:id/config      {readOnly, thinkingLevel}
+POST /v1/sessions                 {name, model, thinkingLevel, skills}
+POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills}
 POST /v1/sessions/:id/messages    {content, requestId?, waitMs?}
 GET  /v1/sessions/:id/events      SSE
+GET  /v1/sessions/:id/entries     ?system=1 把 pi.system 的 sections 原样放出来（调试提示词用）
 ```
 
 环境：`PORT`（默认 4780）、`NOUS_DATA`、`NW_BASE`（默认 tailnet 8443）、`NW_TOKEN`（走 panel-gate 才要）。
@@ -69,3 +103,7 @@ GET  /v1/sessions/:id/events      SSE
 - 不读 `~/.pi/agent/models.json` —— 那是 pi CLI 的配置，跟 Nous 无关。
 - 不把密钥写进 `data/` —— 那目录会被 `cp -r` 带走，而块目录不该装秘密。
 - 不按 id 猜 `reasoning` / 上下文窗口。宁可少一档思考，不要连着 400。
+- 不读本机任何 `skills.json` / `~/.pi/agent/skills` —— 技能编目也是 nw 一份，本机那两份
+  （`/var/opt/Data-001/skills.json` 只有 1 条，8443 上有 38 条）是会漂的第二真相。
+- 不把技能做成树节点。技能有上游（repo@sha），树只有四个字段、装不下来源；把别人的
+  38 份 README 导进盘面，盘就不是你的了。
