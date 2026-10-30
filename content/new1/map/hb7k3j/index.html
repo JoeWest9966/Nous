@@ -102,7 +102,7 @@
            opacity:0; transition:opacity .28s var(--ease); }
   .scrim[hidden] { display:none; }
   .scrim.on { opacity:1; }
-  .sheet { width:min(560px, 94vw); max-height:min(74dvh, 660px); display:flex; flex-direction:column;
+  .sheet { width:min(720px, 94vw); max-height:min(78dvh, 680px); display:flex; flex-direction:column;
            background:color-mix(in srgb, var(--panel) 82%, transparent);
            backdrop-filter:blur(24px) saturate(160%);
            border:1px solid var(--border); border-top-color:var(--faint);
@@ -118,9 +118,10 @@
                  font-family:var(--font); font-size:clamp(11px,1.5vmin,13px); outline:none; }
   .sheet input:focus { border-color:var(--border); }
   .sheet input::placeholder { color:var(--faint); }
-  /* ── 弹窗正文：两列铁路图（pele railroad 的语法重绘）──
-     左列 = 供应商，每行一支药丸（choice 分支）；右列 = 当前供应商的模型，每行一支；
-     高度由最长一列的行数决定 —— 每行一支，不折行不扎堆 */
+  /* ── 弹窗正文：三列铁路图（pele railroad 的语法重绘）──
+     供应商 │ 模型 │ 思考，每列每行一支药丸（choice 分支），同一个 drawRule 画的；
+     高度 = 最长一列的行数 × PITCH —— 每行一支，不折行不扎堆。
+     窄到装不下时列会摞成行（同一个 drawRule 换个位置），不是另一套版面。 */
   .diagram { flex:1; min-height:0; overflow-y:auto; padding:1vmin 1vmin .4vmin; overscroll-behavior:contain; }
   .diagram svg { display:block; width:100%; margin:0 auto; height:auto; }
   .diagram .rule > text { fill:var(--fg); }
@@ -234,7 +235,7 @@
       <input type="text" id="q" placeholder="筛选…" autocomplete="off">
     </div>
     <div class="diagram" id="diagram"></div>
-    <div class="dfoot">左列供应商 · 右列模型 · 点模型选中 · ✓ 当前 · <span class="demo">·默认</span> = 缺省 · Esc 关闭</div>
+    <div class="dfoot">供应商 › 模型 › 思考 · 点模型选中即收回 · 思考档只对支持的模型出 · ✓ 当前 · <span class="demo">·默认</span> = 缺省 · Esc 关闭</div>
   </div>
 </div>
 
@@ -297,11 +298,12 @@ $("choose").onclick = (e) => openSheet(e.currentTarget);
 $("scrim").onclick = (e) => { if (e.target === $("scrim")) closeSheet(); };
 addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("scrim").hidden) closeSheet(); });
 
-// ── 弹窗内容：两列铁路图（pele.run/examples/railroad 的语法重绘）──
-//   左列规则「供应商」：每行一支药丸，choice 分支纵向排；
-//   右列规则「当前供应商 · 模型」：每行一支药丸，同一套轨道几何；
-//   搜索时右列跨供应商出「匹配」，左列整列压暗；
-//   高度 = max(两列行数) × PITCH —— 不折行不扎堆。
+// ── 弹窗内容：铁路图（pele.run/examples/railroad 的语法重绘）──
+//   一列一条规则，每行一支药丸（choice 分支纵向排）：
+//     「供应商」→「当前供应商 · 模型」→「思考」（只对支持思考的模型出）
+//   搜索时模型列跨供应商出「匹配」，供应商列整列压暗。
+//   宽度够就三列并排，不够就降成「两列 + 思考另起一行」，再窄就三段竖着摞 ——
+//   不是三套版面，是同一个 drawRule 换了位置。
 // 轨道/弧线/起终点圆点照抄 pele 的几何：首行在主轨道，其余行汇入左右两根锚定竖线。
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
 const pillW = (t) => {
@@ -310,7 +312,93 @@ const pillW = (t) => {
   return Math.max(34, Math.ceil(w) + 22);
 };
 const PH = 30, R = 10, PITCH = 40, GAP = 8;
-let pickProvider = null;      // 右列当前展开哪个供应商
+/** 列间距：每列两头各有一个 r4 圆点（±16），40 让它们既不重叠也不显得两列无关。 */
+const COLGAP = 40;
+/**
+ * 七个档位的全名，顺序照抄 pi-ai 的 `ModelThinkingLevelSchema`
+ * （`@earendil-works/pi-ai/dist/providers/model-schema.d.ts:8`）。
+ * 顺序就是“从少想到多想”，服务端夹档位也是按这个顺序往上找 —— 两边一致，
+ * 面板上看到的就是库里会落的值。
+ */
+const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+let pickProvider = null;      // 模型列当前展开哪个供应商
+/** 当前选的思考档。缺省 "off" —— 跟 pi-durable 的 `state?.thinkingLevel ?? "off"` 对齐，
+    面板一开始就不撒谎：不填就是不思考，不是“不知道”。*/
+let thinking = "off";
+
+/** 当前模型支持哪几档。非 reasoning 模型这里就是 ["off"]，长度 1=不出思考列。 */
+const levelsOfPick = () => {
+  const m = picked && models.find((x) => x.provider === picked.provider && x.modelId === picked.modelId);
+  return m?.thinkingLevels ?? ["off"];
+};
+
+/**
+ * 把档位夹进 `levels`。跟 pi-ai 的 `clampThinkingLevel` 逐字同序（先往上找、再往下找），
+ * 因为这一份只在模型换了的时候用；真落盘的是服务端那一夹，两边不一致就会出现
+ * “面板显示 A、存进去是 B”。同序就不可能出现。
+ */
+const clampLevel = (level, levels) => {
+  if (levels.includes(level)) return level;
+  const at = LEVELS.indexOf(level);
+  if (at === -1) return levels[0] ?? "off";
+  for (let i = at; i < LEVELS.length; i++) if (levels.includes(LEVELS[i])) return LEVELS[i];
+  for (let i = at - 1; i >= 0; i--) if (levels.includes(LEVELS[i])) return LEVELS[i];
+  return levels[0] ?? "off";
+};
+
+/**
+ * 一条规则 —— 铁路图的原子单位。`top` 是规则名基线，返回它占了几行。
+ *
+ * 自己在内部算 `ty`（轨道 y），所以调用方可以把它摆在任何位置：
+ * 并排时三列传同一个 `top`，竖着摞时依次往下推。
+ */
+const drawRule = (name, items, cx0, cx1, top) => {
+  const ty = top + 24;                          // 轨道在规则名下方 24px
+  const ws = items.map((it) => {
+    const isProvider = !!it.isProvider;
+    const isLevel = !!it.isLevel;
+    const sel = isLevel
+      ? thinking === it.m.modelId
+      : isProvider
+        ? picked?.provider === it.m.provider && !$("q").value.trim()
+        : !!picked && picked.provider === it.m.provider && picked.modelId === it.m.modelId;
+    const isDef = !isProvider && !isLevel && !!defaultModel && defaultModel.provider === it.m.provider && defaultModel.modelId === it.m.modelId;
+    return { ...it, isProvider, isLevel, sel, isDef, w: pillW(it.m.modelId) + (sel ? 18 : 0) + (isDef ? 32 : 0) };
+  });
+  const rows = ws.map((p, i) => ({ ...p, x: cx0 + 16, y: ty + i * PITCH }));   // 列内左对齐 —— 一列清单，不是扎堆
+  const n = rows.length;
+  // 进线 + 出线：两根短轨接到起终点圆点。每列都一样，所以不用区分“是不是最后一列”。
+  let d = `M${cx0 - 16},${ty}H${cx0}M${cx1},${ty}H${cx1 + 16}`;
+  if (n === 1) {
+    d += `M${cx0},${ty}H${rows[0].x}M${rows[0].x + rows[0].w},${ty}H${cx1}`;
+  } else {
+    const first = rows[0], last = rows[n - 1];
+    const xR = cx1 - 2 * R;                            // 右竖线的 x：锚死，不跟药丸走
+    d += `M${cx0},${ty}H${first.x}M${first.x + first.w},${ty}H${cx1}`;   // 首行在主轨道上
+    d += `M${cx0},${ty}a${R},${R} 0 0 1 ${R},${R}V${last.y - R}a${R},${R} 0 0 0 ${R},${R}H${last.x}`;   // 左竖线，喂给每一行
+    d += `M${last.x + last.w},${last.y}H${xR - R}a${R},${R} 0 0 0 ${R},${-R}V${ty + R}a${R},${R} 0 0 1 ${R},${-R}`; // 右竖线，收回主轨道
+    for (const r of rows.slice(1, -1)) {                              // 中间行：左右各一条弧搭上竖线
+      d += `M${cx0 + R},${r.y - R}a${R},${R} 0 0 0 ${R},${R}H${r.x}`;
+      d += `M${r.x + r.w},${r.y}H${xR - R}a${R},${R} 0 0 0 ${R},${-R}`;
+    }
+  }
+  const pills = rows.map((p) => {
+    const spans = [];
+    if (p.sel) spans.push('<tspan fill="var(--accent)">✓ </tspan>');
+    spans.push(esc(p.m.modelId));
+    if (p.isDef) spans.push('<tspan fill="var(--s4)" font-size="10"> ·默认</tspan>');
+    const cls = `pill${p.sel ? " sel" : ""}${p.isProvider && pickProvider === p.m.provider ? " cur" : ""}`
+      + `${p.isProvider ? " pv" : ""}${p.isLevel ? " lv" : ""}${p.dim ? " dim" : ""}`;
+    const label = p.isLevel ? `思考档位 ${p.m.modelId}`
+      : p.isProvider ? `${p.m.provider}（切换）`
+      : `${p.m.provider} / ${p.m.modelId}`;
+    return `<g class="${cls}" data-p="${esc(p.m.provider)}" data-m="${esc(p.m.modelId)}" role="button" tabindex="0" aria-label="${esc(label)}"><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${PH}" rx="${PH / 2}"/><text x="${p.x + p.w / 2}" y="${p.y + PH / 2 + 4.5}" text-anchor="middle" style="font-family:var(--mono)" font-size="13">${spans.join("")}</text></g>`;
+  }).join("");
+  body += `<g class="rule"><text x="${cx0}" y="${top + 4}" font-size="14" font-weight="700" text-anchor="start">${esc(name)}</text><path d="${d}"/><circle cx="${cx0 - 16}" cy="${ty}" r="4"/><circle cx="${cx1 + 16}" cy="${ty}" r="4"/>${pills}</g>`;
+  return n;
+};
+
+let body = "";   // drawRule 往里追加 <g>，所以只能在 renderDiagram 里重置
 
 const renderDiagram = () => {
   const box = $("diagram");
@@ -338,62 +426,57 @@ const renderDiagram = () => {
     rightName = `${pickProvider} · 模型`;
   }
 
-  const W = Math.min(640, Math.max(480, box.clientWidth || 560));
-  const x0 = 28, xE = W - 28;
-  const colGap = 64;                              // 两列之间留足两个圆点的位置，不叠
-  const leftW = Math.max(...left.map((p) => pillW(p.m.modelId))) + 16;   // + 左对齐缩进
-  const leftX0 = x0;
-  const leftX1 = leftX0 + leftW;
-  const rightX0 = leftX1 + colGap;
-  const rightX1 = xE;
+  // 思考列只在模型真有得选的时候出（["off"] 一个档不占地方）。
+  const levels = levelsOfPick();
+  const cols = [{ name: "供应商", items: left }, { name: rightName, items: right }];
+  if (levels.length > 1) {
+    cols.push({ name: "思考", items: levels.map((l) => ({ m: { modelId: l, provider: "" }, isLevel: true })) });
+  }
 
-  let y = 22, body = "";
-  const drawRule = (name, items, cx0, cx1) => {
-    const ty = y + 24;                         // 轨道在规则名下方 24px
-    const ws = items.map((it) => {
-      const isProvider = !!it.isProvider;
-      const sel = isProvider
-        ? picked?.provider === it.m.provider && !q
-        : !!picked && picked.provider === it.m.provider && picked.modelId === it.m.modelId;
-      const isDef = !isProvider && !!defaultModel && defaultModel.provider === it.m.provider && defaultModel.modelId === it.m.modelId;
-      return { ...it, isProvider, sel, isDef, w: pillW(it.m.modelId) + (sel ? 18 : 0) + (isDef ? 32 : 0) };
-    });
-    const rows = ws.map((p, i) => {
-      return { ...p, x: cx0 + 16, y: ty + i * PITCH };   // 列内左对齐 —— 一列清单，不是扎堆
-    });
-    const n = rows.length;
-    let d = `M16,${ty}H${cx0}M${cx1},${ty}H${cx1 + (cx1 === xE ? W - 16 - cx1 : 0)}`;
-    if (cx1 === xE) d = `M16,${ty}H${cx0}M${cx1},${ty}H${W - 16}`;
-    if (n === 1) {
-      d += `M${cx0},${ty}H${rows[0].x}M${rows[0].x + rows[0].w},${ty}H${cx1}`;
-    } else {
-      const first = rows[0], last = rows[n - 1];
-      const xR = cx1 - 2 * R;                            // 右竖线的 x：锚死，不跟药丸走
-      d += `M${cx0},${ty}H${first.x}M${first.x + first.w},${ty}H${cx1}`;   // 首行在主轨道上
-      d += `M${cx0},${ty}a${R},${R} 0 0 1 ${R},${R}V${last.y - R}a${R},${R} 0 0 0 ${R},${R}H${last.x}`;   // 左竖线，喂给每一行
-      d += `M${last.x + last.w},${last.y}H${xR - R}a${R},${R} 0 0 0 ${R},${-R}V${ty + R}a${R},${R} 0 0 1 ${R},${-R}`; // 右竖线，收回主轨道
-      for (const r of rows.slice(1, -1)) {                              // 中间行：左右各一条弧搭上竖线
-        d += `M${cx0 + R},${r.y - R}a${R},${R} 0 0 0 ${R},${R}H${r.x}`;
-        d += `M${r.x + r.w},${r.y}H${xR - R}a${R},${R} 0 0 0 ${R},${-R}`;
-      }
+  const W = Math.min(720, Math.max(360, box.clientWidth || 560));
+  const x0 = 28, xE = W - 28, avail = xE - x0;
+  const widthOf = (c) => Math.max(...c.items.map((it) => pillW(it.m.modelId))) + 16;
+
+  body = "";
+  let height;
+  const widest = (a) => a.reduce((s, c) => s + widthOf(c), 0);
+
+  if (widest(cols) + COLGAP * (cols.length - 1) <= avail) {
+    // 三列（或两列）并排：列间距 64，两个圆点各有地方待
+    let cx = x0;
+    let rows = 1;
+    for (const c of cols) {
+      const w = widthOf(c);
+      rows = Math.max(rows, drawRule(c.name, c.items, cx, cx + w, 22));
+      cx += w + COLGAP;
     }
-    const pills = rows.map((p) => {
-      const spans = [];
-      if (p.sel) spans.push('<tspan fill="var(--accent)">✓ </tspan>');
-      spans.push(esc(p.m.modelId));
-      if (p.isDef) spans.push('<tspan fill="var(--s4)" font-size="10"> ·默认</tspan>');
-      const cls = `pill${p.sel ? " sel" : ""}${p.isProvider && pickProvider === p.m.provider ? " cur" : ""}${p.isProvider ? " pv" : ""}${p.dim ? " dim" : ""}`;
-      const label = p.isProvider ? `${p.m.provider}（切换）` : `${p.m.provider} / ${p.m.modelId}`;
-      return `<g class="${cls}" data-p="${esc(p.m.provider)}" data-m="${esc(p.m.modelId)}" role="button" tabindex="0" aria-label="${esc(label)}"><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${PH}" rx="${PH / 2}"/><text x="${p.x + p.w / 2}" y="${p.y + PH / 2 + 4.5}" text-anchor="middle" style="font-family:var(--mono)" font-size="13">${spans.join("")}</text></g>`;
-    }).join("");
-    body += `<g class="rule"><text x="${cx0}" y="${y + 4}" font-size="14" font-weight="700" text-anchor="start">${esc(name)}</text><path d="${d}"/><circle cx="${cx0 - 16}" cy="${ty}" r="4"/><circle cx="${cx1 + 16}" cy="${ty}" r="4"/>${pills}</g>`;
-    return Math.max(n - 1, 0);
-  };
+    height = 22 + 24 + (rows - 1) * PITCH + PH + 16;
+  } else {
+    // 装不下就摞：先并排能塞的，剩下的各占一整行 —— 宽屏不变、窄屏自动长高
+    let top = 22;
+    const pairs = [];
+    let cx = x0, used = 0, pair = [];
+    for (const c of cols) {
+      const w = widthOf(c);
+      const add = pair.length ? COLGAP + w : w;
+      if (pair.length && used + add > avail) { pairs.push(pair); pair = [c]; used = w; }
+      else { pair.push(c); used += add; }
+    }
+    if (pair.length) pairs.push(pair);
+    for (const row of pairs) {
+      let rows = 1;
+      cx = x0;
+      for (const c of row) {
+        const w = row.length === 1 ? avail : widthOf(c);
+        rows = Math.max(rows, drawRule(c.name, c.items, cx, cx + w, top));
+        cx += w + COLGAP;
+      }
+      top += 24 + (rows - 1) * PITCH + PH + 30;
+    }
+    height = top - 30 + 16;
+  }
 
-  drawRule("供应商", left, leftX0, leftX1);
-  drawRule(rightName, right, rightX0, rightX1);
-  const rows2 = Math.max(left.length, right.length);
-  box.innerHTML = `<svg viewBox="0 0 ${W} ${Math.round(y + 24 + (rows2 - 1) * PITCH + PH + 16)}" role="img" aria-roledescription="railroad" aria-label="模型语法图">${body}</svg>`;
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${Math.round(height)}" role="img" aria-roledescription="railroad" aria-label="模型语法图">${body}</svg>`;
   const sel = box.querySelector(".pill.sel");
   if (sel) sel.scrollIntoView({ block:"nearest", behavior: reduceMotion ? "auto" : "smooth" });
   return box;
@@ -402,25 +485,31 @@ const renderDiagram = () => {
 const choose = (provider, modelId) => {
   picked = { provider, modelId };
   pickProvider = provider;
+  thinking = clampLevel(thinking, levelsOfPick());   // 换了模型，档位跟着它的表重新夹
   $("flash").textContent = "";
   renderCurrent();
   renderDiagram();
   updateHub();
   setTimeout(closeSheet, reduceMotion ? 0 : 220);   // 让选中那格先亮一下，再原路收回
 };
+/** 药丸点击的三种走法，键盘那边用的是同一份判断 —— 别写两套。 */
+const actOn = (g) => {
+  // 思考档位：只改档位，不开不关 —— 它跟“选哪个模型”是两件事
+  if (g.classList.contains("lv")) { thinking = g.dataset.m; renderCurrent(); renderDiagram(); return; }
+  // 供应商：只切换模型列的视图，也不关门
+  if (g.classList.contains("pv")) { pickProvider = g.dataset.p; renderDiagram(); return; }
+  choose(g.dataset.p, g.dataset.m);
+};
 $("diagram").addEventListener("click", (e) => {
   const g = e.target.closest(".pill");
-  if (!g) return;
-  if (g.classList.contains("pv")) { pickProvider = g.dataset.p; renderDiagram(); return; }   // 供应商只切换视图，不关门
-  choose(g.dataset.p, g.dataset.m);
+  if (g) actOn(g);
 });
 $("diagram").addEventListener("keydown", (e) => {
   if (e.key !== "Enter" && e.key !== " ") return;
   const g = e.target.closest?.(".pill");
   if (!g) return;
   e.preventDefault();
-  if (g.classList.contains("pv")) { pickProvider = g.dataset.p; renderDiagram(); return; }
-  choose(g.dataset.p, g.dataset.m);
+  actOn(g);
 });
 $("q").oninput = renderDiagram;
 $("q").onkeydown = (e) => { if (e.key === "Enter") $("diagram").querySelector(".pill")?.click(); };
@@ -436,7 +525,9 @@ const renderCurrent = () => {
   $("cur-id").textContent = picked.modelId;
   $("cur-tag").textContent = m?.provider ?? "";
   const isDef = defaultModel && defaultModel.provider === picked.provider && defaultModel.modelId === picked.modelId;
-  $("model-sub").textContent = `已开放 · ${models.length} 款${isDef ? " · 默认" : ""}`;
+  const lv = levelsOfPick();
+  $("model-sub").textContent = `已开放 · ${models.length} 款${isDef ? " · 默认" : ""}`
+    + (lv.length > 1 ? ` · 思考 ${thinking}` : "");
 };
 
 const updateHub = () => {
@@ -451,9 +542,13 @@ async function commit() {
   $("flash").textContent = "";
   try {
     const name = $("name").value.trim();
-    const created = await post(tag.url + "/v1/sessions", { model: picked, ...(name ? { name } : {}) });
+    // 档位跟着创建一起发 —— 服务端在建会话的同一个 commit 里落定，
+    // 中间不会有“已经跑了一条消息但档位还是旧的”那一瞬。
+    const created = await post(tag.url + "/v1/sessions", { model: picked, thinkingLevel: thinking, ...(name ? { name } : {}) });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
-    $("flash").textContent = `✓ 对话 ${created.id} 已创建`;
+    // 服务端回来的才是生效值（它夹过一遍）：认这一份，不认我们发上去的
+    if (created.thinkingLevel) thinking = created.thinkingLevel;
+    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}`;
     $("name").value = "";
     defaultModel = picked;
     renderCurrent();

@@ -22,14 +22,33 @@
 
 ## 它做什么
 
-只做一件事：**选配置 → 创建新对话**。目前配置只有「模型」一项。
+只做一件事：**选配置 → 创建新对话**。现在的配置有两项：**模型**和**思考档位**。
 
 - 模型清单来自 `qrd3wh` 的 `GET /v1/models`（只列这台机器真能用的，不列内置目录）。
-- 选模型走**苹果风格弹窗**：半透明材料（`backdrop-filter`）+ 压暗 scrim +
+  清单里每条都带 `thinkingLevels` —— 这个模型真支持哪几档，由 pi-ai 的
+  `getSupportedThinkingLevels` 算出来，非 reasoning 模型就是 `["off"]`。
+- 选配置走**苹果风格弹窗**：半透明材料（`backdrop-filter`）+ 压暗 scrim +
   从被点节点长出来（`transform-origin` 对准触发点），选中即收回、Esc/点 scrim 原路返回；
   `prefers-reduced-motion` 退化成淡入淡出。
-- 点「创建」→ `POST qrd3wh /v1/sessions`，带 `{model, name?}`，成功后 `POST /v1/selection`
-  把盘上的选中切到新对话。
+- 弹窗正文是**三列铁路图**（pele.run/examples/railroad 的语法重绘）：`供应商 │ 模型 │ 思考`。
+  每列一条规则、每行一支药丸（choice 分支纵向排，首行在主轨道、其余行汇入左右两根锚定竖线），
+  高度 = 最长一列的行数 × 40px。宽度装不下时列会摞成行（同一个 `drawRule` 换个位置，
+  不是另一套版面）；思考列只在这个模型有得选（档位 > 1）时才出。
+- 点「创建」→ `POST qrd3wh /v1/sessions`，带 `{model, thinkingLevel, name?}`，成功后
+  `POST /v1/selection` 把盘上的选中切到新对话。
+
+### 「面板上写的 = 实际跑的」
+
+这条是弹窗的唯一硬要求，别为了省事破它：
+
+- **档位由模型能力决定，不由我们决定。** 面板只画 `thinkingLevels` 里那几档；换了模型，
+  本地档位立刻按 pi-ai 同一套顺序（先往上找、再往下找）重新夹 —— 和服务端那次夹**同序**，
+  否则就会出现「面板显示 A、存进去是 B」。
+- **认服务端回来的值。** 创建后拿 `created.thinkingLevel` 覆盖本地 state，副标题也跟着它走；
+  档位默认值是 `off`（对齐 pi-durable 的 `state?.thinkingLevel ?? "off"`），
+  所以「没选」显示的就是真会跑的，不是「不知道」。
+- 服务端还会再夹一遍（客户端发的值不可信），两边夹的规则一字不差，
+  所以正常路径上第二次夹什么都不改。
 
 ## 它不做什么
 
