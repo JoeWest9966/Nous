@@ -25,3 +25,6 @@ content/new1/*
 content/new1/map/*
 !content/new1/map/k5411g/
 !content/new1/map/hb7k3j/
+# qrd3wh 的代码也是人写的(session 引擎 + 编目适配),data/ 仍然不进(运行时数据)。
+!content/new1/map/qrd3wh/
+content/new1/map/qrd3wh/data/

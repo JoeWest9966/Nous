@@ -1,0 +1,3251 @@
+/* 这份 pocket.css 是 Pi Pocket 的样式里「右侧那一列」用得着的部分，原样搬来：
+ * 字体/token/reset/动效(45-813) + 对话列(1482-2147) + 工具卡(2148-3010) + 输入区(3011-3960)。
+ * 只改了三样：/fonts/ 换成相对路径、补了几个缺的变量、去掉了 @font-face 里没用到的字体。
+ */
+/* ─── Fonts, tokens, and the reset ───────────────────────────── */
+
+@font-face {
+    font-family: "Pocket Mono";
+    src: url("fonts/JetBrainsMono.woff2") format("woff2");
+    font-weight: 100 800;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Sans";
+    src: url("fonts/Geist.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+}
+
+/* Each font's own italic, which a browser downloads only when italic text shows (comments in code, emphasis). Fira
+   Code has none: the browser slants its upright letters. */
+@font-face {
+    font-family: "Pocket Mono";
+    src: url("fonts/JetBrainsMono-Italic.woff2") format("woff2");
+    font-weight: 100 800;
+    font-style: italic;
+    font-display: swap;
+}
+
+/* More fonts for themes to name in --sans and --mono (docs/extensions/themes.md lists them). A browser downloads one only
+   when a theme uses it. */
+
+/* The Nerd Fonts icons alone (their Mono build: one cell wide), in the private use areas they fill. */
+@font-face {
+    font-family: "Pocket Nerd Symbols";
+    src: url("fonts/NerdFontsSymbolsMono.woff2") format("woff2");
+    font-display: swap;
+    unicode-range: U+E000-F8FF, U+F0000-F1AF0;
+}
+
+@font-face {
+    font-family: "Pocket Fira Code";
+    src: url("fonts/FiraCode-VF.woff2") format("woff2");
+    font-weight: 300 700;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket IBM Plex Mono";
+    src: url("fonts/IBMPlexMono-Variable.woff2") format("woff2");
+    font-weight: 100 700;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket IBM Plex Mono";
+    src: url("fonts/IBMPlexMono-Variable-Italic.woff2") format("woff2");
+    font-weight: 100 700;
+    font-style: italic;
+    font-display: swap;
+}
+
+/* Iosevka has no variable font: the weights the app uses, upright and italic. 800 shows as 700, 100 as 400. Each file
+   keeps every character but drops the optional letter variants (ss and cv features) the app never turns on, which
+   were three quarters of its size. */
+@font-face {
+    font-family: "Pocket Iosevka";
+    src: url("fonts/Iosevka-Regular.woff2") format("woff2");
+    font-weight: 400;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Iosevka";
+    src: url("fonts/Iosevka-SemiBold.woff2") format("woff2");
+    font-weight: 600;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Iosevka";
+    src: url("fonts/Iosevka-Bold.woff2") format("woff2");
+    font-weight: 700;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Iosevka";
+    src: url("fonts/Iosevka-Italic.woff2") format("woff2");
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Iosevka";
+    src: url("fonts/Iosevka-SemiBoldItalic.woff2") format("woff2");
+    font-weight: 600;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Iosevka";
+    src: url("fonts/Iosevka-BoldItalic.woff2") format("woff2");
+    font-weight: 700;
+    font-style: italic;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Inter";
+    src: url("fonts/InterVariable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "Pocket Inter";
+    src: url("fonts/InterVariable-Italic.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: italic;
+    font-display: swap;
+}
+
+:root {
+    /* The palette. These defaults are Tokyo Night; theme.js replaces them. */
+    --o-bg: #1a1b26;
+    --o-bg-dark: #13141c;
+    --o-bg-darker: #0e0e14;
+    --o-bg-light: #24283b;
+    --o-fg: #a9b1d6;
+    --o-fg-dim: #565f89;
+    --o-fg-light: #b4bee6;
+    --o-fg-bright: #c0caf5;
+    --o-accent: #7aa2f7;
+    --o-selection: #292e42;
+    --o-red: #f7768e;
+    --o-yellow: #e0af68;
+    --o-orange: #eb927b;
+    --o-green: #9ece6a;
+    --o-cyan: #449dab;
+    --o-blue: #7aa2f7;
+    --o-magenta: #ad8ee6;
+
+    /* Surfaces, after omarchy-shell's control states: the foreground laid over the background. */
+    --desk: var(--o-bg-darker);
+    --bg: var(--o-bg);
+    --panel: var(--bg);
+    --card: color-mix(in srgb, var(--body) 4%, var(--bg));
+    --card-2: color-mix(in srgb, var(--body) 8%, var(--bg));
+    /* A selected segment, raised from its track. */
+    --raised: color-mix(in srgb, var(--body) 12%, var(--bg));
+    --hover: color-mix(in srgb, var(--body) 7%, transparent);
+    --pressed: color-mix(in srgb, var(--body) 18%, transparent);
+    --line: color-mix(in srgb, var(--body) 13%, var(--bg));
+    --line-strong: color-mix(in srgb, var(--body) 26%, var(--bg));
+    --edge: color-mix(in srgb, var(--body) 25%, transparent);
+    /* Hairlines: the usual 1px line, and a stronger one (fields, a switch's track while off). */
+    --hair: color-mix(in srgb, var(--body) 10%, transparent);
+    --hair-2: color-mix(in srgb, var(--body) 17%, transparent);
+    --text: var(--o-fg-bright);
+    --body: var(--o-fg);
+    /* Quieter text at 4.5:1 or more on the ground (WCAG AA) with every palette that comes with the app. */
+    --muted: color-mix(in oklab, var(--body) 76%, var(--bg));
+    --faint: color-mix(in oklab, var(--body) 42%, var(--bg));
+    --accent: var(--o-accent);
+    --accent-ink: var(--bg);
+    /* The accent as a fill under text (buttons, badges): darker in light themes, so text on it stays readable. */
+    --accent-fill: var(--accent);
+    --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+    --accent-line: color-mix(in srgb, var(--accent) 50%, transparent);
+    /* The keyboard's focus ring: keep it visible (a theme may change its color, never take it away). */
+    --focus-ring: var(--accent);
+    /* The second color of loaders and thoughts. */
+    --spark: var(--o-magenta);
+    /* A second accent, for what a theme draws in two colors (Hyprland's active border is a gradient): the app uses none. */
+    --accent-2: var(--spark);
+    --brand: var(--o-orange);
+    --ok: var(--o-green);
+    --ok-soft: color-mix(in srgb, var(--o-green) 14%, transparent);
+    --warn: var(--o-yellow);
+    --warn-soft: color-mix(in srgb, var(--o-yellow) 10%, transparent);
+    --warn-line: color-mix(in srgb, var(--o-yellow) 42%, transparent);
+    --err: var(--o-red);
+    --err-soft: color-mix(in srgb, var(--o-red) 14%, transparent);
+    --err-line: color-mix(in srgb, var(--o-red) 50%, transparent);
+    --code-bg: var(--o-bg-dark);
+    /* Syntax colors, from the theme's own palette so every Omarchy theme colors code its way. */
+    --hl-kw: var(--o-magenta);
+    --hl-str: var(--o-green);
+    --hl-num: var(--o-orange);
+    --hl-fn: var(--o-blue);
+    --hl-type: var(--o-yellow);
+    --hl-op: var(--o-cyan);
+    --hl-tag: var(--o-red);
+    --scrim: color-mix(in srgb, var(--desk) 55%, transparent);
+    /* Shadows: a soft lift (the message box), and what floats over the page (popovers, sheets, the launcher, PiP). */
+    --sh: rgba(0, 0, 0, 0.5);
+    --shadow: 0 18px 40px -18px var(--sh), 0 2px 6px -2px var(--sh);
+    --pop: 0 24px 60px -16px var(--sh), 0 0 0 1px var(--hair-2);
+    /*
+     * Corners, from small to large: state squares; inline code, keys, and small tags; a segment in its track; small
+     * buttons and list rows; icon buttons, fields, and segmented tracks; cards and primary buttons; windows, approval
+     * cards, and peek tiles; the message box, sheets, and the launcher; PiP. Pills and avatars are round (999px).
+     */
+    --r-mark: 2px;
+    --r-tag: 4px;
+    --r-seg: 5px;
+    --r-row: 6px;
+    --r-control: 7px;
+    --r-card: 8px;
+    --r-window: 10px;
+    --r-sheet: 12px;
+    --r-float: 12px;
+    --r-pill: 999px;
+    /* Fields and plain controls that name no corner of their own. */
+    --radius: var(--r-control);
+    /* Hyprland's layout, softened: gaps_out 8, gaps_in 4, border_size 1. */
+    --gap-out: 8px;
+    --gap-in: 4px;
+    --border: 1px;
+    /* The conversation's column, and the message box under it, at their widest; room before the conversation's turns. */
+    --transcript-width: clamp(720px, 72%, 1200px);
+    --composer-width: calc(var(--transcript-width) + 48px);
+    --transcript-gutter: 0px;
+    /* The timeline in an activity group: where its rule and the centers of its marks are, the marks' size, and the gap
+     * from a mark to its words (and to what a step shows under them). */
+    --timeline-x: 22.5px;
+    --step-mark-size: 19px;
+    --step-gap: 10px;
+    /* Tiled windows' border, the one in focus, and the ring around that one. */
+    --window-border: var(--hair);
+    --window-border-active: var(--accent-line);
+    --window-ring: 0 0 0 3px var(--accent-soft);
+    /* What shows in the gaps between tiled windows: the desktop's wallpaper when Appearance asks for it (inline), else this. */
+    --wallpaper: none;
+    /*
+     * Density, from Appearance (`data-density`): how much room the spacing takes. Padding and gaps from top to bottom
+     * scale by --space-y, and from side to side by --space-x; --leading is the conversation's line height. Rows that
+     * are tap targets keep a floor on touch screens. Font sizes, corners, and colors stay as they are.
+     */
+    --space-y: 1;
+    --space-x: 1;
+    --leading: 1.65;
+
+    /* Motion: Omarchy's Hyprland curves, and its speeds in milliseconds. */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1); /* easeOutQuint */
+    --ease-in-out: cubic-bezier(0.65, 0.05, 0.36, 1); /* easeInOutCubic */
+    --ease-almost: cubic-bezier(0.5, 0.5, 0.75, 1); /* almostLinear */
+    --t-in: 410ms; /* windowsIn */
+    --t-out: 150ms; /* windowsOut */
+    --t-fade: 175ms; /* fadeIn */
+    --t-border: 540ms; /* border */
+    --t-hover: 140ms;
+    /* Fluid motion's own (Appearance → Motion → Fluid): a spring that settles with a 2% overshoot (damping 0.78), a
+     * glide that slows to rest without one, an exit that speeds away, and the step between staggered arrivals. */
+    --ease-spring: linear(
+        0,
+        0.005 1.3%,
+        0.037 3.7%,
+        0.109 6.8%,
+        0.222 10.5%,
+        0.362 14.6%,
+        0.514 19.2%,
+        0.66 24.3%,
+        0.785 29.6%,
+        0.882 35.4%,
+        0.95 41.4%,
+        0.992 47.8%,
+        1.013 54.4%,
+        1.02 61.4%,
+        1.019 68.6%,
+        1.014 76.1%,
+        1.009 83.8%,
+        1.005 91.8%,
+        1
+    );
+    --ease-glide: cubic-bezier(0.16, 1, 0.3, 1); /* easeOutExpo */
+    --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --t-spring: 560ms;
+    --t-glide: 420ms;
+    --t-exit: 150ms;
+    --stagger: 24ms;
+
+    /* Ligatures: none, as in a terminal. A theme may turn on a font's own (`contextual`, `normal`). */
+    --ligatures: none;
+    --mono:
+        "Pocket Mono", "Pocket Nerd Symbols", "JetBrains Mono", "JetBrainsMono Nerd Font",
+        ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Pocket Sans", "Geist", ui-sans-serif, system-ui, sans-serif;
+    color-scheme: dark;
+}
+
+:root[data-density="compact"] {
+    --space-y: 0.7;
+    --space-x: 0.85;
+    --leading: 1.5;
+}
+
+:root[data-density="tight"] {
+    --space-y: 0.45;
+    --space-x: 0.7;
+    --leading: 1.4;
+}
+
+/* Light themes: quieter text and the status colors darken toward the foreground, so they stay readable on light grounds. */
+:root[data-mode="light"] {
+    color-scheme: light;
+    --sh: rgba(40, 40, 70, 0.14);
+    --accent-ink: #fff;
+    --scrim: color-mix(in srgb, var(--desk) 55%, transparent);
+    --line: color-mix(in srgb, var(--body) 15%, var(--bg));
+    --muted: color-mix(in oklab, var(--body) 87%, var(--bg));
+    --faint: color-mix(in oklab, var(--body) 58%, var(--bg));
+    --warn: color-mix(in oklab, var(--o-yellow) 62%, var(--o-fg));
+    --ok: color-mix(in oklab, var(--o-green) 78%, var(--o-fg));
+    --err: color-mix(in oklab, var(--o-red) 85%, var(--o-fg));
+    --accent-fill: color-mix(in oklab, var(--accent) 76%, var(--body));
+    /* Code's colors further still: halfway, yellow (the lightest) more, so each reads at 3:1 or better. */
+    --hl-kw: color-mix(in oklab, var(--o-magenta) 50%, var(--o-fg));
+    --hl-str: color-mix(in oklab, var(--o-green) 50%, var(--o-fg));
+    --hl-num: color-mix(in oklab, var(--o-orange) 50%, var(--o-fg));
+    --hl-fn: color-mix(in oklab, var(--o-blue) 50%, var(--o-fg));
+    --hl-type: color-mix(in oklab, var(--o-yellow) 40%, var(--o-fg));
+    --hl-op: color-mix(in oklab, var(--o-cyan) 50%, var(--o-fg));
+    --hl-tag: color-mix(in oklab, var(--o-red) 50%, var(--o-fg));
+}
+
+* {
+    box-sizing: border-box;
+    /* No ligatures, as in a terminal: code shows the characters it has (=== stays three). Important, because each
+     * `font` shorthand would reset it; a theme changes it through --ligatures (`contextual` for a font's `calt`). */
+    font-variant-ligatures: var(--ligatures) !important;
+}
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    background: var(--desk);
+    color: var(--body);
+    font: 14px / 1.55 var(--sans);
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+    height: 100dvh;
+}
+
+button,
+input,
+textarea,
+select {
+    font: inherit;
+    color: inherit;
+}
+
+button {
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+}
+
+/* iOS zooms into any text field smaller than 16px when it takes focus. Important, so a theme's size for a field (in a
+ * later layer, which beats this one) does not bring the zoom back on touch screens. */
+@media (pointer: coarse) {
+    input,
+    textarea,
+    select {
+        font-size: 16px !important;
+    }
+}
+
+input,
+textarea,
+select {
+    background: var(--card);
+    border: 1px solid var(--hair-2);
+    border-radius: var(--radius);
+    padding: 0.6rem 0.75rem;
+    width: 100%;
+    outline: none;
+    color: var(--text);
+    transition:
+        border-color var(--t-hover) var(--ease-out),
+        background-color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    input:hover,
+    textarea:hover,
+    select:hover {
+        border-color: var(--edge);
+    }
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+    border-color: var(--accent-line);
+}
+
+::placeholder {
+    color: var(--muted);
+    opacity: 1;
+}
+
+::selection {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+    color: var(--text);
+}
+
+:focus-visible {
+    outline: 1px solid var(--focus-ring);
+    outline-offset: 1px;
+}
+
+/* A field's ring lies on its own border, not a second line beside it. */
+input:not([type="checkbox"], [type="radio"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline-offset: -1px;
+}
+
+a {
+    color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+}
+
+/* Thin round scrollbars, on hairline thumbs. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--hair-2) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--hair-2);
+    border: 2px solid transparent;
+    border-radius: var(--r-pill);
+    background-clip: padding-box;
+}
+
+@media (hover: hover) {
+    ::-webkit-scrollbar-thumb:hover {
+        background-color: var(--muted);
+    }
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+kbd {
+    display: inline-grid;
+    place-items: center;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    font: 600 11px/1 var(--mono);
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--hair-2);
+    border-bottom-width: 2px;
+    border-radius: calc(var(--r-tag) + 1px);
+    vertical-align: middle;
+}
+
+.mono {
+    font-family: var(--mono);
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.small {
+    font-size: 0.8rem;
+}
+
+.grow {
+    flex: 1;
+}
+
+.meter {
+    display: inline-flex;
+    height: 4px;
+    border-radius: calc(var(--r-mark) - 1px);
+    overflow: hidden;
+    background: var(--hair-2);
+}
+
+.meter > span {
+    background: var(--accent);
+}
+
+.meter.warn > span {
+    background: var(--warn);
+}
+
+.meter.err > span {
+    background: var(--err);
+}
+
+.warn {
+    color: var(--warn);
+}
+
+.ok {
+    color: var(--ok);
+}
+
+.err {
+    color: var(--err);
+}
+
+.pi {
+    font-family: Georgia, "Times New Roman", serif;
+    color: var(--brand);
+}
+
+/* ─── Motion ───────────────────────────────────────────────── */
+
+/* Hyprland's popin 87%: what opens grows from 87% and fades in. */
+@keyframes popin {
+    from {
+        opacity: 0;
+        transform: scale(0.87);
+    }
+}
+
+@keyframes popout {
+    to {
+        opacity: 0;
+        transform: scale(0.87);
+    }
+}
+
+@keyframes fade {
+    from {
+        opacity: 0;
+    }
+}
+
+@keyframes fade-out {
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes rise-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+}
+
+/* What floats over the page (popovers, sheets, the launcher) rises a little and grows from 98% as it fades in. */
+@keyframes pop {
+    from {
+        opacity: 0;
+        transform: translateY(6px) scale(0.98);
+    }
+}
+
+@keyframes pop-out {
+    to {
+        opacity: 0;
+        transform: translateY(6px) scale(0.98);
+    }
+}
+
+/* Reduced motion (the system's, or Appearance's): no movement, apart from what says something is working. */
+:root[data-motion="reduced"] *,
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0s !important;
+}
+
+:root[data-motion="reduced"] .spinner::before {
+    transform: translate(calc(100% + 2px), 0);
+}
+
+:root[data-motion="reduced"] .boot-bar span {
+    transform: scaleX(0.7);
+}
+
+/* Theme changes: the new look grows as a circle from where it was chosen (theme.js sets the place). */
+:root.theme-vt::view-transition-old(root),
+:root.theme-vt::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+}
+
+:root.theme-vt::view-transition-new(root) {
+    animation: theme-reveal 0.75s var(--ease-out);
+}
+
+@keyframes theme-reveal {
+    from {
+        clip-path: circle(0 at var(--vt-x, 50%) var(--vt-y, 50%));
+    }
+    to {
+        clip-path: circle(var(--vt-r, 150vmax) at var(--vt-x, 50%) var(--vt-y, 50%));
+    }
+}
+
+/* ─── Loaders, after Omarchy's ───────────────────────────────── */
+
+/* The boot screen: π over a flat square bar (Omarchy's boot screen) that eases toward 70% while it waits. */
+.boot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1.1rem;
+    height: 100dvh;
+    padding: 1.5rem;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-align: center;
+    background: var(--bg);
+    animation: fade 0.3s var(--ease-almost);
+}
+
+.boot.inline {
+    height: 100%;
+    min-height: 16rem;
+    background: none;
+}
+
+.boot-mark {
+    font:
+        4.5rem/1 Georgia,
+        "Times New Roman",
+        serif;
+    color: var(--brand);
+    animation: boot-breathe 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes boot-breathe {
+    50% {
+        opacity: 0.55;
+    }
+}
+
+.boot.inline .boot-mark {
+    font-size: 3rem;
+}
+
+.boot-bar {
+    width: min(300px, 64vw);
+    height: 8px;
+    background: var(--line);
+    overflow: hidden;
+}
+
+/* Scaled, not sized: a width would lay the page out on each frame, while the session it waits for loads. */
+.boot-bar span {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: var(--body);
+    transform: scaleX(0);
+    transform-origin: left;
+    animation: boot-fill 15s cubic-bezier(0.12, 0.6, 0.3, 1) forwards;
+}
+
+@keyframes boot-fill {
+    to {
+        transform: scaleX(0.7);
+    }
+}
+
+.boot-caption {
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: lowercase;
+}
+
+.boot-detail {
+    max-width: 32ch;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    opacity: 0.8;
+}
+
+/* The inline spinner: one lit quadrant stepping around a square (▖▘▝▗), from the accent toward the spark. */
+.spinner {
+    position: relative;
+    display: inline-block;
+    flex: none;
+    width: 0.85em;
+    height: 0.85em;
+    min-width: 11px;
+    min-height: 11px;
+    vertical-align: -0.1em;
+    background:
+        linear-gradient(var(--line), var(--line)) 0 0 / calc(50% - 1px) calc(50% - 1px) no-repeat,
+        linear-gradient(var(--line), var(--line)) 100% 0 / calc(50% - 1px) calc(50% - 1px) no-repeat,
+        linear-gradient(var(--line), var(--line)) 0 100% / calc(50% - 1px) calc(50% - 1px) no-repeat,
+        linear-gradient(var(--line), var(--line)) 100% 100% / calc(50% - 1px) calc(50% - 1px)
+            no-repeat;
+}
+
+.spinner::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: calc(50% - 1px);
+    height: calc(50% - 1px);
+    background: var(--accent);
+    animation: quadrant 0.8s steps(1, end) infinite;
+}
+
+@keyframes quadrant {
+    0% {
+        transform: translate(0, calc(100% + 2px));
+        background: var(--accent);
+    }
+    25% {
+        transform: translate(0, 0);
+        background: color-mix(in oklab, var(--accent) 67%, var(--spark));
+    }
+    50% {
+        transform: translate(calc(100% + 2px), 0);
+        background: color-mix(in oklab, var(--accent) 33%, var(--spark));
+    }
+    75% {
+        transform: translate(calc(100% + 2px), calc(100% + 2px));
+        background: var(--spark);
+    }
+}
+
+.loader {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.6rem 0.1rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"], [data-motion="fluid"]) .pulse,
+    :root:not([data-motion="full"], [data-motion="fluid"]) .live-dot,
+    :root:not([data-motion="full"], [data-motion="fluid"]) .background-now .dot,
+    :root:not([data-motion="full"], [data-motion="fluid"]) .agents-dot.working,
+    :root:not([data-motion="full"], [data-motion="fluid"]) .session-working,
+    :root:not([data-motion="full"], [data-motion="fluid"]) .session-placeholder span {
+        animation: none !important;
+    }
+}
+
+.icon {
+    flex: none;
+}
+
+/* ─── Transcript ───────────────────────────────────────────── */
+
+.scroller {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    /* Room for the scrollbar on both sides, kept whether or not it shows: the column stays put, centered over the
+     * message box, when a session long enough to scroll opens. */
+    scrollbar-gutter: stable both-edges;
+    position: relative;
+    /* The room it gives, for what may run wider than the column (a reply's code blocks and tables, below): the
+     * browser's own measure as it lays out, inside the scroll bar's gutters, so no script restyles the conversation
+     * after it is drawn. A fixed or sticky element in it keeps its place: inline-size containment makes neither a
+     * containing block nor a stacking context. */
+    container-type: inline-size;
+    padding-inline: var(--inset-l) var(--inset-r);
+}
+
+/* A column of turns: a person's message, what Pi did, Pi's reply, an approval, the live line. Its text size is
+ * Appearance's; the cards inside keep fixed sizes. */
+.transcript {
+    max-width: var(--transcript-width);
+    margin: 0 auto;
+    padding: calc(28px * var(--space-y)) calc(28px * var(--space-x)) calc(24px * var(--space-y));
+    padding-inline-start: calc(28px * var(--space-x) + var(--transcript-gutter));
+    display: flex;
+    flex-direction: column;
+    gap: calc(16px * var(--space-y));
+    font-size: var(--text-size, 15px);
+    line-height: var(--leading);
+}
+
+/* A session opened rises into place; on a phone, where the route slides it in, the slide alone (`transcript.js`). */
+.transcript.rising {
+    animation: rise-in 0.36s var(--ease-out);
+}
+
+/* Turns stand apart: 10px more before each message or report (less at a tighter density). */
+.transcript > :is(.user-row, .report, .report-group):not(:first-child) {
+    margin-top: calc(10px * var(--space-y));
+}
+
+@media (max-width: 699px) {
+    .transcript {
+        padding: calc(18px * var(--space-y)) calc(16px * var(--space-x)) calc(14px * var(--space-y));
+        padding-inline-start: calc(16px * var(--space-x) + var(--transcript-gutter));
+    }
+}
+
+/* What arrives while the session is open slides up into place: a message sent, or Pi starting to answer. */
+.enter {
+    animation: rise-in 0.42s var(--ease-out) backwards;
+}
+
+.empty {
+    display: grid;
+    place-items: center;
+    gap: 0.6rem;
+    padding: 3rem 1rem;
+    text-align: center;
+    color: var(--muted);
+}
+
+.empty .pi {
+    font-size: 3.2rem;
+    opacity: 0.8;
+}
+
+.breadcrumb {
+    align-self: flex-start;
+    text-align: left;
+    color: var(--accent);
+    font-size: 13px;
+    display: inline-flex;
+    gap: 0.25rem;
+    align-items: center;
+}
+
+.linked-sessions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.linked-sessions .breadcrumb {
+    min-height: 40px;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+/* The explicit parent route stays beside the message box on every layout, even when the dock scrolls. */
+.parent-session {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    background: var(--card);
+    color: var(--accent);
+    font-size: 12.5px;
+    text-align: left;
+}
+
+@media (hover: hover) {
+    .parent-session:hover {
+        background: var(--hover);
+    }
+}
+
+.parent-session > :not(.parent-session-title) {
+    flex-shrink: 0;
+}
+
+.parent-session-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+}
+
+/* A person's message: a card, with who and when over what they wrote. Scoped to its row: the launcher's input has a
+ * `.prompt` of its own. */
+.user-row > .prompt {
+    display: flex;
+    flex-direction: column;
+    gap: calc(4px * var(--space-y));
+    padding: calc(12px * var(--space-y)) calc(16px * var(--space-x)) calc(14px * var(--space-y));
+    border: 1px solid var(--hair);
+    border-radius: var(--r-window);
+    background: var(--card);
+    color: var(--text);
+    transition: background-color var(--t-hover) var(--ease-out);
+}
+
+@media (max-width: 699px) {
+    .user-row > .prompt {
+        padding: calc(12px * var(--space-y)) calc(14px * var(--space-x)) calc(13px * var(--space-y));
+        border-radius: calc(var(--r-window) + 2px);
+    }
+}
+
+.user-row > .prompt.tappable {
+    cursor: pointer;
+}
+
+@media (hover: hover) {
+    .user-row > .prompt.tappable:hover {
+        background: var(--card-2);
+    }
+}
+
+.prompt-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 8px;
+    min-width: 0;
+    font-size: 12.5px;
+    line-height: 22px;
+}
+
+/* Yours takes the accent, someone else's their color (`--who`), anyone else a quiet one. */
+.prompt-avatar {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--who) 20%, transparent);
+    color: var(--who);
+    font-size: 9.5px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.prompt-author {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.prompt-time {
+    color: var(--faint);
+}
+
+.prompt-body {
+    min-width: 0;
+    padding-left: 30px;
+}
+
+.user-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-wrap: pretty;
+}
+
+/* What a PR watch or a webhook fenced for Pi (a check's log, a post): a block of its own, scrolling past a few lines. */
+.fenced-data {
+    margin: 0.4rem 0;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-control);
+    background: var(--code-bg);
+    overflow: hidden;
+}
+
+.fenced-label {
+    padding: 4px 12px;
+    border-bottom: 1px solid var(--hair);
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.fenced-data pre {
+    margin: 0;
+    padding: 8px 12px;
+    max-height: 14rem;
+    overflow: auto;
+    font: 12px / 1.55 var(--mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.attachments,
+.files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.35rem;
+}
+
+/* Pi's words: plain prose, without a container. */
+.reply {
+    display: flex;
+    flex-direction: column;
+    gap: calc(10px * var(--space-y));
+    min-width: 0;
+    color: var(--body);
+}
+
+.reply > .md {
+    display: flex;
+    flex-direction: column;
+    gap: calc(12px * var(--space-y));
+}
+
+.reply > .md > *,
+.reply > .md > :where(.md-part) > * {
+    margin: 0;
+}
+
+.reply > .md :is(h1, h2, h3, h4) {
+    margin-top: calc(6px * var(--space-y));
+}
+
+.reply > .md li + li {
+    margin-top: calc(4px * var(--space-y));
+}
+
+.reply > .md p {
+    text-wrap: pretty;
+}
+
+.md {
+    overflow-wrap: anywhere;
+}
+
+.md > :first-child {
+    margin-top: 0;
+}
+
+.md > :last-child {
+    margin-bottom: 0;
+}
+
+.md p,
+.md ul,
+.md ol {
+    margin: 0.45rem 0;
+}
+
+/* Real lists, with a 20px column for the marker (`1.` or `•`), quiet. */
+.md ul,
+.md ol {
+    padding-left: 20px;
+}
+
+.md li::marker {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+    margin: 0.9rem 0 0.4rem;
+    color: var(--text);
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.md h1 {
+    font-size: 1.2em;
+}
+
+.md h2 {
+    font-size: 1.1em;
+}
+
+.md h3,
+.md h4 {
+    font-size: 1em;
+}
+
+.md code {
+    padding: 2px 6px;
+    border-radius: var(--r-tag);
+    background: var(--card-2);
+    color: var(--text);
+    font: 12.5px var(--mono);
+}
+
+.md strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+/*
+ * A reply's code blocks and tables may run wider than its words, up to the pane's room (the scroller's width, `cqi`)
+ * less the column's padding. A code block as wide as its longest line, at least the column's width, centered on the
+ * column; a table as wide as its cells, from the column's start toward the pane's edge. On a phone, and in a pane no
+ * wider than the column, the room is the column, so nothing changes.
+ */
+.transcript {
+    --wide-room: max(100%, calc(100cqi - 56px * var(--space-x) - var(--transcript-gutter)));
+}
+
+[data-part~="reply"] :is(.md, .md-part) > .code {
+    position: relative;
+    left: 50%;
+    width: max-content;
+    min-width: 100%;
+    max-width: var(--wide-room);
+    translate: -50%;
+}
+
+/* Words in a code block (a draft to copy, say) wrap in the column, as a reply's words do: a paragraph on one line would
+ * otherwise run the pane's width and still scroll sideways. A block with no language is text too, as its label says,
+ * unless the app draws it (a page or a picture: `data-kind`). */
+.code:not([data-kind])
+    > pre:is(
+        :not([data-lang]),
+        [data-lang="text" i],
+        [data-lang="txt" i],
+        [data-lang="plaintext" i],
+        [data-lang="markdown" i],
+        [data-lang="md" i]
+    ) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+[data-part~="reply"]
+    :is(.md, .md-part)
+    > .code:not([data-kind]):has(
+        > pre:is(
+                :not([data-lang]),
+                [data-lang="text" i],
+                [data-lang="txt" i],
+                [data-lang="plaintext" i],
+                [data-lang="markdown" i],
+                [data-lang="md" i]
+            )
+    ) {
+    left: 0;
+    width: auto;
+    max-width: 100%;
+    translate: none;
+}
+
+[data-part~="reply"] :is(.md, .md-part) > table:not(.dv-table) {
+    width: max-content;
+    max-width: calc(100% + (var(--wide-room) - 100%) / 2);
+}
+
+/* A reply's own tables, in a card; a diff it shows draws its table itself. */
+.md table:not(.dv-table) {
+    display: block;
+    max-width: fit-content;
+    overflow-x: auto;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.93em;
+}
+
+.md table:not(.dv-table) :is(td, th) {
+    padding: 6px 12px;
+    text-align: left;
+    /* Words break only when longer than the cell can be, and a cell keeps room for a few words: a crowded table
+     * scrolls sideways instead of crushing its columns. */
+    overflow-wrap: break-word;
+    min-width: 12ch;
+}
+
+.md table:not(.dv-table) th {
+    background: var(--card);
+    color: var(--text);
+    font-weight: 600;
+}
+
+.md table:not(.dv-table) :is(td, th):not(:last-child) {
+    border-right: 1px solid var(--hair);
+}
+
+.md table:not(.dv-table) tr:not(:last-child) > :is(td, th) {
+    border-bottom: 1px solid var(--hair);
+}
+
+.md hr {
+    height: 0;
+    margin: 1.1em 0;
+    border: 0;
+    border-top: 1px solid var(--hair);
+}
+
+.md blockquote {
+    margin: 0.5rem 0;
+    padding-left: 0.8rem;
+    border-left: 2px solid var(--hair-2);
+    color: var(--muted);
+}
+
+/* A code block: a bar with its file or language and Copy, then the code. */
+.code {
+    position: relative;
+    margin: 0.5rem 0;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    background: var(--code-bg);
+    overflow: hidden;
+}
+
+.code-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 6px 0 14px;
+    border-bottom: 1px solid var(--hair);
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.code-lang {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-transform: lowercase;
+}
+
+.code-head .copy {
+    flex: none;
+    height: 24px;
+    margin-left: auto;
+    padding: 0 9px;
+    border-radius: var(--r-seg);
+    font-size: 12px;
+    color: var(--muted);
+    transition:
+        color var(--t-hover) var(--ease-out),
+        background-color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .code-head .copy:hover {
+        color: var(--text);
+        background: var(--hover);
+    }
+}
+
+.md pre {
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    background: var(--code-bg);
+    font: 12.5px / 1.6 var(--mono);
+}
+
+.code pre {
+    border: 0;
+    border-radius: 0;
+    background: none;
+}
+
+.md pre code {
+    background: none;
+    padding: 0;
+    font-size: inherit;
+    color: var(--body);
+}
+
+/* In the conversation, code follows Appearance's text size, as the prose does: 12.5px at the usual 15px. */
+.transcript .md code,
+.transcript .md pre {
+    font-size: calc(var(--text-size, 15px) * 5 / 6);
+}
+
+.md.streaming > :last-child:not(.md-part)::after {
+    content: "█";
+    margin-left: 1px;
+    color: var(--accent);
+    animation: blink 1s steps(2) infinite;
+}
+
+@keyframes blink {
+    50% {
+        opacity: 0;
+    }
+}
+
+/* Chevrons turn instead of swapping: closed points right, open points down. */
+.chev {
+    transition: transform 0.3s var(--ease-out);
+}
+
+.open > button > .chev,
+.chev.open {
+    transform: rotate(90deg);
+}
+
+/* A panel opening below its header: revealed from the top down. */
+@keyframes unroll {
+    from {
+        clip-path: inset(0 0 100% 0);
+        opacity: 0.3;
+    }
+    to {
+        clip-path: inset(0 0 0 0);
+    }
+}
+
+/* Under Pi's answers: reactions, then React, Discuss, Pin, Copy, and More. */
+.answer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    min-height: 26px;
+    font-size: 12.5px;
+    line-height: 1.6;
+}
+
+.reaction {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--hair-2);
+    border-radius: var(--r-pill);
+    color: var(--text);
+    white-space: nowrap;
+    transition:
+        border-color var(--t-hover) var(--ease-out),
+        background-color var(--t-hover) var(--ease-out);
+}
+
+.reaction > span {
+    font: 11.5px var(--mono);
+}
+
+@media (hover: hover) {
+    .reaction:hover {
+        border-color: var(--edge);
+    }
+}
+
+.reaction.mine {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+}
+
+.answer-actions > button.answer-tool,
+.reaction.add {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+    height: 26px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: var(--r-seg);
+    color: var(--muted);
+    white-space: nowrap;
+    transition:
+        color var(--t-hover) var(--ease-out),
+        background-color var(--t-hover) var(--ease-out),
+        opacity var(--t-fade) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .answer-actions > button.answer-tool:hover,
+    .reaction.add:hover {
+        color: var(--text);
+        background: var(--hover);
+    }
+}
+
+/* With a mouse they show while the reply is hovered; touch screens always show them. */
+@media (hover: hover) and (pointer: fine) {
+    .reply .answer-actions > .answer-tool {
+        opacity: 0;
+        transition: opacity var(--t-fade) var(--ease-out);
+    }
+    .reply:hover .answer-actions > .answer-tool,
+    .answer-actions:focus-within > .answer-tool,
+    .answer-actions.picking > .answer-tool {
+        opacity: 1;
+    }
+}
+
+.reaction-host {
+    position: relative;
+    display: inline-flex;
+}
+
+/* The six emoji, in a popover over the button. */
+.reaction-picker {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    z-index: 5;
+    display: flex;
+    gap: 2px;
+    padding: 4px;
+    border-radius: var(--r-card);
+    background: var(--panel);
+    box-shadow: var(--pop);
+    animation: pop 0.2s var(--ease-out);
+}
+
+.reaction-picker button {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-row);
+    font-size: 17px;
+    line-height: 1;
+}
+
+@media (hover: hover) {
+    .reaction-picker button:hover {
+        background: var(--hover);
+    }
+}
+
+/* ─── Tool cards ───────────────────────────────────────────── */
+
+/* What Pi did between its words: a card with one line ("Read 2 files, ran 1 command · 18s") that opens into a
+ * timeline. */
+.activity {
+    min-width: 0;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    overflow: hidden;
+}
+
+.entry-anchor {
+    display: block;
+    height: 0;
+}
+
+/* One between rows takes no room: the gap before it is taken back. */
+.entry-mark {
+    margin-top: calc(-16px * var(--space-y));
+}
+
+.activity-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    /* 40px, 35px, and 30px; a thumb's 34px at least on a touch screen. */
+    min-height: calc(22px + 18px * var(--space-y));
+    padding: 0 calc(12px * var(--space-x));
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--muted);
+    transition:
+        color var(--t-hover) var(--ease-out),
+        background-color var(--t-hover) var(--ease-out);
+}
+
+.activity.open > .activity-head {
+    border-bottom: 1px solid var(--hair);
+}
+
+@media (hover: hover) {
+    .activity-head:hover {
+        color: var(--text);
+        background: var(--hover);
+    }
+}
+
+/* Inside a card that cuts off what is past it. */
+:is(.activity-head, .step-head):focus-visible {
+    outline-offset: -2px;
+}
+
+.activity-summary {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.activity-failed {
+    flex: none;
+    padding: 1px 7px;
+    border-radius: var(--r-pill);
+    background: var(--err-soft);
+    color: var(--err);
+    font: 500 11px var(--sans);
+}
+
+.activity-time {
+    flex: none;
+    font: 11.5px var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--faint);
+}
+
+.activity-time.live {
+    color: var(--accent);
+}
+
+/* The timeline: a line per call, each with its mark on a thin rule. */
+.timeline {
+    position: relative;
+    padding: calc(6px * var(--space-y)) 0;
+}
+
+/* A group that is one thought alone: its words, under the line that names it. */
+.activity-thought {
+    padding: calc(10px * var(--space-y)) calc(12px * var(--space-x)) calc(12px * var(--space-y));
+}
+
+/* What a person opened unrolls (`unrolling`, transcript.js); what opens by itself (a session's open groups, a group
+ * that goes live) shows at once. A clip-path is painted on each frame, which a phone cannot spare as a session opens. */
+:is(.timeline, .activity-thought, .step-body).unrolling {
+    animation: unroll var(--t-in) var(--ease-out);
+}
+
+/* Above a long group's newest steps: it shows the rest, from the rule's left. */
+.timeline-earlier {
+    display: block;
+    margin: 0 0 calc(4px * var(--space-y))
+        calc(var(--timeline-x) + var(--step-mark-size) / 2 + var(--step-gap));
+    padding: 4px 0;
+}
+
+.timeline::before {
+    content: "";
+    position: absolute;
+    left: calc(var(--timeline-x) - 0.5px);
+    top: 20px;
+    bottom: 20px;
+    width: 1px;
+    background: var(--hair-2);
+}
+
+.step {
+    position: relative;
+    min-width: 0;
+}
+
+.step-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.step-head {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--step-gap);
+    min-height: 34px;
+    padding: 0 14px 0 calc(var(--timeline-x) - var(--step-mark-size) / 2);
+    text-align: left;
+    transition: background-color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .step-head:hover {
+        background: var(--hover);
+    }
+}
+
+/* Just finished: the line flashes its success color once. */
+.step.settled > .step-line > .step-head {
+    animation: settle 0.9s var(--ease-out);
+}
+
+@keyframes settle {
+    from {
+        background-color: color-mix(in srgb, var(--ok) 14%, transparent);
+    }
+}
+
+/* How the call went, in a circle on the rule: its tint over the window's color, so the rule does not show through. */
+.step-mark {
+    --tint: var(--card-2);
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: var(--step-mark-size);
+    height: var(--step-mark-size);
+    border-radius: 50%;
+    background: linear-gradient(var(--tint), var(--tint)), var(--bg);
+    box-shadow: 0 0 0 3px var(--bg);
+    color: var(--muted);
+    font: 600 10px / 1 var(--mono);
+    transition:
+        background-color var(--t-border) var(--ease-out),
+        color var(--t-border) var(--ease-out);
+}
+
+.step-mark.done {
+    --tint: var(--ok-soft);
+    color: var(--ok);
+}
+
+.step-mark.error {
+    --tint: var(--err-soft);
+    color: var(--err);
+}
+
+.step-mark.asking {
+    --tint: var(--warn-soft);
+    color: var(--warn);
+    box-shadow:
+        inset 0 0 0 1px var(--warn-line),
+        0 0 0 3px var(--bg);
+}
+
+.step-mark.spinning,
+.step-mark.agent {
+    --tint: var(--accent-soft);
+    color: var(--accent);
+}
+
+.step-mark.thought {
+    --tint: color-mix(in srgb, var(--spark) 16%, transparent);
+    color: var(--spark);
+}
+
+/* Light themes' magenta can be faint as text on their ground: toward the foreground, as code's colors are. */
+:root[data-mode="light"] .step-mark.thought {
+    color: color-mix(in oklab, var(--spark) 60%, var(--body));
+}
+
+.step-label {
+    flex: none;
+    max-width: 45%;
+    font: 600 12.5px var(--mono);
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.step-subject {
+    flex: 1;
+    min-width: 0;
+    font: 12.5px var(--mono);
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.step-meta {
+    flex: none;
+    max-width: 40%;
+    font: 12px var(--mono);
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+}
+
+.step-meta.ok {
+    color: var(--ok);
+}
+
+.step-meta.warn {
+    color: var(--warn);
+}
+
+.step-meta.err {
+    color: var(--err);
+}
+
+/* A subagent's line goes to it. */
+.step-open {
+    flex: none;
+    height: 28px;
+    margin-right: 8px;
+    padding: 0 8px;
+    border-radius: var(--r-seg);
+    font-size: 12px;
+    color: var(--accent);
+    transition: background-color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .step-open:hover {
+        background: var(--hover);
+    }
+}
+
+/* Who allowed or denied a call Lancet Guard asked about. */
+.step-decision {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px 6px calc(var(--timeline-x) + var(--step-mark-size) / 2 + var(--step-gap));
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.step-decision.allowed .icon {
+    color: var(--ok);
+}
+
+.step-decision.denied .icon {
+    color: var(--err);
+}
+
+/* Under a line, in line with its words: what the call made, and once tapped, its input and output. */
+.step-extras,
+.step-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    margin: 2px 14px 10px calc(var(--timeline-x) + var(--step-mark-size) / 2 + var(--step-gap));
+}
+
+.step-extras + .step-body {
+    margin-top: 0;
+}
+
+.step-extras > .thumbs {
+    margin-top: 0;
+}
+
+.step-extras > .artifact-preview {
+    max-width: min(100%, 420px);
+}
+
+.step-extras > .artifact-preview img {
+    max-height: 240px;
+}
+
+.thought-body {
+    max-height: 50vh;
+    overflow: auto;
+    padding: 10px 12px;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-control);
+    background: var(--code-bg);
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.tool-note {
+    white-space: pre-wrap;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.step-body .dv-block {
+    border-radius: var(--r-control);
+    overflow: hidden;
+    font-size: 0.76rem;
+    line-height: 1.6;
+}
+
+pre.output,
+pre.cmd,
+pre.diff {
+    margin: 0;
+    padding: 10px 12px;
+    max-height: 45vh;
+    overflow: auto;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-control);
+    background: var(--code-bg);
+    color: var(--body);
+    font: 12px / 1.55 var(--mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+pre.cmd {
+    color: var(--ok);
+}
+
+pre.output.error {
+    color: var(--err);
+}
+
+pre.diff .add {
+    color: var(--ok);
+}
+
+pre.diff .del {
+    color: var(--err);
+}
+
+.cmd-sign {
+    color: var(--faint);
+}
+
+/* An artifact a call made, or the browser it used: a way there. */
+.artifact-link {
+    align-self: flex-start;
+    max-width: 100%;
+    min-height: 30px;
+    padding: 0 8px;
+    margin-left: -8px;
+    border-radius: var(--r-seg);
+    text-align: left;
+    font-size: 12.5px;
+    color: var(--accent);
+    overflow-wrap: anywhere;
+    transition: background-color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .artifact-link:hover {
+        background: var(--hover);
+    }
+}
+
+/* A subagent's report: a card. */
+.report {
+    padding: 12px 14px;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-window);
+    background: var(--card);
+}
+
+.report.failed {
+    border-color: var(--err-line);
+}
+
+/* Reports that arrived together, as one message to Pi: a card each. */
+.report-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.report-head {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    margin-bottom: 4px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+/* A background task's end: its command can be one long word, and its output keeps its lines as printed. */
+.background-command {
+    overflow-wrap: anywhere;
+}
+
+.background-output pre {
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    overflow-x: auto;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    background: var(--code-bg);
+    font: calc(var(--text-size, 15px) * 5 / 6) / 1.5 var(--mono);
+    white-space: pre;
+}
+
+.report-name {
+    color: var(--text);
+    font-weight: 600;
+    font-family: var(--mono);
+}
+
+.report-why {
+    color: var(--err);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+/* Lancet Guard asks before a call: at the end of the turn, until someone answers. */
+.approval {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid var(--warn-line);
+    border-radius: calc(var(--r-window) + 2px);
+    background: var(--warn-soft);
+    animation: pop 0.35s var(--ease-out);
+}
+
+.approval-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.approval-shield {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-row);
+    background: color-mix(in srgb, var(--o-yellow) 16%, transparent);
+    color: var(--warn);
+}
+
+.approval-title {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.approval-ask {
+    font-size: 14.5px;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--text);
+}
+
+.approval-reason {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--muted);
+}
+
+.approval pre.cmd {
+    padding: 10px 12px;
+    border: 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
+/* An extension's question for the person Pi works for (`host.ask`): a field for each value, a thumb's height. */
+.ask-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.ask-field input {
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: 15px;
+}
+
+.approval-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.approval-actions .button {
+    height: 36px;
+    padding: 0 16px;
+    border-radius: var(--r-control);
+    font-size: 13.5px;
+}
+
+.approval-actions .button.primary {
+    padding: 0 18px;
+}
+
+/* The shared button's least height is 38px; touch screens keep their thumb height. */
+@media not (pointer: coarse) {
+    .approval-actions .button {
+        min-height: 0;
+    }
+}
+
+.approval-actions .button.deny {
+    border-color: transparent;
+    background: var(--card-2);
+    color: var(--text);
+}
+
+@media (hover: hover) {
+    .approval-actions .button.deny:hover {
+        color: var(--err);
+    }
+}
+
+/* On a phone: the answers share the width, thumb-tall. */
+@media (max-width: 699px) {
+    .approval {
+        padding: 14px;
+    }
+
+    .approval-shield {
+        width: 30px;
+        height: 30px;
+    }
+
+    .approval-ask {
+        font-size: 14px;
+    }
+
+    .approval-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .approval-actions .button {
+        height: 42px;
+        border-radius: calc(var(--r-control) + 1px);
+        font-size: 14px;
+    }
+}
+
+/* The live turn's last line: what Pi does now, for how long, and how to stop it. */
+.live-line {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-width: 0;
+    padding: 2px 2px 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--muted);
+    animation: fade var(--t-fade) var(--ease-almost);
+}
+
+/* A dot with a soft ring, pulsing; the warning color while a call waits for an approval. */
+.live-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin-inline: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+    animation: pulse 1.4s infinite;
+}
+
+.live-line.waiting .live-dot {
+    background: var(--warn);
+    box-shadow: 0 0 0 4px var(--warn-soft);
+}
+
+.live-state {
+    flex: none;
+    color: var(--accent);
+}
+
+.live-line.waiting .live-state {
+    color: var(--warn);
+}
+
+.live-time {
+    flex: none;
+    font: 11.5px var(--mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--faint);
+}
+
+.live-why {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.live-line .live-limit {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+}
+
+.live-retry {
+    flex: none;
+    padding: 1px 8px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid var(--accent-soft);
+    border-radius: var(--r-control);
+    cursor: pointer;
+}
+
+.live-retry:hover {
+    background: var(--accent-soft);
+}
+
+/* Narrow: the line wraps, so the wait's facts and Retry now stay inside the column. */
+@media (max-width: 600px) {
+    .live-line {
+        flex-wrap: wrap;
+        row-gap: 2px;
+    }
+
+    .live-line .live-limit {
+        flex: 0 1 auto;
+    }
+
+    .live-why {
+        flex: 1 1 100%;
+    }
+}
+
+.live-esc {
+    flex: none;
+    margin-left: auto;
+    font: 11px var(--mono);
+    color: var(--faint);
+}
+
+/*
+ * Show thinking adds the timeline's bare chevron before the dot. It turns up when open, toward the thought above the
+ * line. Its hit area reaches past the glyph without drawing a box, and the gap after it stays the line's own.
+ */
+.live-fold {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin-right: -4px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--faint);
+    position: relative;
+    transition: color var(--t-hover) var(--ease-out);
+}
+
+.live-fold::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+}
+
+.live-fold.open {
+    color: var(--muted);
+}
+
+.live-fold.open > .chev {
+    transform: rotate(-90deg);
+}
+
+@media (hover: hover) {
+    .live-fold:hover {
+        color: var(--body);
+    }
+}
+
+@media (pointer: coarse) {
+    .live-fold::before {
+        inset: -13px;
+    }
+}
+
+/* A quiet reading area, not another timeline card. The existing Thought steps and their boxes are unchanged. */
+.live-thought {
+    min-width: 0;
+    padding: 10px 14px 12px;
+    border-radius: var(--r-card);
+    background: var(--card);
+    animation: fade var(--t-fade) var(--ease-almost);
+}
+
+.live-thought-label {
+    margin-bottom: 4px;
+    color: var(--faint);
+    font-size: 11.5px;
+}
+
+.live-thought-text {
+    max-height: min(32vh, 260px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--muted);
+}
+
+.live-thought-text.is-empty {
+    color: var(--faint);
+}
+
+.live-thought-text.streaming::after {
+    content: "";
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 3px;
+    vertical-align: -2px;
+    background: var(--accent);
+    animation: blink 1s steps(2) infinite;
+}
+
+.error-box {
+    padding: 10px 14px;
+    border: 1px solid var(--err-line);
+    border-radius: var(--r-card);
+    background: var(--err-soft);
+    color: var(--err);
+    font-size: 13.5px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.divider {
+    text-align: center;
+    color: var(--muted);
+    font-size: 13px;
+    border-top: 1px solid var(--hair);
+    padding-top: 0.5rem;
+}
+
+.divider-body {
+    text-align: left;
+    margin-top: 0.5rem;
+    font-size: 13.5px;
+}
+
+.history {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    opacity: 0.75;
+}
+
+.history > :is(.user-row, .report, .report-group):not(:first-child) {
+    margin-top: 10px;
+}
+
+.pulse {
+    width: 7px;
+    height: 7px;
+    border-radius: var(--radius);
+    background: var(--accent);
+    display: inline-block;
+    animation: pulse 1.4s infinite;
+}
+
+@keyframes pulse {
+    50% {
+        opacity: 0.35;
+    }
+}
+
+/* The way back to the newest message. */
+.jump {
+    position: sticky;
+    bottom: 0.8rem;
+    left: 100%;
+    margin-right: 0.8rem;
+    width: 40px;
+    height: 40px;
+    border: 1px solid var(--hair-2);
+    border-radius: var(--r-pill);
+    background: var(--bg);
+    box-shadow: var(--shadow);
+    color: var(--body);
+    display: grid;
+    place-items: center;
+    float: right;
+    animation: popin var(--t-in) var(--ease-out);
+    transition:
+        border-color var(--t-hover) var(--ease-out),
+        color var(--t-hover) var(--ease-out),
+        transform 90ms var(--ease-out);
+}
+
+@media (hover: hover) {
+    .jump:hover {
+        border-color: var(--accent-line);
+        color: var(--accent);
+    }
+}
+
+.jump:active {
+    transform: scale(0.92);
+}
+
+/* ─── Composer ─────────────────────────────────────────────── */
+
+.composer-wrap {
+    padding: 4px calc(24px * var(--space-x) + var(--inset-r))
+        calc(env(safe-area-inset-bottom) + 12px * var(--space-y))
+        calc(24px * var(--space-x) + var(--inset-l));
+    max-width: var(--composer-width);
+    width: 100%;
+    margin: 0 auto;
+}
+
+@media (max-width: 699px) {
+    .composer-wrap {
+        padding-inline: calc(12px * var(--space-x) + var(--inset-l))
+            calc(12px * var(--space-x) + var(--inset-r));
+    }
+}
+
+/*
+ * What is above the message box: who is typing, the queue, and the bars. `dock.js` shares its room: the bars show
+ * whole, and the queue and the subagents' list take what is left of its share, and scroll.
+ */
+.inbox-count {
+    display: none;
+    height: 1.25rem;
+    line-height: 1.25rem;
+    margin: 0 0 0.25rem 0.1rem;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+/* How many wait, when the queue does not show them all. */
+.dock[data-count="on"] > .inbox-count {
+    display: block;
+}
+
+/* Folded for the subagents' list: out of sight, its rows still laid out for `dock.js` to measure. */
+.dock[data-queue="folded"] > .inbox {
+    visibility: hidden;
+}
+
+/* Too little room even so (a phone on its side with every bar up): the dock stops, and scrolls. */
+.dock[data-capped] {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+/* There, a swipe on the queue that reaches its end goes on to scroll the dock, to the bars below it. */
+.dock[data-capped] > .inbox {
+    overscroll-behavior: auto;
+}
+
+/* Little room for the conversation: each bar keeps one line, its words cut short, its buttons whole. */
+.dock[data-compact] > :is(.plan-bar, .goal-bar, .watch-bar, .trust-bar) {
+    flex-wrap: nowrap;
+}
+
+.dock[data-compact] > :is(.plan-bar, .goal-bar, .watch-bar, .trust-bar) > .grow {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dock[data-compact] > :is(.plan-bar, .goal-bar, .watch-bar, .trust-bar) > :not(.grow) {
+    flex: none;
+    white-space: nowrap;
+}
+
+.dock[data-compact] .trust-actions {
+    gap: 0.5rem;
+}
+
+/* Messages waiting for Pi: a few rows' height at most, so the conversation stays in view; more scroll inside. */
+.inbox {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 6px;
+    max-height: min(28vh, 12rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+/* A message waiting for Pi: Steer or Queue, what it says, and a way to take it back. */
+.queued {
+    /* Its own height in a queue that scrolls: shrunk, the dock would measure it smaller and let it grow again. */
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 34px;
+    padding: 0 4px 0 12px;
+    border: 1px solid var(--hair);
+    border-radius: var(--r-control);
+    background: var(--card);
+    font-size: 13px;
+}
+
+.queued-mode {
+    color: var(--accent);
+    font-weight: 600;
+    flex: none;
+}
+
+.queued-text {
+    flex: 1;
+    min-width: 0;
+    align-self: stretch;
+    padding: 0;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Tapped: what the queue holds of the message (its start), wrapped (the queue scrolls past a few lines), with who sent it
+   and its × at its top. */
+.queued-text.open {
+    padding: 8px 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.queued:has(> .queued-text.open) {
+    align-items: flex-start;
+}
+
+.queued:has(> .queued-text.open) > .queued-mode {
+    padding-top: 8px;
+}
+
+.queued:has(> .queued-text.open) > .queued-remove {
+    margin-top: 4px;
+}
+
+.queued .queued-remove {
+    width: 26px;
+    height: 26px;
+    color: var(--muted);
+}
+
+/* Tapped open, one's own message: a row of buttons under it to move it to Steer or Queue, or send it now. */
+.queued:has(> .queued-actions) {
+    flex-wrap: wrap;
+}
+
+.queued-actions {
+    flex-basis: 100%;
+    display: flex;
+    gap: 6px;
+    padding-bottom: 8px;
+}
+
+/* Interrupt, tapped once: the color of stopping the run. */
+.queued-actions .button.danger {
+    border-color: var(--err);
+    color: var(--err);
+}
+
+/* A thumb's room around the small mark. */
+@media (pointer: coarse) {
+    .queued .queued-remove::after {
+        content: "";
+        position: absolute;
+        inset: -8px -4px;
+    }
+}
+
+/* Slash commands: suggestions while typing a name, then a hint for the one that will run. */
+.commands {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 6px;
+    padding: 4px;
+    background: var(--card);
+    border: 1px solid var(--hair);
+    border-radius: var(--r-card);
+    max-height: 40vh;
+    overflow-y: auto;
+    animation: rise-in 0.3s var(--ease-out);
+}
+
+.command {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    width: 100%;
+    text-align: left;
+    padding: 7px 10px;
+    border-radius: var(--r-row);
+    font-size: 13px;
+    transition: background-color var(--t-hover) var(--ease-out);
+}
+
+.command.on {
+    background: var(--hover);
+}
+
+@media (hover: hover) {
+    .command:hover {
+        background: var(--hover);
+    }
+}
+
+.command-name {
+    color: var(--accent);
+    flex: none;
+}
+
+.command-args {
+    color: var(--muted);
+    flex: none;
+}
+
+.command-description {
+    color: var(--muted);
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* File mentions: an icon, the name with what matched marked, then its folder. */
+.file-option {
+    align-items: center;
+}
+
+.file-icon {
+    flex: none;
+    color: var(--muted);
+}
+
+.file-option.on .file-icon {
+    color: var(--accent);
+}
+
+.file-name {
+    flex: none;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-option mark {
+    background: none;
+    color: var(--accent);
+    font-weight: 700;
+}
+
+.file-note {
+    font-size: 12.5px;
+    color: var(--muted);
+    padding: 7px 10px;
+}
+
+.command-hint.wraps {
+    white-space: normal;
+}
+
+.command-hint {
+    font-size: 12.5px;
+    padding: 0 10px 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* The message box: a card that takes the accent's line while it has the focus. */
+.composer {
+    container: composer / inline-size;
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--hair-2);
+    border-radius: var(--r-sheet);
+    box-shadow: var(--shadow);
+    transition: border-color var(--t-border) var(--ease-out);
+}
+
+.composer:focus-within {
+    border-color: var(--accent-line);
+}
+
+@media (max-width: 699px) {
+    .composer {
+        border-radius: var(--r-float);
+    }
+}
+
+.composer .files {
+    margin: 0;
+    padding: 10px 14px 0;
+}
+
+/* One line to start with, growing with the text (`fitBox`). */
+.composer textarea {
+    display: block;
+    border: 0;
+    border-radius: 0;
+    outline: none;
+    background: none;
+    color: var(--text);
+    resize: none;
+    padding: calc(14px * var(--space-y)) calc(16px * var(--space-x)) 2px;
+    max-height: 40vh;
+    font-size: 15px;
+    line-height: 1.5;
+    /* As tall as what is written, to the most above; browsers without this measure it in script (`fitBox`). */
+    field-sizing: content;
+}
+
+/* Touch screens keep 16px, below which iOS zooms into the field. */
+@media (pointer: coarse) {
+    .composer textarea {
+        padding: calc(13px * var(--space-y)) calc(15px * var(--space-x)) 2px;
+        font-size: 16px;
+    }
+    /* The status line's own room below it is enough. */
+    .composer-wrap {
+        padding-bottom: calc(env(safe-area-inset-bottom) + 2px);
+    }
+}
+
+.composer-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: calc(6px * var(--space-y)) calc(10px * var(--space-x)) calc(4px + 6px * var(--space-y));
+}
+
+/* On a phone its bottom keeps 5px or more at every density: the status line's guard reaches up into it for a thumb's
+ * tap. */
+@media (max-width: 699px) {
+    .composer-row {
+        gap: 4px;
+        padding: calc(6px * var(--space-y)) calc(8px * var(--space-x))
+            calc(3px + 5px * var(--space-y));
+    }
+}
+
+.composer-row .attach-button {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-control);
+    color: var(--muted);
+}
+
+/* The model and its thinking level: opens the model menu. */
+.model-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    height: 30px;
+    padding: 0 10px 0 11px;
+    border-radius: var(--r-pill);
+    background: var(--hover);
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    transition: background-color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .model-chip:hover {
+        background: var(--card-2);
+    }
+}
+
+.model-chip .model-spark {
+    color: var(--accent);
+}
+
+.model-chip .model-name {
+    min-width: 4ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.model-chip .model-level {
+    color: var(--muted);
+}
+
+/* The chevron points down: the menu opens up from it, over the conversation. */
+.model-chip .model-caret {
+    color: var(--faint);
+    transform: rotate(90deg);
+}
+
+.model-chip.warn {
+    color: var(--warn);
+}
+
+/* A narrow message box (a narrow pane, or a phone) gives up the level first, then, while Pi works and Steer and Queue
+ * take room, Plan and the sparkle: the model's name stays. */
+@container composer (max-width: 340px) {
+    .model-chip .model-level {
+        display: none;
+    }
+}
+
+@container composer (max-width: 540px) {
+    .composer.busy .model-chip .model-level {
+        display: none;
+    }
+}
+
+@container composer (max-width: 400px) {
+    .composer.busy :is(.plan-chip, .model-caret) {
+        display: none;
+    }
+}
+
+@container composer (max-width: 355px) {
+    .composer.busy .model-chip .model-spark {
+        display: none;
+    }
+}
+
+/* Steer, Queue, and Interrupt leave no room for the model on a narrow box while Pi works: it shows again after. */
+@container composer (max-width: 480px) {
+    .composer.busy .composer-row .model-chip {
+        display: none;
+    }
+}
+
+/* The buttons that extensions add to the row: any number of them can come. Where they would push Send (or Stop) out of a
+ * narrow box (two or more up to 480 px, one up to 340 px), they take a line of their own under the row, where they stay
+ * while Pi works. The break is the row's `::after`: a line of no height, so only the buttons' margin parts the lines. A
+ * wrapping row breaks before an item that is too wide, not after shrinking one: the model asks for no room, so Send
+ * stays on the first line, then takes what is left, up to its whole name. */
+@container composer (max-width: 480px) {
+    .composer-row:has(.ext-composer-button ~ .ext-composer-button) {
+        flex-wrap: wrap;
+        row-gap: 0;
+    }
+
+    .composer-row:has(.ext-composer-button ~ .ext-composer-button) .model-chip {
+        flex: 100 1 0;
+        max-width: max-content;
+    }
+
+    .composer-row:has(.ext-composer-button ~ .ext-composer-button)::after {
+        content: "";
+        order: 1;
+        flex-basis: 100%;
+        height: 0;
+    }
+
+    .composer-row:has(.ext-composer-button ~ .ext-composer-button) .ext-composer-button {
+        order: 2;
+        margin-top: 4px;
+    }
+}
+
+@container composer (max-width: 340px) {
+    .composer-row:has(.ext-composer-button) {
+        flex-wrap: wrap;
+        row-gap: 0;
+    }
+
+    .composer-row:has(.ext-composer-button) .model-chip {
+        flex: 100 1 0;
+        max-width: max-content;
+    }
+
+    .composer-row:has(.ext-composer-button)::after {
+        content: "";
+        order: 1;
+        flex-basis: 100%;
+        height: 0;
+    }
+
+    .composer-row:has(.ext-composer-button) .ext-composer-button {
+        order: 2;
+        margin-top: 4px;
+    }
+}
+
+/* One button, on its line in the row: while Pi works it steps aside on a narrow box, so Steer, Queue, Interrupt, and
+ * Stop stay inside it. It shows again after. */
+@container composer (340px < width <= 480px) {
+    .composer.busy
+        .composer-row:not(:has(.ext-composer-button ~ .ext-composer-button))
+        .ext-composer-button {
+        display: none;
+    }
+}
+
+/* On a screen up to 360 px wide (an iPhone SE is 320 px; a 360 px screen's box is 334 px, and the row needs 335), Steer,
+ * Queue, and Interrupt would push Stop out of the box: while Pi works, Attach goes and the three get closer. Attach
+ * comes back when Pi stops. */
+@container composer (max-width: 340px) {
+    .composer.busy .composer-row .attach-button {
+        display: none;
+    }
+
+    .composer.busy .mode-switch button {
+        padding-inline: 6px;
+    }
+}
+
+/* Whatever else takes room in the row, Stop, Send, and the mic keep theirs, and the three modes give way: their labels
+ * are cut before Stop leaves the box. Cut sideways only: a touch screen's taller tap layer (`::before`, below) reaches
+ * above and below each mode, and a clip there would take it away. */
+.composer.busy .composer-row :is(.stop-button, .send-button, .composer-mic) {
+    flex: none;
+}
+
+.composer.busy .mode-switch {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-x: clip;
+}
+
+.composer.busy .mode-switch button {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-x: clip;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border: 1px solid var(--line);
+    background: var(--card-2);
+    border-radius: var(--radius);
+    padding: 0.2rem 0.55rem;
+    font-size: 0.78rem;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition:
+        background-color var(--t-hover) var(--ease-out),
+        border-color var(--t-hover) var(--ease-out),
+        color var(--t-hover) var(--ease-out);
+}
+
+/* An attachment: a long name gives way, never its size or the button that removes it. */
+.files .chip > * {
+    flex: none;
+}
+
+.files .chip > .chip-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (hover: hover) {
+    button.chip:hover {
+        border-color: var(--edge);
+        color: var(--text);
+    }
+}
+
+.chip.toggle.on {
+    color: var(--accent);
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+}
+
+/* Plan mode: an outlined pill, filled softly in the accent while it is on. */
+.composer-row .plan-chip {
+    flex: none;
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--hair-2);
+    border-radius: var(--r-pill);
+    font-size: 13px;
+    color: var(--muted);
+    white-space: nowrap;
+    transition:
+        background-color var(--t-hover) var(--ease-out),
+        border-color var(--t-hover) var(--ease-out),
+        color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .composer-row .plan-chip:hover {
+        color: var(--text);
+    }
+}
+
+.composer-row .plan-chip.on {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+/* While Pi works: whether a message steers the run or waits for its end. */
+.mode-switch {
+    flex: none;
+    display: flex;
+    padding: 2px;
+    border-radius: var(--r-pill);
+    background: var(--hover);
+}
+
+.mode-switch button {
+    height: 28px;
+    padding: 0 10px;
+    border-radius: var(--r-pill);
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--muted);
+    transition:
+        color var(--t-hover) var(--ease-out),
+        background-color var(--t-hover) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .mode-switch button:hover {
+        color: var(--text);
+    }
+}
+
+.mode-switch button.on {
+    color: var(--text);
+    background: var(--raised);
+}
+
+.mode-switch button.interrupt.on {
+    color: var(--err);
+}
+
+.stop-button,
+.send-button {
+    flex: none;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    transition:
+        background-color var(--t-hover) var(--ease-out),
+        color var(--t-hover) var(--ease-out),
+        transform 90ms var(--ease-out);
+}
+
+.stop-button:active,
+.send-button:active:not(:disabled) {
+    transform: scale(0.92);
+}
+
+/* Stop: a square in the failure color, on its soft tint. */
+.stop-button {
+    background: var(--err-soft);
+}
+
+@media (hover: hover) {
+    .stop-button:hover {
+        background: color-mix(in srgb, var(--o-red) 22%, transparent);
+    }
+}
+
+.stop-square {
+    width: 11px;
+    height: 11px;
+    border-radius: var(--r-mark);
+    background: var(--err);
+}
+
+/* Send: the accent with something to send, quiet without; then a tap on it goes to the text (composer.js). */
+.send-button {
+    background: var(--card-2);
+    color: var(--faint);
+    cursor: default;
+}
+
+.send-button:disabled {
+    pointer-events: none;
+}
+
+.send-button.ready {
+    background: var(--accent-fill);
+    color: var(--accent-ink);
+    cursor: pointer;
+}
+
+@media (hover: hover) {
+    .send-button.ready:hover {
+        background: color-mix(in oklab, var(--accent-fill) 85%, var(--text));
+    }
+}
+
+.send-button.ready .icon {
+    transition: transform var(--t-in) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .send-button.ready:hover .icon {
+        transform: translateY(-2px);
+    }
+}
+
+/* Dictation (voice.js): a quiet mic beside Send; while it listens, the accent and a ring that breathes. */
+.composer-row .composer-mic {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--r-control);
+    color: var(--muted);
+}
+
+.mic-button.listening {
+    color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.mic-button.listening::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid var(--accent);
+    border-radius: var(--r-control);
+    pointer-events: none;
+    animation: listening 1.6s var(--ease-out) infinite;
+}
+
+@keyframes listening {
+    from {
+        opacity: 0.9;
+        transform: scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: scale(1.35);
+    }
+}
+
+/* Still, the inset ring alone says it listens. */
+:root[data-motion="reduced"] .mic-button.listening::after {
+    display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root:not([data-motion="full"], [data-motion="fluid"]) .mic-button.listening::after {
+        display: none;
+    }
+}
+
+/* Square buttons elsewhere: the chat's send. */
+.round {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius);
+    display: grid;
+    place-items: center;
+    flex: none;
+    animation: popin 0.3s var(--ease-out);
+    transition:
+        background-color var(--t-hover) var(--ease-out),
+        color var(--t-hover) var(--ease-out),
+        transform 90ms var(--ease-out);
+}
+
+.round:active:not(:disabled) {
+    transform: scale(0.9);
+}
+
+.round.send {
+    background: var(--accent-fill);
+    color: var(--accent-ink);
+}
+
+@media (hover: hover) {
+    .round.send:not(:disabled):hover {
+        background: color-mix(in oklab, var(--accent-fill) 85%, var(--text));
+    }
+}
+
+.round.send:not(:disabled) .icon {
+    transition: transform var(--t-in) var(--ease-out);
+}
+
+@media (hover: hover) {
+    .round.send:not(:disabled):hover .icon {
+        transform: translateY(-2px);
+    }
+}
+
+.round.send:disabled {
+    background: var(--raised);
+    color: var(--muted);
+    cursor: default;
+}
+
+/* Under the message box: who is here, how fast the last answer came, the context, the cache, the spend, and Lancet
+ * Guard. Its numbers are in mono. */
+.status-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 4px 14px;
+    padding-top: calc(3px + 5px * var(--space-y));
+    font-size: 11.5px;
+    line-height: 16px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.status-line .num {
+    font: 11px var(--mono);
+    font-variant-numeric: tabular-nums;
+}
+
+.status-line .context {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-line .meter {
+    width: 36px;
+}
+
+/* Lancet Guard: a pill that opens Extensions, green while it guards and yellow while it does not. */
+.status-line .guard {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: var(--r-pill);
+    background: var(--ok-soft);
+    color: var(--ok);
+    font: inherit;
+}
+
+.status-line .guard.off {
+    background: var(--warn-soft);
+    color: var(--warn);
+}
+
+/* Commands Pi runs in the background: a pill that opens Running now, with a dot that pulses while they run. */
+.status-line .background-now {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 8px;
+    border-radius: var(--r-pill);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font: inherit;
+}
+
+.status-line .background-now .dot {
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.4s infinite;
+}
+
+/* How fast the last answer came, once Appearance turns it on: its two halves spaced like the line's items. */
+.status-line .speed {
+    display: inline-flex;
+    align-items: center;
+    column-gap: inherit;
+}
+
+.status-line .speed .short {
+    display: none;
+}
+
+/* A line too narrow for one row takes shorter forms, one after another, until it fits (`fitStatus`, composer.js). */
+.status-line[data-short~="words"] {
+    column-gap: 8px;
+}
+
+.status-line[data-short~="words"] .speed {
+    column-gap: 1ch;
+}
+
+.status-line[data-short~="words"] .speed .long,
+.status-line[data-short~="here"] .here.alone,
+.status-line[data-short~="guard"] .guard .word,
+.status-line[data-short~="guard"] .background-now .word,
+.status-line[data-short~="cache"] .cache,
+.status-line[data-short~="wait"] .speed .wait,
+.status-line[data-short~="wait"] .speed.wait-only {
+    display: none;
+}
+
+.status-line[data-short~="words"] .speed .short {
+    display: inline;
+}
+
+/* Extensions' items: their text, in a tone, and their short form on a narrow line. */
+.status-line .ext-status .short,
+.status-line[data-short~="ext"] .ext-status .long {
+    display: none;
+}
+
+.status-line[data-short~="ext"] .ext-status .short {
+    display: inline;
+}
+
+.status-line .ext-status.warn {
+    color: var(--warn);
+}
+
+.status-line .ext-status.error {
+    color: var(--err);
+}
+
+.status-line .ext-status.muted {
+    color: var(--faint);
+}
+
+/* One whose page or panel is open: lit in the accent, as the top bar's toggles are. */
+.status-line .ext-status.on {
+    color: var(--accent);
+}
+
+@media (hover: hover) {
+    .status-line button.ext-status:hover {
+        color: var(--text);
+    }
+}
+
+/* Words that go from sight but not from a screen reader: "77%" is still the context's, "1.2s" the first token's. */
+.status-line[data-short~="words"] .speed .rate + .wait .word,
+.status-line[data-short~="context"] .context .word {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* Narrow, the wait has no words of its own: "42 tok/s · 1.2s". */
+.status-line[data-short~="words"] .speed .rate + .wait::before {
+    content: "·";
+    margin-right: 1ch;
+}

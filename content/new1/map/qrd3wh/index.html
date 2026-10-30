@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark">
+<title>qrd3wh · 对话</title>
+<!--
+  pocket.css 是 Pi Pocket 的样式表里「右侧那一列」用得着的那几段，原样搬来：
+  字体 / token / reset / 动效 / 加载器，对话列，工具卡，输入区。下面 <style> 只有骨架。
+-->
+<link rel="stylesheet" href="pocket.css">
+<style>
+  /* ── 骨架 ──
+     一个滚动的列，一个钉在底部的输入区。--inset-l/r 是宿主侧栏留下的内缩，这里是 0。 */
+  :root { --inset-l: 0px; --inset-r: 0px; --text-size: 15px; }
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  .scroller { flex: 1; min-height: 0; }
+
+  /* ── 左列：这一趟里你问过的每一句 ──
+     一条目录，不是清单：点一下，正文滚到那句。它自己不产生任何状态，也不存盘。 */
+  .shell { flex: 1; min-height: 0; display: flex; }
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .qnav {
+    flex: 0 0 auto; width: clamp(200px, 20%, 320px); min-height: 0;
+    display: flex; flex-direction: column; border-right: 1px solid var(--hair);
+  }
+  .qnav-list {
+    flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 10px 8px;
+    list-style: none; display: flex; flex-direction: column; gap: 1px; scrollbar-gutter: stable;
+  }
+  .qnav-list li { margin: 0; }
+  .qnav-row {
+    display: flex; gap: 8px; align-items: baseline; width: 100%;
+    padding: 6px 8px; border: 0; border-radius: var(--r-row); background: none;
+    text-align: left; font: inherit; font-size: 12.5px; line-height: 1.45;
+    color: var(--muted); cursor: pointer;
+    transition: background-color var(--t-hover) var(--ease-out), color var(--t-hover) var(--ease-out);
+  }
+  @media (hover: hover) { .qnav-row:hover { background: var(--hover); color: var(--text); } }
+  .qnav-row:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+  /* 正在读的那一条：底色和序号一起亮。 */
+  .qnav-row.current { background: var(--accent-soft); color: var(--text); }
+  .qnav-row.current .qnav-num { color: var(--accent); }
+  .qnav-num {
+    flex: none; width: 2.2ch; text-align: right; color: var(--faint);
+    font: 11px / 1.45 var(--mono); font-variant-numeric: tabular-nums;
+  }
+  .qnav-text {
+    min-width: 0; overflow: hidden; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  /* 跳过去留一点顶边，别贴着窗口。 */
+  .user-row { scroll-margin-top: 24px; }
+  /* 20% 的 390px 是 78px：窄屏这一列没有意义。 */
+  @media (max-width: 760px) { .qnav { display: none; } }
+
+  /* ── 它用 React 条件渲染、我们这儿用 CSS 收起来的地方 ──
+     折叠的工具组和步骤，在 Pi Pocket 里是根本不渲染，所以样式表里没有「藏起来」这条规则。 */
+  .activity:not(.open) > .timeline { display: none; }
+  .step:not(.open) > .step-body { display: none; }
+  .activity-head .chev { color: var(--faint); font-size: 12px; transition: transform var(--t-in) var(--ease-out); }
+  .activity.open > .activity-head .chev { transform: rotate(90deg); }
+
+  /* 这里没有 markdown 渲染器，正文是纯文本：留住换行，段落间距仍由 .md 的规则给。 */
+  .md p, .user-text { white-space: pre-wrap; }
+  .step-body pre {
+    margin: 0; padding: 10px 12px; max-height: 40vh; overflow: auto;
+    background: var(--code-bg); border: 1px solid var(--hair); border-radius: var(--r-card);
+    font: 11.5px / 1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted);
+  }
+
+  /* 模型选择：原生 select 藏在 .model-chip 那个胶囊壳里，外观全是它的。 */
+  .model-chip select {
+    appearance: none; -webkit-appearance: none; border: 0; padding: 0; background: none;
+    color: inherit; font: inherit; max-width: 26ch; text-overflow: ellipsis; cursor: pointer;
+  }
+  .model-chip select:focus { outline: none; }
+  .model-chip select option { background: var(--panel); color: var(--text); }
+
+  /* 只读打开时，胶囊变成警示色 —— 和它 .model-chip.warn 用的是同一个变量。 */
+  .chip.on { color: var(--warn); }
+
+  /* 「对话列表 ›」是个链接，但看起来得跟旁边的 chip 一模一样。 */
+  a.chip { text-decoration: none; color: inherit; }
+
+  /* 「从这条分叉」：一直在，不藏在 hover 里 —— 藏起来就等于没有。 */
+  .forkbtn { margin-left: auto; flex: none; opacity: 1; }
+  .forkbtn:hover { color: var(--text); border-color: var(--edge); }
+
+  .transcript > .empty { align-self: center; }
+  /* 作者样式里的 display 会赢过 UA 的 [hidden]：[hidden] 得自己再按一次。 */
+  .stop-button[hidden] { display: none; }
+  /* 状态行没话说时不该占着一条空白。 */
+  .status-line:empty { display: none; }
+  .status-line { min-height: 18px; }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside class="qnav" id="qnav" aria-label="你的问题">
+    <ol class="qnav-list" id="qnavList"></ol>
+  </aside>
+
+  <div class="main">
+    <div class="scroller" id="scroller">
+      <div class="transcript" id="transcript"></div>
+    </div>
+
+    <footer class="composer-wrap">
+  <form class="composer" id="say">
+    <textarea id="q" rows="1" placeholder="说点什么…" autocomplete="off"></textarea>
+    <div class="composer-row">
+      <span class="model-chip" title="新对话用哪个模型">
+        <select id="pick"></select>
+        <span class="model-caret">›</span>
+      </span>
+      <button class="chip" id="ro" type="button" title="切到只读：不给模型会写的工具">只读</button>
+      <button class="chip" id="new" type="button" title="开一个新对话">＋ 新对话</button>
+      <!-- 这一页没有左列了：挑对话在 pxbgng。地址从宿主的 ctx 拿，不自己拼。 -->
+      <a class="chip" id="list" href="#" hidden title="去对话列表挑一个">对话列表 ›</a>
+      <span class="grow"></span>
+      <button class="stop-button" id="stop" type="button" title="停" hidden><span class="stop-square"></span></button>
+      <button class="send-button" id="send" type="submit" title="发送 (Enter)">↑</button>
+    </div>
+  </form>
+  <div class="status-line" id="status"></div>
+</footer>
+  </div>
+</div>
+
+<script type="module">
+// 相对地址：宿主把 /p/<board>/<id>/ 反代进来。
+const base = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const $ = (id) => document.getElementById(id);
+const api = (p, init) => fetch(base + p, init).then(async (r) => {
+  const body = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+  return body;
+});
+const post = (p, body) => api(p, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}),
+});
+
+// crypto.randomUUID 只在安全上下文（https / localhost）里有。
+// 从 http://<内网IP>:4790 打开它时它是 undefined —— 发一句话不该靠运气。
+const newRequestId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && typeof crypto.getRandomValues === "function") {
+    return [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
+};
+
+const el = (tag, cls, text) => {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+
+const transcript = $("transcript");
+const scroller = $("scroller");
+const field = $("q");
+
+let sessions = [];
+let current = null;   // 选中的会话 id
+let stream = null;    // 那个会话的 SSE
+let group = null;     // 正在往里加步的那条工具轨道
+let replaying = false; // 正在回放历史：轨道默认收起，跑的时候才展开
+let selAt = 0;        // 盘上那条选择的版本号：别把自己的回声当成别人的话
+
+// 贴着底就跟着走，往上看历史就别拽回来（Pi Pocket 也是这么办的）。
+let stick = true;
+scroller.addEventListener("scroll", () => {
+  stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 96;
+  spyNav();
+}, { passive: true });
+const follow = () => { if (stick) scroller.scrollTop = scroller.scrollHeight; };
+
+// ── 左列：你问过的每一句，一条一行 ──────────────────────────────────
+const qnavList = $("qnavList");
+const qnav = [];          // { btn, row }：目录和正文里那条的对应
+let qnavCurrent = null;
+
+const markNav = (btn) => {
+  if (qnavCurrent === btn) return;
+  qnavCurrent?.classList.remove("current");
+  qnavCurrent = btn ?? null;
+  qnavCurrent?.classList.add("current");
+};
+
+// 目录自己不滚离视线：正文滚到哪，那一行就跟到哪。
+const keepNavVisible = (btn) => {
+  const box = qnavList.getBoundingClientRect();
+  const r = btn.getBoundingClientRect();
+  if (r.top >= box.top && r.bottom <= box.bottom) return;
+  if (qnavList.matches(":hover")) return;   // 你在翻目录，别跟你抢
+  btn.scrollIntoView({ block: "nearest" });
+};
+
+// 滚到哪一条：最后一个「已经到头顶 80px」的，就是你在读的那条。
+// 贴底的时候例外 —— 那时你在看最新那条，而它未必过了头顶那条线。
+let spyFrame = 0;
+const spyNav = () => {
+  if (spyFrame || !qnav.length) return;
+  spyFrame = requestAnimationFrame(() => {
+    spyFrame = 0;
+    const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4;
+    const line = scroller.getBoundingClientRect().top + 80;
+    let at = qnav[0].btn;
+    for (const item of qnav) {
+      if (item.row.getBoundingClientRect().top > line) break;
+      at = item.btn;
+    }
+    if (atBottom) at = qnav[qnav.length - 1].btn;
+    markNav(at);
+    keepNavVisible(at);
+  });
+};
+
+const addNavRow = (text) => {
+  const li = document.createElement("li");
+  const btn = el("button", "qnav-row");
+  btn.type = "button";
+  btn.title = text;
+  btn.append(
+    el("span", "qnav-num", String(qnav.length + 1)),
+    el("span", "qnav-text", text.replace(/\s+/g, " ").trim()),
+  );
+  li.append(btn);
+  qnavList.append(li);
+  return btn;
+};
+
+const clearNav = () => {
+  qnavList.replaceChildren();
+  qnav.length = 0;
+  markNav(null);
+};
+
+const status = (text) => {
+  $("status").textContent = text ?? "";
+};
+
+// ── 你说的话：一张卡，头上一行「谁 + 什么时候」 ──────────────────────────
+const addUser = (text, entryId, opts = {}) => {
+  const row = el("div", "user-row enter");
+  const prompt = el("div", "prompt tappable");
+  prompt.dataset.from = "me";
+
+  const head = el("span", "prompt-head");
+  const avatar = el("span", "prompt-avatar", "你");
+  avatar.style.setProperty("--who", "var(--accent)");
+  head.append(avatar, el("b", "prompt-author", "你"));
+
+  if (entryId != null) {
+    // 分叉只挂在具体的一条上：从哪一句长出来的，就得指得清。
+    const fork = el("button", "chip forkbtn", "从这条分叉");
+    fork.type = "button";
+    fork.onclick = async () => {
+      const made = await post(`v1/sessions/${current}/fork`, { entryId });
+      current = made.id;
+      await refresh();
+      await select(made.id);
+    };
+    head.append(fork);
+  }
+
+  const body = el("div", "prompt-body");
+  body.append(el("div", "user-text", text));
+  prompt.append(head, body);
+  row.append(prompt);
+
+  group = null;
+  transcript.append(row);
+
+  // 目录里那一条：编号 + 你的原话，点一下就滚过去。
+  // opts.nav === false 的不进目录 —— 那是「发送失败」，不是你问的话。
+  if (opts.nav !== false) {
+    const btn = addNavRow(text);
+    btn.onclick = () => {
+      row.scrollIntoView({ behavior: "smooth", block: "start" });
+      markNav(btn);
+    };
+    qnav.push({ btn, row });
+  }
+
+  follow();
+  return row;
+};
+
+// ── 它说的话：没有容器，纯散文 ──────────────────────────────────────────
+const addReply = () => {
+  const reply = el("div", "reply enter");
+  const md = el("div", "md streaming");
+  const para = el("p");
+  md.append(para);
+  reply.append(md);
+  group = null;
+  transcript.append(reply);
+  follow();
+  return { reply, md, para };
+};
+
+// ── 它做了什么：一条轨道，一趟一行 ──────────────────────────────────────
+const summarize = (g) => {
+  // 历史上的 pi.tool-result 只有结果没有调用，名字就是空的 —— 那就只说「几步」，别写「2 步 · 工具」。
+  const names = [...new Set(g.names.filter(Boolean))].slice(0, 3).join(", ");
+  g.summary.textContent = `${g.count} 步${names ? ` · ${names}` : ""}`;
+};
+
+const newGroup = (open = true) => {
+  const box = el("div", `activity${open ? " open" : ""} enter`);
+  const head = el("button", "activity-head");
+  head.type = "button";
+  head.setAttribute("aria-expanded", String(open));
+  const chev = el("span", "chev", "›");
+  const summary = el("span", "activity-summary", "0 步");
+  const time = el("span", "activity-time live", "0s");
+  head.append(chev, summary, time);
+
+  const timeline = el("div", "timeline");
+  box.append(head, timeline);
+
+  const started = Date.now();
+  const tick = setInterval(() => {
+    time.textContent = `${((Date.now() - started) / 1000).toFixed(1)}s`;
+  }, 200);
+
+  const g = { box, head, summary, timeline, time, tick, count: 0, names: [], started };
+
+  head.onclick = () => {
+    box.classList.toggle("open");
+    head.setAttribute("aria-expanded", String(box.classList.contains("open")));
+  };
+
+  transcript.append(box);
+  group = g;
+  return g;
+};
+
+const settleGroup = () => {
+  if (!group) return;
+  clearInterval(group.tick);
+  group.time.classList.remove("live");
+  group.time.textContent = `${((Date.now() - group.started) / 1000).toFixed(1)}s`;
+  group = null;
+};
+
+const firstLine = (text) => {
+  const line = (text ?? "").split("\n").find((l) => l.trim()) ?? "";
+  return line.trim().length > 120 ? `${line.trim().slice(0, 120)}…` : line.trim();
+};
+
+// name 是工具名；历史上的 pi.tool-result 只有结果文本，名字就是空的。
+const addStep = (name, text) => {
+  const g = group ?? newGroup(!replaying);
+  g.count += 1;
+  g.names.push(name || "");
+  summarize(g);
+
+  const step = el("div", "step settled");
+  const line = el("div", "step-line");
+  const head = el("button", "step-head");
+  head.type = "button";
+  head.setAttribute("aria-expanded", "false");
+
+  const mark = el("span", "step-mark done", "✓");
+  const label = el("span", "step-label", name || "工具");
+  const subject = el("span", "step-subject", firstLine(text));
+  const meta = el("span", "step-meta", `${(text ?? "").split("\n").length} 行`);
+  head.append(mark, label, subject, meta);
+
+  const body = el("div", "step-body");
+  body.append(el("pre", "", text ?? ""));
+
+  line.append(head);
+  step.append(line, body);
+  step.dataset.status = "done";
+
+  head.onclick = () => {
+    step.classList.toggle("open");
+    head.setAttribute("aria-expanded", String(step.classList.contains("open")));
+  };
+
+  g.timeline.append(step);
+  follow();
+  return step;
+};
+
+// ── 一个会话 ────────────────────────────────────────────────────────────
+const roleOf = (kind) =>
+  kind === "pi.user" ? "user" : kind === "pi.assistant" ? "assistant" : "tool";
+
+const reveal = (text) => {
+  const empty = transcript.querySelector(":scope > .empty");
+  if (empty) empty.remove();
+};
+
+// 选谁是这一盘的眼睛，不是这一页的变量：pxbgng 那个列表挑的也是同一双。
+// 写完拿回带 `at` 的那份，轮询才认得出「这条我见过」。
+const announce = (id) =>
+  post("v1/selection", { id })
+    .then((saved) => { selAt = saved.at; })
+    .catch(() => {});
+
+const select = async (id, talk = true) => {
+  current = id;
+  transcript.replaceChildren();
+  clearNav();
+  group = null;
+  $("stop").hidden = true;
+  status("加载…");
+
+  stream?.close();
+  const data = await api(`v1/sessions/${id}/entries?limit=200`);
+  const items = [...data.items].reverse();
+
+  replaying = true;
+  for (const entry of items) {
+    const text = entry.text;
+    if (!text) continue;
+    reveal();
+    const role = roleOf(entry.kind);
+    if (role === "tool") addStep(null, text);
+    else if (role === "user") addUser(text, entry.id);
+    else addReply().para.textContent = text;
+  }
+  settleGroup();
+  replaying = false;
+  for (const md of transcript.querySelectorAll(".md.streaming")) md.classList.remove("streaming");
+
+  if (!items.length) {
+    const empty = el("div", "empty");
+    empty.append(el("div", "pi", "π"), el("div", "", "空会话，说第一句吧"));
+    transcript.append(empty);
+  }
+
+  const me = sessions.find((s) => s.id === current);
+  $("ro").classList.toggle("on", Boolean(me?.readOnly));
+  // 左列没了：标题标签是唯一能说明「现在是谁」的地方。
+  document.title = me ? `${me.name} · qrd3wh` : "qrd3wh · 对话";
+  status("");
+  stick = true;
+  scroller.scrollTop = scroller.scrollHeight;
+  spyNav();   // 刚打开就把你在读的那条点亮（会话短到不能滚时也得亮）
+
+  stream = new EventSource(base + `v1/sessions/${id}/events`);
+  let live = null;   // 正在长的那条回复
+  const settle = () => {
+    live?.md.classList.remove("streaming");
+    live = null;
+    settleGroup();
+  };
+
+  stream.onmessage = (message) => {
+    const event = JSON.parse(message.data);
+    if (event.type === "snapshot") { settle(); return; }
+    if (event.type === "message_start" && event.message?.role === "assistant") { settle(); return; }
+    if (event.type === "message_update") {
+      for (const change of event.changes ?? []) {
+        if (change.type !== "text_delta") continue;
+        reveal();
+        live ??= addReply();
+        live.para.textContent += change.delta;
+        follow();
+      }
+      return;
+    }
+    if (event.type === "message_end") {
+      // 这台模型只流 thinking_delta，正文是整段落在 message_end 里的 ——
+      // 只认 text_delta 的话，页面上永远不会有回复。两路都得接。
+      if (event.entry?.kind === "pi.assistant") {
+        const text = entryText(event.entry);
+        if (text) {
+          if (live) {
+            live.para.textContent = text;   // 流过的活以落地那份为准
+            live.md.classList.remove("streaming");
+            live = null;
+          } else {
+            reveal();
+            const reply = addReply();
+            reply.para.textContent = text;
+            reply.md.classList.remove("streaming");
+          }
+          follow();
+        }
+      }
+      settle();
+      return;
+    }
+    if (event.type === "tool_execution_start") {
+      live?.md.classList.remove("streaming");
+      live = null;
+      reveal();
+      addStep(event.name, summarizeArgs(event.args));
+      return;
+    }
+    if (event.type === "run_end") { settle(); status(""); $("stop").hidden = true; refresh(); }
+  };
+  stream.onerror = () => status("断流了，正在重连…");
+  if (talk) announce(id);
+};
+
+// 一条 entry 里的正文：content 可能是字符串，也可能是一串 block（thinking / text / tool…），
+// 只要 text。
+const entryText = (entry) => {
+  const parts = [];
+  for (const message of entry?.model ?? []) {
+    const content = message?.content;
+    if (typeof content === "string") { parts.push(content); continue; }
+    for (const block of content ?? []) {
+      if (block?.type === "text" && block.text) parts.push(block.text);
+    }
+  }
+  return parts.join("\n").trim();
+};
+
+const summarizeArgs = (args) => {
+  if (!args) return "";
+  const text = JSON.stringify(args);
+  return text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
+};
+
+const refresh = async () => {
+  try {
+    sessions = (await api("v1/sessions")).items;
+    if (current === null && sessions.length) current = sessions[0].id;
+    const me = sessions.find((s) => s.id === current);
+    $("ro").classList.toggle("on", Boolean(me?.readOnly));
+  } catch (error) {
+    status(String(error.message ?? error));
+  }
+};
+
+// ── 发话 ────────────────────────────────────────────────────────────────
+const updateSend = () => {
+  $("send").classList.toggle("ready", field.value.trim().length > 0 && current !== null);
+};
+field.addEventListener("input", updateSend);
+
+field.addEventListener("keydown", (event) => {
+  // Enter 发，Shift+Enter 换行。isComposing：中文输入法选词时的回车不是在提交。
+  if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  $("say").requestSubmit();
+});
+
+$("say").onsubmit = async (event) => {
+  event.preventDefault();
+  const content = field.value.trim();
+  if (!content || current === null) return;
+  field.value = "";
+  updateSend();
+  addUser(content);
+  $("send").disabled = true;
+  $("stop").hidden = false;
+  status("想…");
+  stick = true;
+  try {
+    // requestId 让重发变成同一次提交，而不是第二次干活。
+    await post(`v1/sessions/${current}/messages`, { content, requestId: newRequestId() });
+  } catch (error) {
+    // 这是页面自己的错，不是工具的 —— 别顶着「工具」的皮出现。
+    const row = addUser(`发送失败：${error.message ?? error}`, null, { nav: false });
+    row.querySelector(".prompt").style.borderColor = "var(--err-line)";
+    row.querySelector(".user-text").style.color = "var(--err)";
+    $("stop").hidden = true;
+    status("");
+  } finally {
+    $("send").disabled = false;
+    // 停按钮不在这里收：POST 只是把活排上队，模型还在跑。收它在 run_end。
+  }
+};
+
+$("stop").onclick = () => current !== null && post(`v1/sessions/${current}/abort`).catch(() => {});
+$("ro").onclick = async () => {
+  if (current === null) return;
+  const me = sessions.find((s) => s.id === current);
+  await post(`v1/sessions/${current}/config`, { readOnly: !me?.readOnly });
+  await refresh();
+};
+$("new").onclick = async () => {
+  const name = prompt("新对话叫什么？", "新对话");
+  if (name === null) return;
+  const made = await post("v1/sessions", { name: name.trim() || "新对话" });
+  await refresh();
+  await select(made.id);
+};
+
+// 新对话用哪个模型：默认值落在这块自己的 data/default-model.json 里。
+const loadModels = async () => {
+  try {
+    const data = await api("v1/models");
+    const pick = $("pick");
+    pick.replaceChildren();
+    for (const item of data.items) {
+      const option = document.createElement("option");
+      option.value = `${item.provider}/${item.modelId}`;
+      option.textContent = `${item.provider}/${item.modelId}`;
+      option.selected = item.provider === data.default.provider && item.modelId === data.default.modelId;
+      pick.append(option);
+    }
+    pick.onchange = async () => {
+      const at = pick.value.indexOf("/");
+      await api("v1/default", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: pick.value.slice(0, at), modelId: pick.value.slice(at + 1) }),
+      });
+      refresh();
+    };
+  } catch (error) {
+    status(String(error.message ?? error));
+  }
+};
+
+await loadModels();
+await refresh();
+
+// 打开就跟盘上选的那个走：pxbgng 里挑过谁，这一页就是谁。
+const saved = await api("v1/selection").catch(() => null);
+if (saved) selAt = saved.at;
+const first = saved?.id != null && sessions.some((s) => s.id === saved.id) ? saved.id : current;
+if (first !== null) {
+  await select(first, saved?.id == null);
+} else {
+  const empty = el("div", "empty");
+  empty.append(el("div", "pi", "π"), el("div", "", "还没有对话。点「＋ 新对话」。"));
+  transcript.append(empty);
+}
+
+// 别的页面也能改「现在看哪个」：自己轮它，比记着「谁点过什么」可靠。
+const pollSelection = async () => {
+  try {
+    const next = await api("v1/selection");
+    if (next.at === selAt) return;
+    selAt = next.at;
+    if (next.id === null || next.id === current) return;
+    if (!sessions.some((s) => s.id === next.id)) await refresh();
+    if (!sessions.some((s) => s.id === next.id)) return;   // 它已经被删了，就当没选过
+    await select(next.id, false);
+  } catch {}
+};
+setInterval(pollSelection, 1200);
+
+// 这一页没有左列了，挑对话在 pxbgng —— 地址只从宿主的 ctx 来。
+try {
+  const ctx = await fetch(base + "__nous/ctx").then((r) => r.json());
+  const list = ctx.blocks.find((b) => b.id === "pxbgng") ?? ctx.blocks.find((b) => b.name === "session.2");
+  if (list) {
+    $("list").href = list.url;
+    $("list").hidden = false;
+  }
+} catch {}
+
+updateSend();
+</script>
+</body>
+</html>
