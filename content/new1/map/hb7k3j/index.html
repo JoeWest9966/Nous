@@ -240,7 +240,7 @@
       <input type="text" id="q" placeholder="筛选…" autocomplete="off">
     </div>
     <div class="diagram" id="diagram"></div>
-    <div class="dfoot">供应商 › 模型 › 思考 › 技能 · 点模型选中即收回 · 技能可多选（勾了不关）· ✓ 当前 · <span class="demo">·默认</span> = 缺省 · ↑↓ 选 · ←→ 换列 · ↵ 确认 · Esc 关闭 · 装技能去会话引擎的「技能」页</div>
+    <div class="dfoot">供应商 › 模型 › 思考 · 点模型选中即收回 · 思考档只对支持的模型出 · ✓ 当前 · <span class="demo">·默认</span> = 缺省 · ↑↓ 选 · ←→ 换列 · ↵ 确认 · Esc 关闭</div>
   </div>
 </div>
 
@@ -331,11 +331,6 @@ let pickProvider = null;      // 模型列当前展开哪个供应商
     面板一开始就不撒谎：不填就是不思考，不是“不知道”。*/
 let thinking = "off";
 
-/** 已装的技能（编目 38 条全摆上来会把图撑成一面墙，所以只出装好的）。 */
-let installedSkills = [];
-/** 这次要带给新会话的技能。**多选**：跟模型/档位不一样，勾一个不关门。 */
-const pickedSkills = new Set();
-
 /** 当前模型支持哪几档。非 reasoning 模型这里就是 ["off"]，长度 1=不出思考列。 */
 const levelsOfPick = () => {
   const m = picked && models.find((x) => x.provider === picked.provider && x.modelId === picked.modelId);
@@ -367,16 +362,13 @@ const drawRule = (name, items, cx0, cx1, top) => {
   const ws = items.map((it) => {
     const isProvider = !!it.isProvider;
     const isLevel = !!it.isLevel;
-    const isSkill = !!it.isSkill;
-    const sel = isSkill
-      ? pickedSkills.has(it.m.modelId)
-      : isLevel
-        ? thinking === it.m.modelId
-        : isProvider
-          ? picked?.provider === it.m.provider && !$("q").value.trim()
-          : !!picked && picked.provider === it.m.provider && picked.modelId === it.m.modelId;
-    const isDef = !isProvider && !isLevel && !isSkill && !!defaultModel && defaultModel.provider === it.m.provider && defaultModel.modelId === it.m.modelId;
-    return { ...it, isProvider, isLevel, isSkill, sel, isDef, w: pillW(it.m.modelId) + (sel ? 18 : 0) + (isDef ? 32 : 0) };
+    const sel = isLevel
+      ? thinking === it.m.modelId
+      : isProvider
+        ? picked?.provider === it.m.provider && !$("q").value.trim()
+        : !!picked && picked.provider === it.m.provider && picked.modelId === it.m.modelId;
+    const isDef = !isProvider && !isLevel && !!defaultModel && defaultModel.provider === it.m.provider && defaultModel.modelId === it.m.modelId;
+    return { ...it, isProvider, isLevel, sel, isDef, w: pillW(it.m.modelId) + (sel ? 18 : 0) + (isDef ? 32 : 0) };
   });
   const rows = ws.map((p, i) => ({ ...p, x: cx0 + 16, y: ty + i * PITCH }));   // 列内左对齐 —— 一列清单，不是扎堆
   const n = rows.length;
@@ -401,9 +393,8 @@ const drawRule = (name, items, cx0, cx1, top) => {
     spans.push(esc(p.m.modelId));
     if (p.isDef) spans.push('<tspan fill="var(--s4)" font-size="10"> ·默认</tspan>');
     const cls = `pill${p.sel ? " sel" : ""}${p.isProvider && pickProvider === p.m.provider ? " cur" : ""}`
-      + `${p.isProvider ? " pv" : ""}${p.isLevel ? " lv" : ""}${p.isSkill ? " sk" : ""}${p.dim ? " dim" : ""}`;
-    const label = p.isSkill ? `技能 ${p.m.modelId}（多选）`
-      : p.isLevel ? `思考档位 ${p.m.modelId}`
+      + `${p.isProvider ? " pv" : ""}${p.isLevel ? " lv" : ""}${p.dim ? " dim" : ""}`;
+    const label = p.isLevel ? `思考档位 ${p.m.modelId}`
       : p.isProvider ? `${p.m.provider}（切换）`
       : `${p.m.provider} / ${p.m.modelId}`;
     return `<g class="${cls}" data-p="${esc(p.m.provider)}" data-m="${esc(p.m.modelId)}" role="button" tabindex="0" aria-label="${esc(label)}"><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${PH}" rx="${PH / 2}"/><text x="${p.x + p.w / 2}" y="${p.y + PH / 2 + 4.5}" text-anchor="middle" style="font-family:var(--mono)" font-size="13">${spans.join("")}</text></g>`;
@@ -445,14 +436,6 @@ const renderDiagram = () => {
   const cols = [{ name: "供应商", items: left }, { name: rightName, items: right }];
   if (levels.length > 1) {
     cols.push({ name: "思考", items: levels.map((l) => ({ m: { modelId: l, provider: "" }, isLevel: true })) });
-  }
-  // 技能列：只出**已装的**（编目 38 条全摆上来就是一面墙，装技能去会话引擎那页的「技能」）。
-  // 一个都没装就不出这列 —— 跟思考列同一个规矩：没得选就别占地方。
-  if (installedSkills.length) {
-    cols.push({
-      name: "技能 · 多选",
-      items: installedSkills.map((s) => ({ m: { modelId: s.name, provider: "" }, isSkill: true })),
-    });
   }
 
   const W = Math.min(720, Math.max(360, box.clientWidth || 560));
@@ -599,12 +582,6 @@ const actOn = (g) => {
   if (g.classList.contains("lv")) { thinking = g.dataset.m; renderCurrent(); renderDiagram(); return; }
   // 供应商：只切换模型列的视图，也不关门
   if (g.classList.contains("pv")) { pickProvider = g.dataset.p; renderDiagram(); return; }
-  // 技能：多选开关，**不关门** —— 勾一个就关弹窗，第二个技能永远勾不上
-  if (g.classList.contains("sk")) {
-    const name = g.dataset.m;
-    if (pickedSkills.has(name)) pickedSkills.delete(name); else pickedSkills.add(name);
-    renderCurrent(); renderDiagram(); return;
-  }
   choose(g.dataset.p, g.dataset.m);
 };
 $("diagram").addEventListener("click", (e) => {
@@ -643,8 +620,7 @@ const renderCurrent = () => {
   const isDef = defaultModel && defaultModel.provider === picked.provider && defaultModel.modelId === picked.modelId;
   const lv = levelsOfPick();
   $("model-sub").textContent = `已开放 · ${models.length} 款${isDef ? " · 默认" : ""}`
-    + (lv.length > 1 ? ` · 思考 ${thinking}` : "")
-    + (pickedSkills.size ? ` · 技能 ${pickedSkills.size}` : "");
+    + (lv.length > 1 ? ` · 思考 ${thinking}` : "");
 };
 
 const updateHub = () => {
@@ -661,20 +637,11 @@ async function commit() {
     const name = $("name").value.trim();
     // 档位跟着创建一起发 —— 服务端在建会话的同一个 commit 里落定，
     // 中间不会有“已经跑了一条消息但档位还是旧的”那一瞬。
-    const created = await post(tag.url + "/v1/sessions", {
-      model: picked,
-      thinkingLevel: thinking,
-      // 技能跟模型/档位一起在**同一个 commit** 里落定，不在后面再 configure。
-      ...(pickedSkills.size ? { skills: [...pickedSkills] } : {}),
-      ...(name ? { name } : {}),
-    });
+    const created = await post(tag.url + "/v1/sessions", { model: picked, thinkingLevel: thinking, ...(name ? { name } : {}) });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
     // 服务端回来的才是生效值（它夹过一遍）：认这一份，不认我们发上去的
     if (created.thinkingLevel) thinking = created.thinkingLevel;
-    // 发上去但没装成的，服务端会点名（missing）。别静默：人以为勾上了，其实没有。
-    if (created.missing?.length) $("errbox").innerHTML = `<div class="err">这些技能没装，已跳过：${esc(created.missing.join("、"))}</div>`;
-    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}`
-      + ((created.skills ?? []).length ? ` · 技能 ${created.skills.join("、")}` : "");
+    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}`;
     $("name").value = "";
     defaultModel = picked;
     renderCurrent();
@@ -695,12 +662,6 @@ if (tag) {
     $("state").textContent = models.length ? `${models.length} 款可用` : "";
   } catch (error) {
     $("errbox").innerHTML = `<div class="err">拿不到模型清单：${String(error.message ?? error)}</div>`;
-  }
-  // 技能单独一个 try：编目挂了不该把模型清单一起拖下水（两件事、两个要去修的地方）。
-  try {
-    installedSkills = (await api("v1/skills")).installed ?? [];
-  } catch (error) {
-    console.warn("技能清单拿不到：", error);
   }
 }
 renderCurrent();
