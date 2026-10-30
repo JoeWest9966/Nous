@@ -77,6 +77,30 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 按 sha 记收据（编目**没有版本层**，nw 自己说的：不含 ref/@tag —— 所以「上次跑的是哪一版」
 只有我们记）。已经装过同一版就不重拉。
 
+### 版本：只认收据，不认编目
+
+页面「仓库版本」那一列是 `1.3.2+1` 这样的东西，意思就是 `git describe` 那句话：
+`v1.3.2-1-ga496f55` = 装下的 sha 比 `v1.3.2` 那个 tag 晚 1 个提交。
+
+- **来源是收据**（`data/skills/<名>/.nw.json` 的 `version` / `tag` / `commitsSince` /
+  `describe` / `commitAt` / `skillChangedAt`），装的那一刻从**装下的那个 sha** 上读。
+- **不碰 `api.github.com`**：匿名 60 次/小时，38 条就穿。走的是
+  `git clone --bare --filter=blob:none`（git 协议，零配额，一条源 ~1 秒 / 几百 KB），
+  缓存在 `data/.repos/<owner>__<repo>.git` —— **纯缓存，`rm -rf` 掉没关系**，下次装会重建。
+  `git show <sha>:package.json` 拿下上游声明的版本，`git describe --tags --long` 拿下
+  「离 tag 几步」，`git log -1 -- <path>` 拿下这条技能自己最后改动的时间。
+- **编目里那个 `version` 不是版本号，是账面情报**：`/api/source` 的 source 上确实有
+  `version`（今天 `matt` 写着 `v1.3.1`，`mattpocock` 是空串），但它是**注册那一刻**上游
+  latest release 的快照，仓库级、会过期、还跟另一个条目对不上。`skills.js` 把它作为
+  `catalogVersion` 一起带出来，**只用于对照**（「编目录上还写着 v1.3.1」），绝不拿去显示成
+  「你装的是哪一版」。
+- **算不出来就是 null**：上游不打 tag、没写 `package.json`、断网、私有仓 —— 页面显
+  「未标版本」。宁可少一个数字，不要编一个。
+- 老收据（这个字段是后加的）由 `skills.backfill()` 在启动和每次 `GET /v1/skills` 时**后台**
+  补齐，补齐前那一行照实是 null。页面只重试一次，不轮询。
+- 版本是**装的那一刻**的版本。上游发了新版不会自己变 —— 想更新就卸载重装（「检查更新」
+  是另一个功能，现在没有）。
+
 ## 接口
 
 ```

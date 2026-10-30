@@ -251,6 +251,8 @@ const skills = await createSkills({ dir: path.join(DATA, "skills"), registry });
 registry.install(Nous);
 registry.install(skills.extension);
 await skills.load();
+// 老收据补齐版本：后台跑，别把启动卡在 clone 上。
+void skills.backfill();
 
 const harness = await Harness.open(
   storage,
@@ -460,6 +462,9 @@ const route = async (req, res, url) => {
       // 编目没拉过就先拉一次：列表页第一次打开不该看见「什么都没有」。
       const cached = skills.catalog();
       const loaded = cached.at ? cached : await skills.refreshCatalog();
+      // 还有人没记版本（老收据 / 刚装完断电）：后台补一次，这一轮先照实回 null。
+      // 页面上就是「未标版本」，不会凭空猜一个数字。
+      void skills.backfill();
       return json(res, 200, {
         dir: skills.dir,
         installed: skills.list(),

@@ -31,6 +31,9 @@ import { defineExtension, section } from "@earendil-works/pi-durable";
 
 const run = promisify(execFile);
 
+/** git 不许交互：一次密码提示就能把整个装在后台挂到超时。 */
+const GIT_ENV = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true", GIT_LFS_SKIP_SMUDGE: "1" };
+
 // 编目在哪儿：跟 catalog.js 同一把 8443（免 token）。走 panel-gate（8080）才需要 NW_TOKEN。
 const DEFAULT_BASE = "https://j1900.tail8d0018.ts.net:8443";
 
@@ -97,6 +100,9 @@ export async function createSkills({
   githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "",
 }) {
   const root = base.replace(/\/+$/, "");
+  // 仓库缓存：只存 git 的提交图（--filter=blob:none），一条源几百 KB。
+  // 放 data/.repos 而不是 data/skills：后者是名册，扫盘时不能看见一堆不是技能的目录。
+  const cacheRoot = path.join(dir, "..", ".repos");
   const headers = token ? { authorization: `Bearer ${token}` } : {};
   const ghHeaders = { accept: "application/vnd.github+json", ...(githubToken ? { authorization: `Bearer ${githubToken}` } : {}) };
 
@@ -119,6 +125,14 @@ export async function createSkills({
       repo: skill.receipt?.repo ?? null,
       sha: skill.receipt?.sha ?? null,
       at: skill.receipt?.at ?? null,
+      // 版本是**装下那个 sha 上的**事实，不是编目里的账面情报：
+      // version = 仓库 package.json 声明的版本；commitsSince = 比 tag 晚几个提交（git describe）。
+      version: skill.receipt?.version ?? null,
+      tag: skill.receipt?.tag ?? null,
+      commitsSince: skill.receipt?.commitsSince ?? null,
+      describe: skill.receipt?.describe ?? null,
+      commitAt: skill.receipt?.commitAt ?? null,
+      skillChangedAt: skill.receipt?.skillChangedAt ?? null,
     }));
 
   const has = (name) => installed.has(name);
@@ -236,6 +250,10 @@ export async function createSkills({
             path: entry.path,
             repo: source.repo,
             category: source.category ?? [],
+            // 编目里那个 version 是**账面情报**（注册那一刻上游最新 release），不是版本层，
+            // 而且会过期（今天 matt 这条就写着 v1.3.1，实际已 v1.3.2）。只拿来对照着显示，
+            // 绝不拿它冒充「你装的是哪一版」—— 那个只认收据。
+            catalogVersion: source.version || null,
           });
         }
       }
@@ -261,6 +279,67 @@ export async function createSkills({
     const sha = Array.isArray(body) ? body[0]?.sha : undefined;
     if (!sha) throw new Error(`${owner}/${name} 没有提交记录`);
     return sha;
+  };
+
+  // ── 版本：只从「装下的那个 sha」上读，不猜、不借用编目 ────────────────────
+  //
+  // 一条外部源没有版本层（nw 自己的 ADR 就这么写的），技能目录里也没有 package.json。
+  // 能拿到的最真的一句就是 `git describe`：v1.3.2-1-ga496f55 = 「v1.3.2 之后第 1 个提交」。
+  // 所以这里**不碰 api.github.com**（匿名 60 次/小时，38 条就穿）：
+  // blobless bare clone 走 git 协议，零配额，一条源 1-2 秒、几百 KB，之后复用。
+
+  const git = (args) => run("git", args, { env: GIT_ENV, timeout: 180_000, maxBuffer: 8 << 20 });
+
+  /** 源仓库的提交图缓存。返回目录，拿不到就 null。 */
+  const repoCache = async (repo) => {
+    const slug = repoSlug(repo);
+    if (!slug) return null;
+    const dest = path.join(cacheRoot, `${slug.owner}__${slug.name}.git`);
+    const stamp = path.join(dest, ".nw-fetched");
+    try {
+      if (!(await stat(dest).catch(() => null))) {
+        await mkdir(cacheRoot, { recursive: true });
+        await git(["clone", "--bare", "--filter=blob:none", "--quiet", `https://github.com/${slug.owner}/${slug.name}`, dest]);
+      } else {
+        // tag 不是每分钟一个：十分钟内不重复 fetch，否则每装一条都在等网络。
+        const last = Number(await readFile(stamp, "utf8").catch(() => "0")) || 0;
+        if (Date.now() - last > 600_000) {
+          await git(["-C", dest, "fetch", "--tags", "--force", "--quiet", "origin"]).catch(() => {});
+        }
+      }
+      await writeFile(stamp, String(Date.now()));
+      return dest;
+    } catch {
+      return null; // 断网、私有仓、git 版本太老：版本留空，装照装
+    }
+  };
+
+  /**
+   * 从缓存里读版本。四条，缺哪条留哪条空 —— 宁可显「未标版本」，不编。
+   * `version` 是仓库声明的（package.json，拿不到时退回 tag 名去掉 v）。
+   */
+  const versionOf = async ({ repo, sha, path: entryPath }) => {
+    const out = { version: null, tag: null, commitsSince: null, describe: null, commitAt: null, skillChangedAt: null };
+    const cache = await repoCache(repo);
+    if (!cache || !sha) return out;
+    const g = (args) => git(["-C", cache, ...args]).then((r) => r.stdout.trim()).catch(() => "");
+
+    // v1.3.2-1-ga496f55（--long 保证偶数个提交也带 -0-gxxx）
+    out.describe = (await g(["describe", "--tags", "--long", "--abbrev=7", sha])) || null;
+    const parsed = /^(.+)-(\d+)-g([0-9a-f]+)$/.exec(out.describe ?? "");
+    if (parsed) {
+      out.tag = parsed[1];
+      out.commitsSince = Number(parsed[2]);
+    }
+
+    try {
+      out.version = JSON.parse(await g(["show", `${sha}:package.json`]))?.version ?? null;
+    } catch {}
+    if (!out.version && out.tag) out.version = out.tag.replace(/^v/, "");
+
+    out.commitAt = (await g(["log", "-1", "--format=%cI", sha])) || null;
+    if (entryPath) out.skillChangedAt = (await g(["log", "-1", "--format=%cI", "--", entryPath])) || null;
+    return out;
   };
 
   /**
@@ -308,10 +387,23 @@ export async function createSkills({
       await cp(from, dest, { recursive: true });
       // 收据：编目**没有版本层**（nw 自己说的，编目不含 ref/@tag），所以「上次跑的是
       // 哪一版」只有我们记。跟模型密钥那条纪律同构：凭证只活内存，版本只活收据。
+      //
+      // 版本在现场算：装下的这个 sha 上，仓库自己写了什么、离最近的 tag 差几步。
+      // 算不出来就是 null（断网 / 上游不打 tag / 私有仓）—— 页面上显「未标版本」，
+      // 不让一个猜出来的 “1.0.0” 进收据。
+      const version = await versionOf({ repo: target.repo, sha, path: target.path });
       await writeFile(
         path.join(dest, ".nw.json"),
         JSON.stringify(
-          { source: target.source, entry: target.entry, repo: target.repo, path: target.path, sha, at: new Date().toISOString() },
+          {
+            source: target.source,
+            entry: target.entry,
+            repo: target.repo,
+            path: target.path,
+            sha,
+            at: new Date().toISOString(),
+            ...version,
+          },
           null,
           2,
         ) + "\n",
@@ -333,8 +425,36 @@ export async function createSkills({
     return { removed: Boolean(skill), installed: list() };
   };
 
+  /**
+   * 补齐老收据：这个字段是后加的，之前装的没有 version。装的时候不阻塞启动，
+   * 装完也不阻塞页面 —— 由调用方 fire-and-forget，下一次 GET 就能看见。
+   * 同一时刻只跑一份，重复触发直接返回空。
+   */
+  let backfilling = null;
+  const backfill = () => {
+    if (backfilling) return backfilling;
+    const pending = sorted().filter((skill) => skill.receipt?.sha && skill.receipt.version === undefined);
+    if (!pending.length) return Promise.resolve([]);
+    backfilling = (async () => {
+      const done = [];
+      for (const skill of pending) {
+        const version = await versionOf({ repo: skill.receipt.repo, sha: skill.receipt.sha, path: skill.receipt.path });
+        await writeFile(
+          path.join(skill.dir, ".nw.json"),
+          JSON.stringify({ ...skill.receipt, ...version }, null, 2) + "\n",
+        ).catch(() => {});
+        done.push(skill.name);
+      }
+      await load();
+      return done;
+    })().finally(() => {
+      backfilling = null;
+    });
+    return backfilling;
+  };
+
   /** 选了但没装的技能名：给前端画「已失效」用，不静默吞掉。 */
   const missing = (names) => names.filter((name) => !installed.has(name));
 
-  return { dir, list, has, load, refreshCatalog, install, uninstall, missing, extension, catalog: () => catalog };
+  return { dir, list, has, load, refreshCatalog, install, uninstall, missing, backfill, extension, catalog: () => catalog };
 }

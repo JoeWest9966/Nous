@@ -208,7 +208,10 @@
   .status i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
   .status.on { color: var(--ok); }
   .status.off { color: var(--faint); }
-  .sha { font: 11px / 1.2 var(--mono); color: var(--faint); }
+  .ver { font: 500 12px / 1.2 var(--mono); color: var(--body); white-space: nowrap; }
+  .ver .plus { color: var(--faint); }
+  .ver.none { font-family: var(--sans); font-size: 11.5px; font-weight: 400; color: var(--faint); }
+  .ver.na { color: var(--faint); }
   .c-act { display: flex; justify-content: flex-end; }
   .c-act .btn { height: 28px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
   .c-act .btn svg { width: 13px; height: 13px; }
@@ -343,7 +346,7 @@
           <span>技能</span>
           <span class="c-src-h">来源</span>
           <span>状态</span>
-          <span class="c-ver-h">版本</span>
+          <span class="c-ver-h">仓库版本</span>
           <span style="text-align:right">操作</span>
         </div>
         <div id="rows"></div>
@@ -351,8 +354,10 @@
 
       <p class="footnote">
         装 = 把仓库里的那一份拉到 <code>data/skills/&lt;名&gt;/</code>，连 <code>scripts/</code>、<code>references/</code> 一起，
-        模型用 <code>read</code> 自己读，<code>bash</code> 也能跑里面的脚本。版本号是收据里那一次拉下来的 commit
-        —— 编目没有版本层，<b>「上次跑的是哪一版」只有这里记</b>。
+        模型用 <code>read</code> 自己读，<code>bash</code> 也能跑里面的脚本。<br>
+        <b>仓库版本</b>是上游 <code>package.json</code> 里声明的版本，<code>+N</code> = 装下的那个 sha 比这个 tag 晚 N 个提交
+        （就是 <code>git describe</code> 那句话）。它是<b>仓库的</b>版本，不是这条技能自己的 —— 上游没给技能定版本，
+        唯一属于这条技能的时间戳是「最后改动」那个日期，鼠标停在版本上能看到。上游不写版本号的仓库显示「未标版本」，不编。
       </p>
     </div>
   </main>
@@ -405,6 +410,27 @@ const rel = (at) => {
   return `${t.getMonth() + 1} 月 ${t.getDate()} 日`;
 };
 const when = (at) => (at ? new Date(at).toLocaleString("zh-CN", { hour12: false }) : "");
+const dayShort = (iso) => {
+  const t = new Date(iso);
+  return Number.isNaN(t.getTime()) ? "" : `${t.getMonth() + 1}-${String(t.getDate()).padStart(2, "0")}`;
+};
+
+/**
+ * 版本格：`1.3.2+1` = 仓库声明 1.3.2，装的这个 sha 比它的 tag 晚 1 个提交（git describe）。
+ * 没有就是「未标版本」—— 不拿编目里那个会过期的账面数字顶上。
+ */
+const versionCell = (r) => {
+  if (r.kind !== "installed") return '<span class="ver na" title="装完才知道：版本记在收据里（装下的那个 sha）">—</span>';
+  const tip = [
+    r.repo ? `${r.repo.replace(/^https?:\/\/github\.com\//, "")}@${(r.sha ?? "").slice(0, 7)}` : "",
+    r.commitAt ? `提交 ${dayShort(r.commitAt)}` : "",
+    r.skillChangedAt ? `这条技能最后改于 ${dayShort(r.skillChangedAt)}` : "",
+    r.catalogVersion ? `编目录上还写着 ${r.catalogVersion}` : "",
+  ].filter(Boolean).join(" · ");
+  if (!r.version) return `<span class="ver none" title="${esc(tip || "收据里没记版本")}">未标版本</span>`;
+  const plus = r.commitsSince ? `<span class="plus">+${r.commitsSince}</span>` : "";
+  return `<span class="ver" title="${esc(tip)}">${esc(r.version)}${plus}</span>`;
+};
 
 /* 状态：一次 GET 的结果 + 页面自己那点筛选。busy 单独放，因为它不该跟着筛选丢。 */
 const state = {
@@ -430,6 +456,13 @@ function rowsOf() {
     source: s.source ?? null,
     path: null,
     sha: s.sha ?? null,
+    repo: s.repo ?? null,
+    version: s.version ?? null,
+    tag: s.tag ?? null,
+    commitsSince: s.commitsSince ?? null,
+    commitAt: s.commitAt ?? null,
+    skillChangedAt: s.skillChangedAt ?? null,
+    catalogVersion: state.items.find((it) => it.entry === s.name)?.catalogVersion ?? null,
     hidden: Boolean(s.hidden),
   }));
   const available = state.items
@@ -442,6 +475,9 @@ function rowsOf() {
       path: it.path ?? null,
       category: it.category ?? [],
       sha: null,
+      repo: it.repo ?? null,
+      version: null,
+      catalogVersion: it.catalogVersion ?? null,
       hidden: false,
     }));
   return [...installed.sort((a, b) => a.name.localeCompare(b.name)), ...available.sort((a, b) => a.name.localeCompare(b.name))];
@@ -574,7 +610,7 @@ function renderRows(rows) {
       </div>
       <div class="c-src">${r.source ? `<span class="chip" style="--tone:${tone}" title="${esc(r.source)}">${esc(r.source)}</span>` : `<span class="chip none">—</span>`}</div>
       <div><span class="status ${r.kind === "installed" ? "on" : "off"}"><i></i>${r.kind === "installed" ? "已装" : "可装"}</span></div>
-      <div class="c-ver"><span class="sha" title="${esc(r.sha ?? "")}">${r.sha ? esc(r.sha.slice(0, 7)) : "—"}</span></div>
+      <div class="c-ver">${versionCell(r)}</div>
       <div class="c-act">${action}</div>
     </div>`;
   }).join("");
@@ -618,6 +654,17 @@ async function refresh() {
     if (state.source && !rowsOf().some((r) => (r.source ?? "未记来源") === state.source)) state.source = null;
   }
   render();
+  retryMissingVersions();
+}
+
+// 老收据没有版本：服务端收到 GET 之后会在后台补（clone 一次 1-2 秒），补完再问一次就够。
+// 只重试一次：页面不该变成轮询器。
+let versionRetried = false;
+function retryMissingVersions() {
+  if (versionRetried || state.loading) return;
+  if (!state.installed.some((s) => s.sha && s.version == null)) return;
+  versionRetried = true;
+  setTimeout(() => { void refresh(); }, 5000);
 }
 
 async function act(kind, key, work) {
