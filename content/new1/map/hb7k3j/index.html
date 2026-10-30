@@ -148,6 +148,36 @@
   .dfoot .demo { color:var(--s4); }
   .mnone { color:var(--muted); font-size:clamp(10px,1.4vmin,12.5px); padding:2.4vmin 1.2vmin; text-align:center; }
 
+  /* ── 上下文弹窗：多选清单，**故意不用铁路图** ──
+     铁路图表达的是「语法链」（供应商 › 模型 › 思考 有依赖，一层嵌一层）；
+     技能是平铺多选，把它硬套成语法图就是把语义搞错。为版式统一而牺牲语义，不划算。 */
+  .skills { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+            padding:1vmin 1.2vmin .6vmin; display:flex; flex-direction:column; gap:.3vmin; }
+  .skill-row { display:grid; grid-template-columns:auto 1fr; gap:.9em; align-items:start; width:100%;
+               padding:.55em .8em; text-align:left; cursor:pointer;
+               background:none; border:1px solid transparent; border-radius:var(--radius);
+               color:var(--fg); font-family:var(--font);
+               transition:background .12s ease, border-color .12s ease; }
+  .skill-row:hover { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+  .skill-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .skill-row[aria-checked="true"] { border-color:var(--accent);
+                                     background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .skill-box { width:1.1em; height:1.1em; margin-top:.18em; border:1px solid var(--border); border-radius:3px;
+               display:grid; place-items:center; line-height:1; font-size:.78em; color:var(--accent); }
+  .skill-row[aria-checked="true"] .skill-box { border-color:var(--accent); }
+  .skill-name { display:block; font-family:var(--mono); font-size:clamp(11px,1.5vmin,13.5px); }
+  .skill-desc { color:var(--muted); font-size:clamp(10px,1.35vmin,12.5px); line-height:1.45; margin-top:.15em;
+                display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .skill-meta { display:block; color:var(--faint); font-family:var(--mono); font-size:clamp(9px,1.2vmin,11px); margin-top:.25em; }
+  .skill-none { color:var(--muted); font-size:clamp(10px,1.4vmin,12.5px); padding:2.4vmin 1.2vmin; text-align:center; line-height:1.7; }
+  .skill-none a { color:var(--accent); font-size:inherit; }
+  .dfoot.skillfoot { display:flex; align-items:center; gap:1vmin; }
+  .dfoot .done { margin-left:auto; flex:none; font-family:var(--font); font-size:clamp(11px,1.5vmin,13px);
+                 color:var(--fg); background:color-mix(in srgb, var(--accent) 18%, transparent);
+                 border:1px solid var(--accent); border-radius:var(--radius); padding:.35em 1.1em; cursor:pointer;
+                 transition:background .12s ease; }
+  .dfoot .done:hover { background:color-mix(in srgb, var(--accent) 28%, transparent); }
+
   @media (max-width:640px) { .hub input, .sheet input { font-size:16px; } .sheet { width:96vw; } }  /* iOS 不缩放 */
   /* 竖屏：椭圆收小，域的标题往外侧推，谁也不盖谁 */
   @media (orientation:portrait) {
@@ -206,8 +236,14 @@
     </section>
     <section class="region r2">
       <h2>上下文</h2>
-      <div class="sub">还没排上</div>
-      <div class="sub">暂未开放</div>
+      <div class="sub" id="ctx-sub">技能：一条没选</div>
+      <div class="sub">进提示词的知识 · 跟 AGENTS.md 同类</div>
+      <div class="nodes">
+        <button class="node" id="pickctx" disabled title="这条新对话该知道什么">
+          <span class="id" id="ctx-id">未选</span>
+          <span class="tag" id="ctx-tag">选择 ›</span>
+        </button>
+      </div>
     </section>
     <section class="region r4">
       <h2>工具</h2>
@@ -230,6 +266,20 @@
     </div>
   </div>
 </main>
+
+<div class="scrim" id="scrim2" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择上下文：技能">
+    <div class="shead">
+      <b>上下文 · 技能</b>
+      <input type="text" id="sq" placeholder="筛选已装的…" autocomplete="off">
+    </div>
+    <div class="skills" id="skillList"></div>
+    <div class="dfoot skillfoot">
+      <span id="skillHint">—</span>
+      <button class="done" id="skillDone" type="button">完成 ›</button>
+    </div>
+  </div>
+</div>
 
 <div id="errbox"></div>
 
@@ -303,6 +353,34 @@ const closeSheet = () => {
 $("choose").onclick = (e) => openSheet(e.currentTarget);
 $("scrim").onclick = (e) => { if (e.target === $("scrim")) closeSheet(); };
 
+// ── 上下文：多选清单 ──
+//   跟模型弹窗**故意不同**：那边是单选、点了就收回；这边是多选，勾完按「完成」。
+//   一个「点了就关」的窗口里塞多选，勾第二个的时候窗口已经没了 —— 那就是我之前犯的错。
+const openCtx = (from) => {
+  const scrim = $("scrim2");
+  if (from && !reduceMotion) {
+    const r = from.getBoundingClientRect();
+    scrim.querySelector(".sheet").style.transformOrigin = `${r.left + r.width / 2}px ${r.top + r.height / 2}px`;
+  }
+  scrim.hidden = false;
+  requestAnimationFrame(() => scrim.classList.add("on"));
+  $("sq").value = "";
+  renderSkillList();
+  ($("skillList").querySelector(".skill-row") ?? $("skillDone")).focus();
+};
+const closeCtx = () => {
+  const scrim = $("scrim2");
+  scrim.classList.remove("on");
+  setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
+};
+$("pickctx").onclick = (e) => openCtx(e.currentTarget);
+$("scrim2").onclick = (e) => { if (e.target === $("scrim2")) closeCtx(); };
+$("skillDone").onclick = closeCtx;
+addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || $("scrim2").hidden) return;
+  e.preventDefault(); closeCtx();
+});
+
 // ── 弹窗内容：铁路图（pele.run/examples/railroad 的语法重绘）──
 //   一列一条规则，每行一支药丸（choice 分支纵向排）：
 //     「供应商」→「当前供应商 · 模型」→「思考」（只对支持思考的模型出）
@@ -330,6 +408,11 @@ let pickProvider = null;      // 模型列当前展开哪个供应商
 /** 当前选的思考档。缺省 "off" —— 跟 pi-durable 的 `state?.thinkingLevel ?? "off"` 对齐，
     面板一开始就不撒谎：不填就是不思考，不是“不知道”。*/
 let thinking = "off";
+
+/** 上下文域：这台机器装了哪些技能（`qrd3wh GET /v1/skills` 的 installed）。 */
+let installedSkills = [];
+/** 这条新对话要带哪几个。**多选** —— 所以它不进模型弹窗：那个是「点一下就收回」的单选。 */
+const pickedSkills = new Set();
 
 /** 当前模型支持哪几档。非 reasoning 模型这里就是 ["off"]，长度 1=不出思考列。 */
 const levelsOfPick = () => {
@@ -607,6 +690,68 @@ $("q").onkeydown = (e) => {
   actOn(first);
 };
 
+/** 上下文弹窗里的一行一行。弹窗打开、筛选、勾选之后重画 —— 不在渲染里做 IO。 */
+const renderSkillList = () => {
+  const needle = $("sq").value.trim().toLowerCase();
+  const rows = installedSkills
+    .filter((s) => !needle || `${s.name} ${s.description ?? ""}`.toLowerCase().includes(needle))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!installedSkills.length) {
+    // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 ctx 拿，不拼死的）。
+    $("skillList").innerHTML = `<div class="skill-none">这台机器一个技能都没装。<br>`
+      + (tag ? `<a href="${esc(tag.url)}/skills">去会话引擎的「技能」页装一个 ›</a>` : "")
+      + `</div>`;
+  } else if (!rows.length) {
+    $("skillList").innerHTML = `<div class="skill-none">没有匹配的技能。</div>`;
+  } else {
+    $("skillList").innerHTML = rows.map((s) => {
+      const on = pickedSkills.has(s.name);
+      const desc = String(s.description ?? "").replace(/\s+/g, " ").trim();
+      const meta = [s.source, s.sha ? s.sha.slice(0, 7) : null].filter(Boolean).join(" · ");
+      return `<button class="skill-row" type="button" role="checkbox" aria-checked="${on}" data-s="${esc(s.name)}">`
+        + `<span class="skill-box">${on ? "✓" : ""}</span>`
+        + `<span><span class="skill-name">${esc(s.name)}</span>`
+        + `<span class="skill-desc">${esc(desc)}</span>`
+        + (meta ? `<span class="skill-meta">${esc(meta)}</span>` : "")
+        + `</span></button>`;
+    }).join("");
+  }
+  const n = pickedSkills.size;
+  $("skillHint").textContent = `${installedSkills.length} 条已装 · ${n ? `已选 ${n}` : "未选"} · 勾完按完成`;
+};
+
+/** 区域里那个节点显示什么 —— 跟模型域一样，只显示生效的东西，不显示“待定”。 */
+const renderCtx = () => {
+  const names = [...pickedSkills];
+  $("ctx-id").textContent = !names.length ? "未选" : names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
+  $("ctx-tag").textContent = names.length ? "改 ›" : "选择 ›";
+  $("ctx-sub").textContent = installedSkills.length
+    ? `技能：${names.length ? `已选 ${names.length}` : "一条没选"} · 装好了 ${installedSkills.length}`
+    : "这台机器一个技能都没装";
+  $("pickctx").disabled = !tag;
+};
+
+$( "skillList").addEventListener("click", (e) => {
+  const row = e.target.closest?.(".skill-row");
+  if (!row) return;
+  const name = row.dataset.s;
+  if (pickedSkills.has(name)) pickedSkills.delete(name); else pickedSkills.add(name);
+  renderSkillList();
+  renderCtx();
+  // 重画之后 DOM 全换了，焦点得钉回同一行 —— 否则键盘勾第二个时焦点已经没了
+  $("skillList").querySelector(`.skill-row[data-s="${CSS.escape(name)}"]`)?.focus();
+});
+$("skillList").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const rows = [...$("skillList").querySelectorAll(".skill-row")];
+  const at = rows.indexOf(document.activeElement);
+  e.preventDefault();
+  const i = Math.max(0, Math.min(rows.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
+  rows[i]?.focus();
+});
+$("sq").oninput = renderSkillList;
+
 const renderCurrent = () => {
   if (!picked) {
     $("cur-id").textContent = "—";
@@ -637,11 +782,20 @@ async function commit() {
     const name = $("name").value.trim();
     // 档位跟着创建一起发 —— 服务端在建会话的同一个 commit 里落定，
     // 中间不会有“已经跑了一条消息但档位还是旧的”那一瞬。
-    const created = await post(tag.url + "/v1/sessions", { model: picked, thinkingLevel: thinking, ...(name ? { name } : {}) });
+    const created = await post(tag.url + "/v1/sessions", {
+      model: picked,
+      thinkingLevel: thinking,
+      // 技能跟模型/档位一起在**同一个 commit** 里落定，不在后面再 configure。
+      ...(pickedSkills.size ? { skills: [...pickedSkills] } : {}),
+      ...(name ? { name } : {}),
+    });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
     // 服务端回来的才是生效值（它夹过一遍）：认这一份，不认我们发上去的
     if (created.thinkingLevel) thinking = created.thinkingLevel;
-    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}`;
+    // 勾了但没装成的，服务端会点名（missing）。别静默：人以为勾上了，其实没有。
+    if (created.missing?.length) $("errbox").innerHTML = `<div class="err">这些技能没装，已跳过：${esc(created.missing.join("、"))}</div>`;
+    const got = (created.skills ?? []).length;
+    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}` + (got ? ` · 技能 ${got}` : "");
     $("name").value = "";
     defaultModel = picked;
     renderCurrent();
@@ -663,8 +817,16 @@ if (tag) {
   } catch (error) {
     $("errbox").innerHTML = `<div class="err">拿不到模型清单：${String(error.message ?? error)}</div>`;
   }
+  // 上下文域要用的：已装技能。单独一个 try —— 编目挂了不该把模型清单一起拖下水
+  // （两件事，修的地方也不一样）。拿不到就当没装，节点点开里面会说清楚。
+  try {
+    installedSkills = (await api("v1/skills")).installed ?? [];
+  } catch (error) {
+    console.warn("技能清单拿不到：", error);
+  }
 }
 renderCurrent();
+renderCtx();
 updateHub();
 </script>
 </body>
