@@ -88,10 +88,6 @@
   .msg.warn { color:var(--warn); }
   .msg.bad { color:var(--bad); }
 
-  .drift { margin-top:8px; font-size:12.5px; display:flex; flex-direction:column; gap:3px; }
-  .drift .d { color:var(--dim); }
-  .drift .d b { color:var(--warn); font-weight:600; }
-
   /* ── 删除确认弹窗 ───────────────────────────────────────────── */
   .backdrop { position:fixed; inset:0; z-index:50; display:grid; place-items:center; padding:22px;
     background:rgba(6,8,11,.62); backdrop-filter:blur(2.5px); }
@@ -218,9 +214,8 @@
       <li><b>名字是唯一键。</b><code>nw model register</code> 同名同 baseUrl = 覆盖写，同名不同 baseUrl = 硬拒。想换 baseUrl 只能删了再登记。</li>
       <li><b>密钥形状有三种：</b><span class="k ref">$ENV</span> 引用 / <span class="k literal">字面量</span> / <span class="k cmd">!命令</span>。列表里字面量永远是 <code>&lt;redacted:…&gt;</code>，真身只在点「密钥」时现拿一次。</li>
       <li><b>推到编目的密钥是明文的</b>，落进 <code>/opt/Data-001/models.json</code>（这个文件在 git 里）。token 闸不展开 <code>$ENV</code>，所以推引用进去必然 401 —— 引用只能手写进文件。</li>
-      <li><b>重扫 = 同名同 baseUrl 重跑 register（覆盖写）：</b>模型清单换成本次扫到的，密钥留空就用编目里那把 —— 密钥不进浏览器，服务器自己取。想改名字或链接，那是另一条记录，只能删了重登。</li>
-      <li><b>自查 = <code>nw model recheck</code>：</b>编目自己跟上游 <code>/models</code> 比，报新增 / 下线 / 漂移 —— 只报告，一个字节都不改。真要把清单换掉，用「重扫」。</li>
-      <li><b>删除不可逆，且没有「谁在用」的保护。</b>确认弹窗会先把「改哪个文件、会打 commit、谁还在引用」摆出来，点确认就执行；删掉一条还被配方引用的供应商仓库不会拦你，破绽留到自查和 <code>nw doctor</code> 那层才露。</li>
+      <li><b>自扫 = 拿这条的 baseUrl + 密钥直接问供应商 <code>GET /models</code>，然后把编目里的清单换成它的：</b>供应商有的、编目里没的补上；编目里有、供应商已经没有的删掉 —— 整个 <code>models[]</code> 替掉，所以编目里永远是供应商此刻的真实清单。密钥留空就用编目里那把（服务器代取，不进浏览器）。</li>
+      <li><b>删除不可逆，且没有「谁在用」的保护。</b>确认弹窗会先把「改哪个文件、会打 commit、谁还在引用」摆出来，点确认就执行；删掉一条还被配方引用的供应商仓库不会拦你，破绽留到自扫和 <code>nw doctor</code> 那层才露。</li>
     </ul>
   </footer>
 </main>
@@ -316,13 +311,14 @@ function confirmDelete(entry) {
   });
 }
 
-// ── 登记（新增 / 重扫）：表单 → 五道闸 → 落账 ────────────────────
+// ── 自扫 / 新增：表单 → 五道闸 → 落账 ──────────────────────────
 // 跟删除不一样：登记不是一按就没的事，它要扫上游、过五道闸、打 commit、推一下。
 // 所以弹窗不关，进度和闸簿就在原地长 —— 关掉再飘一个结果条，等于让人凭记忆对账。
 // 密钥读出后立刻从输入框抹掉：它只活在那一次请求的 body 里。
 //
-// `opts.entry` = 重扫模式：名字和 baseUrl 定死（改了就是另一条记录，不是编辑），
-// 密钥可以留空 —— 留空就走 /v1/rescan，密钥在服务器那边拐一道，从不进浏览器。
+// `opts.entry` = 自扫模式：拿这条自己的 baseUrl + 密钥直接问供应商，名字和 baseUrl 定死
+// （改了就是另一条记录，不是更新），密钥可以留空 —— 留空就走 /v1/selfscan，密钥在服务器
+// 那边拐一道，从不进浏览器。
 function registerDialog(opts = {}) {
   return new Promise((resolve) => {
     const prev = document.activeElement;
@@ -344,7 +340,7 @@ function registerDialog(opts = {}) {
       fBase.readOnly = true;
       fName.readOnly = true;
       if (target.api === "openai-completions" || target.api === "anthropic-messages") fAPI.value = target.api;
-      fKey.placeholder = "留空 = 用编目里现有的密钥重扫";
+      fKey.placeholder = "留空 = 用编目里现有的密钥去扫";
     }
 
     const field = (label, node, hint, opt) => el("div", { class: "field" },
@@ -364,7 +360,7 @@ function registerDialog(opts = {}) {
     // 这块 note 是「描述文案」的常驻节点。跑起来时换成转圈、出结果时换成闸簿；
     // 点「返回改」要能换回这张原样的——所以换的时候只 swap，不就地改内容。
     const note = el("div", { class: "note", html: isUpdate
-      ? `重扫 = <b>同名同 baseUrl 重跑 nw model register</b>：上游 <code>GET /models</code> 扫到什么，这条的 <code>models[]</code> 就换成什么。<br><b>旧清单整个被替掉</b>（上游下线的也会从这条里消失），密钥一并换成这次的。要的是「拿回一条已删的供应商」，走「+ 新增条目」。`
+      ? `自扫 = 拿这条的 <b>baseUrl + 密钥</b>直接问供应商 <code>GET /models</code>，然后把编目里的清单换成它的：<br>供应商有、编目没有 —— <b>补上</b>；编目有、供应商已经没了 —— <b>删掉</b>。整个 <code>models[]</code> 替掉，所以编目里永远存的是供应商此刻的真实清单。密钥一并换成这次的。`
       : `登记 = <b>nw model register</b>：先扫上游 <code>GET /models</code>（全收，不做勾选），再写 <code>models.json</code> 并打一个 git commit。<br>五道闸哪道没过，<b>编目一个字节都不会动</b>。慢的时候能到 2 分钟 —— 卡在最后那步 git push。` });
     let noteSlot = note;
     const swapNote = (node) => { noteSlot.replaceWith(node); noteSlot = node; };
@@ -376,7 +372,7 @@ function registerDialog(opts = {}) {
       el("div", { class: "top" },
         el("span", { class: "icon", "aria-hidden": "true", html: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>` }),
         el("div", { class: "grow" },
-          el("h2", { id: "reg-title", text: isUpdate ? "重扫 / 换密钥" : "往编目里加一个供应商" }),
+          el("h2", { id: "reg-title", text: isUpdate ? "自扫：" + target.name : "往编目里加一个供应商" }),
           el("div", { class: "sub" }, isUpdate
             ? el("span", { class: "mono", text: target.name })
             : null,
@@ -459,10 +455,10 @@ function registerDialog(opts = {}) {
         if (bad) { bad.classList.add("bad"); bad.focus(); return; }
       }
 
-      // 重扫且没填密钥 = 把那把密钥的事交给服务器（它自己从 /secret 取）。
+      // 自扫且没填密钥 = 把那把密钥的事交给服务器（它自己从 /secret 取）。
       // 这样「让模型清单跟上上游」不用先把密钥贴回浏览器一遍。
       const reuseKey = isUpdate && !key;
-      const endpoint = reuseKey ? "v1/rescan" : "v1/register";
+      const endpoint = reuseKey ? "v1/selfscan" : "v1/register";
       const payload = reuseKey ? { name: target.name } : { baseUrl, api, name, key };
 
       fKey.value = "";                       // 密钥只活在这次请求的 body 里
@@ -492,7 +488,7 @@ function registerDialog(opts = {}) {
       const head = el("div", { class: "headline" });
       const gates = Array.isArray(r.gates) ? r.gates : [];
       if (r.ok) {
-        const verb = r.updated ? "覆盖写" : "新建";
+        const verb = isUpdate ? "清单已换成供应商此刻的" : r.updated ? "覆盖写" : "新建";
         head.append(el("span", { class: "good", text: "✓ " }));
         head.append(el("b", { text: r.name }));
         head.append(el("span", { text: ` · ${r.modelCount} 个模型 · ${verb}` }));
@@ -505,8 +501,8 @@ function registerDialog(opts = {}) {
         );
         swapNote(note2);
         flash(r.partial
-          ? `已登记 ${r.name}（${r.modelCount} 个模型），但 git push 没推上去`
-          : `已登记 ${r.name} · ${r.modelCount} 个模型 · ${verb}`, r.partial ? "warn" : "ok");
+          ? `已${isUpdate ? "自扫" : "登记"} ${r.name}（${r.modelCount} 个模型），但 git push 没推上去`
+          : `已${isUpdate ? "自扫" : "登记"} ${r.name} · ${r.modelCount} 个模型 · ${verb}`, r.partial ? "warn" : "ok");
         load();
         finish(true);
       } else {
@@ -679,27 +675,12 @@ const modelBar = (models) => {
 
 function card(entry) {
   const msg = el("div", { class: "msg" });
-  const driftBox = el("div", { class: "drift hidden" });
   const acts = el("div", { class: "acts" });
 
   acts.append(
     el("button", {
-      text: "自查",
-      title: "POST /api/model/recheck —— 编目跟上游 /models 比，报新增 / 下线 / 漂移",
-      onclick: (e) => busy(e.target, "比上游…", async () => {
-        const r = await post("v1/recheck", { name: entry.name });
-        msg.className = r.drifts.length ? "msg warn" : "msg ok";
-        msg.textContent = r.drifts.length ? `${entry.name}：${r.drifts.length} 处漂移` : `${entry.name}：跟上游一致`;
-        driftBox.replaceChildren(...r.drifts.map((d) => {
-          const kind = { model_added: "上游多", model_removed: "上游下线", model_changed: "变了" }[d.kind] || d.kind;
-          return el("div", { class: "d", html: `<b>${kind}</b> · ${(d.model || d.name || "").replace(/[<>&]/g, "")}` });
-        }));
-        driftBox.classList.toggle("hidden", !r.drifts.length);
-      }),
-    }),
-    el("button", {
-      text: "重扫",
-      title: "同名同 baseUrl 重跑 register = 覆盖写：模型清单换成本次扫到的，密钥可换可不换",
+      text: "自扫",
+      title: "拿这条的 baseUrl + 密钥直接问供应商 /models，然后把编目里的清单换成它的 —— 多删少补，整个替掉",
       onclick: () => registerDialog({ entry }),
     }),
     el("button", {
@@ -765,7 +746,6 @@ function card(entry) {
               ...entry.usedBy.map((u) => el("button", { class: "tagchip click", text: u, title: "看它在 recipe.yaml 里怎么指这一条", onclick: () => recipeDialog(u, entry) })))
           : el("div", { class: "row" }, el("span", { class: "lab", text: "配方式子" }), el("span", { class: "none", text: "没有配方在用" })),
         msg,
-        driftBox,
       ),
       entry.models.length ? modelBar(entry.models) : el("div", { class: "none", text: "（这条没有模型清单）" }),
     ),

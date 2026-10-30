@@ -20,11 +20,11 @@
 //   GET    /healthz
 //   GET    /v1/state               编目全量（条目 + 模型 id + usedBy + 密钥形状）
 //   GET    /v1/secret/:name        明文，唯一出口（眼睛按钮才点）
-//   POST   /v1/recheck  {name?}    编目自己跟上游比；不带 name = 全量
 //   POST   /v1/delete   {name}     删一条（服务端核 name 非空，其余交给面板）
 //   POST   /v1/register {baseUrl, api, key, name?}   登记一条，回闸簿（ok:false 也回 200，
 //                                  带着 data.gates 让前端把哪道闸没过摆出来）
-//   POST   /v1/rescan   {name}     用编目里现有的密钥重扫一遍（覆盖写；引用形态直接拒）
+//   POST   /v1/selfscan {name}     自扫：拿这条的 baseUrl + 编目里的密钥问供应商，把清单换成它的
+//                                  （多删少补；引用形态密钥直接拒 —— register 不展开 $ENV）
 //   GET    /v1/recipe/:name/source 配方 recipe.yaml 原文（回答「谁在用它」）
 //
 // 环境：PORT（默认 4780）、NW_BASE（默认 tailnet 8443）、NW_TOKEN（走 panel-gate 时才要）
@@ -36,7 +36,6 @@ const NW_BASE = (process.env.NW_BASE || "https://j1900.tail8d0018.ts.net:8443").
 const NW_TOKEN = process.env.NW_TOKEN || "";
 const READ_MS = 15000;
 const WRITE_MS = 130000; // register/rm 会扫上游 + git commit，面板自己 2 分钟就放弃
-const RECHECK_MS = 130000;
 
 const nwHeaders = () => (NW_TOKEN ? { authorization: `Bearer ${NW_TOKEN}` } : {});
 
@@ -108,26 +107,6 @@ async function loadLedger() {
 }
 
 // ── 动作 ──────────────────────────────────────────────────────────────────
-async function doRecheck(name) {
-  const data = await nw("/api/model/recheck", {
-    method: "POST",
-    body: name ? { name } : {},
-    timeout: RECHECK_MS,
-  });
-  // 202 的作业：面板已经把 nw 跑完了才回，所以这里拿到的是终局。
-  const drifts = Array.isArray(data.drifts) ? data.drifts : Array.isArray(data.diff) ? data.diff : [];
-  return {
-    ok: true,
-    scope: name || "全量",
-    drifts: drifts.map((d) => ({
-      kind: String(d.kind ?? d.type ?? "?"),
-      model: d.model ?? d.id ?? "",
-      name: d.name ?? "",
-    })),
-    summary: data.summary ?? null,
-  };
-}
-
 async function doDelete(name) {
   const clean = String(name ?? "").trim();
   if (!clean) throw new Error("没给名字");
@@ -204,12 +183,13 @@ async function doRegister(input) {
   }
 }
 
-// 重扫：用**编目里现有的密钥**把同一条重登一遍（同名同 baseUrl = 覆盖写）。
-// 密钥只在这台服务器的内存里拐一道 —— 它从不进浏览器，所以页面不需要为了一次重扫
+// 自扫：拿这条自己的 baseUrl + 密钥去问供应商 `/models`，然后把编目里的清单换成它的 ——
+// 上游有账内无的补上、账内有上游无的删掉（整个 models[] 替换，同名同 baseUrl = 覆盖写）。
+// 密钥只在这台服务器的内存里拐一道 —— 它从不进浏览器，所以页面不需要为了一次自扫
 // 逼人把密钥再贴一遍。但 `$ENV` / `!cmd` 引用这条走不通：register 不展开引用，
 // 拿引用字面量去扫上游必 401（`internal/modelcatalog/register.go` 的已知缺口），
 // 所以直接拒，并让人去表单里手动填一次真身。
-async function doRescan(name) {
+async function doSelfScan(name) {
   const clean = String(name ?? "").trim();
   if (!clean) throw new Error("没给名字");
   const ls = await nw("/api/model");
@@ -293,11 +273,6 @@ async function route(req, res) {
     });
   }
 
-  if (path === "/v1/recheck" && req.method === "POST") {
-    const body = await readBody(req);
-    return send(res, 200, await doRecheck(body.name ? String(body.name) : ""));
-  }
-
   if (path === "/v1/delete" && req.method === "POST") {
     const body = await readBody(req);
     return send(res, 200, await doDelete(body.name));
@@ -309,10 +284,10 @@ async function route(req, res) {
     return send(res, 200, await doRegister(body));
   }
 
-  if (path === "/v1/rescan" && req.method === "POST") {
+  if (path === "/v1/selfscan" && req.method === "POST") {
     const body = await readBody(req);
     try {
-      return send(res, 200, await doRescan(body.name));
+      return send(res, 200, await doSelfScan(body.name));
     } catch (error) {
       return send(res, 200, { ok: false, error: String(error?.data ? (error.data.warnings?.[0] ?? error.message) : error.message ?? error), gates: gateRows(error?.data?.gates) });
     }

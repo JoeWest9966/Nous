@@ -1,6 +1,6 @@
 # k5411g · Nous Warehouse 模型编目
 
-这一页只做一件事：**把 Nous Warehouse 的模型编目摆出来，能在上面新增、重扫、自查、看密钥、删一条，
+这一页只做一件事：**把 Nous Warehouse 的模型编目摆出来，能在上面新增、自扫、看密钥、删一条，
 并且看得到「这条到底被哪一行配方指着」。**
 
 它不读本机、不比对、不做同步。上一版是「编目 × 本机」的对账页，本机那半边已经整个删掉了 ——
@@ -12,7 +12,7 @@
 
 - `NW_BASE` 默认 `https://j1900.tail8d0018.ts.net:8443`（tailscale serve，tailnet only，免 token）。
 - `NW_TOKEN` 只在绕 `panel-gate` 的 `:8080` 上才需要（`Authorization: Bearer`）。
-- 这一页**没有任何写文件的代码** —— 唯一的写都是通过编目自己的 REST（register / recheck / delete）。
+- 这一页**没有任何写文件的代码** —— 唯一的写都是通过编目自己的 REST（register / delete）。
 
 ## 一条条目长什么样（ls 投影）
 
@@ -34,22 +34,25 @@
 | 动作 | 走哪 | 会改什么 | 风险 |
 |---|---|---|---|
 | 新增 | `POST /api/model`（`/v1/register` 转一手） | 扫上游 `/models` 全量，写 `models.json` + 打一个 git commit | 过闸才写；同名同 baseUrl = 覆盖写 |
-| 重扫 | `POST /api/model`（`/v1/rescan` 转一手，密钥由服务器代取） | 同上，但只动**已经存在着**的那一条 | 旧 `models[]` **整个被替掉**，密钥一并换掉 |
-| 自查 | `POST /api/model/recheck` | 什么都不改，只比上游 `/models` | 无（202 作业，面板 2 分钟上限，超时那次其实可能已经落账） |
+| 自扫 | `POST /api/model`（`/v1/selfscan` 转一手，密钥可由服务器代取） | 同上，只动**已经存在着**的那一条 | 旧 `models[]` **整个被替掉**，密钥一并换掉 |
 | 密钥 | `GET /api/model/{名}/secret` | 不改，取一次明文就丢 | 剪贴板里会留一份；页面不缓存 |
 | 删除 | `DELETE /api/model/{名}` | 改 `models.json` + 打一个 git commit | **不可逆，且没有「谁在用」的保护** |
 
-## 重扫 = 覆盖写，不是「编辑」
+## 自扫 = 拿供应商的真话覆盖编目，不是「编辑」
 
 `registerDialog({entry})` 复用登记的弹窗，但把**名字和 baseUrl 定死**（`readOnly`）—— 改了那就是
 另一条记录（同名不同 baseUrl 会被硬拒），不叫编辑。想换名字只有一个办法：删了重登。
 
-- **密钥留空 = 走 `/v1/rescan`。** 服务器自己 `GET /api/model/{名}/secret` 拿到真身后直接重登，
-  密钥**从不进浏览器**。为了一次重扫逼人把密钥再贴回页面，等于自己把「只有眼睛按钮才给密钥」废了。
+自扫做的就一件事：用这条自己的 `baseUrl` + 密钥问供应商 `GET /models`，把编目里的 `models[]`
+**整个换成它的** —— 上游有、账内无的补上，账内有、上游无的删掉，顺带把密钥换成这次用的。
+所以「编目里存的就是供应商此刻的真实清单」靠的是重跑一次自扫，不是靠比一比就算了。
+
+- **密钥留空 = 走 `/v1/selfscan`。** 服务器自己 `GET /api/model/{名}/secret` 拿到真身后直接重登，
+  密钥**从不进浏览器**。为了一次自扫逼人把密钥再贴回页面，等于自己把「只有眼睛按钮才给密钥」废了。
 - **`$ENV` / `!cmd` 引用条目必须手填。** `register` 不展开引用，拿引用字面量去扫上游必 401
-  （`internal/modelcatalog/register.go` 的已知缺口）。`/v1/rescan` 直接拒并说清原因，不让人白等 2 分钟。
-- **「重扫」与「自查」是两件事**：自查只告诉上游多了/少了什么，重扫是真的把清单换掉。
-  所以自查的按钮文案是「比上游」，重扫的弹窗里明说「旧清单整个被替掉」。
+  （`internal/modelcatalog/register.go` 的已知缺口）。`/v1/selfscan` 直接拒并说清原因，不让人白等 2 分钟。
+- **`nw model recheck` 那套「只报告不写」的只读对账页已经删了**（2026-10-29 家长裁定）：
+  要的是一键对齐，不是先看报告再点第二次。`POST /api/model/recheck` 还在面板上，这一页不再用它。
 
 ## 谁在用它：`usedBy` 是可点的
 
@@ -121,6 +124,6 @@ GET    /                       这一页
 GET    /healthz                { ok, ledger }
 GET    /v1/state               { at, ledger:{ok,base,entries[]}, summary:{entries,models}, error? }
 GET    /v1/secret/:name        { ok, name, key, shape }       唯一明文出口
-POST   /v1/recheck  {name?}    { ok, scope, drifts[], summary }  不带 name = 全量
+POST   /v1/selfscan {name}     { ok, name, baseUrl, api, modelCount, modelIds[], gates[], partial, warnings[] }
 POST   /v1/delete   {name}     { ok, name, action, remaining, partial, warnings[] }
 ```
