@@ -84,6 +84,7 @@ GET  /                            那棵树
 GET  /v1/device                   我是谁、模型、编目状态
 GET  /v1/models                   items[]（含档位表/窗口/输出上限）+ catalog{base,at,error,providers[],skipped[]}
 POST /v1/catalog/refresh          重拉编目与密钥（换密钥 / 编目里加了供应商之后）
+GET  /skills                     技能页（装 / 卸，给人点的）
 GET  /v1/skills                   已装 + 编目里能装的（按 repo 去重后的 38 条）+ catalog{base,at,error}
 POST /v1/skills/install           {source, entry}（或 {repo, path}）→ 拉到 data/skills/
 POST /v1/skills/uninstall         {name}（会话还选着它的，静默失效，不报错）

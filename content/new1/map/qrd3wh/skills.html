@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>qrd3wh · 技能</title>
+<link rel="stylesheet" href="pocket.css">
+<!--
+  技能页。它只管两件事：装（从 nw 编目拉到 data/skills/）、卸。
+
+  「哪条会话会哪些技能」**不在这里**——那是会话的配置，跟模型、思考档位一起在建会话那页勾。
+  这一页装完就退场：装好的技能出现在新对话弹窗的第四列里。
+-->
+<style>
+  :root { --text-size: 14px; }
+  html, body { height: 100%; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+
+  header {
+    flex: 0 0 auto; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 14px 20px 12px; border-bottom: 1px solid var(--hair);
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; }
+  header .meta { font-size: 12px; color: var(--muted); }
+  header .meta b { color: var(--text); font-weight: 600; }
+  header .back { margin-left: auto; font-size: 12.5px; color: var(--muted); text-decoration: none; }
+  header .back:hover { color: var(--text); }
+
+  .bar { flex: 0 0 auto; display: flex; gap: 10px; align-items: center; padding: 10px 20px; border-bottom: 1px solid var(--hair); }
+  .bar input {
+    flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--text);
+    background: var(--field, rgba(255,255,255,.04)); border: 1px solid var(--hair);
+    border-radius: 999px; padding: 7px 14px;
+  }
+  .bar input:focus { outline: 2px solid var(--accent-line); outline-offset: -1px; }
+  .bar button {
+    font: inherit; font-size: 12.5px; color: var(--muted); background: none;
+    border: 1px solid var(--hair); border-radius: 999px; padding: 6px 12px; cursor: pointer;
+  }
+  .bar button:hover { color: var(--text); }
+
+  .scroller { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 40px; scrollbar-gutter: stable; }
+  h2 { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: .04em; margin: 22px 0 8px; }
+  h2:first-child { margin-top: 0; }
+
+  .card {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 11px 0; border-bottom: 1px solid var(--hair);
+  }
+  .card .body { flex: 1; min-width: 0; }
+  .card .name { font-family: var(--mono); font-size: 13px; color: var(--text); }
+  .card .name .on { color: var(--accent); }
+  .card .desc { font-size: 12.5px; line-height: 1.5; color: var(--muted); margin-top: 3px; }
+  .card .src { font-size: 11.5px; color: var(--muted); opacity: .8; margin-top: 4px; font-family: var(--mono); }
+  .card .act { flex: 0 0 auto; }
+  .card .act button {
+    font: inherit; font-size: 12.5px; padding: 5px 13px; border-radius: 999px; cursor: pointer;
+    color: var(--text); background: var(--accent-soft); border: 1px solid var(--accent-line);
+  }
+  .card .act button.ghost { background: none; border-color: var(--hair); color: var(--muted); }
+  .card .act button:disabled { opacity: .5; cursor: default; }
+
+  .empty { font-size: 12.5px; color: var(--muted); padding: 10px 0 4px; }
+  .err { font-size: 12.5px; color: var(--s1, #d14d41); padding: 10px 20px; border-bottom: 1px solid var(--hair); }
+  .notice { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 18px 0 0; padding-top: 12px; border-top: 1px solid var(--hair); }
+  .notice code { font-family: var(--mono); font-size: 11.5px; }
+  .tag { font-size: 10.5px; font-family: var(--mono); color: var(--muted); border: 1px solid var(--hair); border-radius: 999px; padding: 1px 7px; margin-left: 6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>技能</h1>
+  <span class="meta" id="meta">读编目…</span>
+  <a class="back" href="./">← 对话</a>
+</header>
+
+<div class="bar">
+  <input id="q" type="search" placeholder="按名字 / 路径筛编目…" autocomplete="off">
+  <button id="reload">重拉编目</button>
+</div>
+<div id="err"></div>
+
+<div class="scroller">
+  <h2>已装 · 会进提示词的候选</h2>
+  <div id="installed"></div>
+  <h2 id="availHead">编目里能装的</h2>
+  <div id="available"></div>
+  <p class="notice">
+    装 = 把仓库里的那一份拉到 <code>data/skills/&lt;名&gt;/</code>，连 <code>scripts/</code>、<code>references/</code> 一起，
+    模型用 <code>read</code> 自己读，<code>bash</code> 也能跑里面的脚本。<br>
+    <b>装了不等于生效</b>：哪条会话用它，在建会话那页的第四列里勾。装了但没勾的，一个 token 都不占。
+  </p>
+</div>
+
+<script type="module">
+// 地址一律相对（宿主把它反代在 /p/<board>/<id>/ 下），一个 "/v1/..." 都不写死。
+const $ = (id) => document.getElementById(id);
+const get = (url) => fetch(url).then(async (r) => {
+  const body = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+  return body;
+});
+const post = (url, body) => fetch(url, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}),
+}).then(async (r) => {
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
+  return data;
+});
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// 动作在跑的时候按钮必须真的 disabled，并且**在 busy 清掉之后**再画一次 ——
+// 否则看起来像「按钮没反应」，其实是自己把自己锁死了。
+let busy = null;
+
+async function load() {
+  $("err").innerHTML = "";
+  const data = await get("v1/skills");
+  const installed = data.installed ?? [];
+  const items = data.items ?? [];
+  const catalog = data.catalog ?? {};
+
+  $("meta").innerHTML = `已装 <b>${installed.length}</b> · 编目 <b>${items.length}</b>`
+    + (catalog.error ? ` · <span style="color:var(--s1,#d14d41)">编目挂了</span>` : "");
+  if (catalog.error) $("err").innerHTML = `<div class="err">编目读不到：${esc(catalog.error)}（地址 ${esc(catalog.base)}）</div>`;
+
+  $("installed").innerHTML = installed.length ? installed.map((s) => `
+    <div class="card">
+      <div class="body">
+        <div class="name"><span class="on">✓</span> ${esc(s.name)}${s.hidden ? '<span class="tag">只手动</span>' : ""}</div>
+        <div class="desc">${esc(s.description)}</div>
+        <div class="src">${esc(s.repo)} · ${esc(s.sha?.slice(0, 7) ?? "?")} · ${esc(s.dir)}</div>
+      </div>
+      <div class="act"><button class="ghost" data-un="${esc(s.name)}" ${busy ? "disabled" : ""}>卸载</button></div>
+    </div>`).join("") : `<div class="empty">一个都还没装。下面挑一个，或者直接去新对话页勾选（那边只列已装的）。</div>`;
+
+  const q = $("q").value.trim().toLowerCase();
+  const have = new Set(installed.map((s) => s.name));
+  const shown = items.filter((it) => !q || `${it.entry} ${it.path} ${it.source}`.toLowerCase().includes(q));
+  $("availHead").textContent = q ? `编目里能装的 · 匹配 ${shown.length}` : `编目里能装的 · ${items.length}`;
+  $("available").innerHTML = shown.length ? shown.map((it) => `
+    <div class="card">
+      <div class="body">
+        <div class="name">${esc(it.entry)}${have.has(it.entry) ? '<span class="tag">已装</span>' : ""}</div>
+        <div class="src">${esc(it.source)} · ${esc(it.path)}${(it.category ?? []).length ? " · " + esc(it.category.join(" / ")) : ""}</div>
+      </div>
+      <div class="act"><button data-in="${esc(it.source)}|${esc(it.entry)}" ${busy || have.has(it.entry) ? "disabled" : ""}>${have.has(it.entry) ? "已装" : "安装"}</button></div>
+    </div>`).join("") : `<div class="empty">编目里没有匹配的条目。</div>`;
+}
+
+async function run(work) {
+  busy = work;
+  await load().catch(() => {});
+  try {
+    await work();
+  } catch (error) {
+    $("err").innerHTML = `<div class="err">${esc(error.message ?? error)}</div>`;
+  } finally {
+    busy = null;
+    await load().catch((error) => {
+      $("err").innerHTML = `<div class="err">${esc(error.message ?? error)}</div>`;
+    });
+  }
+}
+
+document.addEventListener("click", (e) => {
+  const un = e.target.closest?.("[data-un]");
+  if (un) return run(() => post("v1/skills/uninstall", { name: un.dataset.un }));
+  const ins = e.target.closest?.("[data-in]");
+  if (ins) {
+    const [source, entry] = ins.dataset.in.split("|");
+    ins.textContent = "装…";   // 拉 tarball 要一两秒，别让人以为没点上
+    return run(() => post("v1/skills/install", { source, entry }));
+  }
+});
+
+$("q").oninput = () => load().catch(() => {});
+$("reload").onclick = () => run(() => post("v1/skills/refresh", {}));
+
+await load().catch((error) => {
+  $("err").innerHTML = `<div class="err">${esc(error.message ?? error)}</div>`;
+});
+</script>
+</body>
+</html>
