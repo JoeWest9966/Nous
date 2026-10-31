@@ -48,36 +48,47 @@ pi-ai provider（内存）                                        ← 运行时�
 非 reasoning 只有 `["off"]`；reasoning 的上 `low..high` 默认都在。服务端收档位时用
 `fitLevel()` 夹回模型真有的那一档再落盘（客户端发的值不可信）—— 面板显示 A、库里存 B 是要防的病。
 
-## 自研扩展住在这儿：`extensions/`
+## 自研扩展住在另一个仓库：`Nous-extend`
+
+**源码不在这棵树里。** 在 `NOUS_EXTEND`（默认 `/opt/Nous-extend`，GitHub 同名仓库）——
+块里只留两件事：去哪儿拿（`server.js` 顶部那两行动态 import）+ 钉着哪个 commit
+（`extensions.lock.json`）。
 
 ```
-extensions/
-  manifest.json      清单的真相 —— 谁要读「我们开发了哪些扩展」，读它，别解析代码
-  nous.js            静态扩展：export default defineExtension({...})，零参数
-  skills/index.js    工厂扩展：createSkills({dir, registry}) 返回 {extension, install, …}
+/opt/Nous-extend/
+  index.json        ← 扫出来的目录（`node index.mjs`），别手改
+  nous/  nous.json + index.js
+  skills/ nous.json + index.js
 ```
 
-两种形态，区别只在**装它之前要不要先喂东西**：
+**每个扩展都是「造扩展的函数」，宿主递 api 进去**：
 
-| kind | 长什么样 | 装法 |
-|---|---|---|
-| `static` | `export default defineExtension({…})` | `registry.install(mod.default)` |
-| `factory` | `export default createXxx(host)` | `const x = await createXxx({dir, registry}); registry.install(x.extension)` |
+```js
+const api = { defineExtension, section };
+const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
+registry.install(createNous(api));
+const skills = await createSkills({ dir, registry, api });
+```
 
-`manifest.json` 里的 `needs` 就是那条配置契约（skills 要 `dir` + `registry`）。**清单读 manifest，
-不读代码** —— 将来 vbe4pt 的前端接这个文件，才不用去解析 ts。
+Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durable**。仓库住在宿主的
+`node_modules` 之外，自己去找它只剩符号链接或者本地重装一份两个下策 —— 前者离开宿主就断，
+后者版本会漂。递 api 之后那个仓库只用 node 内置模块，能单独 checkout、单独跑测试。
 
-两条不进清单：
+`nous.json` 是给宿主和人看的清单（`file` / `entry` / `needs` / `sections` / `default`），
+**不进提示词**。以前块里的 `extensions/manifest.json` 已拆成每目录一份，跟着代码走。
+
+三条不进清单：
 
 - **pi-durable 自带的**（`CodingTools` 那四件套）—— 不是我们开发的。谁写的代码谁进账。
 - **`skill:<名>` 名牌** —— 运行时 `skillExtension(name)` 现造的家族，装 38 条技能就是 38 个空对象。
   列进清单会变成 40 行里 38 行是生成物，没人看得懂。它归「skills 扩展派生」这一个条目。
+- **技能内容** —— 落 `data/skills/`，是数据不是代码。
 
 **扩展名就是 API**：会话里存的是名字不是对象（durable 的 `AgentState`），改 `name` = 破坏性变更。
 
 ## 技能：内容在盘上，选择在会话里
 
-`extensions/skills/index.js`。跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read`
+`Nous-extend/skills/index.js`。跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read`
 去读正文、同样按 SKILL.md 所在目录展开相对路径），所以给 pi 写的技能直接能用。
 
 **三层，只有第三层跟代码有关系：**

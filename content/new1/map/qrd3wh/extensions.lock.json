@@ -1,0 +1,10 @@
+{
+  "_about": [
+    "钉住 Nous-extend 仓库的那个 commit —— 扩展源码在仓库里，版本钉在这儿。",
+    "属于使用方，不属于仓库：仓库说「我有什么」，这份说「我这条正在跑哪一版」。",
+    "改完扩展记得更新 commit；忘了的话块启动时会 console.error 一句（不拦）。"
+  ],
+  "repo": "JoeWest9966/Nous-extend",
+  "path": "/opt/Nous-extend",
+  "commit": "6fa2cf5ce51af33675c53d668eeb0bd4b63ed625"
+}

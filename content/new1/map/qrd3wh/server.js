@@ -27,6 +27,8 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,13 +37,17 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { contentText } from "@earendil-works/pi-ai/utils/text";
-import { AssistantEntry, Harness, createRegistry, defineDoc, watchEvents } from "@earendil-works/pi-durable";
+import { AssistantEntry, Harness, createRegistry, defineDoc, defineExtension, section, watchEvents } from "@earendil-works/pi-durable";
 import { CodingTools, createBashTool, createEditTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { installCatalog } from "./catalog.js";
-// 自研扩展住在 extensions/ —— 清单和它在一起（`extensions/manifest.json`）。
-// 这里只接线：import 进来、装进 registry、列进默认选择。
-import nous from "./extensions/nous.js";
-import { createSkills, skillExtension, skillNamesOf } from "./extensions/skills/index.js";
+// 自研扩展的**源码不在这棵树里** —— 在 Nous-extend 仓库的本地副本（`NOUS_EXTEND`）。
+// 块里只留两件事：去哪儿拿（下面这两行）+ 钉着哪个 commit（extensions.lock.json）。
+// 用动态 import 是因为路径得能配；静态 import 只能写字面量，一换机器就炸。
+const EXTEND = process.env.NOUS_EXTEND ?? "/opt/Nous-extend";
+// 扩展是造扩展的函数，宿主把 api 递进去 —— 它们不自己 import pi-durable（见仓库 README）。
+const api = { defineExtension, section };
+const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
+const { createSkills, skillNamesOf } = await import(`${EXTEND}/skills/index.js`);
 // 回放提示词增量 —— 自己在 `prompt-log.js`，纯读，能单验。
 import { replayPrompt } from "./prompt-log.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -49,9 +55,22 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 
 const ctx = BACKGROUND_CONTEXT;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const run = promisify(execFile);
 const PORT = Number(process.env.PORT ?? 4780);
 const DATA = process.env.NOUS_DATA ?? path.join(HERE, "data");
 const startedAt = Date.now();
+
+// lock 不钉就是没钉：启动时说一句实话。不一致**不拦** —— 开发时天天不一致，
+// 拦了每次改扩展都得先提交；它只负责让人知道自己跑的不是钉的那版。
+try {
+  const lock = JSON.parse(await readFile(path.join(HERE, "extensions.lock.json"), "utf8"));
+  const head = (await run("git", ["-C", EXTEND, "rev-parse", "HEAD"])).stdout.trim();
+  if (head !== lock.commit) {
+    console.error(`[extend] ${EXTEND} 在 ${head.slice(0, 7)}，lock 钉的是 ${lock.commit.slice(0, 7)}`);
+  }
+} catch (error) {
+  console.error("[extend] lock 没读出来，或 git 不在：", String(error?.message ?? error));
+}
 
 // 会话名不在 ConversationRecord 里（那东西没有 name 字段），也不许进 tree.json。
 // 存在一个 session 级文档里 —— 名字是这盘的状态，跟棋谱一起落 sqlite。
@@ -231,12 +250,14 @@ registry.install(CodingTools);
 
 // ── 提示词 ───────────────────────────────────────────────────────────────
 //
-// 提示词一类的自研扩展（`nous` = 自我介绍 + cwd）在 `extensions/nous.js`，不再写在这儿。
+// 提示词一类的自研扩展（`nous` = 自我介绍 + cwd）在 Nous-extend 仓库的 `nous/`，不写在这儿。
 // 当初为什么先有它再有 skills：registry 里只有 CodingTools 时一条 section 都没有，
 // 系统提示词是空的 —— 技能清单挂上去会像「一个不知道自己是谁的家伙手里拿着一张技能表」。
 
-const skills = await createSkills({ dir: path.join(DATA, "skills"), registry });
-registry.install(nous);
+const nousExtension = createNous(api);
+const skills = await createSkills({ dir: path.join(DATA, "skills"), registry, api });
+const { skillExtension } = skills;
+registry.install(nousExtension);
 registry.install(skills.extension);
 await skills.load();
 // 老收据补齐版本：后台跑，别把启动卡在 clone 上。
@@ -250,7 +271,7 @@ const harness = await Harness.open(
     env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? HERE }),
     // 默认选择只放**真扩展**：空名牌（skill:<名>）装了但不默认选 —— 否则每条新会话
     // 一出生就吃 38 条描述，progressive disclosure 当场作废。
-    settings: { extensions: [CodingTools, nous, skills.extension] },
+    settings: { extensions: [CodingTools, nousExtension, skills.extension] },
     // 新会话一出生就带一张自己的名字卡片，省得后面到处判空。
     conversationCreated: async (tx, conversation) => {
       const doc = await tx.doc(Sessions);
