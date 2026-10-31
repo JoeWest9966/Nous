@@ -145,10 +145,33 @@ POST /v1/sessions                 {name, model, thinkingLevel, skills}
 POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills}
 POST /v1/sessions/:id/messages    {content, requestId?, waitMs?}
 GET  /v1/sessions/:id/events      SSE
-GET  /v1/sessions/:id/entries     ?system=1 把 pi.system 的 sections 原样放出来（调试提示词用）
+GET  /v1/sessions/:id/entries     ?system=1 额外给 items[].delta + system（调试提示词用）
 ```
 
 环境：`PORT`（默认 4780）、`NOUS_DATA`、`NW_BASE`（默认 tailnet 8443）、`NW_TOKEN`（走 panel-gate 才要）。
+
+### 提示词是增量的 —— `?system=1` 得回放才看得见
+
+durable 存提示词不存全文，存**差值**：每个 `pi.system` 条目只带变了的段
+（`message.sections` 是 `{key: 文本 | null}`，`null` = 这一段被删），工具同理
+（`toolsAdded` / `toolsRemoved`）。所以「这一条 system 里有什么」永远答不了
+「这一轮提示词里有什么」。
+
+`prompt-log.js` 的 `replayPrompt()` 按时间顺序回放整条会话，给出**此刻生效**的提示词。
+`?system=1` 于是给两样，别搞混：
+
+```
+items[].delta   { sections, toolsAdded, toolsRemoved }   这一条自己带了什么（增量原文）
+system          { sections, tools, scanned, truncated }  回放后此刻生效的（人真正想看的）
+```
+
+两条实测才知道的事：
+
+- **`sections` 是对象不是数组**，而且只在**变化**时出现 —— 一条只换工具的 system 条目
+  里根本没有 `sections` 这个键。原来那版直接读 `message.sections` 再当全量显示，
+  结果是永远 `null`。
+- **没跑过的会话，回放就是空的**，而且这是对的：段还没被渲染过，库里就没东西可回放。
+  `scanned` 一栏就是为了让人能分辨「空」和「没读到」。
 
 ## 不做什么
 

@@ -18,7 +18,7 @@
 //   GET  /v1/skills                   已装技能 + 编目里能装的（skills.js）
 //   POST /v1/skills/install           {source, entry} → 拉下来落到 data/skills/
 //   POST /v1/skills/uninstall         {name}
-//   GET  /v1/sessions/:id/entries     历史（新的在前；?system=1 把 pi.system 也放出来）
+//   GET  /v1/sessions/:id/entries     历史（新的在前；?system=1 额外给一份回放后的提示词）
 //   POST /v1/sessions/:id/messages    {content, requestId?, waitMs?}
 //   GET  /v1/sessions/:id/events      SSE
 //   POST /v1/sessions/:id/abort
@@ -42,6 +42,8 @@ import { installCatalog } from "./catalog.js";
 // 这里只接线：import 进来、装进 registry、列进默认选择。
 import nous from "./extensions/nous.js";
 import { createSkills, skillExtension, skillNamesOf } from "./extensions/skills/index.js";
+// 回放提示词增量 —— 自己在 `prompt-log.js`，纯读，能单验。
+import { replayPrompt } from "./prompt-log.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -612,9 +614,12 @@ const route = async (req, res, url) => {
     if (req.method === "GET" && rest === "entries") {
       const limit = Math.min(Number(url.searchParams.get("limit") ?? 200) || 200, 1000);
       const page = await conversation.entries({}, limit, undefined, ctx);
-      // pi.system 是工具目录 + 提示词增量：界面上不收它（一整屏噪音），但调试要看得见 ——
-      // `?system=1` 把它的 sections 原样放出来，一个人能直接看出这一轮提示词里到底有什么。
+      // pi.system 是工具目录 + 提示词增量：界面上不收它（一整屏噪音），但调试要看得见。
+      // `?system=1` 给两样，别搞混：
+      //   items[].delta —— 这一条**自己**带了什么（增量原文）
+      //   system        —— 回放整条会话后**此刻生效**的提示词（人真正想看的是这个）
       const withSystem = url.searchParams.get("system") === "1";
+      const system = withSystem ? await replayPrompt(conversation, ctx) : undefined;
       return json(res, 200, {
         items: page.items
           .filter((entry) => withSystem || entry.kind !== "pi.system")
@@ -627,12 +632,16 @@ const route = async (req, res, url) => {
                   return {
                     id: entry.id,
                     kind: entry.kind,
-                    sections: message.sections ?? null,
-                    tools: (message.toolsAdded ?? []).map((tool) => tool.name),
+                    delta: {
+                      sections: message.sections ?? null,
+                      toolsAdded: (message.toolsAdded ?? []).map((tool) => tool.name),
+                      toolsRemoved: (message.toolsRemoved ?? []).map((tool) => tool.name),
+                    },
                   };
                 })()
               : { id: entry.id, kind: entry.kind, text: textOfEntry(entry), parent: entry.head ?? null },
           ),
+        ...(system ? { system } : {}),
         next: page.next ?? null,
       });
     }
