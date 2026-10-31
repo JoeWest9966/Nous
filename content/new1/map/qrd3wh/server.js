@@ -47,7 +47,7 @@ const EXTEND = process.env.NOUS_EXTEND ?? "/opt/Nous-extend";
 // 扩展是造扩展的函数，宿主把 api 递进去 —— 它们不自己 import pi-durable（见仓库 README）。
 const api = { defineExtension, section };
 const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
-const { createSkills, skillNamesOf } = await import(`${EXTEND}/skills/index.js`);
+const { createSkills, skillNamesOf, SKILL_PREFIX } = await import(`${EXTEND}/skills/index.js`);
 // 回放提示词增量 —— 自己在 `prompt-log.js`，纯读，能单验。
 import { replayPrompt } from "./prompt-log.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
@@ -504,6 +504,53 @@ const route = async (req, res, url) => {
       return json(res, 200, { ok: true, ...(await skills.uninstall(name)) });
     }
     return json(res, 404, { error: "skills 没有这条路" });
+  }
+
+  // ── B 路线的答案：不问仓库文件，问**正在跑的进程** ───────────────────────────
+  //
+  // 仓库里有什么（catalog）一并带上，因为块知道仓库在哪：于是页面一次就能看出
+  // 「菜谱上有、厨房里没有」那种漂移 —— 仓库改了但没重启，别让页面汇报一个假的版本。
+  if (req.method === "GET" && parts[0] === "v1" && parts[1] === "extensions") {
+    const catalog = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions;
+    const installed = registry.snapshot().installed().map((extension) => extension.name);
+    // 自带的（CodingTools 那四件套）单列：不是我们开发的，不该跟自研的混一个列表 ——
+    // 它不在仓库里，页面也就不该给它「装卸」之类的按钮。
+    const builtins = [CodingTools].map((extension) => extension?.name).filter(Boolean);
+    const ours = installed.filter((name) => !name.startsWith(SKILL_PREFIX) && !builtins.includes(name));
+    const nameplates = installed.filter((name) => name.startsWith(SKILL_PREFIX));
+    let head = null;
+    try {
+      head = (await run("git", ["-C", EXTEND, "rev-parse", "HEAD"])).stdout.trim();
+    } catch {
+      // git 不在也照样回：版本那一栏就显示「不知道」，别让一个工具缺了整个接口 500。
+    }
+    const lock = JSON.parse(await readFile(path.join(HERE, "extensions.lock.json"), "utf8")).commit;
+    const body = {
+      repo: { path: EXTEND, lock, head, drift: head !== null && head !== lock },
+      installed: ours,
+      builtin: builtins,
+      // 名牌单独列：那是 skills 扩展运行时按技能生成的家族，不是独立扩展 ——
+      // 混进 installed 会变成 40 行里 38 行是生成物。
+      nameplates: { prefix: SKILL_PREFIX, count: nameplates.length, names: nameplates },
+      defaults: [nousExtension.name, skills.extension.name],
+      catalog,
+    };
+    // 谁在用 —— 管理页最有用的一栏，代价是每条会话读一次 agent。默认不算，?usage=1 才给。
+    if (url.searchParams.get("usage") === "1") {
+      const records = (await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx)).items;
+      const usage = {};
+      for (const record of records) {
+        const conversation = await harness.conversation(record.id, ctx);
+        if (!conversation) continue;
+        const agent = await conversation.agent(ctx);
+        for (const { name } of agent.extensions ?? []) {
+          if (!ours.includes(name)) continue;
+          (usage[name] ??= []).push(record.id);
+        }
+      }
+      body.usage = usage;
+    }
+    return json(res, 200, body);
   }
 
   if (parts[0] === "v1" && parts[1] === "selection") {
