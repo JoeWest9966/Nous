@@ -1,0 +1,12 @@
+{
+  "name": "vbe4pt",
+  "private": true,
+  "type": "module",
+  "description": "extend · pi 扩展管理器：扫描盘上散落的 extensions，收进块内库，再装卸到各处。库在 data/lib/，cp -r 走块 = 走了整个扩展库。",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

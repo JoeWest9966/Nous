@@ -28,3 +28,6 @@ content/new1/map/*
 # qrd3wh 的代码也是人写的(session 引擎 + 编目适配),data/ 仍然不进(运行时数据)。
 !content/new1/map/qrd3wh/
 content/new1/map/qrd3wh/data/
+# vbe4pt 同理:扩展管理器的代码是人写的,data/(注册表 + 库 + 快照)是运行时数据。
+!content/new1/map/vbe4pt/
+content/new1/map/vbe4pt/data/
