@@ -1,4 +1,10 @@
-// skills.js —— 技能：装、名册、提示词。
+// skills —— 技能：装、名册、提示词。
+//
+// 位置：`extensions/skills/index.js`（原来在块根的 `skills.js`）。
+// 形态：**工厂** —— `createSkills({dir, registry, base})` 返回 `{extension, …}`。
+// 它跟 `extensions/nous.js` 不同：nous 是静态对象，谁 import 都能直接装；
+// 这个要宿主先告诉它「内容住哪」（dir）、「名牌注册到哪」（registry），才能装。
+// 这条差别记在 `extensions/manifest.json` 的 `kind` / `needs` 上 —— 清单读 manifest，不读代码。
 //
 // 一句话：**这里没有一行技能正文。** 技能是磁盘上的 md（`data/skills/<名>/SKILL.md`），
 // 模型用 read 工具自己按需去读。本文件只干三件事：

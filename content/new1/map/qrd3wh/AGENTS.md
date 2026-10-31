@@ -48,9 +48,36 @@ pi-ai provider（内存）                                        ← 运行时�
 非 reasoning 只有 `["off"]`；reasoning 的上 `low..high` 默认都在。服务端收档位时用
 `fitLevel()` 夹回模型真有的那一档再落盘（客户端发的值不可信）—— 面板显示 A、库里存 B 是要防的病。
 
+## 自研扩展住在这儿：`extensions/`
+
+```
+extensions/
+  manifest.json      清单的真相 —— 谁要读「我们开发了哪些扩展」，读它，别解析代码
+  nous.js            静态扩展：export default defineExtension({...})，零参数
+  skills/index.js    工厂扩展：createSkills({dir, registry}) 返回 {extension, install, …}
+```
+
+两种形态，区别只在**装它之前要不要先喂东西**：
+
+| kind | 长什么样 | 装法 |
+|---|---|---|
+| `static` | `export default defineExtension({…})` | `registry.install(mod.default)` |
+| `factory` | `export default createXxx(host)` | `const x = await createXxx({dir, registry}); registry.install(x.extension)` |
+
+`manifest.json` 里的 `needs` 就是那条配置契约（skills 要 `dir` + `registry`）。**清单读 manifest，
+不读代码** —— 将来 vbe4pt 的前端接这个文件，才不用去解析 ts。
+
+两条不进清单：
+
+- **pi-durable 自带的**（`CodingTools` 那四件套）—— 不是我们开发的。谁写的代码谁进账。
+- **`skill:<名>` 名牌** —— 运行时 `skillExtension(name)` 现造的家族，装 38 条技能就是 38 个空对象。
+  列进清单会变成 40 行里 38 行是生成物，没人看得懂。它归「skills 扩展派生」这一个条目。
+
+**扩展名就是 API**：会话里存的是名字不是对象（durable 的 `AgentState`），改 `name` = 破坏性变更。
+
 ## 技能：内容在盘上，选择在会话里
 
-`skills.js`。跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read`
+`extensions/skills/index.js`。跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read`
 去读正文、同样按 SKILL.md 所在目录展开相对路径），所以给 pi 写的技能直接能用。
 
 **三层，只有第三层跟代码有关系：**
@@ -91,7 +118,7 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
   「离 tag 几步」，`git log -1 -- <path>` 拿下这条技能自己最后改动的时间。
 - **编目里那个 `version` 不是版本号，是账面情报**：`/api/source` 的 source 上确实有
   `version`（今天 `matt` 写着 `v1.3.1`，`mattpocock` 是空串），但它是**注册那一刻**上游
-  latest release 的快照，仓库级、会过期、还跟另一个条目对不上。`skills.js` 把它作为
+  latest release 的快照，仓库级、会过期、还跟另一个条目对不上。`extensions/skills/index.js` 把它作为
   `catalogVersion` 一起带出来，**只用于对照**（「编目录上还写着 v1.3.1」），绝不拿去显示成
   「你装的是哪一版」。
 - **算不出来就是 null**：上游不打 tag、没写 `package.json`、断网、私有仓 —— 页面显

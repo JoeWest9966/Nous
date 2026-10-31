@@ -35,10 +35,13 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@earendil-works/pi-ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { contentText } from "@earendil-works/pi-ai/utils/text";
-import { AssistantEntry, Harness, createRegistry, defineDoc, defineExtension, section, watchEvents } from "@earendil-works/pi-durable";
+import { AssistantEntry, Harness, createRegistry, defineDoc, watchEvents } from "@earendil-works/pi-durable";
 import { CodingTools, createBashTool, createEditTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { installCatalog } from "./catalog.js";
-import { createSkills, skillExtension, skillNamesOf } from "./skills.js";
+// 自研扩展住在 extensions/ —— 清单和它在一起（`extensions/manifest.json`）。
+// 这里只接线：import 进来、装进 registry、列进默认选择。
+import nous from "./extensions/nous.js";
+import { createSkills, skillExtension, skillNamesOf } from "./extensions/skills/index.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -226,29 +229,12 @@ registry.install(CodingTools);
 
 // ── 提示词 ───────────────────────────────────────────────────────────────
 //
-// 到这一版之前 `registry` 里只有 CodingTools，**一条 section 都没有** —— 系统提示词是空的，
-// agent 不知道自己是谁、在哪个目录。技能清单要是挂在这上面，会像「一个不知道自己是谁的家伙
-// 手里拿着一张技能表」。所以先有这两段，再有 skills。
-const Nous = defineExtension({
-  name: "nous",
-  sections: [
-    section(
-      "preamble",
-      () =>
-        [
-          "You are an agent inside Nous, a board whose units are folders called blocks. You are one of the board's conversations.",
-          "Blocks live under the board's map/ folder. A block's AGENTS.md is its entry document: read it before changing that block.",
-          "A block's data/ folder is that block's own state. Work through the tools; they see the working directory below.",
-        ].join("\n"),
-      { tag: false },
-    ),
-    // cwd 每次现算：会话的 agent.cwd 可以改，改了下一轮就吃到。
-    section("cwd", ({ env }) => env?.cwd),
-  ],
-});
+// 提示词一类的自研扩展（`nous` = 自我介绍 + cwd）在 `extensions/nous.js`，不再写在这儿。
+// 当初为什么先有它再有 skills：registry 里只有 CodingTools 时一条 section 都没有，
+// 系统提示词是空的 —— 技能清单挂上去会像「一个不知道自己是谁的家伙手里拿着一张技能表」。
 
 const skills = await createSkills({ dir: path.join(DATA, "skills"), registry });
-registry.install(Nous);
+registry.install(nous);
 registry.install(skills.extension);
 await skills.load();
 // 老收据补齐版本：后台跑，别把启动卡在 clone 上。
@@ -262,7 +248,7 @@ const harness = await Harness.open(
     env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? HERE }),
     // 默认选择只放**真扩展**：空名牌（skill:<名>）装了但不默认选 —— 否则每条新会话
     // 一出生就吃 38 条描述，progressive disclosure 当场作废。
-    settings: { extensions: [CodingTools, Nous, skills.extension] },
+    settings: { extensions: [CodingTools, nous, skills.extension] },
     // 新会话一出生就带一张自己的名字卡片，省得后面到处判空。
     conversationCreated: async (tx, conversation) => {
       const doc = await tx.doc(Sessions);

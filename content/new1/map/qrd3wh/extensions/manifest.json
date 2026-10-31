@@ -1,0 +1,28 @@
+{
+  "_about": [
+    "块内自研扩展的清单 —— 清单读这里，不读代码。",
+    "kinds: static = 默认导出 defineExtension({...})，谁 import 都能直接装；",
+    "factory = 默认导出 createXxx(host)，要先喂 needs 里那几样才能装。",
+    "不含 pi-durable 自带的（CodingTools 等）—— 那不是我们开发的，不该进这张表。",
+    "不含 skill:<名> 名牌 —— 那是 skills 扩展运行时生成的家族，不是独立扩展。"
+  ],
+  "extensions": [
+    {
+      "name": "nous",
+      "file": "nous.js",
+      "kind": "static",
+      "default": true,
+      "sections": ["preamble", "cwd"],
+      "summary": "agent 在 Nous 里的自我介绍 + 当前工作目录"
+    },
+    {
+      "name": "skills",
+      "file": "skills/index.js",
+      "kind": "factory",
+      "needs": ["dir", "registry"],
+      "default": true,
+      "sections": ["skills"],
+      "summary": "把这条会话选中的技能渲染成 <available_skills>；附带装卸与名册"
+    }
+  ]
+}
