@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>extend · 扩展管理</title>
+    <title>extend · Nous 扩展</title>
     <link rel="stylesheet" href="./style.css" />
     <script>
       // 宿主把这块挂在 /p/new1/vbe4pt（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
@@ -27,108 +27,38 @@
         </div>
       </div>
       <div class="top-right">
-        <button class="btn primary" id="new-ext">＋新扩展</button>
-        <span class="hint dim">改了盘上的文件后，在 pi 里 <code>/reload</code> 生效</span>
-        <button class="chip-status" id="refresh" title="重新扫描">
-          <span class="dot" data-state="wait"></span>扫描
+        <span class="hint dim" id="repo">—</span>
+        <button class="chip-status" id="refresh" title="重新问一遍">
+          <span class="dot" data-state="wait"></span>刷新
         </button>
       </div>
     </header>
 
     <main>
-      <section class="ledger" id="ledger">
-        <div class="empty" id="empty" hidden>
-          <p>盘上还没有发现任何扩展。</p>
-          <p class="dim">全局目录是 <code>~/.pi/agent/extensions/</code>，项目目录需要加进下面的白名单。</p>
+      <p class="lede">
+        这一页是<b>只读</b>的：扩展装在 qrd3wh 那个进程里（<code>registry.install()</code>），
+        不落盘、没有安装位、不靠 <code>/reload</code>。所以下面每一样都是
+        <b>问进程要的</b>，不是扫目录扫出来的 —— 仓库里写着什么，和这一刻装着什么，是两件事。
+      </p>
+
+      <section class="card" id="ours">
+        <div class="card-head">
+          <h2>我们开发的</h2>
+          <span class="dim small">源码在 <code id="repo-path">—</code></span>
         </div>
-        <!-- 行由 app.js 铺 -->
+        <ul class="exts" id="ours-list"></ul>
       </section>
 
-      <section class="nous" id="nous">
-        <div class="toolbar">
-          <h2>Nous 扩展</h2>
-          <span class="dim small" id="nous-src">连着 session 块问…</span>
+      <section class="card muted" id="others">
+        <div class="card-head">
+          <h2>不归这一页管</h2>
+          <span class="dim small">列出来只为让人知道它们存在，别以为是漏了</span>
         </div>
-        <p class="dim small">
-          这一栏是<b>问进程要的</b>（qrd3wh 的 <code>GET /v1/extensions</code>），不是扫盘扫出来的：
-          仓库里写着什么 ≠ 这一刻进程里装着什么。上面那一栏才是盘上的 pi 扩展，两套不是一回事。
-        </p>
-        <ul id="nous-list"></ul>
-      </section>
-
-      <section class="watch">
-        <h2>关注的目录</h2>
-        <p class="dim small">扫描范围 = 全局目录 + 这里的白名单。只往下看一层。</p>
-        <ul id="watchlist"></ul>
-        <form id="watch-form">
-          <input id="watch-dir" type="text" placeholder="/path/to/project" spellcheck="false" autocomplete="off" />
-          <button type="submit">加目录</button>
-        </form>
+        <ul class="exts" id="others-list"></ul>
       </section>
     </main>
 
-    <dialog id="viewer">
-      <div class="viewer-bar">
-        <strong id="viewer-title"></strong>
-        <button id="viewer-close" class="ghost">关</button>
-      </div>
-      <pre id="viewer-code" class="mono"></pre>
-    </dialog>
-
-    <dialog id="factory" class="factory">
-      <div class="viewer-bar">
-        <strong id="factory-title">车间</strong>
-        <button id="factory-close" class="ghost">关</button>
-      </div>
-      <div class="factory-body">
-        <div class="factory-side">
-          <div class="f-head">
-            <span class="f-title mono" id="f-file">—</span>
-            <span class="dim small" id="f-status"></span>
-          </div>
-          <textarea id="f-editor" class="mono" spellcheck="false" autocomplete="off"></textarea>
-        </div>
-        <div class="factory-panel">
-          <h3>出厂检查</h3>
-          <ul id="f-lint" class="lint"></ul>
-          <button class="btn" id="f-check">跑一遍检查</button>
-
-          <h3>出厂</h3>
-          <label class="dim small">装到哪个目录</label>
-          <select id="f-target"></select>
-          <button class="btn primary" id="f-install">装出去</button>
-          <p class="dim small">装完去 pi 里 <code>/reload</code>。</p>
-
-          <h3>快照</h3>
-          <p class="dim small" id="f-revs">每次保存自动留一版，最多 20 版。</p>
-          <button class="btn" id="f-revlist">看历史版本</button>
-        </div>
-      </div>
-    </dialog>
-
-    <dialog id="newdlg">
-      <form method="dialog" id="newform">
-        <div class="viewer-bar"><strong>新扩展</strong></div>
-        <div class="newdlg-body">
-          <label class="dim small">名字（小写字母开头，字母数字连字符 —— 装出去就是这个文件名）</label>
-          <input id="new-name" type="text" placeholder="my-guard" spellcheck="false" autocomplete="off" required />
-          <label class="dim small">从哪个模板开始</label>
-          <div id="new-tpl" class="tpl-grid"></div>
-          <label class="dim small">默认安装位</label>
-          <select id="new-scope">
-            <option value="global">全局 ~/.pi/agent/extensions</option>
-            <option value="project">项目 .pi/extensions（装时再选目录）</option>
-          </select>
-        </div>
-        <div class="newdlg-foot">
-          <button type="button" class="btn ghost" id="new-cancel">取消</button>
-          <button type="submit" class="btn primary">开档</button>
-        </div>
-      </form>
-    </dialog>
-
-    <div id="toast" hidden></div>
-
-    <script src="./app.js" type="module"></script>
+    <div class="toast" id="toast" hidden></div>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
