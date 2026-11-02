@@ -386,16 +386,8 @@ const openCtx = (from) => {
   requestAnimationFrame(() => scrim.classList.add("on"));
   $("sq").value = "";
   $("sq").oninput = renderSkillList;
-  $("eq").value = "";
-  $("eq").oninput = renderExtList;
   renderSkillList();
-  renderExtList();
   ($("skillList").querySelector(".skill-row") ?? $("skillDone")).focus();
-  // 扩展用第二个 scrim，紧挨着技能弹窗打开，方便一起勾。
-  const scrim3 = $("scrim3");
-  scrim3.hidden = false;
-  requestAnimationFrame(() => scrim3.classList.add("on"));
-  $("eq").value = "";
 };
 const openExt = (from) => {
   const scrim = $("scrim3");
