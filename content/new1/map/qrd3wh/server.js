@@ -255,13 +255,90 @@ registry.install(CodingTools);
 // 系统提示词是空的 —— 技能清单挂上去会像「一个不知道自己是谁的家伙手里拿着一张技能表」。
 
 const nousExtension = createNous(api);
-const skills = await createSkills({ dir: path.join(DATA, "skills"), registry, api });
+// skills 的 API 用间接引用：热重载时要换整个 service 对象。直接替换变量不够，
+// 路由里的闭包还指着旧对象——所以所有调用都走代理，读当前那个 service。
+const skillsService = { current: null };
+const skills = new Proxy({}, {
+  get(_, key) {
+    const service = skillsService.current;
+    const value = service[key];
+    return typeof value === "function" ? value.bind(service) : value;
+  },
+});
+skillsService.current = await createSkills({ dir: path.join(DATA, "skills"), registry, api });
 const { skillExtension } = skills;
 registry.install(nousExtension);
 registry.install(skills.extension);
 await skills.load();
 // 老收据补齐版本：后台跑，别把启动卡在 clone 上。
 void skills.backfill();
+
+// ── B + 自动触发：push 代码，进程里立刻生效，不用点装 ─────────────────────
+//
+// B 方案的核心特性：`registry.install()` 是同名就地替换 —— 不重启、不重放历史，
+// 所有会话下一轮就吃到新代码。装这个动作根本不需要人点，人只做一件事：写代码 + push。
+//
+// 用轮询（不用 webhook）：每 N 秒一次 `git rev-parse HEAD`，变了就
+// `git pull --ff-only`，然后用带 `?v=<sha>` 的 `import()` 热重载（ESM 缓存要绕过）。
+// skills 得用间接引用（闭包太多，直接换变量不行），nous 直接覆盖就行。
+// 重装失败不崩进程，下一轮再试；lock 自动把 lock 写成新的 HEAD。
+const EXTEND_RELOAD_MS = Number(process.env.NOUS_EXTEND_RELOAD_MS ?? 30_000);
+let extendRepoHead = null;
+
+const reloadExtensions = async () => {
+  let head;
+  try {
+    head = (await run("git", ["-C", EXTEND, "rev-parse", "HEAD"])).stdout.trim();
+  } catch (error) {
+    console.error("[extend] git 不在或仓库没了：", String(error?.message ?? error));
+    return;
+  }
+  if (extendRepoHead === null) {
+    // 初次：从 lock 读我们 booted 的版本 —— HEAD 可能已经比 lock 新（比如手动 pull 过），
+    // 那样 extendRepoHead = HEAD 就永远追不上，重装永远不触发。
+    try {
+      extendRepoHead = JSON.parse(await readFile(path.join(HERE, "extensions.lock.json"), "utf8")).commit;
+    } catch {
+      extendRepoHead = head;
+    }
+    return;
+  }
+  if (head === extendRepoHead) return;
+
+  try {
+    await run("git", ["-C", EXTEND, "pull", "--ff-only"]);
+  } catch (error) {
+    console.error("[extend] git pull 失败，下一轮再试：", String(error?.message ?? error));
+    return;
+  }
+  head = (await run("git", ["-C", EXTEND, "rev-parse", "HEAD"])).stdout.trim();
+  if (head === extendRepoHead) return;
+
+  try {
+    const api = { defineExtension, section };
+    const { default: createNous } = await import(`${EXTEND}/nous/index.js?v=${head}`);
+    registry.install(createNous(api));
+
+    const skillsModule = await import(`${EXTEND}/skills/index.js?v=${head}`);
+    skillsService.current = await skillsModule.createSkills({ dir: path.join(DATA, "skills"), registry, api });
+    registry.install(skillsService.current.extension);
+    await skillsService.current.load();
+    void skillsService.current.backfill();
+
+    extendRepoHead = head;
+    await writeFile(path.join(HERE, "extensions.lock.json"), JSON.stringify({
+      _about: ["钉住 Nous-extend 仓库的那个 commit —— 扩展源码在仓库里，版本钉在这儿。"],
+      repo: "JoeWest9966/Nous-extend",
+      path: EXTEND,
+      commit: head,
+    }, null, 2) + "\n");
+    console.error("[extend] 热重装：nous + skills @" + head.slice(0, 7));
+  } catch (error) {
+    console.error("[extend] 重装失败：", String(error?.message ?? error));
+  }
+};
+setInterval(reloadExtensions, EXTEND_RELOAD_MS);
+void reloadExtensions();
 
 const harness = await Harness.open(
   storage,
@@ -589,6 +666,9 @@ const route = async (req, res, url) => {
     // 技能也在这个 commit 里落 —— 跟 thinkingLevel 一条纪律：先建再 configure，中间那一下
     // 第一条消息可能已经跑出去了。没装的技能名直接丢（选了也不生效，不存一个幽灵）。
     const wanted = [...new Set((Array.isArray(body.skills) ? body.skills : []).map(String))].filter((name) => skills.has(name));
+    const wantedExt = [...new Set((Array.isArray(body.extensions) ? body.extensions : []).map(String))].filter((name) =>
+      registry.snapshot().installed().some((e) => e.name === name),
+    );
     const created = await harness.createConversation(
       {
         ownership: { kind: "ownerless" },
@@ -596,7 +676,13 @@ const route = async (req, res, url) => {
           cwd: HERE,
           model,
           ...(thinkingLevel ? { thinkingLevel } : {}),
-          ...(wanted.length ? { extensions: { add: wanted.map(skillExtension) } } : {}),
+          ...(() => {
+          const adds = [
+            ...(wanted.length ? wanted.map(skillExtension) : []),
+            ...(wantedExt.length ? wantedExt.map((n) => registry.snapshot().extension(n)) : []),
+          ];
+          return adds.length ? { extensions: { add: adds } } : {};
+        })(),
         },
       },
       ctx,
@@ -609,6 +695,7 @@ const route = async (req, res, url) => {
       model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
       thinkingLevel: agent.thinkingLevel ?? null,
       skills: skillNamesOf(agent),
+      extensions: (agent.extensions ?? []).filter((n) => !String(n).startsWith("skill:")),
       missing: skills.missing(wanted),
     });
   }
@@ -655,6 +742,21 @@ const route = async (req, res, url) => {
           ctx,
         );
       }
+      if (Array.isArray(body.extensions)) {
+        const current = (await conversation.agent(ctx)).extensions ?? [];
+        const wanted = [...new Set(body.extensions.map(String))].filter((name) =>
+          registry.snapshot().installed().some((e) => e.name === name),
+        );
+        await conversation.configure(
+          {
+            extensions: {
+              remove: current.map((n) => registry.snapshot().extension(n)).filter(Boolean),
+              add: wanted.map((n) => registry.snapshot().extension(n)).filter(Boolean),
+            },
+          },
+          ctx,
+        );
+      }
       // 回的是**生效值**，不是请求值：前端拿它重画，面板和真相就不会分叉。
       const agent = await conversation.agent(ctx);
       return json(res, 200, {
@@ -662,6 +764,7 @@ const route = async (req, res, url) => {
         model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
         thinkingLevel: agent.thinkingLevel ?? null,
         skills: skillNamesOf(agent),
+        extensions: (agent.extensions ?? []).filter((n) => !String(n).startsWith("skill:")),
         readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       });
     }

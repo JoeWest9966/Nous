@@ -281,6 +281,20 @@
   </div>
 </div>
 
+<div class="scrim" id="scrim3" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择上下文：扩展">
+    <div class="shead">
+      <b>上下文 · 扩展</b>
+      <input type="text" id="eq" placeholder="筛选已装的…" autocomplete="off">
+    </div>
+    <div class="skills" id="extList"></div>
+    <div class="dfoot skillfoot">
+      <span id="extHint">—</span>
+      <button class="done" id="extDone" type="button">完成 ›</button>
+    </div>
+  </div>
+</div>
+
 <div id="errbox"></div>
 
 <div class="scrim" id="scrim" hidden>
@@ -365,17 +379,31 @@ const openCtx = (from) => {
   scrim.hidden = false;
   requestAnimationFrame(() => scrim.classList.add("on"));
   $("sq").value = "";
+  $("sq").oninput = renderSkillList;
+  $("eq").value = "";
+  $("eq").oninput = renderExtList;
   renderSkillList();
+  renderExtList();
   ($("skillList").querySelector(".skill-row") ?? $("skillDone")).focus();
+  // 扩展用第二个 scrim，紧挨着技能弹窗打开，方便一起勾。
+  const scrim3 = $("scrim3");
+  scrim3.hidden = false;
+  requestAnimationFrame(() => scrim3.classList.add("on"));
+  $("eq").value = "";
 };
 const closeCtx = () => {
   const scrim = $("scrim2");
   scrim.classList.remove("on");
   setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
+  const scrim3 = $("scrim3");
+  scrim3.classList.remove("on");
+  setTimeout(() => { scrim3.hidden = true; }, reduceMotion ? 200 : 320);
+  renderCtx();
 };
 $("pickctx").onclick = (e) => openCtx(e.currentTarget);
 $("scrim2").onclick = (e) => { if (e.target === $("scrim2")) closeCtx(); };
 $("skillDone").onclick = closeCtx;
+$("extDone").onclick = closeCtx;
 addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || $("scrim2").hidden) return;
   e.preventDefault(); closeCtx();
@@ -413,6 +441,8 @@ let thinking = "off";
 let installedSkills = [];
 /** 这条新对话要带哪几个。**多选** —— 所以它不进模型弹窗：那个是「点一下就收回」的单选。 */
 const pickedSkills = new Set();
+let installedExtensions = [];
+const pickedExtensions = new Set();
 
 /** 当前模型支持哪几档。非 reasoning 模型这里就是 ["off"]，长度 1=不出思考列。 */
 const levelsOfPick = () => {
@@ -721,14 +751,46 @@ const renderSkillList = () => {
   $("skillHint").textContent = `${installedSkills.length} 条已装 · ${n ? `已选 ${n}` : "未选"} · 勾完按完成`;
 };
 
+const renderExtList = () => {
+  const needle = $("eq").value.trim().toLowerCase();
+  const all = (installedExtensions ?? []).filter((e) => !String(e.name).startsWith("skill:"));
+  const rows = all
+    .filter((e) => !needle || `${e.name} ${e.summary ?? ""}`.toLowerCase().includes(needle))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (!all.length) {
+    $("extList").innerHTML = `<div class="skill-none">进程里一个可选扩展都没有。</div>`;
+  } else if (!rows.length) {
+    $("extList").innerHTML = `<div class="skill-none">没有匹配的扩展。</div>`;
+  } else {
+    $("extList").innerHTML = rows.map((e) => {
+      const on = pickedExtensions.has(e.name);
+      const desc = String(e.summary ?? "").replace(/\s+/g, " ").trim();
+      const meta = e.version ? `v${e.version}` : "";
+      return `<button class="skill-row" type="button" role="checkbox" aria-checked="${on}" data-e="${esc(e.name)}">`
+        + `<span class="skill-box">${on ? "✓" : ""}</span>`
+        + `<span><span class="skill-name">${esc(e.name)}</span>`
+        + `<span class="skill-desc">${esc(desc)}</span>`
+        + (meta ? `<span class="skill-meta">${esc(meta)}</span>` : "")
+        + `</span></button>`;
+    }).join("");
+  }
+  const n = pickedExtensions.size;
+  $("extHint").textContent = `${all.length} 条 · ${n ? `已选 ${n}` : "未选"} · 勾完按完成`;
+};
+
 /** 区域里那个节点显示什么 —— 跟模型域一样，只显示生效的东西，不显示“待定”。 */
 const renderCtx = () => {
-  const names = [...pickedSkills];
-  $("ctx-id").textContent = !names.length ? "未选" : names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`;
-  $("ctx-tag").textContent = names.length ? "改 ›" : "选择 ›";
-  $("ctx-sub").textContent = installedSkills.length
-    ? `技能：${names.length ? `已选 ${names.length}` : "一条没选"} · 装好了 ${installedSkills.length}`
-    : "这台机器一个技能都没装";
+  const sn = [...pickedSkills];
+  const en = [...pickedExtensions];
+  const parts = [];
+  if (sn.length) parts.push(`技能 ${sn.length === 1 ? sn[0] : `${sn[0]} +${sn.length - 1}`}`);
+  else parts.push("技能 未选");
+  if (en.length) parts.push(`扩展 ${en.length === 1 ? en[0] : `${en[0]} +${en.length - 1}`}`);
+  else parts.push("扩展 未选");
+  $("ctx-id").textContent = parts.join(" · ");
+  $("ctx-tag").textContent = "选择 ›";
+  $("ctx-sub").textContent = `已装技能 ${installedSkills.length} · 已装扩展 ${(installedExtensions ?? []).filter((e)=>!String(e.name).startsWith("skill:")).length}`;
   $("pickctx").disabled = !tag;
 };
 
@@ -750,6 +812,16 @@ $("skillList").addEventListener("keydown", (e) => {
   const i = Math.max(0, Math.min(rows.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
   rows[i]?.focus();
 });
+
+$("extList").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const rows = [...$("extList").querySelectorAll(".skill-row")];
+  const at = rows.indexOf(document.activeElement);
+  e.preventDefault();
+  const i = Math.max(0, Math.min(rows.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
+  rows[i]?.focus();
+});
+$("extDone").onclick = () => { $("scrim3").hidden = true; renderCtx(); };
 $("sq").oninput = renderSkillList;
 
 const renderCurrent = () => {
@@ -787,6 +859,7 @@ async function commit() {
       thinkingLevel: thinking,
       // 技能跟模型/档位一起在**同一个 commit** 里落定，不在后面再 configure。
       ...(pickedSkills.size ? { skills: [...pickedSkills] } : {}),
+      ...(pickedExtensions.size ? { extensions: [...pickedExtensions] } : {}),
       ...(name ? { name } : {}),
     });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
@@ -823,6 +896,19 @@ if (tag) {
     installedSkills = (await api("v1/skills")).installed ?? [];
   } catch (error) {
     console.warn("技能清单拿不到：", error);
+  }
+  try {
+    const extData = await api("v1/extensions");
+    installedExtensions = (extData.installed ?? []).map((name) => ({ name })).concat(
+      (extData.catalog ?? []).filter((e) => (extData.installed ?? []).includes(e.name)),
+    );
+    // 去重：catalog 里有详情，优先用 catalog 的
+    const byName = new Map();
+    for (const e of installedExtensions) byName.set(e.name, e);
+    for (const e of (extData.catalog ?? [])) if ((extData.installed ?? []).includes(e.name)) byName.set(e.name, e);
+    installedExtensions = [...byName.values()];
+  } catch (error) {
+    console.warn("扩展清单拿不到：", error);
   }
 }
 renderCurrent();
