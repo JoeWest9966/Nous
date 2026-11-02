@@ -246,9 +246,15 @@
       </div>
     </section>
     <section class="region r4">
-      <h2>工具</h2>
-      <div class="sub">还没排上</div>
-      <div class="sub">暂未开放</div>
+      <h2>扩展</h2>
+      <div class="sub" id="ext-sub">Nous 扩展</div>
+      <div class="sub">每条会话可选装哪些</div>
+      <div class="nodes">
+        <button class="node" id="pickext" disabled title="这条新对话要装哪些 Nous 扩展">
+          <span class="id" id="ext-id">未选</span>
+          <span class="tag" id="ext-tag">选择 ›</span>
+        </button>
+      </div>
     </section>
     <section class="region r3">
       <h2>权限</h2>
@@ -391,13 +397,29 @@ const openCtx = (from) => {
   requestAnimationFrame(() => scrim3.classList.add("on"));
   $("eq").value = "";
 };
+const openExt = (from) => {
+  const scrim = $("scrim3");
+  if (from && !reduceMotion) {
+    const r = from.getBoundingClientRect();
+    scrim.querySelector(".sheet").style.transformOrigin = `${r.left + r.width / 2}px ${r.top + r.height / 2}px`;
+  }
+  scrim.hidden = false;
+  requestAnimationFrame(() => scrim.classList.add("on"));
+  $("eq").value = "";
+  $("eq").oninput = renderExtList;
+  renderExtList();
+  ($("extList").querySelector(".skill-row") ?? $("extDone")).focus();
+};
+const closeExt = () => {
+  const scrim = $("scrim3");
+  scrim.classList.remove("on");
+  setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
+  renderCtx();
+};
 const closeCtx = () => {
   const scrim = $("scrim2");
   scrim.classList.remove("on");
   setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
-  const scrim3 = $("scrim3");
-  scrim3.classList.remove("on");
-  setTimeout(() => { scrim3.hidden = true; }, reduceMotion ? 200 : 320);
   renderCtx();
 };
 $("pickctx").onclick = (e) => openCtx(e.currentTarget);
@@ -821,7 +843,7 @@ $("extList").addEventListener("keydown", (e) => {
   const i = Math.max(0, Math.min(rows.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
   rows[i]?.focus();
 });
-$("extDone").onclick = () => { $("scrim3").hidden = true; renderCtx(); };
+$("extDone").onclick = closeExt;
 $("sq").oninput = renderSkillList;
 
 const renderCurrent = () => {
