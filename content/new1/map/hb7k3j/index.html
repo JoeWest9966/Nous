@@ -415,6 +415,7 @@ const closeCtx = () => {
   renderCtx();
 };
 $("pickctx").onclick = (e) => openCtx(e.currentTarget);
+$("pickext").onclick = (e) => openExt(e.currentTarget);
 $("scrim2").onclick = (e) => { if (e.target === $("scrim2")) closeCtx(); };
 $("skillDone").onclick = closeCtx;
 $("extDone").onclick = closeCtx;
@@ -796,16 +797,23 @@ const renderExtList = () => {
 /** 区域里那个节点显示什么 —— 跟模型域一样，只显示生效的东西，不显示“待定”。 */
 const renderCtx = () => {
   const sn = [...pickedSkills];
-  const en = [...pickedExtensions];
-  const parts = [];
-  if (sn.length) parts.push(`技能 ${sn.length === 1 ? sn[0] : `${sn[0]} +${sn.length - 1}`}`);
-  else parts.push("技能 未选");
-  if (en.length) parts.push(`扩展 ${en.length === 1 ? en[0] : `${en[0]} +${en.length - 1}`}`);
-  else parts.push("扩展 未选");
-  $("ctx-id").textContent = parts.join(" · ");
-  $("ctx-tag").textContent = "选择 ›";
-  $("ctx-sub").textContent = `已装技能 ${installedSkills.length} · 已装扩展 ${(installedExtensions ?? []).filter((e)=>!String(e.name).startsWith("skill:")).length}`;
+  $("ctx-id").textContent = !sn.length ? "未选" : sn.length === 1 ? sn[0] : `${sn[0]} +${sn.length - 1}`;
+  $("ctx-tag").textContent = sn.length ? "改 ›" : "选择 ›";
+  $("ctx-sub").textContent = installedSkills.length
+    ? `技能：${sn.length ? `已选 ${sn.length}` : "一条没选"} · 装好了 ${installedSkills.length}`
+    : "这台机器一个技能都没装";
   $("pickctx").disabled = !tag;
+};
+
+/** 扩展域：默认全装 —— 所以空集不是“没选”，是“全都要”。 */
+const renderExt = () => {
+  const all = (installedExtensions ?? []).filter((e) => !String(e.name).startsWith("skill:"));
+  const off = all.filter((e) => !pickedExtensions.has(e.name));
+  $("ext-id").textContent = !all.length ? "没有可选"
+    : !off.length ? `全部 ${all.length} 条` : `${all.length - off.length}/${all.length}`;
+  $("ext-tag").textContent = "改 ›";
+  $("ext-sub").textContent = all.length ? `已装 ${all.length} · 默认全开` : "进程里没有可选扩展";
+  $("pickext").disabled = !tag || !all.length;
 };
 
 $( "skillList").addEventListener("click", (e) => {
@@ -827,6 +835,15 @@ $("skillList").addEventListener("keydown", (e) => {
   rows[i]?.focus();
 });
 
+$("extList").addEventListener("click", (e) => {
+  const row = e.target.closest?.(".skill-row");
+  if (!row) return;
+  const name = row.dataset.e;
+  if (pickedExtensions.has(name)) pickedExtensions.delete(name); else pickedExtensions.add(name);
+  renderExtList();
+  renderExt();
+  $("extList").querySelector(`.skill-row[data-e="${CSS.escape(name)}"]`)?.focus();
+});
 $("extList").addEventListener("keydown", (e) => {
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   const rows = [...$("extList").querySelectorAll(".skill-row")];
@@ -873,7 +890,9 @@ async function commit() {
       thinkingLevel: thinking,
       // 技能跟模型/档位一起在**同一个 commit** 里落定，不在后面再 configure。
       ...(pickedSkills.size ? { skills: [...pickedSkills] } : {}),
-      ...(pickedExtensions.size ? { extensions: [...pickedExtensions] } : {}),
+      // 扩展：装了什么就发什么（全勾 = 发全部）。空数组也是有效值 —— 表示“一个都不要”，
+      // 不能省掉，省掉服务端会按默认全开。
+      ...(installedExtensions.some((e) => !String(e.name).startsWith("skill:")) ? { extensions: [...pickedExtensions] } : {}),
       ...(name ? { name } : {}),
     });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
@@ -924,9 +943,14 @@ if (tag) {
   } catch (error) {
     console.warn("扩展清单拿不到：", error);
   }
+  // 默认全开：扩展是 Nous 的核心功能，新会话不带任何理由地少装一个才是意外。
+  for (const e of installedExtensions) {
+    if (!String(e.name).startsWith("skill:")) pickedExtensions.add(e.name);
+  }
 }
 renderCurrent();
 renderCtx();
+renderExt();
 updateHub();
 </script>
 </body>
