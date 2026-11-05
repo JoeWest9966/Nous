@@ -227,6 +227,24 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 用 bare clone 缓存算版本号」。那套的第二真相（收据 + 缓存 + 编目快照三份会漂的账）就是它
 被删的原因 —— 收据格式、缓存目录、安装/卸载端点全没了，别照着老记忆写。
 
+## 提示词模板：文件在 `/opt/Nous-prompts`，跟技能是兄弟但**单选**
+
+一条模板 = `<名>/PROMPT.md`（正文）+ `nous.json`（`{name, summary, category[]}`）。
+仓库形状、写入口（`/v1/prompts*`）、内容闸、归档都是照着技能仓的模子刻的；三处不同：
+
+1. **正文整段进系统提示词。** 所以选择是**单值**：会话里最多一个 `prompt:<名>`。
+   多条同时选中时 `render()` 只吐第一条 —— 两份互相矛盾的沟通规则一起进提示词，模型只会挑它喜欢的那个。
+2. **没有 frontmatter。** 摘要只给挑模板的人看（正文 7KB，没有摘要等于闭眼选），所以它住在 `nous.json`。
+3. **它是核心第三条扩展**（`CORE_EXTENSIONS`）。不是清单扩展：`syncExtraExtensions` 递的 `bag.dir`
+   指向 `DATA/skills`，而模板仓在 `/opt/Nous-prompts`。所以跟 `skills` 一样走启动路径硬编码 import +
+   `loadCoreVariants` 的 bag 里多一个 `promptsDir`。
+
+`template` 三态别合并：字符串 = 选它，`null` = 显式不要，不传 = 用仓库 `settings.json` 的 `default`。
+回参里 `template` 是**生效值**；`missingTemplates[]` 是「勾了但没装、已跳过」。
+
+名牌跟技能同一档：`prompt:<名>` 不进 `installed`，只在 `nameplates` 里（统一用
+`NAMEPLATE_PREFIXES`，别逐处写 `startsWith("skill:")` —— 漏一处就是面板里多一行生成物）。
+
 ## 接口
 
 ```
@@ -251,15 +269,29 @@ GET  /v1/skills/pending/diff      ?path= → { path, before, after }（对 HEAD�
 GET  /v1/skills/pending/commit    ?hash= → { hash, subject, files:[{path,status}] }（status 是 A/M/D/R）
 POST /v1/skills/sync              {message, paths?} → 只提交点名的路径
 POST /v1/skills/reload            重扫仓库（拿不准的时候用；写端点自己会扫）
+GET  /v1/prompts                  模板私库全景：repo + prompts[]（带 tracked）+ archived[] + categories[] + default
+GET  /v1/prompts/categories       词表（同样一个都不护）
+POST /v1/prompts/categories       {op:"add"|"rename"|"remove", name, to}
+POST /v1/prompts/category         {name, category[]} → 写这条模板的 nous.json + 并进词表
+GET  /v1/prompts/files            ?name= → 目录里有什么
+GET  /v1/prompts/file             ?name=&path= → { text, etag }
+PUT  /v1/prompts/file             {name,path,text,base} → { etag }；base 对不上 = 409
+POST /v1/prompts/create           {name, summary, category[], body?} → 只落工作区，不提交
+POST /v1/prompts/publish          {message} → 闸 + 重扫 index.json + commit + push
+POST /v1/prompts/archive|restore|purge {name}
+GET  /v1/prompts/pending          待同步清单（一个模板 = 一个单元）
+POST /v1/prompts/sync             {message, paths?}
+POST /v1/prompts/reload           重扫名册
 GET  /v1/sessions                 会话树
-POST /v1/sessions                 {name, model, thinkingLevel, skills}
-POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills}
+POST /v1/sessions                 {name, model, thinkingLevel, skills, template}
+POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template}
 POST /v1/sessions/:id/messages    {content, requestId?, waitMs?}
 GET  /v1/sessions/:id/events      SSE
 GET  /v1/sessions/:id/entries     ?system=1 额外给 items[].delta + system（调试提示词用）
 ```
 
 环境：`PORT`（默认 4780）、`NOUS_DATA`、`NOUS_SKILLS`（技能仓根，默认 `/opt/Nous-skills`）、
+`NOUS_PROMPTS`（模板仓根，默认 `/opt/Nous-prompts`）、
 `NOUS_EXTEND`（扩展仓，默认 `/opt/Nous-extend`）、`NW_BASE`（默认 tailnet 8443，**只给模型编目**）、
 `NW_TOKEN`（走 panel-gate 才要）。
 

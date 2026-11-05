@@ -1754,7 +1754,7 @@ const route = async (req, res, url) => {
   // 仓库里有什么就是装着什么，没有「装」这个动作，也没有上游编目要刷新。
   if (parts[0] === "v1" && parts[1] === "skills") {
     try {
-      return await handleSkills({ req, res, url, parts, root: SKILLS_ROOT, skills, repo });
+      return await handleSkills({ req, res, url, parts, root: SKILLS_ROOT, skills, repo, data: DATA });
     } catch (error) {
       // handleSkills 自己写响应；走到这儿说明是它没接住的意外（读 body 炸了之类）。
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });

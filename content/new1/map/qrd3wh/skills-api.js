@@ -17,6 +17,8 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import * as upstream from "./upstream.js";
+
 // ── HTTP 小工具 ─────────────────────────────────────────────────────────────
 
 const withStatus = (error, status) => Object.assign(error, { status });
@@ -65,6 +67,7 @@ const RESERVED = new Set([
   "nous.json",
   "SKILL.md",
   "README.md",
+  "sources.json",
   "AGENTS.md",
   "test",
   "node_modules",
@@ -279,6 +282,135 @@ const createSkill = async (repo, root, body) => {
   return { ok: true, name };
 };
 
+// ── 上游 ───────────────────────────────────────────────────────────────────
+//
+// 「上游就是一个 git remote」。这里只加三样东西：订阅清单的读写、镜像的清单/对照、
+// 以及取用（adopt）。**没有自动同步、没有定时 fetch、没有双向推送** ——
+// 打开面板只读已有镜像，联网只发生在 `upstream/refresh`。
+
+/** `nous.json.upstream` 那个注脚：`<source>/<path>@<tree-sha>`。只写不读逻辑。 */
+const upstreamFoot = (source, home, sha) => `${source}/${home}@${sha ?? "unknown"}`;
+
+const footOf = async (root, name) => {
+  try {
+    const manifest = JSON.parse(await readFile(path.join(root, name, "nous.json"), "utf8"));
+    return typeof manifest?.upstream === "string" ? manifest.upstream : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * 本地这条跟上一条什么关系。四种：
+ *   none    本地没有这条 → 可以取用
+ *   same    取用过，且上游没变
+ *   changed 取用过，上游又改了 → 面板上「上游有更新」
+ *   taken   本地有同名，但不是从这条取的（名字占了）→ 只能改名取用
+ */
+const localStateOf = (roster, foot, entry) => {
+  const mine = roster.find((skill) => skill.name === entry.name);
+  if (!mine) return "none";
+  if (!foot) return "taken";
+  const prefix = `${entry.source}/${entry.path}@`;
+  if (!foot.startsWith(prefix)) return "taken";
+  return foot.endsWith(`@${entry.sha}`) ? "same" : "changed";
+};
+
+const readManifestOf = (dir) =>
+  readFile(path.join(dir, "nous.json"), "utf8")
+    .then((text) => JSON.parse(text))
+    .catch(() => null);
+
+/** 只改 frontmatter 里那一行 name；正文一个字都不碰。 */
+const renameInFrontmatter = (text, name) => {
+  const match = /^(\uFEFF?---[ \t]*\r?\n)([\s\S]*?)(\r?\n---)/.exec(text);
+  if (!match) return text; // 没有 frontmatter：闸会报，别在这儿编一个
+  const body = /^name:.*$/m.test(match[2]) ? match[2].replace(/^name:.*$/m, `name: ${name}`) : `name: ${name}\n${match[2]}`;
+  return match[1] + body + match[3] + text.slice(match[0].length);
+};
+
+/**
+ * 取用：把上游一条技能摊进点开头的暂存目录，补齐/改名 nous.json，过闸，才 rename。
+ *
+ * 这跟 `createSkill` 是同一个形状（I7 半截不留），区别只有一个：骨架不是空的，
+ * 是从 `git cat-file` 里摊出来的。**仍然不提交** —— 第一个正确状态是「未发布」。
+ */
+const adoptSkill = async (repo, root, data, body) => {
+  const sourceName = String(body.source ?? "").trim();
+  const home = String(body.path ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!sourceName) throw withStatus(new Error("没说从哪个上游取（source 是空的）"), 400);
+  if (!home) throw withStatus(new Error("没说取哪一条（path 是空的）"), 400);
+
+  const { sources } = await upstream.readSources(root);
+  const source = sources.find((item) => item.name === sourceName);
+  if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+  if (!(await upstream.hasMirror({ data, source }))) {
+    throw withStatus(new Error(`${sourceName}: 还没拉过镜像 —— 先点刷新（POST /v1/skills/upstream/refresh）`), 400);
+  }
+
+  const name = checkName(body.name ?? path.posix.basename(home));
+  if (await stat(path.join(root, name)).catch(() => null)) {
+    throw withStatus(new Error(`${name}/ 已经在了 —— 想换成上游这版就改个名字，或者先归档本地这条`), 409);
+  }
+  if (await stat(path.join(root, repo.ARCHIVE_DIR, name)).catch(() => null)) {
+    throw withStatus(new Error(`${name}/ 在 .archive/ 里 —— 先恢复或彻底删掉，别建第二个`), 409);
+  }
+
+  const beforeVocab = await repo.readCategories(root, NO_PROTECT);
+  const staging = path.join(root, `.new-${name}-${Date.now()}`);
+  await mkdir(staging, { recursive: false });
+  let landed = false;
+  let fileCount = 0;
+  try {
+    const { head, files } = await upstream.materialize({ data, source, run: repo.run, home, target: staging });
+    fileCount = files.length;
+    if (!files.includes("SKILL.md")) throw withStatus(new Error(`${home}: 上游这一条里没有 SKILL.md`), 400);
+
+    // 名字对齐：目录名、frontmatter 的 name、nous.json 的 name 必须是同一个（I3）。
+    const skillFile = path.join(staging, "SKILL.md");
+    const text = await readFile(skillFile, "utf8");
+    const renamed = renameInFrontmatter(text, name);
+    if (renamed !== text) await writeFile(skillFile, renamed, "utf8");
+
+    const manifest = (await readManifestOf(staging)) ?? {};
+    const categories = repo.sortCategories(
+      repo.normalizeCategories([
+        ...(Array.isArray(manifest.category) ? manifest.category : []),
+        ...(Array.isArray(body.category) ? body.category : []),
+      ]),
+    );
+    const entry = (await upstream.listEntries({ data, source, run: repo.run })).find((item) => item.path === home);
+    await writeFile(
+      path.join(staging, "nous.json"),
+      JSON.stringify(
+        {
+          name,
+          summary: typeof manifest.summary === "string" ? manifest.summary : "",
+          category: categories,
+          upstream: upstreamFoot(source.name, home, entry?.sha ?? head),
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+
+    // 闸在这个位置跑：骨架是别人的，名字是我们改的 —— 两件事都可能出问题，一次说清。
+    const problems = await checkSkillContent(root, name, staging);
+    if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
+
+    if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories], NO_PROTECT);
+    await rename(staging, path.join(root, name));
+    landed = true;
+    await repo.regenIndex(root, { required: false });
+  } catch (error) {
+    if (landed) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  return { ok: true, name, fileCount };
+};
+
 const archiveSkill = async (repo, root, name) => {
   if (!(await stat(path.join(root, name)).catch(() => null))) {
     throw withStatus(new Error(`工作区里没有 ${name}/`), 404);
@@ -343,9 +475,15 @@ const purgeSkill = async (repo, root, name) => {
  * `repo` = `repo-tools.js` 的整包（`syncRepo` / `pendingState` / `listRepoFiles` …），
  * 每个函数都收 `root`。测试递同一包、换一个 `root` 就是另一个仓。
  */
-export async function handleSkills({ req, res, url, parts, root, skills, repo }) {
+export async function handleSkills({ req, res, url, parts, root, skills, repo, data }) {
   const method = req.method ?? "GET";
   const at = parts.slice(2);
+  // 镜像落在块的 data/ 里（缓存，不是事实）。没有 data 的上游路由无处落盘 —— 直说，
+  // 别悄悄往仓库根里 clone（那会把几 MB 的 bare 仓提交进内容仓）。
+  const mirrors = () => {
+    if (!data) throw withStatus(new Error("这个进程没有 data 目录，上游镜像无处落盘"), 500);
+    return data;
+  };
 
   try {
     if (!at.length) {
@@ -511,6 +649,109 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
         const roster = skills.list();
         return error ? { ok: false, error, skills: roster } : { ok: true, skills: roster };
       }));
+    }
+
+    if (at[0] === "sources") {
+      if (method === "GET") return send(res, 200, { sources: (await upstream.readSources(root)).sources });
+      if (method !== "POST") return send(res, 405, { error: "订阅清单只有 GET / POST" });
+      const body = await parseJsonBody(req);
+      // 整份替换：这文件就几行，diff 一眼看得完。写盘不提交 —— 它跟技能一样是内容，
+      // 「加了一个上游」也得走发布（并且在面板上是琥珀虚线）。
+      const sources = await repo.serializeRepoWrite(root, () => upstream.writeSources(root, body.sources));
+      return send(res, 200, { ok: true, sources });
+    }
+
+    if (at[0] === "upstream") {
+      if (!at[1]) {
+        if (method !== "GET") return send(res, 405, { error: "上游清单只有 GET" });
+        const { sources } = await upstream.readSources(root);
+        const roster = skills.list() ?? [];
+        const reported = [];
+        const entries = [];
+        const errors = [];
+        for (const source of sources) {
+          // **打开面板不联网**：镜像不在就报 missing，让人自己点刷新。
+          const ready = await upstream.hasMirror({ data: mirrors(), source });
+          reported.push({ ...source, mirror: ready ? "ready" : "missing" });
+          if (!ready) continue;
+          try {
+            for (const entry of await upstream.listEntries({ data, source, run: repo.run })) {
+              entries.push({ ...entry, local: localStateOf(roster, await footOf(root, entry.name), entry) });
+            }
+          } catch (error) {
+            errors.push({ source: source.name, error: errorLine(error) });
+          }
+        }
+        return send(res, 200, { sources: reported, entries, errors });
+      }
+
+      if (at[1] === "refresh") {
+        if (method !== "POST") return send(res, 405, { error: "刷新只有 POST" });
+        const body = await parseJsonBody(req);
+        const only = String(body.name ?? "").trim() || null;
+        const { sources } = await upstream.readSources(root);
+        const picked = only ? sources.filter((source) => source.name === only) : sources;
+        if (only && !picked.length) throw withStatus(new Error(`没有订阅「${only}」这个上游`), 400);
+        const out = [];
+        // 一个挂了不该拖住别的：每个 source 各自报 ok/error，面板上分开显示。
+        for (const source of picked) {
+          try {
+            await upstream.fetchMirror({ data: mirrors(), source, run: repo.run });
+            out.push({ name: source.name, ok: true, head: await upstream.resolveHead({ data: mirrors(), source, run: repo.run }) });
+          } catch (error) {
+            out.push({ name: source.name, ok: false, error: errorLine(error) });
+          }
+        }
+        return send(res, 200, { ok: out.every((item) => item.ok), sources: out });
+      }
+
+      if (at[1] === "files") {
+        if (method !== "GET") return send(res, 405, { error: "上游文件清单只有 GET" });
+        const sourceName = String(url.searchParams.get("source") ?? "").trim();
+        const home = String(url.searchParams.get("path") ?? "").trim().replace(/^\/+|\/+$/g, "");
+        const { sources } = await upstream.readSources(root);
+        const source = sources.find((item) => item.name === sourceName);
+        if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+        if (!home) throw withStatus(new Error("没说看哪一条（path 是空的）"), 400);
+
+        // 本地对照的那一侧：优先找「从这条取的」那个本地技能（可能取用时改过名）。
+        const roster = skills.list() ?? [];
+        const adopted = (await Promise.all(roster.map(async (skill) => ({ skill, foot: await footOf(root, skill.name) })))).find(
+          (item) => item.foot?.startsWith(`${source.name}/${home}@`),
+        );
+        const localName = adopted?.skill.name ?? path.posix.basename(home);
+        const files = await upstream.entryFiles({ data: mirrors(), source, run: repo.run, dir: home });
+        const out = [];
+        for (const file of files) {
+          const localFile = path.join(root, localName, file.path);
+          let state = "missing";
+          if (await stat(localFile).catch(() => null)) {
+            // 比 git blob sha：内容一致就是 same，一个字节不同就是 diff。
+            const localSha = (await repo.run("git", ["-C", root, "hash-object", "--no-filters", "--", localFile])).stdout.trim();
+            state = localSha === file.sha ? "same" : "diff";
+          }
+          out.push({ path: file.path, state });
+        }
+        return send(res, 200, { source: source.name, path: home, localName, files: out });
+      }
+
+      if (at[1] === "adopt") {
+        if (method !== "POST") return send(res, 405, { error: "取用只有 POST" });
+        const body = await parseJsonBody(req);
+        const result = await repo.serializeRepoWrite(root, () => adoptSkill(repo, root, mirrors(), body));
+        const loadError = await reloadRoster(skills);
+        const roster = skills.list();
+        return send(res, 200, {
+          ok: true,
+          name: result.name,
+          files: result.fileCount,
+          skill: roster.find((skill) => skill.name === result.name) ?? null,
+          skills: roster,
+          ...(loadError ? { loadError } : {}),
+        });
+      }
+
+      return send(res, 404, { error: "upstream 没有这条路", path: at.join("/") });
     }
 
     return send(res, 404, { error: "skills 没有这条路", path: at.join("/") });

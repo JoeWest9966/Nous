@@ -231,12 +231,13 @@ export const makeRes = () => {
 };
 
 /** 一次完整的 `handleSkills` 调用；返回 { status, body }。 */
-export const call = async (handleSkills, { method = "GET", path: target, body, root, skills, repo }) => {
+export const call = async (handleSkills, { method = "GET", path: target, body, root, skills, repo, data }) => {
   const url = new URL(`http://block.local${target}`);
   const parts = url.pathname.split("/").filter(Boolean);
   const req = makeReq(method, body);
   const { res, out } = makeRes();
-  await handleSkills({ req, res, url, parts, root, skills, repo });
+  // `data` 只有上游镜像用得上（缓存落在块的 data/ 里）；不传就等于这台没有 data 目录。
+  await handleSkills({ req, res, url, parts, root, skills, repo, data });
   return { status: out.status, body: out.body, raw: out.text };
 };
 
