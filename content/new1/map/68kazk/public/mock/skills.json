@@ -1,0 +1,75 @@
+{
+  "root": "/opt/Nous-skills",
+  "repo": {
+    "head": "4f1c2ab",
+    "dirty": true,
+    "ahead": 1,
+    "behind": 0,
+    "remote": "https://github.com/JoeWest9966/Nous-skills",
+    "error": null
+  },
+  "skills": [
+    {
+      "name": "code-review",
+      "description": "审查从某个固定点以来的改动：先看标准（这份仓的规矩），再看规格（票里要的是什么）。",
+      "dir": "/opt/Nous-skills/code-review",
+      "file": "/opt/Nous-skills/code-review/SKILL.md",
+      "hidden": false,
+      "category": ["Basics"],
+      "load": { "state": "ok" },
+      "tracked": true
+    },
+    {
+      "name": "write-tests",
+      "description": "先写失败的那个测试，再写让它变绿的实现。",
+      "dir": "/opt/Nous-skills/write-tests",
+      "file": "/opt/Nous-skills/write-tests/SKILL.md",
+      "hidden": false,
+      "category": ["工具"],
+      "load": { "state": "ok" },
+      "tracked": true
+    },
+    {
+      "name": "search-docs",
+      "description": "按关键词翻文档：先看代码，再看注释，最后才信 README。",
+      "dir": "/opt/Nous-skills/search-docs",
+      "file": "/opt/Nous-skills/search-docs/SKILL.md",
+      "hidden": false,
+      "category": ["工具/搜索"],
+      "load": { "state": "ok" },
+      "tracked": true
+    },
+    {
+      "name": "draft-mail",
+      "description": "起草一封邮件：一句结论，三条理由，别写「您好，见附件」。",
+      "dir": "/opt/Nous-skills/draft-mail",
+      "file": "/opt/Nous-skills/draft-mail/SKILL.md",
+      "hidden": false,
+      "category": ["工具"],
+      "load": { "state": "ok" },
+      "tracked": false
+    },
+    {
+      "name": "broken-notes",
+      "description": "目录名和 frontmatter 里的 name 对不上 —— 这条是故意写坏的，用来看红卡。",
+      "dir": "/opt/Nous-skills/broken-notes",
+      "file": "/opt/Nous-skills/broken-notes/SKILL.md",
+      "hidden": false,
+      "category": ["工具"],
+      "load": { "state": "failed", "error": "broken-notes: SKILL.md 的 name 是「broken-note」，跟目录名「broken-notes」对不上" },
+      "tracked": false
+    },
+    {
+      "name": "notes-to-self",
+      "description": "没挂类别的一条：落在「未分类」桶里，不是消失。",
+      "dir": "/opt/Nous-skills/notes-to-self",
+      "file": "/opt/Nous-skills/notes-to-self/SKILL.md",
+      "hidden": true,
+      "category": [],
+      "load": { "state": "ok" },
+      "tracked": true
+    }
+  ],
+  "archived": ["legacy-helper"],
+  "categories": ["Basics", "工具", "工具/搜索", "工具/爬虫"]
+}

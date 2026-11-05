@@ -1,0 +1,154 @@
+// 面板的纯计算部分：卡片状态、facet 计数、排序、删除类别的影响范围、未分类桶。
+//
+// 不碰 DOM、不 fetch、不看时间 —— 所以能裸跑 node --test。DOM 那半截在 app.js。
+// 判据来自 spec §7：卡片状态只取第一个命中的（failed > unpublished > ok），
+// 归档不在网格里、沉到最后；facet 计数对**全量**算，不是对当前筛选算。
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+import {
+  ARCHIVED,
+  UNCATEGORIZED,
+  buildView,
+  cardState,
+  categoryImpact,
+  childCount,
+  categoriesOf,
+  facetCounts,
+  filterCards,
+  stateFilterOf,
+} from "../public/model.js";
+
+const MOCK_URL = new URL("../public/mock/skills.json", import.meta.url);
+const mock = async () => JSON.parse(await readFile(MOCK_URL, "utf8"));
+const names = (list) => list.map((item) => item.name);
+
+test("七条 fixture：卡片状态照 spec §7.1，归档的不在网格里", async () => {
+  const data = await mock();
+  const view = buildView(data);
+
+  assert.equal(view.total, 7);
+  assert.equal(view.skillCount, 6);
+  // 网格顺序 = 正常 → 未发布 → 装载失败，同类按 name 升序。
+  assert.deepEqual(names(view.cards), [
+    "code-review",
+    "notes-to-self",
+    "search-docs",
+    "write-tests",
+    "draft-mail",
+    "broken-notes",
+  ]);
+  assert.deepEqual(
+    view.cards.map((card) => card.state),
+    ["ok", "ok", "ok", "ok", "unpublished", "failed"],
+  );
+  // 归档项不在网格里，只在 archived 里，带自己的状态。
+  assert.deepEqual(view.archived, [{ name: "legacy-helper", state: "archived" }]);
+  assert.ok(!view.cards.some((card) => card.name === "legacy-helper"));
+});
+
+test("failed 优先于 unpublished（一条既没发布又装载失败 → failed）", () => {
+  assert.equal(cardState({ name: "x", tracked: false, load: { state: "failed", error: "坏了" } }), "failed");
+  assert.equal(cardState({ name: "x", tracked: true, load: { state: "failed", error: "坏了" } }), "failed");
+  assert.equal(cardState({ name: "x", tracked: false, load: { state: "ok" } }), "unpublished");
+  assert.equal(cardState({ name: "x", tracked: true, load: { state: "ok" } }), "ok");
+  // 没有 load 字段（老响应 / 读不到）就当正常，别把整页标红。
+  assert.equal(cardState({ name: "x", tracked: true }), "ok");
+});
+
+test("facet 计数对全量算：筛出一半，计数还是全量的", async () => {
+  const data = await mock();
+  const view = buildView(data);
+
+  const onlyBasics = filterCards(view.cards, { filter: "Basics" });
+  assert.deepEqual(names(onlyBasics), ["code-review"]);
+  // 筛出来只剩 1 条，但「工具」那格的计数还是全量的 4 —— facet 是导航，不是统计。
+  assert.equal(view.counts.get("工具"), 4);
+  assert.equal(view.counts.get("Basics"), 1);
+  // 同一份数据再算一遍，结果一样（计数不读筛选态）。
+  assert.deepEqual([...buildView(data).counts], [...view.counts]);
+  // 计数是「条数」不是「标签数」：搜索改的是结果集，不动计数。
+  assert.equal(filterCards(view.cards, { query: "工具" }).length, 4);
+  assert.equal(view.counts.get("工具/搜索"), 1);
+});
+
+test("类别路径：`工具/搜索` 挂在 `工具` 下，父级计数含子树；词表里的空类别仍然出现", async () => {
+  const data = await mock();
+  const view = buildView(data);
+
+  const search = view.rows.find((row) => row.path === "工具/搜索");
+  assert.equal(search.label, "搜索");
+  assert.equal(search.depth, 1);
+  assert.equal(view.rows.find((row) => row.path === "工具").parent, true);
+
+  assert.equal(view.counts.get("工具/搜索"), 1);
+  assert.equal(view.counts.get("工具"), 4); // 自身 3 条 + 子树 1 条
+  // 词表里有、还没挂到任何技能上的类别：仍然出现，计数 0（建了不能看不见）。
+  assert.equal(view.counts.get("工具/爬虫"), 0);
+  assert.ok(view.categoryNames.includes("工具/爬虫"));
+
+  // 同时挂父和子只算一次。
+  const deduped = facetCounts([
+    { name: "a", category: ["工具", "工具/搜索"] },
+    { name: "b", category: ["工具/搜索"] },
+  ]);
+  assert.equal(deduped.get("工具"), 2);
+  assert.equal(deduped.get("工具/搜索"), 2);
+
+  // 祖先不写进技能的 category，但要在树里出现。
+  const leafonly = facetCounts([{ name: "c", category: ["工具/搜索"] }]);
+  assert.equal(leafonly.get("工具"), 1);
+  assert.deepEqual(categoriesOf({ category: [" 工具 // 搜索 "] }), ["工具/搜索"]);
+});
+
+test("排序：正常 → 未发布 → 装载失败，同类按 name 升序；归档沉到最后", async () => {
+  const data = await mock();
+  const view = buildView(data);
+  const ranks = { ok: 0, unpublished: 1, failed: 2 };
+  const states = view.cards.map((card) => card.state);
+  assert.deepEqual(states, [...states].sort((a, b) => ranks[a] - ranks[b]));
+  for (const state of ["ok", "unpublished", "failed"]) {
+    const group = names(view.cards.filter((card) => card.state === state));
+    assert.deepEqual(group, [...group].sort((a, b) => a.localeCompare(b)));
+  }
+  // 归档自成一段，按 name 升序。
+  const archived = buildView({ ...data, archived: ["zeta", "alpha"] }).archived;
+  assert.deepEqual(names(archived), ["alpha", "zeta"]);
+  assert.deepEqual(archived.map((item) => item.state), ["archived", "archived"]);
+});
+
+test("删除类别的影响范围 = 整枝命中的技能数", async () => {
+  const data = await mock();
+  // 删「工具」连「工具/搜索」一起 —— 影响的是整枝，不是只挂「工具」那三条。
+  assert.equal(categoryImpact(data.skills, "工具"), 4);
+  assert.equal(categoryImpact(data.skills, "工具/搜索"), 1);
+  assert.equal(categoryImpact(data.skills, "Basics"), 1);
+  assert.equal(categoryImpact(data.skills, "工具/爬虫"), 0);
+  // 子级数量也照整枝数（确认框里那句「连同 N 个子类别」）。
+  const view = buildView(data);
+  assert.equal(childCount(view.categoryNames, "工具"), 2);
+});
+
+test("未分类（category: []）落在「未分类」桶里，而不是消失", async () => {
+  const data = await mock();
+  const view = buildView(data);
+
+  assert.equal(view.uncategorized, 1);
+  const only = filterCards(view.cards, { filter: UNCATEGORIZED });
+  assert.deepEqual(names(only), ["notes-to-self"]);
+  // 「未分类」是算出来的，不进类别树、也不进词表。
+  assert.ok(!view.categoryNames.includes("未分类"));
+  assert.ok(!view.categoryNames.includes(UNCATEGORIZED));
+  // 归档筛选值也不是类别。
+  assert.ok(!view.categoryNames.includes(ARCHIVED));
+  assert.deepEqual(
+    only.map((card) => categoriesOf(card)),
+    [[]],
+  );
+  // 状态筛选走自己的前缀，不会跟叫「未发布」的类别撞车。
+  assert.equal(stateFilterOf("__state__:failed"), "failed");
+  assert.equal(stateFilterOf("工具"), null);
+  assert.deepEqual(names(filterCards(view.cards, { filter: "__state__:unpublished" })), ["draft-mail"]);
+});
