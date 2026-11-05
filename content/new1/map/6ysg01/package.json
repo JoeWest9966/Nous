@@ -1,0 +1,13 @@
+{
+  "name": "6ysg01",
+  "private": true,
+  "type": "module",
+  "description": "Session-Template · Nous 提示词模板私库的管理页：卡片网格 + 类别 + 正文抽屉，只发静态文件，读写全在 qrd3wh。",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/index.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

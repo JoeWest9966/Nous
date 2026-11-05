@@ -35,3 +35,6 @@ content/new1/map/vbe4pt/data/
 # 逐层反白，data/ 仍然不进（运行时数据）。
 !content/new1/map/68kazk/
 content/new1/map/68kazk/data/
+# 6ysg01（Session-Template）：提示词模板私库的管理页，代码是人写的 —— 进版本控制。
+# 这一块没有 data/：数据全在 qrd3wh 和 Nous-prompts 仓里。
+!content/new1/map/6ysg01/
