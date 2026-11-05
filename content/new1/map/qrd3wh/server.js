@@ -1442,12 +1442,17 @@ const renameInCode = (code, from, to) => {
   return { text, hits };
 };
 
-const duplicateExtension = async ({ from, name, summary, category }) => {
+const duplicateExtension = async ({ from, variant = null, name, summary, category, unbind = false }) => {
   guardExtensionName(from);
   guardExtensionName(name);
   if (from === name) throw withStatus(new Error("复制到同名？改个名字"), 400);
 
-  const src = path.join(EXTEND, from);
+  // 源可以是主树里的扩展，也可以是**某个变体自己那棵树**（「转正」就是这一条）。
+  // 变体那颗树上可能有还没提交的改动 —— 那正是它的价值：试出来的东西原样落地。
+  const source = variant
+    ? { ...(await variantRootOf(from, variant)), kind: "variant" }
+    : { dir: path.join(EXTEND, from), branch: null, kind: "extension" };
+  const src = source.dir;
   const info = await stat(src).catch(() => null);
   if (!info?.isDirectory()) throw withStatus(new Error(`${from}/ 不在工作区里`), 404);
 
@@ -1530,7 +1535,23 @@ const duplicateExtension = async ({ from, name, summary, category }) => {
     throw withStatus(new Error(`index.mjs 不认这个副本，已删掉：${detail}`), 400);
   }
   if (cats.length) await writeCategories([...(await readCategories()), ...cats]);
-  return { ok: true, name, from, manifest: { ...manifest, name, summary: clean }, rewritten };
+  // 转正之后「变体要不要留」是**第二个决定**：默认一动不动（树、分支、绑定都还在），
+  // 人勾了才解绑，而且解绑也不拆树不删分支 —— 那是它自己那条路。
+  let unbound = false;
+  if (variant && unbind) {
+    await unbindVariant(from, variant);
+    unbound = true;
+  }
+  return {
+    ok: true,
+    name,
+    from,
+    variant,
+    manifest: { ...manifest, name, summary: clean },
+    rewritten,
+    source: { kind: source.kind, dir: src, branch: source.branch ?? null },
+    unbound,
+  };
 };
 
 const archiveExtension = async (name) => {
@@ -1750,6 +1771,19 @@ const pendingFileDiff = async (rel) => {
     .catch(() => "");
   const text = info ? await readFile(file, "utf8").catch(() => "") : "";
   return { path: clean, base, text, missing: !text && !base };
+};
+
+/** 有哪些会话的扩展列表里还点着这个名字（`123@dev` 也算一个名字）。 */
+const sessionsUsing = async (key) => {
+  const records = (await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx)).items;
+  const ids = [];
+  for (const record of records) {
+    const conversation = await harness.conversation(record.id, ctx);
+    if (!conversation) continue;
+    const agent = await conversation.agent(ctx);
+    if ((agent.extensions ?? []).some((item) => item.name === key)) ids.push(record.id);
+  }
+  return ids;
 };
 
 /** 一条已提交但没推的 commit 改了哪些文件 —— 弹窗里点开看，人去不去推它。 */
@@ -2587,6 +2621,17 @@ const route = async (req, res, url) => {
   // 变体：绑目录 / 开分支树 / 解绑 / 拆树。**只动本机清单和本机工作树，不 commit 不 push**
   // （参数变体是另一回事：它写在 nous.json 里，跟着仓库走，用代码抽屉改，不走这个接口）。
   if (parts[0] === "v1" && parts[1] === "extensions" && parts[2] === "variant") {
+    // 转正前先问一句「谁还在用这个变体名」—— 解绑会让那些会话装载失败，那种失败没人能自己诊断。
+    if (parts[3] === "usage") {
+      if (req.method !== "GET") return json(res, 405, { error: "usage 只有 GET" });
+      try {
+        const key = String(url.searchParams.get("key") ?? "");
+        if (!key.includes(VARIANT_SEP)) return json(res, 400, { error: "key 得是 名称@变体" });
+        return json(res, 200, { key, sessions: await sessionsUsing(key) });
+      } catch (error) {
+        return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+      }
+    }
     if (req.method !== "POST") return json(res, 405, { error: "变体只有 POST" });
     const body = JSON.parse((await readBody(req)) || "{}");
     const family = String(body.name ?? "");

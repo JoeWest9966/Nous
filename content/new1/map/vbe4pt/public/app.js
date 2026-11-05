@@ -274,13 +274,22 @@ document.addEventListener("visibilitychange", () => {
 // 新的会悄悄顶掉旧的，而页面上两张卡看起来都好好的。所以这件事交给后端做，
 // 它找不到那个字面量就拒绝复制（宁可失败，也别造出个会撞名的目录）。
 
-function openDuplicate(from) {
+function openDuplicate(from, { variant = null } = {}) {
   const ext = oursNow().find((item) => item.name === from);
   if (!ext) return;
-  state.duplicate = { from };
+  state.duplicate = { from, variant };
   $("dup").reset();
-  $("dup-from").textContent = from;
-  $("dup-name").value = `${from}-copy`;
+  // 从变体转正：拷的是那棵树的代码（含没提交的改动），落点还是主树里一个未发布目录。
+  $("dup-title").textContent = variant ? `${from}@${variant.id} → 新扩展` : "复制成新扩展";
+  $("dup-from").textContent = variant ? `${from}@${variant.id}` : from;
+  $("dup-source").hidden = !variant;
+  if (variant) {
+    $("dup-source").textContent = `源：${variant.dir}${variant.branch ? `（分支 ${variant.branch}）` : ""} —— 拷的是它现在的样子，包括还没提交的改动。`;
+  }
+  $("dup-unbind-wrap").hidden = !variant;
+  $("dup-unbind").checked = false;
+  $("dup-warn").hidden = true;
+  $("dup-name").value = variant ? `${from}-${variant.id}` : `${from}-copy`;
   $("dup-summary").value = ext.summary ?? "";
   $("dup-cat").value = categoriesOf(ext).join(", ");
   $("dup-err").hidden = true;
@@ -301,6 +310,19 @@ function openDuplicate(from) {
     $("dup-name").focus();
     $("dup-name").select();
   }, 30);
+
+  if (variant) {
+    // 解绑会让这些会话装载失败 —— 那种失败没人能自己诊断，所以提前说，别等它烂掉。
+    void get(`${state.base}v1/extensions/variant/usage?key=${encodeURIComponent(`${from}@${variant.id}`)}`)
+      .then((data) => {
+        const used = data?.sessions ?? [];
+        if (!used.length || state.duplicate?.variant !== variant) return;
+        const warn = $("dup-warn");
+        warn.textContent = `有 ${used.length} 个会话还选着 ${from}@${variant.id} —— 勾「顺手解绑」的话，它们下次打开会装载失败。`;
+        warn.hidden = false;
+      })
+      .catch(() => null);
+  }
 }
 
 function closeDuplicate() {
@@ -348,6 +370,7 @@ async function submitDuplicate() {
   try {
     const result = await post(`${state.base}v1/extensions/duplicate`, {
       from: dup.from,
+      ...(dup.variant ? { variant: dup.variant.id, unbind: $("dup-unbind").checked } : {}),
       name,
       summary: $("dup-summary").value.trim(),
       category: $("dup-cat").value.trim(),
@@ -357,8 +380,15 @@ async function submitDuplicate() {
     state.filter = "";
     await load({ quiet: true });
     const rewritten = result?.rewritten ?? [];
+    const fromLabel = dup.variant ? `${dup.from}@${dup.variant.id}` : dup.from;
+    // 解绑只动绑定：树和分支还在，但面板上已经看不到这个变体了 —— 说明白，别让人以为它连树一起没了。
+    const tail = result?.unbound
+      ? `；变体已解绑（${result?.source?.branch ? `分支 ${result.source.branch} 和它的树还在，要拆得去命令行` : "它的树还在"}）`
+      : dup.variant
+        ? "；变体一动不动"
+        : "";
     toast(
-      `已复制成 ${name}（未发布）\n${
+      `已从 ${fromLabel} 造出 ${name}（未发布）${tail}\n${
         rewritten.length ? "入口里写死的名字改成了新名字 —— 抽屉里能看 diff" : "名字本来就不是写死的，代码一个字节没动"
       }`,
     );
@@ -1562,6 +1592,7 @@ function openVariantDialog(ext, item) {
   $("variant-title").textContent = item ? `${ext.name}@${item.id}` : `给 ${ext.name} 加变体`;
   $("variant-fields").hidden = Boolean(item);
   $("variant-code").hidden = true;
+  $("variant-promote").hidden = true;
   $("variant-where").textContent = "";
   $("variant-info").hidden = !item;
   $("variant-remove").hidden = !item || item.source !== "local";
@@ -1582,6 +1613,8 @@ function openVariantDialog(ext, item) {
       .join("\n");
     $("variant-remove").textContent = item.branch ? "拆树并解绑" : "解绑";
     $("variant-code").hidden = item.source !== "local";
+    // 转正只对**本机变体**（另一棵树）有意义：参数变体的代码就是本体那份，没有可拷的东西。
+    $("variant-promote").hidden = item.source !== "local";
   } else {
     renderVariantHints();
     setTimeout(() => $("variant-id").focus(), 0);
@@ -1682,6 +1715,14 @@ async function removeVariant() {
   }
   await run();
 }
+
+$("variant-promote").onclick = () => {
+  const current = state.variant;
+  if (!current?.item) return;
+  const { ext, item } = current;
+  closeVariant();
+  void openDuplicate(ext.name, { variant: item });
+};
 
 $("variant-close").onclick = () => closeVariant();
 $("variant-scrim").onclick = () => closeVariant();

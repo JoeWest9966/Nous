@@ -120,9 +120,13 @@ Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durab
 `index.json` 的摘除规则一句话：**「HEAD 里没有它」且「这次的 paths 里也没有它」才摘**。
 所以发布一个新扩展时它的条目照常进索引，别人的未发布条目照常被摘。
 
-`POST /v1/extensions/duplicate {from, name, summary?, category?}`：复制成新扩展（暂存目录 +
+`POST /v1/extensions/duplicate {from, variant?, name, summary?, category?, unbind?}`：复制成新扩展（暂存目录 +
 改名 + 校验 + rename，历史不带）。**名字写死在入口里，所以复制必须先改名**：只认
 `name: "旧名"` 这种字面量，找不到就整体回滚报错 —— 否则两个扩展注册同一个名字，新的顶掉旧的。
+
+带 `variant` 时源换成**那个变体自己那棵树**（`variantRootOf()`），于是「转正」和「复制」是同一条
+代码：变体的代码就这么进了主树，成为未发布的新扩展。`unbind: true` 才顺手解绑 —— 只动绑定，
+树和分支不碰。`GET /v1/extensions/variant/usage?key=名称@变体` 回「还有几个会话点着这个名字」。
 
 配套三个只读接口：`GET /v1/extensions/pending`（按**扩展**分组的改动 + 没推的提交）、
 `/pending/diff?path=`（一个文件对 HEAD 的前后内容）、`/pending/commit?hash=`（一条没推的

@@ -198,6 +198,7 @@
         <span class="dim small" id="variant-where"></span>
         <button class="btn" id="variant-close" type="button">取消</button>
         <button class="btn" id="variant-code" type="button" hidden>改代码 ›</button>
+        <button class="btn" id="variant-promote" type="button" hidden>独立成扩展 ›</button>
         <button class="btn btn-bad" id="variant-remove" type="button" hidden>解绑</button>
         <button class="btn btn-good" id="variant-ok" type="submit">绑定</button>
       </div>
@@ -211,6 +212,8 @@
         拷一份 <b id="dup-from">—</b> 的代码，换掉名字。入口里写死的 <code>name: "…"</code> 会一起改掉
         —— 不然两个扩展注册同一个名字，新的会悄悄顶掉旧的。历史不带，旧提交还在原扩展里。
       </p>
+
+      <p class="create-note" id="dup-source" hidden></p>
 
       <label class="create-label" for="dup-name">
         <span>新扩展名 <b>建完就改不了 —— 会话里存的就是它</b></span>
@@ -228,6 +231,12 @@
         <input id="dup-cat" type="text" autocomplete="off" list="dup-cats" />
         <datalist id="dup-cats"></datalist>
       </label>
+
+      <label class="dup-check" id="dup-unbind-wrap" hidden>
+        <input type="checkbox" id="dup-unbind" />
+        <span>顺手解绑这个变体 <i class="dim">树和分支都留着，只是这台不再装它</i></span>
+      </label>
+      <p class="create-note warn" id="dup-warn" hidden></p>
 
       <p class="create-err" id="dup-err" hidden></p>
       <div class="create-actions">
@@ -258,6 +267,6 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=20"></script>
+    <script type="module" src="./app.js?v=22"></script>
   </body>
 </html>
