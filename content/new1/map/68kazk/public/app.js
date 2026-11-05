@@ -3,8 +3,9 @@
 // 块之间只走 HTTP，地址只从宿主的 `__nous/ctx` 来 —— 这里不拼任何绝对路径。
 // 类别 / 正文 / 发布 / 归档全在 qrd3wh 那一头：这一页只发 POST，不读仓库、不跑 git（I4）。
 //
-// 纯计算（卡片状态、facet 计数、排序、影响范围、未分类桶）在 model.js，DOM 在这儿。
-// 这样 `node --test` 只需要测 model.js —— UI 归合并后的 code-review 看（spec §9）。
+// 取数和写回全在 api.js（`createApi` / ctx 解析 / 类别 debounce / 发布后重读），
+// 纯计算在 model.js，DOM 在这儿。三层里只有这一层碰 document，所以
+// `node --test` 拿假 fetch 测的是 api.js —— UI 归合并后的 code-review 看（spec §9）。
 
 import { buildDiff } from "./diff.js";
 import {
@@ -24,27 +25,11 @@ import {
   stateFilter,
   stateFilterOf,
 } from "./model.js";
-import { createMockTransport } from "./mock/api.js";
-
-// ── D1 的 mock 开关 ────────────────────────────────────────────────────────
-// 打开 = 读 public/mock/skills.json，所有写操作落内存（spec §7.3）。
-// **接真端点是 D2 的事：届时删掉这一行、下面 connect() 里的 mock 分支、`public/mock/` 整个目录、
-// 以及 model.js 之外对它的引用。** 留在这儿就是「看起来发布了，其实没连上」。
-const MOCK = true;
+import { CONFLICT_MESSAGE, createApi, createCategoryDebounce, publishWithRefresh } from "./api.js";
 
 const SELF = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
 const $ = (id) => document.getElementById(id);
 const $sel = (selector) => document.querySelector(selector);
-
-async function readJson(res) {
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const error = new Error(body?.error ?? `HTTP ${res.status}`);
-    error.status = res.status;
-    throw error;
-  }
-  return body ?? {};
-}
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -84,7 +69,6 @@ const initialsOf = (name) => {
 const state = {
   data: null, // GET /v1/skills 的原样
   view: null, // buildView(data) 的结果（唯一的派生层）
-  base: "", // qrd3wh 的绝对地址（只在真模式里用）
   filter: "", // "" = 全部；UNCATEGORIZED；ARCHIVED；"__state__:<state>"；其它 = 类别路径
   query: "",
   creating: false, // 左栏「新建类别」的输入框开着
@@ -119,38 +103,23 @@ function refreshView() {
 
 let transport = null;
 
-/** 真模式：地址只从宿主的 `__nous/ctx` 里找 qrd3wh，别的一律不拼。 */
+/** 地址只从宿主的 `__nous/ctx` 里找 qrd3wh，别的一律不拼（I5）。 */
 async function connect() {
-  if (MOCK) {
-    const data = await fetch("./mock/skills.json").then(readJson);
-    transport = createMockTransport(data);
-    toast("mock 模式：数据来自 public/mock/skills.json，改动只在这页的内存里");
-    return;
-  }
-  const ctx = await fetch(`${SELF}__nous/ctx`).then(readJson);
-  const blocks = Array.isArray(ctx.blocks) ? ctx.blocks : [];
-  const host =
-    blocks.find((block) => block.id === "qrd3wh") ??
-    blocks.find((block) => block.name === "qrd3wh") ??
-    blocks.find((block) => block.kind === "group" && block.path === "session");
-  if (!host?.url) throw new Error("这一盘里没有 qrd3wh（会话引擎）—— 技能的读写全在它那儿，它不在就没得问");
-  state.base = host.url.endsWith("/") ? host.url : host.url + "/";
-  transport = {
-    get: (path) => fetch(state.base + path).then(readJson),
-    post: (path, body) =>
-      fetch(state.base + path, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body ?? {}),
-      }).then(readJson),
-    put: (path, body) =>
-      fetch(state.base + path, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body ?? {}),
-      }).then(readJson),
-  };
+  const api = createApi({ self: SELF });
+  await api.connect();
+  transport = api;
 }
+
+// 类别改动 8 秒攒一次再落盘（票 7）：连点三个 chip 只写一次。
+const categoryWrites = createCategoryDebounce({
+  post: (path, body) => transport.post(path, body),
+  onSent: () => void load({ quiet: true }),
+  onError: (error) => {
+    toast(`改类别失败：${error.message}`, "bad");
+    // 失败的乐观更新得撤回 —— 重读一次，服务端说是什么就是什么。
+    void load({ quiet: true });
+  },
+});
 
 async function load({ quiet = false } = {}) {
   const dot = $sel("#refresh .dot");
@@ -166,7 +135,12 @@ async function load({ quiet = false } = {}) {
     $("count").textContent = "拿不到";
     $("result-count").textContent = "";
     $("grid").textContent = "";
-    $("grid").append(el("div", "empty", String(error?.message ?? error)));
+    const box = el("div", "empty", String(error?.message ?? error));
+    const retry = el("button", "btn btn-small", "重试");
+    retry.type = "button";
+    retry.onclick = () => void load();
+    box.append(el("br"), retry);
+    $("grid").append(box);
     if (!quiet) toast(String(error?.message ?? error), "bad");
   }
 }
@@ -174,26 +148,17 @@ async function load({ quiet = false } = {}) {
 // ── 类别（写回仓库，qrd3wh 落盘并提交） ────────────────────────────────────
 //
 // 类别不在这一页存：真相是每个 `nous.json` 的 category + `categories.json` 的词表，
-// 两份取并集（spec §3）。所以这里没有本地队列、没有 debounce —— 一次勾选一次 POST。
+// 两份取并集（spec §3）。所以这一页只有一块 8 秒的写入队列（categoryWrites）：
+// 先乐观地画出来，攒够 8 秒发一次；离开详情页 / 发布前立刻 flush。
 
-async function saveCategories(name, next) {
+function saveCategories(name, next) {
   const skill = skillNow(name);
   if (!skill || !transport) return;
-  const before = categoriesOf(skill);
   const wanted = [...new Set(next.map(normalizeCategory).filter(Boolean))].sort(compareCategories);
   skill.category = wanted;
   refreshView();
   render();
-  try {
-    await transport.post("v1/skills/category", { name, category: wanted });
-    await load({ quiet: true });
-  } catch (error) {
-    toast(`改类别失败：${error.message}`, "bad");
-    skill.category = before;
-    refreshView();
-    render();
-    void load({ quiet: true });
-  }
+  categoryWrites.schedule(name, wanted);
 }
 
 function addTag(name, value) {
@@ -203,13 +168,13 @@ function addTag(name, value) {
   if (!tag) return;
   const set = new Set(categoriesOf(skill));
   if (set.has(tag)) return;
-  void saveCategories(name, [...set, tag]);
+  saveCategories(name, [...set, tag]);
 }
 
 function removeTag(name, value) {
   const skill = skillNow(name);
   if (!skill) return;
-  void saveCategories(
+  saveCategories(
     name,
     categoriesOf(skill).filter((tag) => tag !== value),
   );
@@ -599,11 +564,8 @@ function productCard(card) {
   if (skill.description) body.append(el("p", "product-sum", skill.description));
 
   // 装载失败的错误摘要在详情里有全文；卡上留两行，因为「坏了」和「为什么坏」不是一个问题。
-  if (failed && skill.load?.error) {
-    const error = el("p", "product-err", skill.load.error);
-    error.title = skill.load.error;
-    body.append(error);
-  }
+  // 摘要直接摆出来，不放 title：手机没有 hover，「为什么坏了」永远点不出来。
+  if (failed && skill.load?.error) body.append(el("p", "product-err", skill.load.error));
 
   const tags = tagRow(skill, { readOnly: true });
   if (tags.childNodes.length) body.append(tags);
@@ -918,6 +880,8 @@ function leaveDetail() {
   state.detail = null;
   state.detailBody = null;
   state.editing = null;
+  // 离开详情就把攒着的类别发掉：别让人以为勾上了，其实还压在 8 秒计时器里。
+  if (categoryWrites.hasPending()) void categoryWrites.flush();
 }
 
 function openDetail(name, { editTags = false } = {}) {
@@ -996,7 +960,17 @@ function renderDetail() {
   host.append(head);
 
   // ── 真话说在最前面：装载失败 ──────────────────────────────────────────
-  if (failed && skill.load?.error) host.append(alertLine("bad", "装载失败", skill.load.error));
+  if (failed && skill.load?.error) {
+    const line = alertLine("bad", "装载失败", skill.load.error);
+    line.title = "";
+    host.append(line);
+    // 「重试装载」= 把文件改回去，再让 qrd3wh 重扫一遍仓库（POST /v1/skills/reload）。
+    const retry = el("button", "btn btn-small", "重试装载");
+    retry.type = "button";
+    retry.title = "先「改正文」把文件改对，再点这里让 qrd3wh 重扫（不 commit）";
+    retry.onclick = () => void reloadSkill(skill.name);
+    host.append(retry);
+  }
 
   const grid = el("div", "detail-grid");
 
@@ -1071,7 +1045,9 @@ function renderGrid() {
   if (!shown.length) {
     const why = !state.data
       ? "读取中…"
-      : state.query.trim()
+      : state.data?.repo?.error
+        ? `仓库读不了：${state.data.repo.error}（这不是「一条技能都没有」—— 是清单还没读到）`
+        : state.query.trim()
         ? "没有匹配的技能。"
         : state.filter === UNCATEGORIZED
           ? "没有未分类的技能。"
@@ -1093,7 +1069,13 @@ function renderGrid() {
 
 function renderRepo() {
   const repo = state.data?.repo ?? {};
+  const error = String(repo.error ?? "");
   $("repo-path").textContent = state.data?.root ?? "—";
+  // repo.error 非空 = git 读不了。光把红字塞进角落的 hint 里没人看得见，
+  // 所以顶栏也立一个 chip：这一页现在是「读不到清单」，不是「一条技能都没有」。
+  repoChip.hidden = !error;
+  repoChip.textContent = error ? "仓库读不了" : "";
+  repoChip.title = "";
   const dirty = Boolean(repo.dirty);
   const ahead = repo.ahead ?? 0;
   const behind = repo.behind ?? 0;
@@ -1130,6 +1112,21 @@ function render() {
   else renderGrid();
 
   $("count").textContent = `${state.view.skillCount} 条技能${state.view.archived.length ? ` · ${state.view.archived.length} 条归档` : ""}`;
+}
+
+/** 重扫仓库：修好的 SKILL.md 得重新进名册，别让人刷新整页才能看到。 */
+async function reloadSkill(name) {
+  if (!transport) return;
+  try {
+    const result = await transport.post("v1/skills/reload", {});
+    await load({ quiet: true });
+    const card = state.view?.cards.find((item) => item.name === name);
+    if (card?.state === "failed") toast(`${name} 还是装载失败：${card.load?.error ?? "看卡上的摘要"}`, "bad");
+    else if (result.error) toast(`重扫有问题：${result.error}`, "bad");
+    else toast(`${name} 已重新装载`);
+  } catch (error) {
+    toast(`重新装载失败：${error.message}`, "bad");
+  }
 }
 
 // ── 归档 / 恢复 / 彻底删除（会改仓库） ────────────────────────────────────
@@ -1257,6 +1254,7 @@ async function openEditor(skill, { path = null } = {}) {
     pending: new Set(),
     saving: false,
     error: "",
+    conflict: false, // 409：别人先改了 —— 只提示「重新加载」，不猜内容
     notice: "",
     // ── 差异视图 ──────────────────────────────────────────────────────────
     mode: "edit", // edit | diff
@@ -1367,6 +1365,15 @@ function renderEditorState() {
     msg.hidden = false;
     msg.dataset.tone = "bad";
     msg.textContent = ed.error;
+    // 409 不是「坏了」，是「你手里这份旧了」：给一个就地重读，别让人关抽屉再摸回来。
+    if (ed.conflict) {
+      const again = el("button", "ed-btn", "重新加载");
+      again.type = "button";
+      again.title = "重读磁盘上的这一版，base 跟着更新";
+      again.style.marginTop = "8px";
+      again.onclick = () => void reloadEditorFile();
+      msg.append(again);
+    }
   } else if (ed.notice) {
     msg.hidden = false;
     msg.dataset.tone = "ok";
@@ -1390,6 +1397,7 @@ async function openEditorFile(path, { force = false } = {}) {
     ed.base = file.etag;
     ed.expanded.clear();
     ed.error = "";
+    ed.conflict = false;
     ed.notice = "";
     const area = $("ed-text");
     area.disabled = false;
@@ -1446,14 +1454,16 @@ async function saveEditorFile({ quiet = false } = {}) {
     });
     ed.text = text;
     ed.base = saved.etag;
+    ed.conflict = false;
     ed.pending.add(ed.path);
     if (!quiet) ed.notice = `已保存到磁盘：${ed.name}/${ed.path}（还没提交）`;
     return true;
   } catch (error) {
-    ed.error =
-      error.status === 409
-        ? `保存失败：${ed.path} 在别处被改过了（409）。先点「刷新」再改，别把别人的字盖掉。`
-        : `保存失败：${error.message}`;
+    // 409 走自己的分支：不是「保存坏了」，是我手里这份 base 过期了 —— 重读再改。
+    ed.conflict = Boolean(error?.conflict);
+    ed.error = ed.conflict
+      ? `保存失败：${ed.path} ${CONFLICT_MESSAGE} —— 磁盘上那一版比手里的新，重读之后再改，别把别人的字盖掉。`
+      : `保存失败：${error.message}`;
     return false;
   } finally {
     ed.saving = false;
@@ -1461,20 +1471,42 @@ async function saveEditorFile({ quiet = false } = {}) {
   }
 }
 
+/** 409 之后的重读：拿磁盘那一版 + 新 base，放弃手里这份（用户是主动点的）。 */
+async function reloadEditorFile() {
+  const ed = state.editor;
+  if (!ed?.path) return;
+  ed.conflict = false;
+  ed.error = "";
+  await openEditorFile(ed.path, { force: true });
+  if (state.editor !== ed) return;
+  ed.notice = "已重读磁盘上的版本 —— base 跟着更新了，接着改就行";
+  renderEditorState();
+}
+
 async function publishEditor() {
   const ed = state.editor;
   if (!ed || state.publishing) return;
   if (editorDirty() && !(await saveEditorFile({ quiet: true }))) return;
+  // 类别还压在 8 秒队列里就先发掉：否则这一次 commit 会漏掉它，发布完才脏。
+  if (categoryWrites.hasPending()) await categoryWrites.flush();
   state.publishing = true;
   ed.error = "";
   ed.notice = "";
   renderEditorState();
   try {
     // 不传 message：说明由服务端按**真正改了的文件**生。客户端只知道现在开着哪个文件。
-    const result = await transport.post("v1/skills/publish", {});
+    // 发布成功 = HEAD 变了：publishWithRefresh 会重读这个文件，base 换成新 etag，
+    // 基线（pending/diff）也跟着重取 —— 否则差异视图还在跟旧 HEAD 比，永远不归零。
+    const typed = $("ed-text").value;
+    const { result, file } = await publishWithRefresh(transport, { name: ed.name, path: ed.path });
     ed.pending.clear();
-    // 发布成功 = HEAD 变了。重读这个文件 + 基线，否则差异视图还在跟旧 HEAD 比。
-    if (ed.path) await openEditorFile(ed.path, { force: true }).catch(() => {});
+    if (file && ed.path) {
+      ed.text = file.text;
+      ed.base = file.etag;
+      ed.lineCount = file.text.split("\n").length;
+      if ($("ed-text").value === typed) $("ed-text").value = file.text;
+      await loadBaseline(ed, ed.path);
+    }
     const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
     if (result.pushed === false) {
       // 提交在本地、远端没动 —— 最坏的一种「假成功」，必须红着说出来。
@@ -1827,6 +1859,13 @@ async function submitCreate(event) {
 
 // ── 绑定 ───────────────────────────────────────────────────────────────────
 
+// 顶栏那个「仓库读不了」的红 chip：只在 repo.error 时出现，常驻 DOM、靠 hidden 开关。
+const repoChip = el("span", "chip-status");
+repoChip.id = "repo-error";
+repoChip.setAttribute("role", "status");
+repoChip.hidden = true;
+$("repo").before(repoChip);
+
 $("search").oninput = (event) => {
   state.query = event.target.value;
   state.detail = null;
@@ -1920,9 +1959,16 @@ addEventListener("keydown", (event) => {
 
 // 有没保存的字就别让浏览器静默关掉这一页。
 addEventListener("beforeunload", (event) => {
+  // 攒着的类别能抢救一下就抢救（不等结果：这一页已经在走了）。
+  if (categoryWrites.hasPending()) void categoryWrites.flush();
   if (!editorDirty()) return;
   event.preventDefault();
   event.returnValue = "";
+});
+
+// 切到后台 / 藏起来的时候也把攒着的类别发掉 —— 手机上切走再回来常常就是「没了」。
+addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && categoryWrites.hasPending()) void categoryWrites.flush();
 });
 
 load();

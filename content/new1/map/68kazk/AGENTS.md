@@ -70,11 +70,12 @@ package.json       type: module + scripts.start（宿主凭这一条起进程；
 server.js          纯静态（57 行那种，没有反代、没有配置）
 public/index.html  骨架：顶栏 / 左栏 / 网格 / 详情 / 抽屉 / 确认框 / 新建
 public/model.js    纯计算：卡片状态、facet 计数、排序、删除类别影响范围、未分类桶
+public/api.js      数据层：`createApi`（可注入 fetch）、ctx 解析、错误信封 / 409、类别 debounce、
+                   发布后重读。不碰 DOM —— 测试拿假 fetch 打的就是这一层
 public/app.js      DOM 那一半：渲染、菜单、手势、抽屉、diff 视图、Esc 层级
 public/diff.js     行级对齐 + 词级高亮 + 折叠（不碰 DOM）
 public/vendor/diff  jsdiff 8（MIT），逐文件拷的 ESM —— 这页没有打包器
-public/mock/       ⚠️ D1 的 mock：skills.json + api.js（接真端点时整个删掉）
-test/model.test.js 测 model.js，不测 DOM
+test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
 ```
 
 ## 踩过的坑（改之前先读这几条）
@@ -83,7 +84,8 @@ test/model.test.js 测 model.js，不测 DOM
    不然 `./style.css` 会解析到上一层去，页面没样式、`app.js` 直接 404。
 2. **`SELF` 只从 `location.pathname` 来，邻居地址只从 `__nous/ctx` 来。** 老版本写死过路径：
    请求越出前缀打到宿主的 SPA，回了 200 的 `index.html`，面板报「上游回了非 JSON」。
-   现在 `transport` 两套实现（真 fetch / mock），路径都只有短的 `v1/skills…`。
+   现在地址的唯一来源是 `api.js` 的 `hostBase(ctx)`：在 `ctx.blocks` 里按 **id `qrd3wh`** 找
+   （不是名字，名字会改），找到之前一个 `v1/skills…` 请求都不发。找不到就报「ctx 里没有 qrd3wh」。
 3. **Esc 的层级**：菜单 → 新建弹层 → 抽屉 → 详情 → 列表。菜单排最前，因为它是最后一次交互；
    不这么排的话，Esc 关菜单会顺手把背后的详情也关了。抽屉里差异态先回编辑态再关。
    左栏输入框 / 类别输入框 / 正文类别输入框的 Esc 自己 `stopPropagation()`，否则一次 Esc 关两层。
@@ -94,13 +96,14 @@ test/model.test.js 测 model.js，不测 DOM
 6. **差异的基线走 `pending/diff` 的 `before`**，不是文件接口的字段：`§6.1` 的
    `GET /v1/skills/file` 只回 `{name,path,text,etag}`。未跟踪的文件 `before: null` → 整份算新增，
    抽屉里会写一句「发布之后才有基线」。发布成功后必须重读文件 + 重取基线，否则 diff 还在跟旧 HEAD 比。
-7. **`mock` 只活在 D1 分支上。** `app.js` 顶上一个 `MOCK` 开关 + `public/mock/`；
-   接真端点（D2）时**连文件一起删**。留着它就是「看起来发布了，其实没连上」。
-   mock 的写操作全落内存，刷新页面回到原样 —— 它验证的是这一页，不是服务端。
-8. **测试命令。** `node --test test/*.test.js`（或裸 `node --test`）。
-   这台机器的 node（v22.23.2）把位置参数当 glob，`node --test test/` 会命中目录本身、
-   报 `Cannot find module …/test` —— 那是 Node 的行为，不是这个块的问题。
-   也别忘了 `node --check server.js && node --check public/model.js && node --check public/app.js`。
+7. **没有 mock、没有离线缓存、没有本地副本**（spec I2）。D1 的 `public/mock/` 和 `MOCK` 开关
+   已经拆了；测试的 fixture 只活在 `test/` 里。想加「先拿缓存顶一下」= 造第二个真相源，别加。
+   类别写回是 8 秒 debounce：离开详情页 / 发布前 / 切后台都要 `flush()`，否则用户以为存了。
+   保存的 `base` 过期时服务端回 409 —— 那是「重读再改」，不是通用错误（`ConflictError.conflict`）。
+8. **测试命令。** `node --test test/`（`test/index.js` 是 barrel，把两个测试文件都 import 进来）、
+   `node --test "test/*.test.js"`、裸 `node --test` 都能跑。node 22 把目录参数解析成它的
+   `index.js`，所以别删那个 barrel。
+   也别忘了 `node --check server.js && node --check public/model.js && node --check public/api.js && node --check public/app.js`。
 9. **别 import `server.js`。** 它有顶层 `listen`。能纯算的东西放 `model.js`，测试只测它；
    DOM 归合并后的 `code-review` 看（spec §9：不测 DOM）。
 10. **窄屏 375px 不横滚。** 760px 以下左栏折到上面、网格 `minmax(150px,1fr)`、抽屉整屏。
@@ -112,8 +115,8 @@ test/model.test.js 测 model.js，不测 DOM
 cp -r content/new1/map/68kazk ~/68kazk && cd ~/68kazk && npm start   # → http://127.0.0.1:4784/
 ```
 
-`MOCK` 开着就直接能看（数据来自 `public/mock/skills.json`）。要连真 qrd3wh：`MOCK = false`，
-但 `__nous/ctx` 只有宿主给得出来 —— 所以真模式只在宿主里跑得起来，这是设计。
+数据来自 qrd3wh，地址来自宿主的 `__nous/ctx` —— 这份 ctx 只有宿主给得出来，
+所以这一页只在宿主里跑得起来，这是设计。裸 `npm start` 会停在「ctx 里没有 qrd3wh」那张错误卡上。
 `data/` 不预建、不需要：这一块没有后端状态。
 
 ## 不做的事
