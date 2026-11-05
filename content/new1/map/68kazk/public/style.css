@@ -100,33 +100,18 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 }
 .rail-head .facet-n { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
 
-/* 上游那一栏：跟类别同构（同样的行高、同样的数字位置），但语义不同 ——
-   这里列的不是仓库里的东西，是「别人仓库里有什么」。所以点进去是主区的一张清单，
-   不是筛选。 */
-.rail-head-up { margin-top: 14px; }
-.upstream-list { display: flex; flex-direction: column; gap: 1px; }
-.upstream-empty { padding: 6px 8px; font-size: 11.5px; color: var(--dimmer); line-height: 1.5; }
-.upstream-row { display: flex; align-items: center; border-radius: 8px; touch-action: manipulation; }
-.upstream-row:hover { background: var(--wash); }
-.upstream-row.on { background: var(--wash); }
-.upstream-main {
-  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
-  border: 0; background: none; cursor: pointer; text-align: left;
-  padding: 7px 8px; border-radius: 8px; font: inherit; font-size: 12.5px; color: var(--ink-2);
+/* 上游在顶部那排 chip 里（它是一块**视图**，不是筛选：列的不是我们仓库里的东西）。
+   面板里的订阅切换复用 .filter-chip —— 同一排药丸，同一个点击手感。 */
+.filter-n[data-tone="warn"] { color: var(--warn); }
+.source-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.source-form { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.source-form input {
+  flex: 1 1 220px; min-width: 0; padding: 7px 9px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel2); color: var(--ink); font: inherit; font-size: 12.5px;
 }
-.upstream-row.on .upstream-main { color: var(--ink); font-weight: 600; }
-.upstream-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.upstream-n { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
-.upstream-n[data-tone="warn"] { color: var(--warn); }
-.upstream-n[data-tone="bad"] { color: var(--bad); }
-.upstream-sync {
-  flex: none; width: 22px; height: 22px; margin-right: 4px;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 0; border-radius: 5px; background: transparent; color: var(--dim);
-  font: inherit; font-size: 12px; cursor: pointer;
-}
-.upstream-sync:hover { background: var(--line-soft); color: var(--ink); }
-.upstream-sync[disabled] { opacity: 0.5; cursor: default; }
+.source-form input::placeholder { color: var(--dimmer); }
+.upstream-files { margin-top: 8px; }
 
 .facets { display: flex; flex-direction: column; gap: 1px; }
 .facet {

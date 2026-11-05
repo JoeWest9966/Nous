@@ -230,3 +230,26 @@ export function suggestedAdoptName(entry) {
   if (!name) return "";
   return entry?.local === "taken" ? `${name}-upstream` : name;
 }
+
+/**
+ * 从地址推一个订阅名：`https://github.com/mattpocock/skills.git` → `matt`。
+ *
+ * 为什么用**倒数第二段**而不是最后一段：仓库名谁都有（`skills`、`notes`），
+ * 名字撞了要比对半天；`宿主/人/仓` 这个形状里，人是唯一的那一段。
+ * 推不对就自己改 —— 这只是默认值。
+ */
+export function sourceNameFromUrl(url) {
+  const raw = String(url ?? "").trim().replace(/[/:]+$/, "").replace(/\.git$/i, "");
+  if (!raw) return "";
+  const parts = raw.split(/[/:]/).map((part) => part.trim()).filter(Boolean);
+  // `git@github.com:matt/skills` → ["git@github.com", "matt", "skills"]；`/srv/skills` → ["srv","skills"]
+  // 本机路径的倒数第二段常常是 srv / opt / home 这种废话，那就退到仓名。
+  const boring = new Set(["srv", "opt", "home", "var", "tmp", "root", "users", "mnt", "data", "git", "repos", "src"]);
+  const parent = parts.length >= 2 ? parts[parts.length - 2] : "";
+  const slug = parent && !boring.has(parent.toLowerCase()) ? parent : parts.at(-1) ?? "";
+  return slug
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-._]+|[-._]+$/g, "")
+    .slice(0, 32);
+}

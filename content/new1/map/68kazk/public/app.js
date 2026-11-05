@@ -11,6 +11,7 @@ import { buildDiff } from "./diff.js";
 import {
   ARCHIVED,
   STATE_LABEL,
+  UPSTREAM_LABEL,
   UNCATEGORIZED,
   buildView,
   categoriesOf,
@@ -24,6 +25,7 @@ import {
   normalizeCategory,
   stateFilter,
   stateFilterOf,
+  sourceNameFromUrl,
   suggestedAdoptName,
   sortUpstream,
   upstreamSummary,
@@ -93,8 +95,10 @@ const state = {
   editor: null, // 正文抽屉
   publishing: false,
   upstream: null, // GET v1/skills/upstream 的原样（订阅 + 清单 + 每个 source 的报错）
-  upstreamSource: null, // 主区正在看哪个上游；null = 看自己仓库
-  upstreamBusy: null, // 正在取用 / 正在刷新的那一条（按钮上的转圈）
+  upstreamOpen: false, // 主区顶上来的是上游这块视图（不是筛出来的列表）
+  upstreamSource: null, // 在看哪个订阅
+  upstreamBusy: null, // 正在取用 / 刷新 / 添加（按钮上的转圈）
+  addingSource: false, // 添加上游那个表单开着
 };
 
 const skillNow = (name) => (state.data?.skills ?? []).find((item) => item.name === name) ?? null;
@@ -607,7 +611,8 @@ function renderFilters() {
     if (title) button.title = title;
     button.onclick = () => {
       state.filter = state.filter === value ? "" : value;
-      leaveDetail(); // 换筛选就是回列表
+      state.upstreamOpen = false; // 换筛选就是回列表（上游那块视图让位）
+      leaveDetail();
       render();
     };
     return button;
@@ -647,6 +652,21 @@ function renderFilters() {
     for (const item of views) {
       box.append(chip(item.label, stateFilter(item.key), byState.get(item.key), { dot: item.tone, title: item.title }));
     }
+  }
+
+  // 「上游」跟着这一排走，但它不是筛选：点了是把上游那块**视图**顶上来。
+  // 一条订阅都没有时也要在 —— 否则第一次加订阅没有入口。
+  {
+    const up = upstreamSummary(state.upstream?.entries ?? []);
+    const upChip = el("button", "filter-chip" + (state.upstreamOpen ? " on" : ""));
+    upChip.type = "button";
+    upChip.append(el("span", "filter-label", "上游"));
+    const n = el("span", "filter-n", state.upstream ? (up.todo ? String(up.todo) : "—") : "…");
+    if (up.todo) n.dataset.tone = "warn";
+    upChip.append(n);
+    upChip.title = "别的 git 仓库里的技能：看清单、取用过来（不会自动同步）";
+    upChip.onclick = () => (state.upstreamOpen ? closeUpstream() : openUpstream());
+    box.append(upChip);
   }
 
   if (archived.length) {
@@ -1123,13 +1143,11 @@ function render() {
   renderRailNew();
   renderSuggestions();
 
-  renderUpstreamRail();
-
-  // 详情 / 上游清单占主区：网格让位，而不是被挤窄。
-  const panel = Boolean(state.detail || state.upstreamSource);
+  // 详情 / 上游视图占主区：网格让位，而不是被挤窄。
+  const panel = Boolean(state.detail || state.upstreamOpen);
   $("grid").hidden = panel;
   $("detail").hidden = !panel;
-  if (state.upstreamSource) renderUpstreamPanel();
+  if (state.upstreamOpen) renderUpstreamPanel();
   else if (state.detail) renderDetail();
   else renderGrid();
 
@@ -1138,14 +1156,15 @@ function render() {
 
 // ── 上游 ────────────────────────────────────────────────────────────────────
 //
-// 上游就是另一个 git remote。这一页只做三件事：
-//   1. 看别人仓库里有什么 —— 读本地镜像，**打开页面不联网**；
-//   2. 点一下把某条取用过来 —— POST adopt，落进我们仓里，仍然是未发布；
-//   3. 显式刷新 —— 唯一联网的动作，一个 source 一个按钮。
+// 上游就是另一个 git remote。这块是一个**视图**，不是筛选 —— 顶部那排 chip 里的
+// 「上游」把它顶上来：列的不是我们仓库里的东西，而是「别人仓库里有什么、要不要拿过来」。
 //
-// **没有自动同步。** 上游动了只在清单上标「上游有更新」，跟不跟是人的事：
-// 取用是一次性的拷贝，不是一条活的追踪关系（不然就回到「两份真相会漂」）。
-// 四种关系（未取用 / 上游有更新 / 名字被占 / 已取用）由服务端算，这里只摆。
+// 三个动作，边界很清楚：
+//   1. 看清单 —— 读本地镜像，**打开页面不联网**；
+//   2. 取用 —— POST adopt，落进我们仓里，仍然是未发布；
+//   3. 刷新 / 添加上游 —— 刷新是唯一联网动作；添加只是往 `sources.json` 里写一行（未发布）。
+//
+// **没有自动同步。** 上游动了只标「上游有更新」，跟不跟是人的事。
 
 async function loadUpstream({ quiet = true } = {}) {
   try {
@@ -1155,68 +1174,28 @@ async function loadUpstream({ quiet = true } = {}) {
     state.upstream = { sources: [], entries: [], errors: [], error: String(error?.message ?? error) };
     if (!quiet) toast(`读不到上游清单：${error.message}`, "bad");
   }
-  renderUpstreamRail();
-  if (state.upstreamSource) renderUpstreamPanel();
+  // 顶部那颗 chip 的条数也是这份数据算的，所以整页重画一次（很便宜）。
+  if (state.data) render();
 }
 
 const upstreamEntriesOf = (sourceName) =>
   (state.upstream?.entries ?? []).filter((entry) => entry.source === sourceName);
 
-function renderUpstreamRail() {
-  const host = $("upstream");
-  if (!host) return;
-  host.textContent = "";
-
-  const sources = state.upstream?.sources ?? [];
-  const summary = upstreamSummary(state.upstream?.entries ?? []);
-  $("up-count").textContent = state.upstream ? (summary.todo ? String(summary.todo) : "—") : "…";
-
-  if (!sources.length) {
-    host.append(
-      el(
-        "p",
-        "upstream-empty",
-        state.upstream?.error
-          ? `上游清单读不到：${state.upstream.error}`
-          : "还没订阅上游。在 Nous-skills 的 sources.json 里加一条（发布后生效）。",
-      ),
-    );
-    return;
-  }
-
-  for (const source of sources) {
-    const mine = upstreamSummary(upstreamEntriesOf(source.name));
-    const row = el("div", "upstream-row" + (state.upstreamSource === source.name ? " on" : ""));
-    const main = el("button", "upstream-main");
-    main.type = "button";
-    main.title = `${source.url}${source.prefix ? ` · 只看 ${source.prefix}/` : ""}`;
-    main.append(el("span", "upstream-name", source.name));
-    const count = el("span", "upstream-n", source.mirror === "missing" ? "未镜像" : String(mine.total));
-    if (source.mirror === "missing" || mine.todo) count.dataset.tone = "warn";
-    main.append(count);
-    main.onclick = () => openUpstream(source.name);
-    row.append(main);
-
-    const sync = el("button", "upstream-sync", state.upstreamBusy === `fetch:${source.name}` ? "…" : "⟳");
-    sync.type = "button";
-    sync.title = `刷新 ${source.name}：git fetch，这一页唯一联网的动作`;
-    sync.disabled = Boolean(state.upstreamBusy);
-    sync.onclick = () => void refreshSource(source.name);
-    row.append(sync);
-    host.append(row);
-  }
-}
-
-function openUpstream(name) {
+function openUpstream(name = undefined) {
   leaveDetail();
-  state.upstreamSource = name;
+  state.upstreamOpen = true;
+  // 深链接：`#upstream` 直接开这一块（贴给别人、或者测试里省一次点击）。
+  if (location.hash !== "#upstream") history.replaceState(null, "", "#upstream");
+  // 没说看哪个就落到第一个订阅；一个都没有就停在「添加上游」那张空状态上。
+  state.upstreamSource = name ?? state.upstreamSource ?? state.upstream?.sources?.[0]?.name ?? null;
   render();
   $sel(".results")?.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function closeUpstream() {
-  if (!state.upstreamSource) return;
-  state.upstreamSource = null;
+  if (!state.upstreamOpen) return;
+  state.upstreamOpen = false;
+  if (location.hash === "#upstream") history.replaceState(null, "", location.pathname + location.search);
   render();
   $sel(".results")?.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1224,7 +1203,7 @@ function closeUpstream() {
 async function refreshSource(name) {
   if (state.upstreamBusy) return;
   state.upstreamBusy = `fetch:${name}`;
-  renderUpstreamRail();
+  renderUpstreamPanel();
   try {
     const out = await transport.post("v1/skills/upstream/refresh", { name });
     const bad = (out.sources ?? []).find((item) => !item.ok);
@@ -1235,6 +1214,50 @@ async function refreshSource(name) {
   } finally {
     state.upstreamBusy = null;
     await loadUpstream({ quiet: true });
+  }
+}
+
+/** 加一个上游 = 往 sources.json 里写一行，**不提交** —— 它跟技能一样是内容，走发布。 */
+async function addSource({ url, prefix }) {
+  const cleanUrl = String(url ?? "").trim();
+  if (!cleanUrl) {
+    toast("先填个地址", "bad");
+    return;
+  }
+  const name = sourceNameFromUrl(cleanUrl);
+  if (!name) {
+    toast("认不出这个地址 —— 要 https://… / git@host:… / 绝对路径", "bad");
+    return;
+  }
+  const existing = state.upstream?.sources ?? [];
+  if (existing.some((source) => source.name === name)) {
+    toast(`已经订阅过一个叫 ${name} 的上游了 —— 换个地址`, "bad");
+    return;
+  }
+  state.upstreamBusy = "add";
+  renderUpstreamPanel();
+  try {
+    // 整份替换（POST /v1/skills/sources 的语义）：把现有的原样带回去，别把它们弄丢。
+    const next = [
+      ...existing.map(({ name: n, url: u, prefix: p, branch: b }) => ({
+        name: n,
+        url: u,
+        ...(p ? { prefix: p } : {}),
+        ...(b ? { branch: b } : {}),
+      })),
+      { name, url: cleanUrl, ...(prefix ? { prefix: String(prefix).trim() } : {}) },
+    ];
+    await transport.post("v1/skills/sources", { sources: next });
+    await loadUpstream({ quiet: true });
+    state.upstreamSource = name;
+    state.addingSource = false;
+    toast(`订阅了 ${name}（未发布）—— 顺手拉一下镜像`);
+    await refreshSource(name);
+  } catch (error) {
+    toast(`加不上：${error.message}`, "bad");
+  } finally {
+    state.upstreamBusy = null;
+    if (state.upstreamOpen) renderUpstreamPanel();
   }
 }
 
@@ -1252,7 +1275,7 @@ async function adoptEntry(entry, name) {
     toast(`取用失败：${error.message}`, "bad");
   } finally {
     state.upstreamBusy = null;
-    renderUpstreamPanel();
+    if (state.upstreamOpen) renderUpstreamPanel();
   }
 }
 
@@ -1324,8 +1347,7 @@ async function showUpstreamDiff(entry, host) {
     box.textContent = "";
     box.append(el("p", "detail-sum", `跟本地 ${out.localName} 比：`));
     for (const file of out.files ?? []) {
-      const line = detailRow(file.path, file.state === "same" ? "一样" : file.state === "diff" ? "本地改过" : "本地没有");
-      box.append(line);
+      box.append(detailRow(file.path, file.state === "same" ? "一样" : file.state === "diff" ? "本地改过" : "本地没有"));
     }
   } catch (error) {
     box.textContent = "";
@@ -1333,15 +1355,45 @@ async function showUpstreamDiff(entry, host) {
   }
 }
 
+/** 添加上游：地址 + 可选 prefix。名字从地址推，推不对就换个地址重来。 */
+function sourceForm() {
+  const form = el("div", "source-form");
+  const url = el("input");
+  url.type = "text";
+  url.placeholder = "上游地址：https://github.com/谁的/哪个仓（git 认得就行）";
+  const prefix = el("input");
+  prefix.type = "text";
+  prefix.placeholder = "只看哪一段（可选，如 skills）";
+  const go = el("button", "btn btn-small", state.upstreamBusy === "add" ? "添加中…" : "添加");
+  go.type = "button";
+  go.disabled = state.upstreamBusy === "add";
+  go.onclick = () => void addSource({ url: url.value, prefix: prefix.value });
+  const cancel = el("button", "btn btn-small", "算了");
+  cancel.type = "button";
+  cancel.onclick = () => {
+    state.addingSource = false;
+    renderUpstreamPanel();
+  };
+  for (const node of [url, prefix, go, cancel]) form.append(node);
+  url.onkeydown = (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void addSource({ url: url.value, prefix: prefix.value });
+    }
+  };
+  return form;
+}
+
 function renderUpstreamPanel() {
   const host = $("detail");
-  const sourceName = state.upstreamSource;
-  const source = (state.upstream?.sources ?? []).find((item) => item.name === sourceName) ?? null;
+  const sources = state.upstream?.sources ?? [];
+  const sourceName = state.upstreamSource ?? sources[0]?.name ?? null;
+  const source = sources.find((item) => item.name === sourceName) ?? null;
   const entries = sortUpstream(upstreamEntriesOf(sourceName));
   const summary = upstreamSummary(entries);
 
   host.textContent = "";
-  $("result-count").textContent = source ? `${source.name} · ${entries.length} 条` : `${entries.length} 条`;
+  $("result-count").textContent = source ? `${source.name} · ${entries.length} 条` : "还没订阅";
 
   const back = el("button", "detail-back", "‹ 返回");
   back.type = "button";
@@ -1349,36 +1401,79 @@ function renderUpstreamPanel() {
   back.onclick = closeUpstream;
   host.append(back);
 
+  // 头：名字就是当前看的上游；一条订阅都没有时就是「上游」本身。
   const head = el("header", "detail-head");
   const tile = el("div", "detail-tile");
-  tile.style.setProperty("--hue", String(hueOf(sourceName)));
-  tile.append(el("span", "detail-mono", initialsOf(sourceName)));
+  tile.style.setProperty("--hue", String(hueOf(sourceName ?? "upstream")));
+  tile.append(el("span", "detail-mono", initialsOf(sourceName ?? "up")));
   head.append(tile);
 
   const id = el("div", "detail-id");
   const nameRow = el("div", "detail-name-row");
-  nameRow.append(el("h2", "detail-name", sourceName));
-  const badge = el("span", "detail-badge", summary.todo ? `${summary.todo} 条值得看` : "都取用过了");
-  badge.dataset.tone = summary.todo ? "unpub" : "ok";
-  nameRow.append(badge);
+  nameRow.append(el("h2", "detail-name", sourceName ?? "上游"));
+  if (source) {
+    const badge = el("span", "detail-badge", summary.todo ? `${summary.todo} 条值得看` : "都取用过了");
+    badge.dataset.tone = summary.todo ? "unpub" : "ok";
+    nameRow.append(badge);
+  }
   id.append(nameRow);
-  id.append(el("p", "detail-sum", source ? `${source.url}${source.prefix ? ` · 只看 ${source.prefix}/` : ""}` : "订阅里已经没有它了"));
+  id.append(
+    el(
+      "p",
+      "detail-sum",
+      source
+        ? `${source.url}${source.prefix ? ` · 只看 ${source.prefix}/` : ""}`
+        : "别的 git 仓库里的技能：看一眼，觉得有用就取用过来。",
+    ),
+  );
 
   const acts = el("div", "detail-acts");
-  const sync = el("button", "btn btn-small", state.upstreamBusy === `fetch:${sourceName}` ? "刷新中…" : "刷新（fetch）");
-  sync.type = "button";
-  sync.disabled = Boolean(state.upstreamBusy) || !source;
-  sync.title = "git fetch 这个上游 —— 打开这一页不会联网，所以更新要手动拉";
-  sync.onclick = () => void refreshSource(sourceName);
-  acts.append(sync);
+  const add = el("button", "btn btn-small", "+ 添加上游");
+  add.type = "button";
+  add.title = "往 sources.json 里加一行（未发布，跟技能一样走发布）";
+  add.onclick = () => {
+    state.addingSource = !state.addingSource;
+    renderUpstreamPanel();
+  };
+  acts.append(add);
+  if (source) {
+    const sync = el("button", "btn btn-small", state.upstreamBusy === `fetch:${source.name}` ? "刷新中…" : "刷新（fetch）");
+    sync.type = "button";
+    sync.disabled = Boolean(state.upstreamBusy);
+    sync.title = "git fetch 这个上游 —— 打开这一页不会联网，所以更新要手动拉";
+    sync.onclick = () => void refreshSource(source.name);
+    acts.append(sync);
+  }
   id.append(acts);
   head.append(id);
   host.append(head);
 
+  if (state.addingSource || !sources.length) host.append(sourceForm());
+
+  // 订阅切换：一排药丸，跟顶部那排同一个手感。
+  if (sources.length > 1) {
+    const row = el("div", "source-row");
+    for (const item of sources) {
+      const mine = upstreamSummary(upstreamEntriesOf(item.name));
+      const chip = el("button", "filter-chip" + (item.name === sourceName ? " on" : ""));
+      chip.type = "button";
+      chip.append(el("span", "filter-label", item.name));
+      const count = el("span", "filter-n", item.mirror === "missing" ? "未镜像" : String(mine.total));
+      if (item.mirror === "missing" || mine.todo) count.dataset.tone = "warn";
+      chip.append(count);
+      chip.onclick = () => {
+        state.upstreamSource = item.name;
+        render();
+      };
+      row.append(chip);
+    }
+    host.append(row);
+  }
+
+  if (!sources.length) return;
+
   if (source?.mirror === "missing") {
-    host.append(
-      alertLine("warn", "还没镜像", "点「刷新（fetch）」把它拉下来。第一次要联网，之后每次更新也走这个按钮。"),
-    );
+    host.append(alertLine("warn", "还没镜像", "点「刷新（fetch）」把它拉下来。第一次要联网，之后每次更新也走这个按钮。"));
   }
   const failure = (state.upstream?.errors ?? []).find((item) => item.source === sourceName);
   if (failure) host.append(alertLine("bad", "读不出来", failure.error));
@@ -2248,7 +2343,7 @@ addEventListener("keydown", (event) => {
     return;
   }
   // 详情 / 上游清单都是主区、不是浮层：Esc 退回列表。
-  if (state.upstreamSource) return closeUpstream();
+  if (state.upstreamOpen) return closeUpstream();
   if (state.detail) closeDetail();
 });
 
@@ -2269,4 +2364,7 @@ addEventListener("visibilitychange", () => {
 load();
 
 // 上游清单跟着一起读（服务端只读本地镜像，所以这一条不联网、也不拖慢首屏）。
-void loadUpstream({ quiet: true });
+// 地址上带 `#upstream` 就直接把那一块顶上来。
+void loadUpstream({ quiet: true }).then(() => {
+  if (location.hash === "#upstream" && !state.upstreamOpen) openUpstream();
+});
