@@ -349,21 +349,72 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 }
 .tag-input:focus { outline: none; border-color: var(--ink-2); }
 
-/* ── 详情：主区换页，不是浮层 ────────────────────────────────────────
-   电商那套：列表点进来。左栏和筛选条不动，网格让位 —— 所以详情能铺开写，
-   也不会跟右边那条代码抽屉抢位置。（`.grid` 是 display:grid，`[hidden]` 得自己关。） */
+/* ── 详情：半扇浮层 ────────────────────────────────────────────────
+   和下面那条正文抽屉同一副骨头：右边出、遮罩压住列表、Esc / 点遮罩关。
+   两个区别：① 宽度 720（详情是窄栏读的，980 会空一大片）；
+   ② 层级在抽屉**下面**（30/31 vs 40/41）—— 详情里点「正文 ›」，抽屉盖住详情，
+   关掉抽屉回到详情，关掉详情才回网格。（`.grid` 是 display:grid，`[hidden]` 得自己关。） */
 
-.grid[hidden], .detail[hidden] { display: none; }
+.grid[hidden], .upstream[hidden], .dt[hidden] { display: none; }
 
-.detail { display: flex; flex-direction: column; gap: 14px; max-width: 940px; padding-bottom: 40px; }
-
-.detail-back {
-  align-self: flex-start;
-  border: 0; background: none; padding: 2px 0; cursor: pointer;
-  font: inherit; font-size: 12px; color: var(--dim);
+.dt-scrim { position: fixed; inset: 0; z-index: 30; background: rgba(31, 30, 27, 0.28); }
+.dt {
+  position: fixed; z-index: 31; top: 0; right: 0; bottom: 0;
+  width: min(720px, 100vw);
+  background: var(--card); border-left: 1px solid var(--line);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.14);
+  display: flex; flex-direction: column;
+  outline: none;
 }
-.detail-back:hover, .detail-back:focus-visible { color: var(--ink); outline: none; }
+/* 浮层不该把手伸到背后去：开着的时候背后那一层不接焦点、不接点击。 */
 
+.dt-head {
+  flex: none; display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+}
+.dt-tile {
+  flex: none; width: 40px; height: 40px; border-radius: 9px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, hsl(var(--hue) 58% 93%), hsl(calc(var(--hue) + 30) 60% 85%));
+}
+.dt-mono {
+  font: 700 14px/1 var(--mono); letter-spacing: 0.03em;
+  color: hsl(var(--hue) 42% 30%); text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55); user-select: none;
+}
+.dt-title { min-width: 0; flex: 1; }
+.dt-name-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.dt-name-row h2 { margin: 0; font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+.dt-badges { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.dt-x {
+  flex: none; border: 0; background: none; color: var(--dim);
+  font-size: 20px; line-height: 1; padding: 0 4px; cursor: pointer; border-radius: 5px;
+}
+.dt-x:hover, .dt-x:focus-visible { color: var(--ink); background: var(--wash); outline: none; }
+.dt-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 16px 16px 40px;
+}
+
+/* 两个浮层（详情 / 正文抽屉）共用一档入场：220ms 从右边滑进来，遮罩同时淡入。
+   钩子挂在 `:not([hidden])` 上 —— `display:none` 会把动画重置，所以关掉再开是重播，
+   不用 JS 插手。（退场不做：关的时候人已经知道它走了，多等 200ms 都是浪费。） */
+@keyframes sheet-in { from { transform: translateX(100%); } }
+@keyframes scrim-in { from { opacity: 0; } }
+.dt:not([hidden]), .ed:not([hidden]) {
+  animation: sheet-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dt-scrim:not([hidden]), .ed-scrim:not([hidden]) { animation: scrim-in 160ms ease-out both; }
+@media (prefers-reduced-motion: reduce) {
+  .dt:not([hidden]), .ed:not([hidden]),
+  .dt-scrim:not([hidden]), .ed-scrim:not([hidden]) { animation: none; }
+}
+
+/* 主区换页的另一个：上游清单（它列的不是「某一条」，是一整张表）。 */
+.upstream { display: flex; flex-direction: column; gap: 14px; max-width: 940px; padding-bottom: 40px; }
+
+/* 下面这几个 `detail-*` 头部件归**上游**用（它是主区页，头就铺在正文里）。
+   详情那边同名的那套已经搬到 `.dt-*` —— 它是浮层，头是固定的。 */
 .detail-head { display: flex; align-items: flex-start; gap: 16px; }
 .detail-tile {
   flex: none; width: 76px; height: 76px; border-radius: 12px;
@@ -377,7 +428,14 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .detail-id { min-width: 0; flex: 1; }
 .detail-name-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
 .detail-name { margin: 0; font-family: var(--mono); font-size: 19px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.detail-cats { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+
+.detail-back {
+  align-self: flex-start;
+  border: 0; background: none; padding: 2px 0; cursor: pointer;
+  font: inherit; font-size: 12px; color: var(--dim);
+}
+.detail-back:hover, .detail-back:focus-visible { color: var(--ink); outline: none; }
+
 .detail-body-text {
   margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto;
   background: var(--paper); border: 1px solid var(--line-soft); border-radius: 8px;
@@ -576,7 +634,10 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 }
 
 @media (max-width: 760px) {
-  .ed { width: 100vw; }
+  /* 窄屏没有「半扇」这回事：要么看，要么不看 —— 两个浮层都是整屏从右出。 */
+  .ed, .dt { width: 100vw; }
+  .dt-head { padding: 10px 12px; }
+  .dt-body { padding: 12px 12px 32px; }
   .ed-body { flex-direction: column; }
   .ed-files {
     width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--line);

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>skills · Nous 技能</title>
-    <link rel="stylesheet" href="./style.css?v=1" />
+    <link rel="stylesheet" href="./style.css?v=2" />
     <script>
       // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -65,13 +65,32 @@
           </label>
         </div>
         <div class="grid" id="grid"></div>
-        <!-- 详情：点卡进来，占主区（不是又一个右侧浮层 —— 右边那条边归正文抽屉）。 -->
-        <section class="detail" id="detail" hidden aria-label="技能详情"></section>
+        <!-- 上游是主区换页：它列的不是「某一条」，是一整张清单。详情才是浮层。 -->
+        <section class="upstream" id="upstream" hidden aria-label="上游清单"></section>
         <datalist id="tag-suggestions"></datalist>
       </main>
     </div>
 
     <div class="ctxmenu" id="ctxmenu" role="menu" hidden></div>
+
+    <!-- 详情：半扇浮层，和下面那条正文抽屉一副骨头（右边出、遮罩、Esc / 点遮罩关）。
+         卡片不再换页 —— 关掉回来还是那张网格，滚动位置、筛选、搜索词全不动。
+         层级在抽屉下面（30/31 vs 40/41）：详情里点「正文 ›」，抽屉盖住详情。 -->
+    <div class="dt-scrim" id="dt-scrim" hidden></div>
+    <aside class="dt" id="detail" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="dt-name">
+      <header class="dt-head">
+        <div class="dt-tile" id="dt-tile"><span class="dt-mono" id="dt-mono">—</span></div>
+        <div class="dt-title">
+          <div class="dt-name-row">
+            <h2 id="dt-name">—</h2>
+            <span class="dt-badges" id="dt-badges"></span>
+          </div>
+          <p class="dim small" id="dt-meta">—</p>
+        </div>
+        <button class="dt-x" id="dt-close" type="button" title="关闭（Esc）" aria-label="关闭">×</button>
+      </header>
+      <div class="dt-body" id="dt-body"></div>
+    </aside>
 
     <!-- 正文抽屉：读 / 改 SKILL.md。保存 = 落盘，发布 = 校验 + commit + push，两个动作别合并。 -->
     <div class="ed-scrim" id="ed-scrim" hidden></div>
@@ -175,6 +194,6 @@
     </form>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=1"></script>
+    <script type="module" src="./app.js?v=2"></script>
   </body>
 </html>

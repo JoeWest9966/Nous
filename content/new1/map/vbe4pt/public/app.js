@@ -2269,57 +2269,53 @@ function openDetail(name, { editTags = false } = {}) {
   // 「类别」那一项是跳到详情里的勾选区，顺手把输入框打开 —— 菜单不做第二个编辑面。
   state.editing = editTags ? name : null;
   render();
-  $sel(".results")?.scrollTo({ top: 0, behavior: "smooth" });
+  // 半扇浮层：列表不动（滚动位置、筛选、搜索词都留着），滚的是抽屉自己。
+  $("dt-body").scrollTop = 0;
+  // 带「类别」进来时焦点要落在输入框上（renderDetail 已经给了），别被抽屉抢走。
+  if (!editTags) $("detail").focus({ preventScroll: true });
 }
 
-function closeDetail() {
+function closeDetail({ restoreFocus = true } = {}) {
   if (!state.detail) return;
+  const name = state.detail;
   state.detail = null;
   state.editing = null;
   render();
-  $sel(".results")?.scrollTo({ top: 0, behavior: "smooth" });
+  if (!restoreFocus) return;
+  // 焦点还回那张卡：卡片是重画过的，所以按名字重新找一遍，不存元素。
+  const card = [...document.querySelectorAll(".product")].find((node) => node.dataset.name === name);
+  card?.focus({ preventScroll: true });
 }
 
 function renderDetail() {
-  const host = $("detail");
+  const host = $("dt-body");
   const ext = oursNow().find((item) => item.name === state.detail);
-  // 详情开着的时候这个扩展被归档 / 改名走了：退回列表，别留一面空墙。
+  // 详情开着的时候这个扩展被归档 / 改名走了：把浮层收掉，别留一面空墙。
   if (!ext) {
     state.detail = null;
     state.editing = null;
-    host.hidden = true;
-    $("grid").hidden = false;
+    $("detail").hidden = true;
+    $("dt-scrim").hidden = true;
     renderGrid();
+    setBehindInert();
     return;
   }
 
   host.textContent = "";
   const cats = categoriesOf(ext);
-  // 顶栏那一格在列表里是计数，在详情里就是这条的类别 —— 别写一句「扩展详情」凑数。
-  $("result-count").textContent = cats.length ? cats.join(" · ") : "未分类";
 
   const status = statusOf(ext);
   const ghost = status === "ghost";
   const failed = status === "failed";
   const view = STATUS_VIEWS.find((item) => item.key === status);
 
-  const back = el("button", "detail-back", "‹ 返回");
-  back.type = "button";
-  back.title = "回到列表（Esc）";
-  back.onclick = closeDetail;
-  host.append(back);
-
-  // ── 头：色砖 + 名字 + 状态 + 说明 + 两个入口 ──────────────────────────
-  const head = el("header", "detail-head");
-  const tile = el("div", "detail-tile");
-  tile.style.setProperty("--hue", String(hueOf(ext.name)));
-  tile.append(el("span", "detail-mono", initialsOf(ext.name)));
-  head.append(tile);
-
-  const id = el("div", "detail-id");
-  const nameRow = el("div", "detail-name-row");
-  nameRow.append(el("h2", "detail-name", ext.name));
-  nameRow.append(el("span", "detail-ver", `v${ext.version}`));
+  // ── 抽屉头：色砖 + 名字 + 版本 + 状态 + 类别 ───────────────────────
+  $("dt-name").textContent = ext.name;
+  $("dt-meta").textContent = `v${ext.version} · ${cats.length ? cats.join(" · ") : "未分类"}`;
+  $("dt-tile").style.setProperty("--hue", String(hueOf(ext.name)));
+  $("dt-mono").textContent = initialsOf(ext.name);
+  const badges = $("dt-badges");
+  badges.textContent = "";
   const badge = el("span", "detail-badge", ghost ? "仅在仓库" : (view?.label ?? "已装"));
   badge.dataset.tone = ghost
     ? "gone"
@@ -2330,14 +2326,15 @@ function renderDetail() {
         : status === "installed"
           ? "ok"
           : "bad";
-  nameRow.append(badge);
+  badges.append(badge);
   if (status === "installed" && state.data.defaults?.includes(ext.name)) {
     const fallback = el("span", "detail-badge", "默认");
     fallback.dataset.tone = "good";
-    nameRow.append(fallback);
+    badges.append(fallback);
   }
-  id.append(nameRow);
-  id.append(el("p", "detail-sum", ext.summary || "没写说明。"));
+
+  // ── 说明 + 入口 ─────────────────────────────────────────────────────
+  host.append(el("p", "detail-sum", ext.summary || "没写说明。"));
 
   const acts = el("div", "detail-acts");
   if (ghost) {
@@ -2360,9 +2357,7 @@ function renderDetail() {
     retry.onclick = () => void retryLoad(ext.name);
     acts.append(retry);
   }
-  id.append(acts);
-  head.append(id);
-  host.append(head);
+  host.append(acts);
 
   // ── 真话说在最前面：坏了 / 清单对不上 / 已从本机卸载 ────────────────
   const load = state.data.load?.[ext.name];
@@ -2465,6 +2460,16 @@ function renderGrid() {
     shown.length === ours.length ? `${ours.length} 个扩展` : `${shown.length} / ${ours.length} 个扩展`;
 }
 
+/**
+ * 浮层开着的时候，背后那一层不接焦点、也不接点击（Tab 不会跑到遮罩后面去）。
+ * 只留这一处开关，因为两层会套在一起：详情在下面、代码抽屉在上面 ——
+ * 关掉上面那层，还得看下面那层在不在。
+ */
+function setBehindInert() {
+  const layout = document.querySelector(".layout");
+  if (layout) layout.inert = Boolean(state.detail) || !$("editor").hidden;
+}
+
 function render() {
   const data = state.data;
   if (!data) return;
@@ -2485,12 +2490,15 @@ function render() {
   renderFacets(ours);
   renderRailNew();
   renderSuggestions(ours);
-  // 详情占主区：网格让位，而不是被挤窄。
-  $("grid").hidden = Boolean(state.detail);
+  // 详情是浮层：网格不隐身 —— 它就在遮罩下面，关掉抽屉原样还在。
+  $("grid").hidden = false;
   $("detail").hidden = !state.detail;
+  $("dt-scrim").hidden = !state.detail;
+  renderGrid();
+  // 详情重画在网格之后：两边读同一份数据，但 result-count 归网格写。
   if (state.detail) renderDetail();
-  else renderGrid();
   $("count").textContent = `${ours.length} 个自研扩展`;
+  setBehindInert();
   renderSync();
 }
 
@@ -2594,6 +2602,7 @@ async function openExtensionEditor(ext, variant = null) {
   $("ed-path").textContent = "—";
   $("ed-scrim").hidden = false;
   $("editor").hidden = false;
+  setBehindInert();
   $("ed-name").textContent = variant ? `${ext.name}@${variant}` : ext.name;
   $("ed-meta").textContent = variant
     ? `${ext.version} · 变体 · 另一棵树 / 另一个分支`
@@ -2628,6 +2637,7 @@ function closeEditor({ force = false } = {}) {
   state.editor = null;
   $("editor").hidden = true;
   $("ed-scrim").hidden = true;
+  setBehindInert();
 }
 
 function renderEditorFiles() {
@@ -2852,10 +2862,12 @@ async function openDevSession() {
 
 $("search").oninput = (event) => {
   state.query = event.target.value;
+  // 打字搜东西 = 回列表：浮层一起收掉（不然搜完背后还压着一层）。
   state.detail = null;
   state.editing = null;
   $("grid").hidden = false;
   $("detail").hidden = true;
+  $("dt-scrim").hidden = true;
   renderGrid();
 };
 $("refresh").onclick = () => void load();
@@ -3230,6 +3242,9 @@ $("create-summary").addEventListener("keydown", (event) => {
 
 // 抽屉的交互：Esc 关、Ctrl/⌘+S 保存、Tab 缩进两格（不跳出编辑框）。
 $("ed-close").onclick = () => closeEditor();
+  // 详情浮层：遮罩和 × 都只是「关掉」一个动作。
+  $("dt-scrim").onclick = () => closeDetail();
+  $("dt-close").onclick = () => closeDetail();
 $("ed-scrim").onclick = () => closeEditor();
 $("ed-save").onclick = () => void saveEditorFile();
 $("ed-publish").onclick = () => void publishEditor();
@@ -3289,7 +3304,7 @@ addEventListener("keydown", (event) => {
     return;
   }
   if (!state.editor) {
-    // 详情是主区、不是浮层：Esc 退回列表。
+    // 详情是浮层：Esc 是「关掉这一层」，不是「返回上一页」。
     if (event.key === "Escape" && state.detail) closeDetail();
     return;
   }

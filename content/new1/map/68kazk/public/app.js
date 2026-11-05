@@ -922,65 +922,63 @@ function openDetail(name, { editTags = false } = {}) {
   // 「类别」那一项是跳到详情里的勾选区，顺手把输入框打开 —— 菜单不做第二个编辑面。
   state.editing = editTags ? name : null;
   render();
-  $sel(".results")?.scrollTo({ top: 0, behavior: "smooth" });
+  // 半扇浮层：列表不动（滚动位置、筛选、搜索词都留着），滚的是抽屉自己。
+  $("dt-body").scrollTop = 0;
+  // 带「类别」进来时焦点要落在输入框上（renderDetail 已经给了），别被抽屉抢走。
+  if (!editTags) $("detail").focus({ preventScroll: true });
 }
 
-function closeDetail() {
+function closeDetail({ restoreFocus = true } = {}) {
   if (!state.detail) return;
+  const name = state.detail;
   leaveDetail();
   render();
-  $sel(".results")?.scrollTo({ top: 0, behavior: "smooth" });
+  if (!restoreFocus) return;
+  // 焦点还回那张卡：卡片是重画过的，所以按名字重新找一遍，不存元素。
+  const card = [...document.querySelectorAll(".product")].find((node) => node.dataset.name === name);
+  card?.focus({ preventScroll: true });
 }
 
 function renderDetail() {
-  const host = $("detail");
+  const host = $("dt-body");
   const skill = skillNow(state.detail);
-  // 详情开着的时候这条被归档 / 删走了：退回列表，别留一面空墙。
+  // 详情开着的时候这条被归档 / 删走了：把浮层收掉，别留一面空墙。
   if (!skill) {
     leaveDetail();
-    host.hidden = true;
-    $("grid").hidden = false;
+    $("detail").hidden = true;
+    $("dt-scrim").hidden = true;
     renderGrid();
+    setBehindInert();
     return;
   }
 
   host.textContent = "";
   const cats = categoriesOf(skill);
-  // 顶栏那一格在列表里是计数，在详情里就是这条的类别 —— 别写一句「技能详情」凑数。
-  $("result-count").textContent = cats.length ? cats.join(" · ") : "未分类";
 
   const card = state.view.cards.find((item) => item.name === skill.name);
   const stateName = card?.state ?? "ok";
   const failed = stateName === "failed";
   const unpublished = stateName === "unpublished";
 
-  const back = el("button", "detail-back", "‹ 返回");
-  back.type = "button";
-  back.title = "回到列表（Esc）";
-  back.onclick = closeDetail;
-  host.append(back);
-
-  // ── 头：色砖 + 名字 + 状态 + 说明 + 入口 ─────────────────────────────
-  const head = el("header", "detail-head");
-  const tile = el("div", "detail-tile");
-  tile.style.setProperty("--hue", String(hueOf(skill.name)));
-  tile.append(el("span", "detail-mono", initialsOf(skill.name)));
-  head.append(tile);
-
-  const id = el("div", "detail-id");
-  const nameRow = el("div", "detail-name-row");
-  nameRow.append(el("h2", "detail-name", skill.name));
+  // ── 抽屉头：色砖 + 名字 + 状态 + 类别 ────────────────────────────────
+  $("dt-name").textContent = skill.name;
+  $("dt-meta").textContent = cats.length ? cats.join(" · ") : "未分类";
+  $("dt-tile").style.setProperty("--hue", String(hueOf(skill.name)));
+  $("dt-mono").textContent = initialsOf(skill.name);
+  const badges = $("dt-badges");
+  badges.textContent = "";
   const badge = el("span", "detail-badge", STATE_LABEL[stateName] ?? stateName);
   badge.dataset.tone = failed ? "fail" : unpublished ? "unpub" : "ok";
-  nameRow.append(badge);
+  badges.append(badge);
   if (skill.hidden) {
     const hidden = el("span", "detail-badge", "不进提示词");
     hidden.dataset.tone = "gone";
     hidden.title = "disable-model-invocation：模型看不到它";
-    nameRow.append(hidden);
+    badges.append(hidden);
   }
-  id.append(nameRow);
-  id.append(el("p", "detail-sum", skill.description || "没写说明。"));
+
+  // ── 说明 + 入口 ───────────────────────────────────────────────────────
+  host.append(el("p", "detail-sum", skill.description || "没写说明。"));
 
   const acts = el("div", "detail-acts");
   const body = el("button", "btn btn-small", "正文 ›");
@@ -988,9 +986,7 @@ function renderDetail() {
   body.title = `看 / 改 ${skill.name}/SKILL.md`;
   body.onclick = () => void openEditor(skill);
   acts.append(body);
-  id.append(acts);
-  head.append(id);
-  host.append(head);
+  host.append(acts);
 
   // ── 真话说在最前面：装载失败 ──────────────────────────────────────────
   if (failed && skill.load?.error) {
@@ -1133,6 +1129,16 @@ function renderRepo() {
     : [repo.remote ?? "", repo.head ? `HEAD ${repo.head}` : ""].filter(Boolean).join("\n");
 }
 
+/**
+ * 浮层开着的时候，背后那一层不接焦点、也不接点击（Tab 不会跑到遮罩后面去）。
+ * 只留这一处开关，因为两层会套在一起：详情在下面、正文抽屉在上面 ——
+ * 关掉上面那层，还得看下面那层在不在。
+ */
+function setBehindInert() {
+  const layout = document.querySelector(".layout");
+  if (layout) layout.inert = Boolean(state.detail) || !$("editor").hidden;
+}
+
 function render() {
   if (!state.data) return;
   closeMenu();
@@ -1143,15 +1149,21 @@ function render() {
   renderRailNew();
   renderSuggestions();
 
-  // 详情 / 上游视图占主区：网格让位，而不是被挤窄。
-  const panel = Boolean(state.detail || state.upstreamOpen);
-  $("grid").hidden = panel;
-  $("detail").hidden = !panel;
+  // 上游占主区：网格让位，而不是被挤窄。
+  // 详情是浮层：网格不隐身 —— 它就在遮罩下面，关掉抽屉原样还在。
+  $("grid").hidden = Boolean(state.upstreamOpen);
+  $("upstream").hidden = !state.upstreamOpen;
+  $("detail").hidden = !state.detail;
+  $("dt-scrim").hidden = !state.detail;
   if (state.upstreamOpen) renderUpstreamPanel();
-  else if (state.detail) renderDetail();
-  else renderGrid();
+  else {
+    renderGrid();
+    // 详情重画在网格之后：两边读同一份 view，但 result-count 归网格写。
+    if (state.detail) renderDetail();
+  }
 
   $("count").textContent = `${state.view.skillCount} 条技能${state.view.archived.length ? ` · ${state.view.archived.length} 条归档` : ""}`;
+  setBehindInert();
 }
 
 // ── 上游 ────────────────────────────────────────────────────────────────────
@@ -1385,7 +1397,7 @@ function sourceForm() {
 }
 
 function renderUpstreamPanel() {
-  const host = $("detail");
+  const host = $("upstream");
   const sources = state.upstream?.sources ?? [];
   const sourceName = state.upstreamSource ?? sources[0]?.name ?? null;
   const source = sources.find((item) => item.name === sourceName) ?? null;
@@ -1644,6 +1656,7 @@ async function openEditor(skill, { path = null } = {}) {
   $("ed-path").textContent = "—";
   $("ed-scrim").hidden = false;
   $("editor").hidden = false;
+  setBehindInert();
   $("ed-name").textContent = skill.name;
   $("ed-meta").textContent = `SKILL.md · ${skill.tracked === false ? "未发布" : "已进 HEAD"}`;
   setEditorMode("edit");
@@ -1676,6 +1689,7 @@ function closeEditor({ force = false } = {}) {
   state.editor = null;
   $("editor").hidden = true;
   $("ed-scrim").hidden = true;
+  setBehindInert();
 }
 
 function renderEditorFiles() {
@@ -2245,11 +2259,13 @@ $("repo").before(repoChip);
 
 $("search").oninput = (event) => {
   state.query = event.target.value;
+  // 打字搜东西 = 回列表：浮层和它读过的正文一起收掉（不然搜完背后还压着一层）。
   state.detail = null;
   state.detailBody = null;
   state.editing = null;
   $("grid").hidden = false;
   $("detail").hidden = true;
+  $("dt-scrim").hidden = true;
   renderGrid();
 };
 $("refresh").onclick = () => void load();
@@ -2289,6 +2305,10 @@ for (const [id, next] of [
 // 抽屉的交互：Esc 关、Ctrl/⌘+S 保存、Tab 缩进两格（不跳出编辑框）。
 $("ed-close").onclick = () => closeEditor();
 $("ed-scrim").onclick = () => closeEditor();
+
+// 详情浮层：遮罩和 × 都只是「关掉」一个动作。
+$("dt-scrim").onclick = () => closeDetail();
+$("dt-close").onclick = () => closeDetail();
 $("ed-save").onclick = () => void saveEditorFile();
 $("ed-publish").onclick = () => void publishEditor();
 $("ed-text").addEventListener("input", renderEditorState);
@@ -2342,7 +2362,7 @@ addEventListener("keydown", (event) => {
     else closeEditor();
     return;
   }
-  // 详情 / 上游清单都是主区、不是浮层：Esc 退回列表。
+  // 上游是主区换页，详情是浮层：Esc 一层一层往回剥（浮层先走）。
   if (state.upstreamOpen) return closeUpstream();
   if (state.detail) closeDetail();
 });

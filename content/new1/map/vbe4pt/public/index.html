@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>extend · Nous 扩展</title>
-    <link rel="stylesheet" href="./style.css?v=12" />
+    <link rel="stylesheet" href="./style.css?v=13" />
     <script>
       // 宿主把这块挂在 /p/new1/vbe4pt（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -66,13 +66,30 @@
           </label>
         </div>
         <div class="grid" id="grid"></div>
-        <!-- 详情：点卡进来，占主区（不是又一个右侧浮层 —— 右边那条边归代码抽屉）。 -->
-        <section class="detail" id="detail" hidden aria-label="扩展详情"></section>
         <datalist id="tag-suggestions"></datalist>
       </main>
     </div>
 
     <div class="ctxmenu" id="ctxmenu" role="menu" hidden></div>
+
+    <!-- 详情：半扇浮层，和下面那条代码抽屉一副骨头（右边出、遮罩、Esc / 点遮罩关）。
+         卡片不再换页 —— 关掉回来还是那张网格，滚动位置、筛选、搜索词全不动。
+         层级在抽屉下面（30/31 vs 40/41）：详情里点「代码 ›」，抽屉盖住详情。 -->
+    <div class="dt-scrim" id="dt-scrim" hidden></div>
+    <aside class="dt" id="detail" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="dt-name">
+      <header class="dt-head">
+        <div class="dt-tile" id="dt-tile"><span class="dt-mono" id="dt-mono">—</span></div>
+        <div class="dt-title">
+          <div class="dt-name-row">
+            <h2 id="dt-name">—</h2>
+            <span class="dt-badges" id="dt-badges"></span>
+          </div>
+          <p class="dim small" id="dt-meta">—</p>
+        </div>
+        <button class="dt-x" id="dt-close" type="button" title="关闭（Esc）" aria-label="关闭">×</button>
+      </header>
+      <div class="dt-body" id="dt-body"></div>
+    </aside>
 
     <!-- 代码编辑器：点商品卡上的「代码」打开。保存 / 发布是两个动作，别合并。 -->
     <div class="ed-scrim" id="ed-scrim" hidden></div>
@@ -267,6 +284,6 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=23"></script>
+    <script type="module" src="./app.js?v=24"></script>
   </body>
 </html>
