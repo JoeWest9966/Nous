@@ -181,6 +181,21 @@
   .skill-row[aria-disabled="true"]:hover { background:none; }
   .skill-none { color:var(--muted); font-size:clamp(10px,1.4vmin,12.5px); padding:2.4vmin 1.2vmin; text-align:center; line-height:1.7; }
   .skill-none a { color:var(--accent); font-size:inherit; }
+  /* 上下文弹窗分两段：技能多选、模板单选。形状说语义 —— 圆框 = 一次只能选一个。 */
+  .ctx-head { display:flex; align-items:center; gap:.8em; margin:1vmin .8em .1vmin;
+              font-family:var(--mono); font-size:clamp(9px,1.25vmin,11px); letter-spacing:.12em;
+              text-transform:uppercase; color:var(--muted); }
+  .ctx-head::after { content:""; flex:1; border-top:1px solid var(--border); }
+  .skill-row[data-t] { cursor:default; }
+  .skill-row[data-t] .skill-box { border-radius:50%; }
+  .skill-row[data-t]:hover { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+  .peek { margin-top:.35em; background:none; border:0; padding:0; color:var(--accent);
+          font-family:var(--mono); font-size:clamp(9px,1.2vmin,11px); cursor:pointer; }
+  .peek:hover { text-decoration:underline; }
+  .peek-body { margin:.5em 0 0; padding:.7em .9em; max-height:32vh; overflow:auto; white-space:pre-wrap;
+               background:color-mix(in srgb, var(--fg) 5%, transparent); border:1px solid var(--border);
+               border-radius:var(--radius); font-family:var(--mono); font-size:clamp(9.5px,1.3vmin,11.5px);
+               line-height:1.55; }
   .dfoot.skillfoot { display:flex; align-items:center; gap:1vmin; }
   .dfoot .done { margin-left:auto; flex:none; font-family:var(--font); font-size:clamp(11px,1.5vmin,13px);
                  color:var(--fg); background:color-mix(in srgb, var(--accent) 18%, transparent);
@@ -247,7 +262,7 @@
     <section class="region r2">
       <h2>上下文</h2>
       <div class="sub" id="ctx-sub">技能：一条没选</div>
-      <div class="sub">进提示词的知识 · 跟 AGENTS.md 同类</div>
+      <div class="sub">技能 = 模型按需 read 的知识　·　模板 = 每轮都进的规则</div>
       <div class="nodes">
         <button class="node" id="pickctx" disabled title="这条新对话该知道什么">
           <span class="id" id="ctx-id">未选</span>
@@ -284,10 +299,10 @@
 </main>
 
 <div class="scrim" id="scrim2" hidden>
-  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择上下文：技能">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择上下文：技能与提示词模板">
     <div class="shead">
-      <b>上下文 · 技能</b>
-      <input type="text" id="sq" placeholder="筛选已装的…" autocomplete="off">
+      <b>上下文</b>
+      <input type="text" id="sq" placeholder="筛选技能和模板…" autocomplete="off">
     </div>
     <div class="skills" id="skillList"></div>
     <div class="dfoot skillfoot">
@@ -342,12 +357,17 @@ const post = (url, body) => fetch(url, {
 });
 
 let tag = null;
+/** 两个仓库面板的地址（也来自 ctx，不拼死）。空状态里的「去装一个 / 去建一条」用它。 */
+let skillsPage = null;
+let promptsPage = null;
 try {
   const ctx = await get(self + "__nous/ctx");
   tag = ctx.blocks.find((b) => b.id === "qrd3wh")
      ?? ctx.blocks.find((b) => b.name === "session" && b.kind === "group")
      ?? null;
   if (!tag) throw new Error("这一盘里没有 qrd3wh，创建不知道往哪发");
+  skillsPage = ctx.blocks.find((b) => b.id === "68kazk") ?? null;
+  promptsPage = ctx.blocks.find((b) => b.id === "6ysg01") ?? null;
   $("open").href = tag.url;
   $("open").hidden = false;
 } catch (error) {
@@ -395,8 +415,8 @@ const openCtx = (from) => {
   scrim.hidden = false;
   requestAnimationFrame(() => scrim.classList.add("on"));
   $("sq").value = "";
-  $("sq").oninput = renderSkillList;
-  renderSkillList();
+  $("sq").oninput = renderCtxList;
+  renderCtxList();
   ($("skillList").querySelector(".skill-row") ?? $("skillDone")).focus();
 };
 const openExt = (from) => {
@@ -464,6 +484,15 @@ let thinking = "off";
 
 /** 上下文域：这台机器装了哪些技能（`qrd3wh GET /v1/skills` 的 installed）。 */
 let installedSkills = [];
+/** 上下文域的另一半：模板私库里有哪几条能用的（`GET /v1/prompts`）。 */
+let installedTemplates = [];
+/**
+ * 这条新对话带哪条模板。**单值** —— 正文整段进系统提示词，多选就是几份互相矛盾的
+ * 沟通规则一起贴。`null` 也有效：显式「无模板」，不是「还没选」。
+ */
+let pickedTemplate = null;
+/** 预览过的正文：同一行展开 / 收起不重复打接口。 */
+const templateBodies = new Map();
 /** 这条新对话要带哪几个。**多选** —— 所以它不进模型弹窗：那个是「点一下就收回」的单选。 */
 const pickedSkills = new Set();
 const pickedExtensions = new Set();
@@ -781,21 +810,15 @@ $("q").onkeydown = (e) => {
 };
 
 /** 上下文弹窗里的一行一行。弹窗打开、筛选、勾选之后重画 —— 不在渲染里做 IO。 */
-const renderSkillList = () => {
+const renderCtxList = () => {
   const needle = $("sq").value.trim().toLowerCase();
-  const rows = installedSkills
-    .filter((s) => !needle || `${s.name} ${s.description ?? ""}`.toLowerCase().includes(needle))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const hit = (text) => !needle || String(text).toLowerCase().includes(needle);
 
-  if (!installedSkills.length) {
-    // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 ctx 拿，不拼死的）。
-    $("skillList").innerHTML = `<div class="skill-none">这台机器一个技能都没装。<br>`
-      + (tag ? `<a href="${esc(tag.url)}/skills">去会话引擎的「技能」页装一个 ›</a>` : "")
-      + `</div>`;
-  } else if (!rows.length) {
-    $("skillList").innerHTML = `<div class="skill-none">没有匹配的技能。</div>`;
-  } else {
-    $("skillList").innerHTML = rows.map((s) => {
+  // ── 技能：多选。模型按需 read 正文，所以这里只放名字 / 描述 / 路径。 ──
+  const skillRows = installedSkills
+    .filter((s) => hit(`${s.name} ${s.description ?? ""}`))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((s) => {
       const on = pickedSkills.has(s.name);
       const desc = String(s.description ?? "").replace(/\s+/g, " ").trim();
       const meta = [s.source, s.sha ? s.sha.slice(0, 7) : null].filter(Boolean).join(" · ");
@@ -805,10 +828,79 @@ const renderSkillList = () => {
         + `<span class="skill-desc">${esc(desc)}</span>`
         + (meta ? `<span class="skill-meta">${esc(meta)}</span>` : "")
         + `</span></button>`;
-    }).join("");
+    });
+
+  // ── 模板：单选。正文整段进系统提示词，所以圆框、一次一个。 ──
+  const templateRows = installedTemplates
+    .filter((p) => hit(`${p.name} ${p.summary ?? ""}`))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((p) => templateRow(p));
+
+  const skillsHtml = !installedSkills.length
+    // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 ctx 拿，不拼死的）。
+    ? `<div class="skill-none">这台机器一个技能都没装。<br>`
+      + (skillsPage ? `<a href="${esc(skillsPage.url)}/">去技能面板装一个 ›</a>` : "")
+      + `</div>`
+    : skillRows.length ? skillRows.join("") : `<div class="skill-none">没有匹配的技能。</div>`;
+
+  const templatesHtml = !installedTemplates.length
+    ? `<div class="skill-none">私库里还没有模板。`
+      + (promptsPage ? `<br><a href="${esc(promptsPage.url)}/">去模板库建一条 ›</a>` : "")
+      + `</div>`
+    : `<div class="skill-row" role="radio" tabindex="0" aria-checked="${pickedTemplate === null}" data-t="">`
+      + `<span class="skill-box">${pickedTemplate === null ? "✓" : ""}</span>`
+      + `<span><span class="skill-name">无模板</span>`
+      + `<span class="skill-desc">不往系统提示词里加任何模板</span></span></div>`
+      + (templateRows.length ? templateRows.join("") : `<div class="skill-none">没有匹配的模板。</div>`);
+
+  $("skillList").innerHTML =
+    `<h3 class="ctx-head">技能 · 多选 · 按需 read</h3>` + skillsHtml
+    + `<h3 class="ctx-head">提示词模板 · 单选 · 每轮都进</h3>` + templatesHtml;
+
+  $("skillHint").textContent = `技能 ${pickedSkills.size}/${installedSkills.length}`
+    + ` · 模板 ${pickedTemplate ?? "无"} · 勾完按完成`;
+};
+
+/** 一行模板：**div 不是 button** —— 里面还要放「预览」按钮，button 不能套 button。 */
+const templateRow = (p) => {
+  const on = pickedTemplate === p.name;
+  const meta = [`${p.bytes ?? 0} 字节`, ...(p.category?.length ? [p.category.join(" / ")] : [])].join(" · ");
+  return `<div class="skill-row" role="radio" tabindex="0" aria-checked="${on}" data-t="${esc(p.name)}">`
+    + `<span class="skill-box">${on ? "✓" : ""}</span>`
+    + `<span><span class="skill-name">${esc(p.name)}</span>`
+    + `<span class="skill-desc">${esc(String(p.summary ?? ""))}</span>`
+    + `<span class="skill-meta">${esc(meta)}</span>`
+    + `<button class="peek" type="button" data-peek="${esc(p.name)}">预览</button>`
+    + `<pre class="peek-body" data-body="${esc(p.name)}" hidden></pre>`
+    + `</span></div>`;
+};
+
+/**
+ * 预览：就地展开，不弹第三层。Esc 的层级已经够深了，再开一个弹层迟早互相踩。
+ * 正文读一次贴住 —— 模板改完这个页面又不会自己知道，刷新即最新。
+ */
+const togglePeek = async (button) => {
+  const name = button.dataset.peek;
+  const pre = button.parentElement.querySelector(`pre[data-body="${CSS.escape(name)}"]`);
+  if (!pre) return;
+  if (!pre.hidden) { pre.hidden = true; button.textContent = "预览"; return; }
+  pre.hidden = false;
+  button.textContent = "收起";
+  if (pre.dataset.loaded) return;
+  if (templateBodies.has(name)) {
+    pre.textContent = templateBodies.get(name);
+    pre.dataset.loaded = "1";
+    return;
   }
-  const n = pickedSkills.size;
-  $("skillHint").textContent = `${installedSkills.length} 条已装 · ${n ? `已选 ${n}` : "未选"} · 勾完按完成`;
+  pre.textContent = "读…";
+  try {
+    const file = await api(`v1/prompts/file?name=${encodeURIComponent(name)}&path=PROMPT.md`);
+    templateBodies.set(name, file.text);
+    pre.textContent = file.text;
+    pre.dataset.loaded = "1";
+  } catch (error) {
+    pre.textContent = `读不到：${String(error.message ?? error)}`;
+  }
 };
 
 /** 一行：名字 + 一句话 + 灰色元信息。`off` = 灰掉不能选（装载失败 / 进程里没装上）。 */
@@ -892,11 +984,10 @@ const renderExtList = () => {
 /** 区域里那个节点显示什么 —— 跟模型域一样，只显示生效的东西，不显示“待定”。 */
 const renderCtx = () => {
   const sn = [...pickedSkills];
-  $("ctx-id").textContent = !sn.length ? "未选" : sn.length === 1 ? sn[0] : `${sn[0]} +${sn.length - 1}`;
-  $("ctx-tag").textContent = sn.length ? "改 ›" : "选择 ›";
-  $("ctx-sub").textContent = installedSkills.length
-    ? `技能：${sn.length ? `已选 ${sn.length}` : "一条没选"} · 装好了 ${installedSkills.length}`
-    : "这台机器一个技能都没装";
+  // 模板进 id：它是单值、7KB、影响每一轮；技能是集合，进副标题。
+  $("ctx-id").textContent = pickedTemplate ?? "无模板";
+  $("ctx-tag").textContent = pickedTemplate || sn.length ? "改 ›" : "选择 ›";
+  $("ctx-sub").textContent = `模板 ${pickedTemplate ?? "无"} · 技能 ${sn.length}/${installedSkills.length}`;
   $("pickctx").disabled = !tag;
 };
 
@@ -928,17 +1019,43 @@ const renderExt = () => {
   $("pickext").disabled = !tag || !total;
 };
 
-$( "skillList").addEventListener("click", (e) => {
+/** 模板只有一条能生效：点中就落值，「无模板」= 清掉。没有"再点一次取消"那种手势。 */
+const pickTemplate = (name) => {
+  pickedTemplate = name;
+  renderCtxList();
+  renderCtx();
+  // 重画之后 DOM 全换了，焦点钉回同一行 —— 否则键盘换第二条时焦点已经没了。
+  $("skillList").querySelector(`.skill-row[data-t="${CSS.escape(name ?? "")}"]`)?.focus();
+};
+
+$("skillList").addEventListener("click", (e) => {
+  // 预览按钮在模板行里面：先接住，别让它冒泡成"选中这一行"。
+  const peek = e.target.closest?.(".peek");
+  if (peek) { void togglePeek(peek); return; }
+
   const row = e.target.closest?.(".skill-row");
   if (!row) return;
+  if ("t" in row.dataset) return pickTemplate(row.dataset.t || null);
+
   const name = row.dataset.s;
   if (pickedSkills.has(name)) pickedSkills.delete(name); else pickedSkills.add(name);
-  renderSkillList();
+  renderCtxList();
   renderCtx();
   // 重画之后 DOM 全换了，焦点得钉回同一行 —— 否则键盘勾第二个时焦点已经没了
   $("skillList").querySelector(`.skill-row[data-s="${CSS.escape(name)}"]`)?.focus();
 });
 $("skillList").addEventListener("keydown", (e) => {
+  // 模板行是 div（里面还要放「预览」按钮，button 不能套 button），不会像 <button> 那样
+  // 自己把 Enter/Space 变成 click —— 所以这一条得手写。
+  if (e.key === "Enter" || e.key === " ") {
+    const row = document.activeElement;
+    if (row?.dataset && "t" in row.dataset) {
+      e.preventDefault();
+      pickTemplate(row.dataset.t || null);
+    }
+    return;
+  }
+  // 箭头只移焦点、不落值：跨分区扫一遍就把模板换掉，是最烦人的那种"手滑"。
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   const rows = [...$("skillList").querySelectorAll(".skill-row")];
   const at = rows.indexOf(document.activeElement);
@@ -965,7 +1082,7 @@ $("extList").addEventListener("keydown", (e) => {
   rows[i]?.focus();
 });
 $("extDone").onclick = closeExt;
-$("sq").oninput = renderSkillList;
+$("sq").oninput = renderCtxList;
 
 const renderCurrent = () => {
   if (!picked) {
@@ -1002,6 +1119,9 @@ async function commit() {
       thinkingLevel: thinking,
       // 技能跟模型/档位一起在**同一个 commit** 里落定，不在后面再 configure。
       ...(pickedSkills.size ? { skills: [...pickedSkills] } : {}),
+      // 模板**总是发**（`null` 也是有效值 = 明确不要）。省掉它服务端会去用仓库的默认值，
+      // 那就会出现"我明明点了无模板，它又给我塞回来"。
+      template: pickedTemplate,
       // 扩展：装了什么就发什么（全勾 = 发全部）。空数组也是有效值 —— 表示“一个都不要”，
       // 不能省掉，省掉服务端会按默认全开。
       ...(extFamilies.length ? { extensions: [...pickedExtensions] } : {}),
@@ -1011,9 +1131,15 @@ async function commit() {
     // 服务端回来的才是生效值（它夹过一遍）：认这一份，不认我们发上去的
     if (created.thinkingLevel) thinking = created.thinkingLevel;
     // 勾了但没装成的，服务端会点名（missing）。别静默：人以为勾上了，其实没有。
-    if (created.missing?.length) $("errbox").innerHTML = `<div class="err">这些技能没装，已跳过：${esc(created.missing.join("、"))}</div>`;
+    const skipped = [
+      ...(created.missing?.length ? [`技能：${created.missing.join("、")}`] : []),
+      ...(created.missingTemplates?.length ? [`模板：${created.missingTemplates.join("、")}`] : []),
+    ];
+    // 勾了但没装成的，服务端会点名（missing / missingTemplates）。别静默：人以为选上了，其实没有。
+    if (skipped.length) $("errbox").innerHTML = `<div class="err">这些没装，已跳过 —— ${esc(skipped.join("；"))}</div>`;
     const got = (created.skills ?? []).length;
-    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}` + (got ? ` · 技能 ${got}` : "");
+    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}`
+      + (got ? ` · 技能 ${got}` : "") + ` · 模板 ${created.template ?? "无"}`;
     $("name").value = "";
     defaultModel = picked;
     renderCurrent();
@@ -1038,9 +1164,21 @@ if (tag) {
   // 上下文域要用的：已装技能。单独一个 try —— 编目挂了不该把模型清单一起拖下水
   // （两件事，修的地方也不一样）。拿不到就当没装，节点点开里面会说清楚。
   try {
-    installedSkills = (await api("v1/skills")).installed ?? [];
+    // 契约是 `GET /v1/skills` 的 `skills[]`（repo 版，带 tracked），不是 `installed` ——
+    // 早期读的是编目时代的字段名，自从技能搬进自己的 git 仓之后它一直是空的。
+    const data = await api("v1/skills");
+    installedSkills = (data.skills ?? []).filter((s) => s.load?.state === "ok" && !s.hidden);
   } catch (error) {
     console.warn("技能清单拿不到：", error);
+  }
+  // 模板私库：单独一个 try —— 模板库挂了不该把技能清单一一起拖下水（两件事，修的地方也不一样）。
+  // 默认值来自仓库的 settings.json，这里只负责预勾；选不选仍然是人的事。
+  try {
+    const data = await api("v1/prompts");
+    installedTemplates = (data.prompts ?? []).filter((p) => p.load?.state === "ok");
+    pickedTemplate = data.default && installedTemplates.some((p) => p.name === data.default) ? data.default : null;
+  } catch (error) {
+    console.warn("模板清单拿不到：", error);
   }
   try {
     const extData = await api("v1/extensions");
