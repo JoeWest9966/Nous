@@ -15,9 +15,8 @@
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
 //   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills} 只读 = 不给会写的工具
-//   GET  /v1/skills                   已装技能 + 编目里能装的（skills.js）
-//   POST /v1/skills/install           {source, entry} → 拉下来落到 data/skills/
-//   POST /v1/skills/uninstall         {name}
+//   GET  /v1/skills                   技能仓库全景（repo 状态 + list() + archived + 类别）
+//   …                                全套 /v1/skills* 在 skills-api.js（见那个文件的头）
 //   GET  /v1/extensions               进程里装着什么 + 仓库 catalog（扩展清单页吃这个）
 //   POST /v1/extensions/category      {name, category[]} 改扩展类别：写 nous.json + 重扫 index.json
 //   GET  /v1/extensions/categories     类别词表（categories.json）
@@ -42,12 +41,8 @@
 //
 // 所有地址都写相对的：宿主把 /p/<board>/<id>/ 反代进来。
 
-import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -63,18 +58,59 @@ import { installCatalog } from "./catalog.js";
 // 块里只留两件事：去哪儿拿（下面这两行）+ 钉着哪个 commit（extensions.lock.json）。
 // 用动态 import 是因为路径得能配；静态 import 只能写字面量，一换机器就炸。
 const EXTEND = process.env.NOUS_EXTEND ?? "/opt/Nous-extend";
+// 技能仓库的本地副本（票 A 建的那个仓）。跟 EXTEND 并排：两个仓都只有一条真理 —— 盘上的文件。
+// 这里**不**往 data/ 抄一份：技能不是「装进来的包」，仓库里有什么就是什么。
+const SKILLS_ROOT = process.env.NOUS_SKILLS ?? "/opt/Nous-skills";
 // 扩展是造扩展的函数，宿主把 api 递进去 —— 它们不自己 import pi-durable（见仓库 README）。
 const api = { defineExtension, section };
 const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
 const { createSkills, skillNamesOf, SKILL_PREFIX } = await import(`${EXTEND}/skills/index.js`);
 // 回放提示词增量 —— 自己在 `prompt-log.js`，纯读，能单验。
 import { replayPrompt } from "./prompt-log.js";
+// 仓库工具（参数化过 root 的那套）：本文件用它管扩展仓，`skills-api.js` 用它管技能仓。
+// 抽成独立模块是因为这个文件有顶层 await、会起服务 —— 测试永远不能 import 它。
+// 这里既要把常用的一串名字拆出来（本文件到处在用），又要留着整包递进 handleSkills。
+import * as repo from "./repo-tools.js";
+
+const {
+  ARCHIVE_DIR,
+  EXTENSION_NAME_RE,
+  PROTECTED_CATEGORIES,
+  archivedEntries,
+  checkSyntax,
+  gitChanges,
+  gitRootOf,
+  isTrackedDir,
+  listRepoFiles,
+  moveDir,
+  moveIntoArchive,
+  moveOutOfArchive,
+  mutateCategories,
+  normalizeCategories,
+  pendingCommit,
+  pendingFileDiff,
+  pendingState,
+  readCategories,
+  readRepoFile,
+  regenIndex,
+  repoBusy,
+  repoState,
+  run,
+  serializeRepoWrite,
+  setNodeCategories,
+  sortCategories,
+  syncRepo,
+  withStatus,
+  writeCategories,
+  writeFileAtomic,
+  writeRepoFile,
+} = repo;
+import { handleSkills } from "./skills-api.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
 const ctx = BACKGROUND_CONTEXT;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const run = promisify(execFile);
 const PORT = Number(process.env.PORT ?? 4780);
 const DATA = process.env.NOUS_DATA ?? path.join(HERE, "data");
 const startedAt = Date.now();
@@ -88,9 +124,8 @@ const startedAt = Date.now();
 //   · extend-trash/<name>-<时间>/ —— 删掉的源码本体，点安装就搬回来。
 //
 // 仓库（HEAD / origin）一个字节都不动：删除只表现为工作区里的 ` D`，而 publish
-// 会把删除过滤掉（见 syncExtendRepo），绝不会把「本地删除」顺手推上 GitHub。
+// 会把删除过滤掉（见 repo-tools.js 的 syncRepo），绝不会把「本地删除」顺手推上 GitHub。
 const CORE_EXTENSIONS = ["nous", "skills"]; // 引擎启动路径硬编码 import，删了就起不来
-const ARCHIVE_DIR = ".archive"; // 仓库内的归档区：点开头，index.mjs 天然跳过
 const LOCAL_STATE_FILE = path.join(DATA, "extensions.local.json");
 const TRASH_DIR = path.join(DATA, "extend-trash");
 
@@ -120,17 +155,6 @@ const readLocalState = async () => {
 const writeLocalState = async (value) => {
   await mkdir(DATA, { recursive: true });
   await writeFileAtomic(LOCAL_STATE_FILE, JSON.stringify(value, null, 2) + "\n");
-};
-
-/** 搬目录：跨设备时 rename 会 EXDEV，退回复制再删。 */
-const moveDir = async (src, dst) => {
-  try {
-    await rename(src, dst);
-  } catch (error) {
-    if (error?.code !== "EXDEV") throw error;
-    await cp(src, dst, { recursive: true });
-    await rm(src, { recursive: true, force: true });
-  }
 };
 
 /**
@@ -593,38 +617,6 @@ try {
 //      没过就把旧内容原样写回去。
 //   2. git 操作串行 —— 轮询的 `git pull` 和这里写文件会抢 index.lock，用一条链排队。
 
-let extendWriteChain = Promise.resolve();
-let extendBusy = false;
-
-const serializeExtendWrite = (task) => {
-  const runTask = async () => {
-    extendBusy = true;
-    try {
-      return await task();
-    } finally {
-      extendBusy = false;
-    }
-  };
-  const next = extendWriteChain.then(runTask, runTask);
-  extendWriteChain = next.then(() => {}, () => {});
-  return next;
-};
-
-const EXTENSION_NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i;
-const withStatus = (error, status) => Object.assign(error, { status });
-
-const writeFileAtomic = async (file, text) => {
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  try {
-    await writeFile(tmp, text, "utf8");
-    await rename(tmp, file);
-  } catch (error) {
-    // 半截临时文件别留在仓库里 —— 下一轮 `git add -A` 会把它当真账提交。
-    await unlink(tmp).catch(() => {});
-    throw error;
-  }
-};
-
 // 类别词表：扩展目录的 category 是「哪些类别挂在这个扩展上」，
 // categories.json 是「这个仓库认得哪些类别」—— 没有它，一个刚建、还没挂到任何
 // 扩展上的类别就会当场消失（建了看不见）。两边取并集，词表里的零计数类别也摆着。
@@ -632,211 +624,10 @@ const writeFileAtomic = async (file, text) => {
 // 类别是路径：`工具/搜索` = `工具` 底下的 `搜索`。父子关系不存，靠 `/` 推。
 // 祖先会自动进词表（打上 `工具/搜索`，`工具` 就得存在），但**不会**写进扩展的
 // category —— 一个扩展属于 `工具` 是因为它的标签前缀是 `工具/`，不是因为它多存了一条。
-const CATEGORIES_FILE = path.join(EXTEND, "categories.json");
-
-// 内置类别：像「全部」一样永远在 —— 删不掉、改不了名。但可以往里挂扩展、建子类别。
-// 想保护别的就往这个列表里加；客户端从 API 读这份列表，不在前端再抄一遍。
-const PROTECTED_CATEGORIES = ["Basics"];
-
-const CATEGORY_SEP = "/";
-const MAX_CATEGORY_SEGMENT = 40;
-
-const splitCategory = (value) =>
-  String(value ?? "")
-    .split(CATEGORY_SEP)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-/** 规范化一个类别路径；空串表示空。控制字符 / 超长段直接 400。 */
-const normalizeCategory = (value) => {
-  const parts = splitCategory(value);
-  if (!parts.length) return "";
-  for (const part of parts) {
-    if (/[\u0000-\u001f\u007f]/.test(part)) throw withStatus(new Error("类别名里不能有控制字符"), 400);
-    if (part.length > MAX_CATEGORY_SEGMENT) {
-      throw withStatus(new Error(`类别名太长（一段最多 ${MAX_CATEGORY_SEGMENT} 字）：${part}`), 400);
-    }
-  }
-  return parts.join(CATEGORY_SEP);
-};
-
-const normalizeCategories = (list) =>
-  Array.isArray(list) ? list.map((c) => normalizeCategory(c)).filter(Boolean) : [];
-
-/** `a/b/c` → [`a`, `a/b`]。 */
-const ancestorsOf = (value) => {
-  const parts = value.split(CATEGORY_SEP);
-  return parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join(CATEGORY_SEP));
-};
-
-const isUnder = (value, root) => value === root || value.startsWith(root + CATEGORY_SEP);
-
-// 父在子前、同级按段比 —— 直接 localeCompare 比全串会被 `/` 的位置坑到。
-const compareCategories = (a, b) => {
-  const left = a.split(CATEGORY_SEP);
-  const right = b.split(CATEGORY_SEP);
-  const common = Math.min(left.length, right.length);
-  for (let i = 0; i < common; i++) {
-    const cmp = left[i].localeCompare(right[i], "zh-CN");
-    if (cmp) return cmp;
-  }
-  return left.length - right.length;
-};
-
-const sortCategories = (list) => [...new Set(list)].sort(compareCategories);
-
-const readCategories = async () => {
-  let list = [];
-  try {
-    const raw = JSON.parse(await readFile(CATEGORIES_FILE, "utf8"));
-    list = normalizeCategories(Array.isArray(raw) ? raw : raw?.categories);
-  } catch {
-    // 文件没写 / 写坏了：内置类别照样在。
-  }
-  return [...new Set([...list, ...PROTECTED_CATEGORIES])];
-};
-
-const writeCategories = async (list) => {
-  const expanded = [];
-  // 内置类别永远写进去 —— 词表被人清空也丢不了。
-  for (const item of normalizeCategories([...list, ...PROTECTED_CATEGORIES])) expanded.push(...ancestorsOf(item), item);
-  const unique = sortCategories(expanded);
-  await writeFileAtomic(CATEGORIES_FILE, JSON.stringify({ categories: unique }, null, 2) + "\n");
-  return unique;
-};
-
-/** 改一个扩展的 category（字符串数组：去空、去重、排序）。返回新清单。 */
-const setExtensionCategories = async (name, categories) => {
-  if (!EXTENSION_NAME_RE.test(name)) throw withStatus(new Error(`扩展名不合法：${name}`), 400);
-  const file = path.join(EXTEND, name, "nous.json");
-  let before;
-  try {
-    before = await readFile(file, "utf8");
-  } catch {
-    throw withStatus(new Error(`仓库里没有这个扩展：${name}`), 404);
-  }
-  const manifest = JSON.parse(before);
-  const next = sortCategories(normalizeCategories(categories));
-  const updated = { ...manifest, category: next };
-  await writeFileAtomic(file, JSON.stringify(updated, null, 2) + "\n");
-  try {
-    // index.json 是生成物：跑生成器，顺带校验（目录名==扩展名、字段齐全）。
-    await runIndexGenerator();
-  } catch (error) {
-    await writeFileAtomic(file, before);
-    const detail = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
-    throw withStatus(new Error(`index.mjs 校验失败，已回滚：${detail}`), 400);
-  }
-  // 词表跟着收益：任何被打上的类别都该在左栏看得见，哪怕以后从所有扩展上摘掉也还在。
-  // 祖先由 writeCategories 补齐 —— 挂 `工具/搜索` 就得有 `工具` 这个节点。
-  await writeCategories([...(await readCategories()), ...next]);
-  return updated;
-};
-
-/** 仓库根下每个扩展目录（点开头的不是，node_modules / scripts 也不是）。 */
-const listExtensionDirs = async () =>
-  (await readdir(EXTEND, { withFileTypes: true }))
-    .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && e.name !== "scripts")
-    .map((e) => e.name);
-
-const readManifest = async (dir) => {
-  const file = path.join(EXTEND, dir, "nous.json");
-  try {
-    const text = await readFile(file, "utf8");
-    return { file, text, manifest: JSON.parse(text) };
-  } catch {
-    return null; // 没 manifest 或 JSON 坏了：这里不顺手改它
-  }
-};
-
-/** 落盘之后重扫 index.json；生成器不认就整体回滚（manifest + 词表）。 */
-const regenOrRollback = async (snapshots, beforeVocab) => {
-  try {
-    await runIndexGenerator();
-  } catch (error) {
-    for (const [file, text] of snapshots) await writeFileAtomic(file, text);
-    await writeCategories(beforeVocab);
-    const detail = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
-    throw withStatus(new Error(`index.mjs 校验失败，已回滚：${detail}`), 400);
-  }
-};
-
-/** 类别词表操作：add 建空类别；rename 改名（有子类别就整枝改）；remove 删整枝。 */
-const mutateCategories = async ({ op, name, to }) => {
-  const current = await readCategories();
-  const target = normalizeCategory(name);
-  if (!target) throw withStatus(new Error("类别名不能为空"), 400);
-
-  if (op === "add") {
-    return { categories: await writeCategories([...current, target]), touched: 0 };
-  }
-
-  if (op !== "remove" && op !== "rename") {
-    throw withStatus(new Error(`未知操作：${op}（只认 add / rename / remove）`), 400);
-  }
-
-  // 内置类别（或它的祖先）不许删、不许改名 —— 改名等于绕开删除锁。
-  if (PROTECTED_CATEGORIES.some((p) => isUnder(p, target))) {
-    throw withStatus(new Error(`「${target}」是内置类别，不能${op === "rename" ? "改名" : "删除"}`), 403);
-  }
-
-  const dirs = await listExtensionDirs();
-
-  if (op === "rename") {
-    const next = normalizeCategory(to);
-    if (!next) throw withStatus(new Error("新类别名不能为空"), 400);
-    if (next === target) return { categories: current, touched: 0 };
-    if (next.startsWith(target + CATEGORY_SEP)) {
-      throw withStatus(new Error(`不能把「${target}」改到它自己的子类别里`), 400);
-    }
-
-    // 改名 = 整枝改前缀（所以跨父级改名同时就是“移动”）。先扫一遍：谁挂着这枝、
-    // 新名字有没有撞车。撞车不合并 —— 合了就没法反悔。
-    const plans = [];
-    const known = new Set(current);
-    for (const dir of dirs) {
-      const found = await readManifest(dir);
-      if (!found) continue;
-      const cats = normalizeCategories(found.manifest.category);
-      for (const c of cats) known.add(c);
-      if (cats.some((c) => isUnder(c, target))) plans.push({ ...found, cats });
-    }
-    if ([...known].some((c) => isUnder(c, next))) {
-      throw withStatus(new Error(`类别「${next}」已经存在`), 409);
-    }
-    if (!current.some((c) => isUnder(c, target)) && plans.length === 0) {
-      throw withStatus(new Error(`没有这个类别：${target}`), 404);
-    }
-
-    const renamePath = (c) => (isUnder(c, target) ? next + c.slice(target.length) : c);
-    const snapshots = new Map(plans.map((plan) => [plan.file, plan.text]));
-    for (const plan of plans) {
-      plan.manifest.category = sortCategories(plan.cats.map(renamePath));
-      await writeFileAtomic(plan.file, JSON.stringify(plan.manifest, null, 2) + "\n");
-    }
-    await writeCategories([...current.map(renamePath), next]);
-    await regenOrRollback(snapshots, current);
-    return { categories: await readCategories(), touched: plans.length };
-  }
-
-  // remove：删的是整棵子树（`工具` 连 `工具/搜索` 一起），词表和所有 nous.json 同时摘。
-  const snapshots = new Map();
-  let touched = 0;
-  for (const dir of dirs) {
-    const found = await readManifest(dir);
-    if (!found) continue;
-    const cats = normalizeCategories(found.manifest.category);
-    const kept = cats.filter((c) => !isUnder(c, target));
-    if (kept.length === cats.length) continue;
-    snapshots.set(found.file, found.text);
-    found.manifest.category = kept;
-    await writeFileAtomic(found.file, JSON.stringify(found.manifest, null, 2) + "\n");
-    touched++;
-  }
-  await writeCategories(current.filter((c) => !isUnder(c, target)));
-  await regenOrRollback(snapshots, current);
-  return { categories: await readCategories(), touched };
-};
+// 扩展仓的类别工具：root 就是 EXTEND；生成器是本文件里那个（它还要补本机删除的清单）。
+const setExtensionCategories = (name, categories) =>
+  setNodeCategories(EXTEND, name, categories, { index: runIndexGenerator });
+const mutateExtensionCategories = (body) => mutateCategories(EXTEND, body, { index: runIndexGenerator });
 
 // ── 扩展源码：读 / 写（只落盘）/ 发布（校验 + commit + push）──────────────────
 //
@@ -849,23 +640,6 @@ const mutateCategories = async ({ op, name, to }) => {
 //
 // 所以：保存只写盘（随时可改），发布要过语法闸 + index.mjs，再显式 commit/push。
 // 页面上的红字必须说清是「没保存」还是「没发布」—— 这两件事坏起来长得不一样。
-
-const FILE_KINDS = new Map([
-  [".js", "javascript"],
-  [".mjs", "javascript"],
-  [".json", "json"],
-  [".md", "markdown"],
-]);
-const MAX_FILE_BYTES = 512 * 1024;
-const etagOf = (text) => createHash("sha1").update(text, "utf8").digest("hex").slice(0, 16);
-
-const extensionDir = (name) => {
-  const clean = String(name ?? "");
-  if (!EXTENSION_NAME_RE.test(clean)) throw withStatus(new Error(`扩展名不合法：${clean}`), 400);
-  const dir = path.join(EXTEND, clean);
-  // 名字过了正则也可能是个文件：路径下面必须是目录，不然 readdir 会给出奇怪的东西。
-  return { name: clean, dir };
-};
 
 /**
  * 变体的代码根目录。没绑定就是 404 —— 别悄悄回落到主树：那会让人以为在改变体，
@@ -881,220 +655,31 @@ const variantRootOf = async (name, variant) => {
   return { dir: bound.dir, branch: bound.branch ?? null };
 };
 
-/** 文件所在的 git 仓库根：主树是 EXTEND，变体是它自己那棵 checkout。 */
-const gitRootOf = async (dir) => {
-  try {
-    return (await run("git", ["-C", dir, "rev-parse", "--show-toplevel"], { timeout: 15_000 })).stdout.trim();
-  } catch {
-    return EXTEND;
-  }
-};
+// 扩展仓的文件工具：root 是 EXTEND；变体走它自己那棵 checkout（`dir` 覆盖目录）。
+const variantDirOf = async (name, variant) => (variant ? (await variantRootOf(name, variant)).dir : null);
 
-/** 相对路径 → 绝对路径，且 realpath 之后还得在这个扩展目录里（符号链接是逃逸口）。 */
-const resolveInsideExtension = async (name, rel, variant = null) => {
-  const { name: clean, dir: baseDir } = extensionDir(name);
-  const dir = variant ? (await variantRootOf(clean, variant)).dir : baseDir;
-  const raw = String(rel ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
-  if (!raw || raw.split("/").some((part) => !part || part === "." || part === "..")) {
-    throw withStatus(new Error(`路径不合法：${rel}`), 400);
-  }
-  const target = path.resolve(dir, raw);
-  if (!target.startsWith(dir + path.sep)) throw withStatus(new Error("路径跑出了扩展目录"), 403);
-  let real;
-  try {
-    real = await realpath(target);
-  } catch {
-    throw withStatus(new Error(`没有这个文件：${clean}/${raw}`), 404);
-  }
-  const realDir = await realpath(dir).catch(() => dir);
-  if (!real.startsWith(realDir + path.sep)) throw withStatus(new Error("路径跑出了扩展目录"), 403);
-  return { name: clean, dir, file: real, rel: raw, variant: variant ?? null };
-};
+const listExtensionFiles = async (name, variant = null) =>
+  listRepoFiles(EXTEND, name, { dir: await variantDirOf(name, variant) });
 
-const kindOfPath = (file) => FILE_KINDS.get(path.extname(file).toLowerCase()) ?? null;
+const readExtensionFile = async (name, rel, variant = null) => ({
+  ...(await readRepoFile(EXTEND, name, rel, { dir: await variantDirOf(name, variant) })),
+  variant: variant ?? null,
+});
 
-/** 这一个扩展目录里有哪些文件 —— 只列这一页能编辑的，node_modules / 点开头的都不算。 */
-const listExtensionFiles = async (name, variant = null) => {
-  const { name: clean, dir: baseDir } = extensionDir(name);
-  const dir = variant ? (await variantRootOf(clean, variant)).dir : baseDir;
-  const exists = await stat(dir).catch(() => null);
-  if (!exists?.isDirectory()) throw withStatus(new Error(`仓库里没有这个扩展：${clean}`), 404);
-
-  const files = [];
-  const walk = async (base, relBase, depth) => {
-    if (depth > 4) return;
-    const entries = await readdir(base, { withFileTypes: true }).catch(() => []);
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-      const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        await walk(path.join(base, entry.name), rel, depth + 1);
-        continue;
-      }
-      const kind = kindOfPath(entry.name);
-      if (!kind) continue;
-      const info = await stat(path.join(base, entry.name)).catch(() => null);
-      if (!info || info.size > MAX_FILE_BYTES) continue;
-      files.push({ path: rel, kind, size: info.size, mtime: Math.round(info.mtimeMs) });
-    }
-  };
-  await walk(dir, "", 0);
-  return files;
-};
-
-const readExtensionFile = async (name, rel, variant = null) => {
-  const { name: clean, file, rel: pathname, dir } = await resolveInsideExtension(name, rel, variant);
-  const kind = kindOfPath(file);
-  if (!kind) throw withStatus(new Error("这一页只编辑 .js / .mjs / .json / .md"), 415);
-  const info = await stat(file);
-  if (info.size > MAX_FILE_BYTES) throw withStatus(new Error(`文件太大：${info.size} 字节`), 413);
-  const text = await readFile(file, "utf8");
-  // HEAD 里那一版 —— 抽屉的 diff 就靠它与现在的文本比。未见过的文件（未发布）给 null。
-  // 注意：比的是 HEAD，不是 origin。发布推的是工作区 → 本地 commit，
-  // origin 落后是另一件事（顶栏 chip 已经在说）。
-  // 基线取**文件自己那棵树**的 HEAD：变体在自己的分支上，主树的 HEAD 跟它无关
-  // （而且主树那份文件内容都不一样 —— 拿它当基线，diff 会显示成整篇重写）。
-  let base = null;
-  try {
-    const gitRoot = await gitRootOf(dir);
-    const relToRoot = path.relative(gitRoot, file).split(path.sep).join("/");
-    base = (await run("git", ["-C", gitRoot, "show", `HEAD:${relToRoot}`], { timeout: 15_000 })).stdout;
-  } catch {
-    base = null;
-  }
-  return {
-    name: clean,
-    variant: variant ?? null,
-    path: pathname,
-    kind,
-    text,
-    base,
-    size: info.size,
-    mtime: Math.round(info.mtimeMs),
-    etag: etagOf(text),
-  };
-};
-
-/** 语法闸：拷成 .mjs 让 node 按 ESM 解析。只解析，不执行 —— 进程里没有 api 可递。 */
-const checkSyntax = async (label, text) => {
-  const dir = path.join(tmpdir(), "nous-extend-check");
-  await mkdir(dir, { recursive: true });
-  const file = path.join(dir, `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.mjs`);
-  try {
-    await writeFile(file, text, "utf8");
-    await run(process.execPath, ["--check", file], { timeout: 15_000 });
-  } catch (error) {
-    const lines = (error.stderr || error.stdout || String(error?.message ?? error))
-      .trim()
-      // 报错里是 /tmp 那个临时路径，换回仓库里的路径，人才能对上号。
-      .replaceAll(file, label)
-      .split("\n");
-    // 切到错误类型那一行为止：再往下是 checkSyntax 自己的调用栈，对改代码的人零信息量。
-    const stop = lines.findIndex((line) => /^(SyntaxError|ReferenceError|TypeError)\b/.test(line.trim()));
-    const detail = (stop === -1 ? lines : lines.slice(0, stop + 1)).slice(0, 8).join("\n");
-    throw withStatus(new Error(`${label} 语法错误：\n${detail}`), 400);
-  } finally {
-    await unlink(file).catch(() => {});
-  }
-};
-
-/** 写一个文件：立刻落盘，**不提交**。nous.json 额外过一遍 index.mjs（不过就回滚）。 */
-const writeExtensionFile = async ({ name, rel, text, base, variant = null }) => {
-  const { name: clean, file, rel: pathname } = await resolveInsideExtension(name, rel, variant);
-  const kind = kindOfPath(file);
-  if (!kind) throw withStatus(new Error("这一页只编辑 .js / .mjs / .json / .md"), 415);
-  if (typeof text !== "string") throw withStatus(new Error("text 得是字符串（哪怕是空串）"), 400);
-  if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) throw withStatus(new Error("文件太大"), 413);
-
-  const before = await readFile(file, "utf8");
-  // base 是「我改的是哪一版」：别人先改了，这里就 409，别把对方的字盖掉。
-  if (base && etagOf(before) !== String(base)) {
-    throw withStatus(new Error("这个文件在别处被改过了 —— 先刷新，再改"), 409);
-  }
-
-  if (kind === "json") {
-    try {
-      JSON.parse(text);
-    } catch (error) {
-      throw withStatus(new Error(`${clean}/${pathname} 不是合法 JSON：${error.message}`), 400);
-    }
-  }
-  if (kind === "javascript") await checkSyntax(`${clean}/${pathname}`, text);
-
-  await writeFileAtomic(file, text);
-
-  // nous.json 不是「普通 JSON」：目录名 == 扩展名、字段齐全、file 真在 —— 只有 index.mjs 认。
-  // 变体跳过：index.mjs 扫的是主树，拿变体的清单去重扫主树的生成物是错的。
-  if (pathname === "nous.json" && !variant) {
-    try {
-      await run(process.execPath, ["index.mjs"], { cwd: EXTEND, timeout: 30_000 });
-    } catch (error) {
-      await writeFileAtomic(file, before);
-      const detail = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
-      throw withStatus(new Error(`nous.json 没过 index.mjs，已回滚：${detail}`), 400);
-    }
-  }
-
-  const info = await stat(file);
-  const gitRoot = await gitRootOf(path.dirname(file));
-  return {
-    name: clean,
-    variant: variant ?? null,
-    path: pathname,
-    kind,
-    size: info.size,
-    mtime: Math.round(info.mtimeMs),
-    etag: etagOf(text),
-    dirty: (await run("git", ["status", "--porcelain"], { cwd: gitRoot })).stdout.trim().length > 0,
-  };
-};
-
-/** 工作区里改了哪些文件（porcelain v1：前两位是状态，改名只认 `->` 右边那个）。 */
-const gitChanges = async () => {
-  // 别对整份输出 .trim()：第一行是 ` M path`，那个前导空格是状态列的一部分 ——
-  // trim 掉再 slice(3) 会把路径首字母一起切掉（`categories.json` → `ategories.json`）。
-  const porcelain = (await run("git", ["status", "--porcelain"], { cwd: EXTEND, timeout: 15_000 })).stdout.replace(/\n+$/, "");
-  if (!porcelain.trim()) return [];
-  return porcelain
-    .split("\n")
-    .map((line) => {
-      let rel = line.slice(3).trim().replace(/^"|"$/g, "");
-      if (rel.includes(" -> ")) rel = rel.split(" -> ").pop();
-      return { status: line.slice(0, 2), path: rel };
-    })
-    .filter((item) => item.path);
-};
-
-const changedPaths = async () => (await gitChanges()).map((item) => item.path);
-
-/**
- * 语法闸（`checkSyntax`）：代码要过 `node --check` 才允许进仓库。
- *
- * 挂三处，口径一致：发布（`publishExtensions`，只查这次要提交的 js）、变体发布
- * （`publishVariant`，查那棵树里改过的 js）、未同步弹窗的显式提交（`syncExtendRepo` 的
- * `paths` 分支）。类别那条 debounce 碰不到代码，不用陪跑。
- */
-
-/** 重扫 index.json；失败不提交（提交了就是一份红账）。 */
-const regenIndex = async () => {
-  try {
-    await runIndexGenerator();
-  } catch (error) {
-    const detail = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
-    throw withStatus(new Error(`index.mjs 校验失败，没有提交：${detail}`), 400);
-  }
-};
+const writeExtensionFile = async ({ name, rel, text, base, variant = null }) => ({
+  ...(await writeRepoFile(EXTEND, { name, rel, text, base, dir: await variantDirOf(name, variant) })),
+  variant: variant ?? null,
+});
 
 /** 发布：校验工作区里改过的每个 .js，重扫 index.json，然后 commit + push。 */
 const publishExtensions = async ({ name = null, message = null } = {}) => {
   // 发布**只发这一个扩展**（`name/` 底下的一切）+ 重扫出来的 index.json。
   // 以前是「把整份工作区推上去」：抽屉里点一次发布，别人未发布的目录、你正在试的副本
   // 会一起上 GitHub —— 踩过，测试副本就是这么上去的。
-  const changes = await gitChanges();
+  const changes = await gitChanges(EXTEND);
   const scoped = name ? changes.filter((item) => item.path === name || item.path.startsWith(`${name}/`)) : changes;
   if (!scoped.length) {
-    return { committed: false, ...(await extendRepoState()), pushed: null, checked: [], changed: [] };
+    return { committed: false, ...(await repoState(EXTEND)), pushed: null, checked: [], changed: [] };
   }
   const checked = [];
   for (const { status, path: rel } of scoped) {
@@ -1105,9 +690,9 @@ const publishExtensions = async ({ name = null, message = null } = {}) => {
     await checkSyntax(rel, text);
     checked.push(rel);
   }
-  await regenIndex();
+  await regenIndex(EXTEND);
   const paths = [...new Set([...scoped.map((item) => item.path), "index.json"])];
-  const result = await syncExtendRepo(String(message ?? "").trim() || null, { paths });
+  const result = await syncRepo(EXTEND, String(message ?? "").trim() || null, { paths });
   return { ...result, checked, changed: scoped.map((item) => item.path) };
 };
 
@@ -1124,7 +709,7 @@ const branchOf = async (gitRoot) =>
 const publishVariant = async ({ name, variant, message }) => {
   assertVariantId(variant);
   const { dir } = await variantRootOf(name, variant);
-  const gitRoot = await gitRootOf(dir);
+  const gitRoot = await gitRootOf(dir, EXTEND);
   const branch = await branchOf(gitRoot);
   const changed = (await run("git", ["-C", gitRoot, "status", "--porcelain"], { timeout: 20_000 })).stdout
     .split("\n")
@@ -1137,7 +722,7 @@ const publishVariant = async ({ name, variant, message }) => {
   const checked = [];
   for (const rel of changed) {
     const file = path.join(gitRoot, rel);
-    if (kindOfPath(file) !== "javascript") continue;
+    if (!/\.(mjs|cjs|js)$/i.test(file)) continue;
     const text = await readFile(file, "utf8").catch(() => null);
     if (text === null) continue; // 删掉的文件不用查
     await checkSyntax(rel, text);
@@ -1243,74 +828,7 @@ const localInstall = async (name) => {
 //
 // `.archive/<name>/` 在仓库里跟着 origin 走，clone 下来也在 —— 所以「从库里删」
 // 仍然是可逆的。`purge` 才是真没。三个动作都要 commit + push（走发布同一个仓库），
-// 所以都串进 serializeExtendWrite，并带上 includeDeleted。
-
-const isTrackedDir = async (name) => {
-  try {
-    await run("git", ["-C", EXTEND, "ls-files", "--error-unmatch", name], { timeout: 15_000 });
-    return true;
-  } catch {
-    return false; // 未发布的新扩展：还没有任何文件进 index
-  }
-};
-
-/** 归档区里有什么（按归档时间新→旧）。仓库里没有 .archive/ 就返回空。 */
-const archivedEntries = async () => {
-  const root = path.join(EXTEND, ARCHIVE_DIR);
-  let dirs = [];
-  try {
-    dirs = (await readdir(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  } catch {
-    return [];
-  }
-  const out = [];
-  for (const name of dirs) {
-    const info = await readManifest(path.join(ARCHIVE_DIR, name));
-    let archivedAt = null;
-    try {
-      archivedAt = (await run("git", ["-C", EXTEND, "log", "-1", "--format=%cI", "--", `${ARCHIVE_DIR}/${name}`])).stdout.trim() || null;
-    } catch {}
-    out.push({
-      name,
-      version: info?.manifest?.version ?? null,
-      summary: info?.manifest?.summary ?? null,
-      category: info?.manifest?.category ?? [],
-      archivedAt,
-    });
-  }
-  return out.sort((a, b) => String(b.archivedAt ?? "").localeCompare(String(a.archivedAt ?? "")) || a.name.localeCompare(b.name));
-};
-
-/** 把一个目录搬进 / 搬出 .archive/；tracked 的走 git mv（保留历史），否则普搬 + git add。 */
-const moveIntoArchive = async (name) => {
-  const target = `${ARCHIVE_DIR}/${name}`;
-  await mkdir(path.join(EXTEND, ARCHIVE_DIR), { recursive: true });
-  if (await stat(path.join(EXTEND, target)).catch(() => null)) {
-    throw withStatus(new Error(`${target} 已经存在 —— 先到「已删除」里处理掉那一条`), 409);
-  }
-  if (await isTrackedDir(name)) {
-    await run("git", ["-C", EXTEND, "mv", name, target], { timeout: 30_000 });
-  } else {
-    await moveDir(path.join(EXTEND, name), path.join(EXTEND, target));
-    await run("git", ["-C", EXTEND, "add", "--", target], { timeout: 30_000 });
-  }
-};
-
-const moveOutOfArchive = async (name) => {
-  const source = `${ARCHIVE_DIR}/${name}`;
-  if (!(await stat(path.join(EXTEND, source)).catch(() => null))) {
-    throw withStatus(new Error(`归档区里没有 ${name}`), 404);
-  }
-  if (await stat(path.join(EXTEND, name)).catch(() => null)) {
-    throw withStatus(new Error(`工作区里已经有一个叫 ${name} 的目录了`), 409);
-  }
-  if (await isTrackedDir(source)) {
-    await run("git", ["-C", EXTEND, "mv", source, name], { timeout: 30_000 });
-  } else {
-    await moveDir(path.join(EXTEND, source), path.join(EXTEND, name));
-    await run("git", ["-C", EXTEND, "add", "--", name], { timeout: 30_000 });
-  }
-};
+// 所以都串进 serializeRepoWrite(EXTEND, …)，并带上 includeDeleted。
 
 /** 三个动作共用的验前检查。 */
 const guardExtensionName = (name, { allowCore = false } = {}) => {
@@ -1406,7 +924,7 @@ const createExtension = async ({ name, summary, category }) => {
     const detail = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
     throw withStatus(new Error(`index.mjs 不认这个骨架，已删掉：${detail}`), 400);
   }
-  if (cats.length) await writeCategories([...(await readCategories()), ...cats]);
+  if (cats.length) await writeCategories(EXTEND, [...(await readCategories(EXTEND)), ...cats]);
   return { ok: true, name, manifest };
 };
 
@@ -1534,7 +1052,7 @@ const duplicateExtension = async ({ from, variant = null, name, summary, categor
     const detail = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
     throw withStatus(new Error(`index.mjs 不认这个副本，已删掉：${detail}`), 400);
   }
-  if (cats.length) await writeCategories([...(await readCategories()), ...cats]);
+  if (cats.length) await writeCategories(EXTEND, [...(await readCategories(EXTEND)), ...cats]);
   // 转正之后「变体要不要留」是**第二个决定**：默认一动不动（树、分支、绑定都还在），
   // 人勾了才解绑，而且解绑也不拆树不删分支 —— 那是它自己那条路。
   let unbound = false;
@@ -1565,7 +1083,7 @@ const archiveExtension = async (name) => {
   }
   // 未发布（HEAD 里没有这个目录）= 从来没进过仓库。归档它等于「先把没发布的东西推上去，
   // 再归档」—— 那是个反着的动作，而且会把半成品代码塞进 GitHub。没有历史可留，直接删。
-  if (!(await isTrackedDir(name))) {
+  if (!(await isTrackedDir(EXTEND, name))) {
     await rm(path.join(EXTEND, name), { recursive: true, force: true });
     await runIndexGenerator();
     await syncExtraExtensions(`drop-${Date.now()}`);
@@ -1574,11 +1092,11 @@ const archiveExtension = async (name) => {
   const indexFile = path.join(EXTEND, "index.json");
   const beforeIndex = await readFile(indexFile, "utf8").catch(() => null);
   try {
-    await moveIntoArchive(name);
+    await moveIntoArchive(EXTEND, name);
     await runIndexGenerator();
     // 先从库里撤下来（停装），再提交。顺序反过来会有一小段时间「清单里有、目录没了」。
     await syncExtraExtensions(`archive-${Date.now()}`);
-    const result = await syncExtendRepo(`extend: 归档 ${name}`, { includeDeleted: true });
+    const result = await syncRepo(EXTEND, `extend: 归档 ${name}`, { includeDeleted: true });
     return { name, archived: true, ...result };
   } catch (error) {
     await run("git", ["-C", EXTEND, "reset", "-q", "--", name, `${ARCHIVE_DIR}/${name}`]).catch(() => {});
@@ -1592,10 +1110,10 @@ const archiveExtension = async (name) => {
 const restoreExtension = async (name) => {
   guardExtensionName(name);
   try {
-    await moveOutOfArchive(name);
+    await moveOutOfArchive(EXTEND, name);
     await runIndexGenerator();
     await syncExtraExtensions(`unarchive-${Date.now()}`);
-    const result = await syncExtendRepo(`extend: 从归档恢复 ${name}`, { includeDeleted: true });
+    const result = await syncRepo(EXTEND, `extend: 从归档恢复 ${name}`, { includeDeleted: true });
     return { name, archived: false, ...result };
   } catch (error) {
     await run("git", ["-C", EXTEND, "reset", "-q", "--", name, `${ARCHIVE_DIR}/${name}`]).catch(() => {});
@@ -1614,14 +1132,14 @@ const purgeExtension = async (name) => {
   const halfDone = !exists
     && (await run("git", ["-C", EXTEND, "status", "--porcelain", "--", `${ARCHIVE_DIR}/${name}`])).stdout.trim().length > 0;
   if (!exists && !halfDone) throw withStatus(new Error(`归档区里没有 ${name}`), 404);
-  const tracked = await isTrackedDir(`${ARCHIVE_DIR}/${name}`);
+  const tracked = await isTrackedDir(EXTEND, `${ARCHIVE_DIR}/${name}`);
   try {
     if (exists && tracked) {
       await run("git", ["-C", EXTEND, "rm", "-r", "-f", "--", `${ARCHIVE_DIR}/${name}`], { timeout: 30_000 });
     } else if (exists) {
       await rm(source, { recursive: true, force: true });
     }
-    const result = await syncExtendRepo(`extend: 彻底删除 ${name}`, { includeDeleted: true });
+    const result = await syncRepo(EXTEND, `extend: 彻底删除 ${name}`, { includeDeleted: true });
     return { name, purged: true, ...result };
   } catch (error) {
     // 提交/推送挂了：文件已经没了，但 HEAD 里还有 —— 拿回来，别留一个半截的暂存删除。
@@ -1631,146 +1149,6 @@ const purgeExtension = async (name) => {
     }
     throw withStatus(new Error(`彻底删除失败，已回滚：${String(error?.message ?? error)}`), 400);
   }
-};
-
-/** 仓库状态：有没有没提交的、领先/落后远端几步。 */
-const extendRepoState = async () => {
-  const opts = { cwd: EXTEND, timeout: 15_000 };
-  const head = (await run("git", ["rev-parse", "HEAD"], opts)).stdout.trim();
-  const dirty = (await run("git", ["status", "--porcelain"], opts)).stdout.trim().length > 0;
-  let ahead = 0;
-  let behind = 0;
-  try {
-    ahead = Number((await run("git", ["rev-list", "--count", "@{u}..HEAD"], opts)).stdout.trim()) || 0;
-    behind = Number((await run("git", ["rev-list", "--count", "HEAD..@{u}"], opts)).stdout.trim()) || 0;
-  } catch {
-    // 没有上游 / 断网：当成 0 说，别让一个查询把整页卡死。
-  }
-  return { head, dirty, ahead, behind };
-};
-
-// index.json 是 categories.json 的生成物：只提交词表不提交索引，仓库当场自相矛盾。
-const isCategoryFile = (rel) =>
-  rel === "categories.json" || rel === "index.json" || rel.endsWith("nous.json");
-
-// ── 待同步清单：把工作区的脏文件按「改动单元」分组 ─────────────────────────
-//
-// 单元是**扩展**，不是文件：人想的是「把 123 发出去」，不是「提交 index.js」。
-// 文件级的勾选藏在展开里。另外「已提交没推」和「没提交」是两件事，这里分开给。
-
-const EXT_CODE_RE = /\.(mjs|cjs|js)$/i;
-const fileKindOf = (rel) => (EXT_CODE_RE.test(rel) ? "code" : isCategoryFile(rel) ? "manifest" : "other");
-
-/** 一条改动属于哪个单元。这个仓库的顶层目录就是扩展，顶层文件是词表/索引/README。 */
-const unitOfPath = (rel) => {
-  const parts = rel.split("/");
-  if (parts[0] === ".archive" && parts.length > 2) return { key: `.archive/${parts[1]}`, kind: "archive", name: parts[1] };
-  if (parts.length > 1 && !parts[0].startsWith(".")) return { key: parts[0], kind: "extension", name: parts[0] };
-  if (isCategoryFile(rel)) return { key: "__categories", kind: "categories", name: null };
-  return { key: "__other", kind: "other", name: null };
-};
-
-const UNIT_ORDER = { extension: 0, categories: 1, archive: 2, other: 3 };
-
-const trimRemote = (url) => {
-  const raw = String(url ?? "").trim();
-  const ssh = raw.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
-  if (ssh) return `https://${ssh[1]}/${ssh[2]}`;
-  return raw.replace(/\.git$/, "");
-};
-
-const pendingState = async () => {
-  const changes = await gitChanges();
-  const state = await extendRepoState();
-
-  // 「已发布/未发布」看 HEAD 里有没有这个目录 —— 和卡片上 tracked 是同一个口径。
-  const trackedDirs = new Set(
-    (await run("git", ["-C", EXTEND, "ls-tree", "--name-only", "-d", "HEAD"], { timeout: 20_000 })
-      .then((out) => out.stdout)
-      .catch(() => "")).split("\n").map((line) => line.trim()).filter(Boolean),
-  );
-
-  // 行数口径和 git 一致：对 HEAD 比（暂存 + 未暂存都算）。未跟踪的文件 git diff 看不见，单独数。
-  const numstat = new Map();
-  const trackedPaths = changes.filter((item) => !item.status.startsWith("??")).map((item) => item.path);
-  if (trackedPaths.length) {
-    const out = (await run("git", ["-C", EXTEND, "diff", "--numstat", "HEAD", "--", ...trackedPaths], { timeout: 30_000 }))
-      .stdout;
-    for (const line of out.split("\n").filter(Boolean)) {
-      const [adds, dels, ...rest] = line.split("\t");
-      numstat.set(rest.join("\t"), { added: adds === "-" ? 0 : Number(adds), removed: dels === "-" ? 0 : Number(dels) });
-    }
-  }
-
-  const units = new Map();
-  for (const change of changes) {
-    const { key, kind, name } = unitOfPath(change.path);
-    const deleted = change.status.includes("D");
-    let lines = numstat.get(change.path) ?? { added: 0, removed: 0 };
-    if (change.status.startsWith("??")) {
-      // 整份文件都是新增。读不了 / 太大就记 0 —— 这个数只用来判断量级，不参与决策。
-      const info = await stat(path.join(EXTEND, change.path)).catch(() => null);
-      if (info && info.size <= MAX_FILE_BYTES) {
-        const text = await readFile(path.join(EXTEND, change.path), "utf8").catch(() => "");
-        lines = { added: text ? text.replace(/\n+$/, "").split("\n").length : 0, removed: 0 };
-      }
-    }
-    const unit = units.get(key) ?? {
-      key,
-      kind,
-      name,
-      tracked: kind === "extension" ? trackedDirs.has(name) : true,
-      files: [],
-      added: 0,
-      removed: 0,
-      code: false,
-      hasDeleted: false,
-    };
-    unit.files.push({ path: change.path, status: change.status.trim() || "??", kind: fileKindOf(change.path), deleted, ...lines });
-    unit.added += lines.added;
-    unit.removed += lines.removed;
-    if (fileKindOf(change.path) === "code") unit.code = true;
-    if (deleted) unit.hasDeleted = true;
-    units.set(key, unit);
-  }
-
-  const list = [...units.values()].sort(
-    (a, b) => UNIT_ORDER[a.kind] - UNIT_ORDER[b.kind] || String(a.name ?? a.key).localeCompare(String(b.name ?? b.key)),
-  );
-
-  let aheadCommits = [];
-  if (state.ahead) {
-    const log = await run("git", ["-C", EXTEND, "log", "--format=%h%x09%s", "-n", "30", "@{u}..HEAD"], { timeout: 20_000 })
-      .then((out) => out.stdout)
-      .catch(() => "");
-    aheadCommits = log
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [hash, ...rest] = line.split("\t");
-        return { hash, subject: rest.join("\t") };
-      });
-  }
-
-  const remote = await run("git", ["-C", EXTEND, "remote", "get-url", "origin"], { timeout: 10_000 })
-    .then((out) => trimRemote(out.stdout))
-    .catch(() => "");
-  return { ...state, remote, units: list, aheadCommits };
-};
-
-/** 一个文件「对 HEAD」的前后内容 —— 给弹窗里的 diff 用。 */
-const pendingFileDiff = async (rel) => {
-  const clean = String(rel ?? "").trim();
-  if (!clean || clean.includes("..") || path.isAbsolute(clean)) throw withStatus(new Error("路径不对"), 400);
-  const file = path.join(EXTEND, clean);
-  if (!file.startsWith(EXTEND + path.sep)) throw withStatus(new Error("路径跑到仓库外面了"), 400);
-  const info = await stat(file).catch(() => null);
-  if (info && info.size > MAX_FILE_BYTES * 4) throw withStatus(new Error("文件太大，不在面板里看 diff"), 413);
-  const base = await run("git", ["-C", EXTEND, "show", `HEAD:${clean}`], { timeout: 20_000 })
-    .then((out) => out.stdout)
-    .catch(() => "");
-  const text = info ? await readFile(file, "utf8").catch(() => "") : "";
-  return { path: clean, base, text, missing: !text && !base };
 };
 
 /** 有哪些会话的扩展列表里还点着这个名字（`123@dev` 也算一个名字）。 */
@@ -1784,146 +1162,6 @@ const sessionsUsing = async (key) => {
     if ((agent.extensions ?? []).some((item) => item.name === key)) ids.push(record.id);
   }
   return ids;
-};
-
-/** 一条已提交但没推的 commit 改了哪些文件 —— 弹窗里点开看，人去不去推它。 */
-const pendingCommit = async (hash) => {
-  const sha = String(hash ?? "").trim();
-  if (!/^[0-9a-f]{4,40}$/i.test(sha)) throw withStatus(new Error("提交号不对"), 400);
-  const meta = (await run("git", ["-C", EXTEND, "show", "-s", "--format=%H%x09%an%x09%ad%x09%s", "--date=short", sha], {
-    timeout: 20_000,
-  })).stdout.trim();
-  const [full, author, date, ...subject] = meta.split("\t");
-  const numstat = (await run("git", ["-C", EXTEND, "show", "--numstat", "--format=", sha], { timeout: 60_000 })).stdout;
-  const files = numstat
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const [adds, dels, ...rest] = line.split("\t");
-      return { path: rest.join("\t"), added: adds === "-" ? 0 : Number(adds), removed: dels === "-" ? 0 : Number(dels) };
-    });
-  return { hash: full, short: full.slice(0, 7), author, date, subject: subject.join("\t"), files };
-};
-
-/**
- * index.json 里有哪些扩展**不在 HEAD 里** —— 也就是「未发布」：新建的、复制出来的、
- * 还没发布就躺在盘上的。它们合法地出现在工作区的 index.json 里，但**不该跟着自动提交走**。
- */
-const untrackedIndexNames = async () => {
-  let entries = [];
-  try {
-    entries = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions ?? [];
-  } catch {
-    return [];
-  }
-  const tracked = new Set(
-    (await run("git", ["-C", EXTEND, "ls-tree", "--name-only", "-d", "HEAD"], { timeout: 20_000 })
-      .then((out) => out.stdout)
-      .catch(() => ""))
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean),
-  );
-  return entries.filter((item) => !tracked.has(item.name)).map((item) => item.name);
-};
-
-/** 把未发布的扩展从 index.json 里摘掉（只动磁盘；提交完再重扫回去）。 */
-const pruneIndex = async (names) => {
-  const indexFile = path.join(EXTEND, "index.json");
-  const doc = JSON.parse(await readFile(indexFile, "utf8"));
-  doc.extensions = (doc.extensions ?? []).filter((item) => !names.includes(item.name));
-  await writeFile(indexFile, JSON.stringify(doc, null, 2) + "\n", "utf8");
-};
-
-/**
- * 把待提交改动打成一条 commit，然后 push。push 失败要说实话，不能装成功。
- *
- * `only: "categories"` = 只提交词表和清单，**不碰代码**。类别那条 8 秒 debounce 走这个：
- * 否则「保存了但没发布」的代码会被下一次点标签顺手推上去 —— 保存和发布分开了，
- * 推的却是同一个工作区，等于白分。
- */
-const syncExtendRepo = async (message, { only = null, includeDeleted = false, paths = null } = {}) => {
-  const opts = { cwd: EXTEND, timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } };
-  let committed = false;
-  const changes = await gitChanges();
-  // 「删本地」必然让 tracked 文件变成 ` D`。这条过滤是本地删除和发布之间的防火墙：
-  // 发布推的是工作区，不挡住的话，你删了 demo、隔天改一行代码点发布，删除就跟着上 GitHub。
-  const deleted = new Set(changes.filter((item) => item.status.includes("D")).map((item) => item.path));
-  const changed = changes.map((item) => item.path);
-  let targets = (only === "categories" ? changed.filter(isCategoryFile) : changed).filter(
-    // 归档/恢复/彻底删除是显式动作，它们的删除必须能提交；其余路径一律不碰删除。
-    (rel) => includeDeleted || !deleted.has(rel),
-  );
-  if (Array.isArray(paths)) {
-    // 显式勾选：只碰这几条。没勾的一个字节都不提交 —— 这是「按扩展选」的全部实现。
-    const want = new Set(paths.map((rel) => String(rel)));
-    targets = targets.filter((rel) => want.has(rel));
-    // 代码改动要过语法闸：不走抽屉也能提交代码，代价就是这道检查。
-    for (const rel of targets) {
-      if (!EXT_CODE_RE.test(rel)) continue;
-      const text = await readFile(path.join(EXTEND, rel), "utf8").catch(() => null);
-      if (text !== null) await checkSyntax(rel, text);
-    }
-  }
-  // 类别那条 debounce 是**自动**提交，它不能替谁发布。未发布的目录也在 index.json 里
-  // （新建的、复制出来的），整份推上去 = 「仓库说我有它，实际没有」。
-  // 所以提交前把不在 HEAD 里的条目从索引里摘掉，提交完再重扫回来（它会重新变脏，正是该有的样子）。
-  // 谁进了这次提交，谁就有资格留在索引里：index.json 里的未发布条目，只要「HEAD 里没有
-  // 这个目录」且「这次的 paths 里也没有它」，就摘掉 —— 自动提交不能替谁发布。
-  // （发布一个新扩展时它的目录也在 paths 里，于是照常进索引。）
-  let skippedIndex = [];
-  if (targets.includes("index.json")) {
-    const incoming = new Set(targets.map((rel) => rel.split("/")[0]));
-    const untracked = await untrackedIndexNames();
-    const skip = untracked.filter((item) => !incoming.has(item));
-    if (skip.length) {
-      await pruneIndex(skip);
-      skippedIndex = skip;
-    }
-  }
-
-  try {
-    if (targets.length) {
-      // 已删掉的路径不能再 `git add`（“pathspec did not match any files”）；它们的删除
-      // 已经由 `git rm` / `git mv` 暂存好了。只 add 还存在的文件。
-      const addable = [];
-      for (const rel of targets) {
-        if (await stat(path.join(EXTEND, rel)).catch(() => null)) addable.push(rel);
-      }
-      if (addable.length) await run("git", ["add", "--", ...addable], opts);
-      // 用暂存区判断“真有待提交的东西”：纯删除（git rm）不会有 addable，但也得提交。
-      const staged = (await run("git", ["diff", "--cached", "--name-only"], opts)).stdout.trim();
-      if (staged) {
-        // 默认说明按**真改了的文件**生。混着代码改动却写成 `category:` 是骗人
-        // —— 将来的 `git log` 靠这一行找人。
-        const when = new Date().toISOString().slice(0, 19).replace("T", " ");
-        const onlyCategories = targets.every(isCategoryFile);
-        const fallback = onlyCategories
-          ? `category: 更新扩展类别（${when}）`
-          : `extend: 更新 ${targets.slice(0, 4).join("、")}${targets.length > 4 ? ` 等 ${targets.length} 个文件` : ""}`;
-        const msg = String(message ?? "").trim() || fallback;
-        await run("git", ["commit", "-m", msg], opts);
-        committed = true;
-      }
-    }
-    const hash = committed
-      ? (await run("git", ["-C", EXTEND, "rev-parse", "--short", "HEAD"], opts)).stdout.trim()
-      : null;
-    const state = await extendRepoState();
-    if (!state.ahead) return { committed, hash, files: targets, skippedIndex, ...state, pushed: null };
-    try {
-      await run("git", ["push"], opts);
-    } catch (error) {
-      const pushError = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
-      return { committed, hash, files: targets, skippedIndex, ...state, pushed: false, pushError };
-    }
-    return { committed, hash, files: targets, skippedIndex, ...state, ahead: 0, pushed: true };
-  } finally {
-    // 索引必须回到「盘上有什么就写什么」，否则页面和生成器看到的是被摘过的版本。
-    if (skippedIndex.length) {
-      await runIndexGenerator().catch((error) => console.error("[extend] 重扫 index.json 失败：", errorLine(error)));
-    }
-  }
 };
 
 // 会话名不在 ConversationRecord 里（那东西没有 name 字段），也不许进 tree.json。
@@ -2119,13 +1357,14 @@ const skills = new Proxy({}, {
     return typeof value === "function" ? value.bind(service) : value;
   },
 });
-skillsService.current = await createSkills({ dir: path.join(DATA, "skills"), registry, api });
+skillsService.current = await createSkills({ dir: SKILLS_ROOT, registry, api });
 const { skillExtension } = skills;
 registry.install(nousExtension);
 registry.install(skills.extension);
 await skills.load();
-// 老收据补齐版本：后台跑，别把启动卡在 clone 上。
-void skills.backfill();
+// 老收据时代的补版本已经没了（技能没有版本号）。留着 `?.` 是因为：
+// 扩展仓可以比这块新或旧，缺一个方法不该让启动路径炸掉。
+void skills.backfill?.();
 // 核心两条的变体：**启动时就得装**。只靠 installCore 的话，进程一重启它们就没了，
 // 得等人点一次「重试装载」或者推一次代码才回来 —— 那是「页面说装了、进程里没有」的翻版。
 await loadCoreVariants("boot");
@@ -2149,10 +1388,10 @@ const installCore = async (version) => {
   const { default: createNous } = await import(`${EXTEND}/nous/index.js?v=${version}`);
   registry.install(createNous(api));
   const skillsModule = await import(`${EXTEND}/skills/index.js?v=${version}`);
-  skillsService.current = await skillsModule.createSkills({ dir: path.join(DATA, "skills"), registry, api });
+  skillsService.current = await skillsModule.createSkills({ dir: SKILLS_ROOT, registry, api });
   registry.install(skillsService.current.extension);
   await skillsService.current.load();
-  void skillsService.current.backfill();
+  void skillsService.current.backfill?.();
 
   await loadCoreVariants(version);
 };
@@ -2173,7 +1412,7 @@ const pinLock = async (head) => {
 
 const reloadExtensions = async () => {
   // 正在写仓库（改类别 / commit / push）时让一轮 —— 两个 git 进程会抢 index.lock。
-  if (extendBusy) return;
+  if (repoBusy(EXTEND)) return;
   let head;
   try {
     head = (await run("git", ["-C", EXTEND, "rev-parse", "HEAD"])).stdout.trim();
@@ -2458,44 +1697,20 @@ const route = async (req, res, url) => {
   }
 
   // ── 技能 ────────────────────────────────────────────────────────────────
+  //
+  // 全套 `/v1/skills*` 在 `skills-api.js`。这里只有接线：`root` 定死，测试注不进来。
+  // **必须放在 `parts[1] === "extensions"` 那一串路由之前** —— 老代码踩过：
+  // 只看 `parts[1]` 的列表接口会把 `GET /v1/extensions/sync` 先接走。
+  //
+  // 老的三条（`GET /v1/skills` 编目版、`POST refresh|install|uninstall`）已删干净：
+  // 仓库里有什么就是装着什么，没有「装」这个动作，也没有上游编目要刷新。
   if (parts[0] === "v1" && parts[1] === "skills") {
-    if (req.method === "GET" && !parts[2]) {
-      // 编目没拉过就先拉一次：列表页第一次打开不该看见「什么都没有」。
-      const cached = skills.catalog();
-      const loaded = cached.at ? cached : await skills.refreshCatalog();
-      // 还有人没记版本（老收据 / 刚装完断电）：后台补一次，这一轮先照实回 null。
-      // 页面上就是「未标版本」，不会凭空猜一个数字。
-      void skills.backfill();
-      return json(res, 200, {
-        dir: skills.dir,
-        installed: skills.list(),
-        items: loaded.items,
-        // 编目通不通跟着清单一起报，跟 /v1/models 一个道理。
-        catalog: { base: loaded.base, at: loaded.at, error: loaded.error },
-      });
+    try {
+      return await handleSkills({ req, res, url, parts, root: SKILLS_ROOT, skills, repo });
+    } catch (error) {
+      // handleSkills 自己写响应；走到这儿说明是它没接住的意外（读 body 炸了之类）。
+      return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
-    if (req.method === "POST" && parts[2] === "refresh") {
-      const next = await skills.refreshCatalog();
-      return json(res, 200, { ok: !next.error, ...next });
-    }
-    if (req.method === "POST" && parts[2] === "install") {
-      const body = JSON.parse((await readBody(req)) || "{}");
-      try {
-        const installed = await skills.install({ source: body.source, entry: body.entry, repo: body.repo, path: body.path });
-        return json(res, 200, { ok: true, installed });
-      } catch (error) {
-        // 装失败要说清楚到哪一步了（编目？版本号？tarball？目录里没这条路径？），
-        // 不然页面上只有一个红条，人得自己猜。
-        return json(res, 400, { error: String(error?.message ?? error) });
-      }
-    }
-    if (req.method === "POST" && parts[2] === "uninstall") {
-      const body = JSON.parse((await readBody(req)) || "{}");
-      const name = String(body.name ?? "");
-      if (!name) return json(res, 400, { error: "name 是空的" });
-      return json(res, 200, { ok: true, ...(await skills.uninstall(name)) });
-    }
-    return json(res, 404, { error: "skills 没有这条路" });
   }
 
   // 扩展类别：改 nous.json + 重扫 index.json（立刻生效）；commit/push 走 /sync。
@@ -2505,14 +1720,14 @@ const route = async (req, res, url) => {
     if (req.method !== "POST") return json(res, 405, { error: "类别只有 POST" });
     const body = JSON.parse((await readBody(req)) || "{}");
     try {
-      const updated = await serializeExtendWrite(() =>
+      const updated = await serializeRepoWrite(EXTEND, () =>
         setExtensionCategories(String(body.name ?? ""), body.category),
       );
       const catalog = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions;
       return json(res, 200, {
         extension: updated,
         catalog,
-        categories: await readCategories(),
+        categories: await readCategories(EXTEND),
         protected: PROTECTED_CATEGORIES,
       });
     } catch (error) {
@@ -2523,12 +1738,12 @@ const route = async (req, res, url) => {
   // 类别词表：建一个还没挂到任何扩展上的类别 / 删一个（连同从扩展上摘掉）。
   if (parts[0] === "v1" && parts[1] === "extensions" && parts[2] === "categories") {
     if (req.method === "GET") {
-      return json(res, 200, { categories: await readCategories(), protected: PROTECTED_CATEGORIES });
+      return json(res, 200, { categories: await readCategories(EXTEND), protected: PROTECTED_CATEGORIES });
     }
     if (req.method !== "POST") return json(res, 405, { error: "类别词表只有 GET/POST" });
     const body = JSON.parse((await readBody(req)) || "{}");
     try {
-      const result = await serializeExtendWrite(() => mutateCategories(body));
+      const result = await serializeRepoWrite(EXTEND, () => mutateExtensionCategories(body));
       const catalog = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions;
       return json(res, 200, { ...result, catalog, protected: PROTECTED_CATEGORIES });
     } catch (error) {
@@ -2563,7 +1778,7 @@ const route = async (req, res, url) => {
       const body = JSON.parse((await readBody(req)) || "{}");
       try {
         // 写盘不占 git 锁（不碰 index），但和类别写共享一条链：index.mjs 与 commit 会抢。
-        const saved = await serializeExtendWrite(() =>
+        const saved = await serializeRepoWrite(EXTEND, () =>
           writeExtensionFile({
             name: body.name,
             rel: body.path,
@@ -2586,7 +1801,7 @@ const route = async (req, res, url) => {
     const body = JSON.parse((await readBody(req)) || "{}");
     try {
       // 带 variant 就是「发布变体」：在那棵树上 commit + push 到它自己的分支，主树不碰。
-      const result = await serializeExtendWrite(() =>
+      const result = await serializeRepoWrite(EXTEND, () =>
         body.variant
           ? publishVariant({ name: body.name, variant: body.variant, message: body.message })
           : publishExtensions({ name: body.name, message: body.message }),
@@ -2596,7 +1811,7 @@ const route = async (req, res, url) => {
       let reload = null;
       if (result.committed) {
         try {
-          reload = await serializeExtendWrite(() => reloadExtensionsNow());
+          reload = await serializeRepoWrite(EXTEND, () => reloadExtensionsNow());
         } catch (error) {
           // 装不上不算发布失败：代码已经在仓库里了，页面会按「装载失败」红着报。
           reload = { ok: false, error: String(error?.message ?? error) };
@@ -2612,7 +1827,7 @@ const route = async (req, res, url) => {
   if (parts[0] === "v1" && parts[1] === "extensions" && parts[2] === "reload") {
     if (req.method !== "POST") return json(res, 405, { error: "重装只有 POST" });
     try {
-      return json(res, 200, await serializeExtendWrite(() => reloadExtensionsNow()));
+      return json(res, 200, await serializeRepoWrite(EXTEND, () => reloadExtensionsNow()));
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
@@ -2638,7 +1853,7 @@ const route = async (req, res, url) => {
     const id = String(body.id ?? "");
     const action = String(body.action ?? "bind");
     try {
-      const result = await serializeExtendWrite(async () => {
+      const result = await serializeRepoWrite(EXTEND, async () => {
         const manifest = await variantManifestOf(family);
         let worktree = null;
         if (action === "bind") {
@@ -2688,7 +1903,7 @@ const route = async (req, res, url) => {
     const name = String(body.name ?? "");
     const task = { archive: archiveExtension, restore: restoreExtension, purge: purgeExtension }[parts[2]];
     try {
-      return json(res, 200, await serializeExtendWrite(() => task(name)));
+      return json(res, 200, await serializeRepoWrite(EXTEND, () => task(name)));
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
@@ -2700,7 +1915,7 @@ const route = async (req, res, url) => {
     const body = JSON.parse((await readBody(req)) || "{}");
     const name = String(body.name ?? "");
     try {
-      const result = await serializeExtendWrite(() =>
+      const result = await serializeRepoWrite(EXTEND, () =>
         parts[2] === "uninstall" ? localUninstall(name) : localInstall(name),
       );
       return json(res, 200, result);
@@ -2714,16 +1929,16 @@ const route = async (req, res, url) => {
     if (req.method !== "POST") return json(res, 405, { error: "新建只有 POST" });
     const body = JSON.parse((await readBody(req)) || "{}");
     try {
-      const made = await serializeExtendWrite(() => createExtension(body));
+      const made = await serializeRepoWrite(EXTEND, () => createExtension(body));
       // 装不上不算建失败：目录已经在磁盘上了，页面会把它标成「装载失败」并给出重试。
       let load = null;
       try {
-        load = await serializeExtendWrite(() => reloadExtensionsNow());
+        load = await serializeRepoWrite(EXTEND, () => reloadExtensionsNow());
       } catch (error) {
         load = { ok: false, error: String(error?.message ?? error) };
       }
       const catalog = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions;
-      return json(res, 200, { ...made, catalog, categories: await readCategories(), load });
+      return json(res, 200, { ...made, catalog, categories: await readCategories(EXTEND), load });
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
@@ -2733,16 +1948,16 @@ const route = async (req, res, url) => {
     if (req.method !== "POST") return json(res, 405, { error: "复制只有 POST" });
     const body = JSON.parse((await readBody(req)) || "{}");
     try {
-      const made = await serializeExtendWrite(() => duplicateExtension(body));
+      const made = await serializeRepoWrite(EXTEND, () => duplicateExtension(body));
       // 和「新建」一样，造完就重装一次：目录已经在盘上了，装不上的话页面会标成装载失败并给重试。
       let load = null;
       try {
-        load = await serializeExtendWrite(() => reloadExtensionsNow());
+        load = await serializeRepoWrite(EXTEND, () => reloadExtensionsNow());
       } catch (error) {
         load = { ok: false, error: String(error?.message ?? error) };
       }
       const catalog = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions;
-      return json(res, 200, { ...made, catalog, categories: await readCategories(), load });
+      return json(res, 200, { ...made, catalog, categories: await readCategories(EXTEND), load });
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
@@ -2753,12 +1968,12 @@ const route = async (req, res, url) => {
     if (req.method !== "GET") return json(res, 405, { error: "待同步清单只有 GET" });
     try {
       if (parts[3] === "diff") {
-        return json(res, 200, await pendingFileDiff(url.searchParams.get("path")));
+        return json(res, 200, await pendingFileDiff(EXTEND, url.searchParams.get("path")));
       }
       if (parts[3] === "commit") {
-        return json(res, 200, await pendingCommit(url.searchParams.get("hash")));
+        return json(res, 200, await pendingCommit(EXTEND, url.searchParams.get("hash")));
       }
-      return json(res, 200, await pendingState());
+      return json(res, 200, await pendingState(EXTEND));
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
@@ -2767,7 +1982,7 @@ const route = async (req, res, url) => {
   if (parts[0] === "v1" && parts[1] === "extensions" && parts[2] === "sync") {
     if (req.method === "GET") {
       try {
-        return json(res, 200, await extendRepoState());
+        return json(res, 200, await repoState(EXTEND));
       } catch (error) {
         return json(res, 500, { error: String(error?.message ?? error) });
       }
@@ -2779,8 +1994,8 @@ const route = async (req, res, url) => {
         //   · 带 paths = 人在弹窗里显式勾了哪几个改动单元 → 只提交这些（代码过语法闸）；
         //   · 不带 paths = 类别那 8 秒 debounce → 只提交词表 / 清单。
         const picked = Array.isArray(body.paths) ? body.paths : null;
-        const result = await serializeExtendWrite(() =>
-          picked ? syncExtendRepo(body.message, { paths: picked }) : syncExtendRepo(body.message, { only: "categories" }),
+        const result = await serializeRepoWrite(EXTEND, () =>
+          picked ? syncRepo(EXTEND, body.message, { paths: picked }) : syncRepo(EXTEND, body.message, { only: "categories" }),
         );
         return json(res, 200, result);
       } catch (error) {
@@ -2863,12 +2078,12 @@ const route = async (req, res, url) => {
       // 混进 installed 会变成 40 行里 38 行是生成物。
       nameplates: { prefix: SKILL_PREFIX, count: nameplates.length, names: nameplates },
       defaults: [nousExtension.name, skills.extension.name],
-      categories: await readCategories(),
+      categories: await readCategories(EXTEND),
       protected: PROTECTED_CATEGORIES,
       catalog,
       variants,
       local: { ...(await readLocalState()), core: CORE_EXTENSIONS },
-      archived: await archivedEntries(),
+      archived: await archivedEntries(EXTEND),
       // 装载结果：页面上「装载失败」的唯一依据（空对象 = 一切正常）。
       load: Object.fromEntries(extensionLoad),
       // 对账：清单（nous.json 的 sections）说有几段，进程里**真装**了几段。
