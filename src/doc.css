@@ -821,8 +821,13 @@
   border-radius: 8px;
 }
 
-/* 没东西渲染的时候也留一句人话 —— 空白的预览看不出是「空文件」还是「坏了」。 */
+/* 没东西渲染的时候也留一句人话 —— 空白的预览看不出是「空文件」还是「坏了」。
+   空文件还顺手给一扇门（「开始写」），别只留一句「你自己去别处切」的解释。 */
 .dp-prose-quiet {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
   padding-top: 2px;
   font-size: 13px;
   line-height: 1.6;

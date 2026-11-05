@@ -35,9 +35,9 @@ import "./doc.css";
  * - **鼠标端的一切入口都是右键。** 行上不放悬停才浮出来的小图标：一张菜单里有
  *   打开 / 重命名 / 复制名字 / 移到最近删除。触屏没有右键，那颗 ••• 才出现（和盘面共用）。
  * - **右边只放当前这份。** 换文件只换右边，左列的滚动位置和选中都不跳。
- * - **正文有两种看法**：源码（能改）和预览（渲染出来，像 GitHub 上看一份 `.md`）。
- *   切的是「同一条内容怎么显示」，不是两份数据 —— 没存的字在两边都是同一份。预览器是懒加载的：
- *   只看源码的人不为它付首包的体积。
+ * - **正文有两种看法**：预览（默认，渲染出来，像 GitHub 上看一份 `.md`）和源码（能改）。
+ *   切的是「同一条内容怎么显示」，不是两份数据 —— 没存的字在两边都是同一份。渲染器是懒加载的：
+ *   只读不写的人第一屏不为它付体积之外的东西；刚建的那一份例外，先给源码（见 `fresh`）。
  * - **`AGENTS.md` 只是名字特殊**：它在的时候能改、不能删、不能改名 —— 它是 coding agent
  *   进目录时自动找的文件名，删了整块就没人读得懂。但它不预生成：没有就是没有。
  *
@@ -59,7 +59,8 @@ const EASE = "ease-[cubic-bezier(0.32,0.72,0,1)]";
 const NEW_ID = "__padding";
 /**
  * 正文用哪种看法。住在浏览器里：这是「这台机器上我怎么读字」，不是文档的属性，
- * 不该跟着文件走、更不该进 `tree.json`。默认源码 —— 这一页本来就是来改东西的。
+ * 不该跟着文件走、更不该进 `tree.json`。默认预览 —— 打开一份文档，第一件事是读。
+ * 只有你亲手切回源码、且它记下来了，才停在源码。
  */
 const VIEW_KEY = "nous-doc-view";
 
@@ -91,12 +92,12 @@ const splitName = (name: string): [string, string] => {
   return [stem, name.slice(stem.length)];
 };
 
-/** 默认源码模式：只有你亲手切到预览、且它记下来了，才是渲染的。 */
+/** 默认预览：没亲手选过源码，就给渲染出来的那份。 */
 const readView = (): View => {
   try {
-    return localStorage.getItem(VIEW_KEY) === "preview" ? "preview" : "source";
+    return localStorage.getItem(VIEW_KEY) === "source" ? "source" : "preview";
   } catch {
-    return "source";
+    return "preview";
   }
 };
 
@@ -523,8 +524,14 @@ export function DocPage({
   const [trashOpen, setTrashOpen] = useState(false);
   /** 正文里那个标题：点一下就地改名。 */
   const [titleEdit, setTitleEdit] = useState(false);
-  /** 正文是源码还是渲染出来的那份。 */
+  /** 正文是源码还是渲染出来的那份（默认预览）。 */
   const [view, setView] = useState<View>(readView);
+  /**
+   * 刚建出来的那一份：头一眼给源码。
+   * 新建文档的下一件事是写，把一张空白的纸摆成「读的」样子是在跟人客气 ——
+   * 但这是**这一份**的事，不该顺手把默认值改成源码（那一次选择会留在这台机器上）。
+   */
+  const fresh = useRef("");
   /** 正文滚开了没有。滚开了，顶上那条才长出一条发丝边 —— 没滚的时候它是透明的。 */
   const [scrolled, setScrolled] = useState(false);
   /** 纸上的大标题已经滑到条子底下了没有。滑过去了，条子上才把名字拿出来（iOS 的大标题）。 */
@@ -544,6 +551,7 @@ export function DocPage({
   }, []);
 
   const pickView = useCallback((v: View) => {
+    fresh.current = "";
     setView(v);
     try {
       localStorage.setItem(VIEW_KEY, v);
@@ -699,6 +707,7 @@ export function DocPage({
 
   /** 换一份：窄屏把左列收回去（那儿它是盖在正文上的），搜索清掉、输入框关掉。 */
   const open = (name: string) => {
+    fresh.current = "";
     setCur(name);
     setQ("");
     closeInputs();
@@ -717,6 +726,7 @@ export function DocPage({
       const out = await createDoc(board, id, name);
       await refresh();
       closeInputs();
+      fresh.current = out.name;
       setCur(out.name);
       if (narrow) setSide(false);
       setNote(`${out.name} 建好了 —— 直接写`);
@@ -875,6 +885,8 @@ export function DocPage({
   }
 
   const title = cur.replace(/\.md$/i, "");
+  /** 这一份实际按哪种看法显示：刚建的那一份先给源码，别的听偏好的。 */
+  const shown: View = cur && fresh.current === cur ? "source" : view;
   const rows = found ?? live;
   const searching = q.trim().length > 0;
   const empty = listed && live.length === 0 && !searching;
@@ -957,14 +969,14 @@ export function DocPage({
             {doc.phase === "ready" &&
               (narrow ? (
                 <IconBtn
-                  label={view === "preview" ? "切回源码" : "预览（渲染出来）"}
-                  onClick={() => pickView(view === "preview" ? "source" : "preview")}
-                  className={view === "preview" ? "text-text/80" : "text-muted"}
+                  label={shown === "preview" ? "切回源码" : "预览（渲染出来）"}
+                  onClick={() => pickView(shown === "preview" ? "source" : "preview")}
+                  className={shown === "preview" ? "text-text/80" : "text-muted"}
                 >
-                  {view === "preview" ? <IconCode /> : <IconEye />}
+                  {shown === "preview" ? <IconCode /> : <IconEye />}
                 </IconBtn>
               ) : (
-                <ViewSwitch view={view} onChange={pickView} />
+                <ViewSwitch view={shown} onChange={pickView} />
               ))}
 
             {narrow ? (
@@ -1345,15 +1357,17 @@ export function DocPage({
 
                     {/* 同一条 `doc.text`，两种看法。预览看的就是「你会存下去的那一版」——
                         没存的字也已经在里面了，不用先保存再看。 */}
-                    {view === "preview" ? (
+                    {shown === "preview" ? (
                       doc.text.trim() ? (
                         <Suspense fallback={<p className="dp-prose-quiet">渲染中…</p>}>
                           <DocMarkdown text={doc.text} />
                         </Suspense>
                       ) : (
-                        <p className="dp-prose-quiet">
+                        /* 空的一份在预览里没有可读的东西 —— 那就把门指出来，别只留一句解释。 */
+                        <div className="dp-prose-quiet">
                           这份还是空的 —— 切回源码写点东西，这里就出东西。
-                        </p>
+                          <Pill onClick={() => pickView("source")}>开始写</Pill>
+                        </div>
                       )
                     ) : (
                       <textarea
