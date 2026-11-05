@@ -144,7 +144,12 @@ export const sortCategories = (list) => [...new Set(list)].sort(compareCategorie
 
 const categoriesFile = (root) => path.join(root, "categories.json");
 
-export const readCategories = async (root) => {
+/**
+ * 类别词表。`protect` 是「这个仓里不许删、不许改名的类别」——**扩展仓有，技能仓没有**
+ * （spec §3.6：技能仓不许造受保护的类别）。所以它是参数，不是常量：
+ * 写死的话，技能仓删掉 Basics 会 403，而且词表里永远回魂一个 Basics。
+ */
+export const readCategories = async (root, { protect = PROTECTED_CATEGORIES } = {}) => {
   let list = [];
   try {
     const raw = JSON.parse(await readFile(categoriesFile(root), "utf8"));
@@ -152,13 +157,13 @@ export const readCategories = async (root) => {
   } catch {
     // 文件没写 / 写坏了：内置类别照样在。
   }
-  return [...new Set([...list, ...PROTECTED_CATEGORIES])];
+  return [...new Set([...list, ...protect])];
 };
 
-export const writeCategories = async (root, list) => {
+export const writeCategories = async (root, list, { protect = PROTECTED_CATEGORIES } = {}) => {
   const expanded = [];
-  // 内置类别永远写进去 —— 词表被人清空也丢不了。
-  for (const item of normalizeCategories([...list, ...PROTECTED_CATEGORIES])) expanded.push(...ancestorsOf(item), item);
+  // 受保护的类别永远写进去 —— 词表被人清空也丢不了。（技能仓传 `protect: []`。）
+  for (const item of normalizeCategories([...list, ...protect])) expanded.push(...ancestorsOf(item), item);
   const unique = sortCategories(expanded);
   await writeFileAtomic(categoriesFile(root), JSON.stringify({ categories: unique }, null, 2) + "\n");
   return unique;
@@ -206,12 +211,12 @@ export const regenIndex = async (root, { required = true } = {}) => {
 };
 
 /** 落盘之后重扫；生成器不认就整体回滚（快照 + 词表）。 */
-const regenOrRollback = async (root, snapshots, beforeVocab, index) => {
+const regenOrRollback = async (root, snapshots, beforeVocab, index, protect) => {
   try {
     await index();
   } catch (error) {
     for (const [file, text] of snapshots) await writeFileAtomic(file, text);
-    await writeCategories(root, beforeVocab);
+    await writeCategories(root, beforeVocab, { protect });
     throw withStatus(new Error(`index.mjs 校验失败，已回滚：${errorDetail(error)}`), 400);
   }
 };
@@ -219,7 +224,12 @@ const regenOrRollback = async (root, snapshots, beforeVocab, index) => {
 // ── 目录的类别（写 nous.json + 重扫词表）───────────────────────────────────
 
 /** 改一个目录的 category（字符串数组：去空、去重、排序）。返回新清单。 */
-export const setNodeCategories = async (root, name, categories, { label = "扩展", index = null } = {}) => {
+export const setNodeCategories = async (
+  root,
+  name,
+  categories,
+  { label = "扩展", index = null, protect = PROTECTED_CATEGORIES } = {},
+) => {
   if (!EXTENSION_NAME_RE.test(name)) throw withStatus(new Error(`${label}名不合法：${name}`), 400);
   const file = path.join(root, name, "nous.json");
   let before;
@@ -240,27 +250,32 @@ export const setNodeCategories = async (root, name, categories, { label = "扩�
     throw withStatus(new Error(`index.mjs 校验失败，已回滚：${errorDetail(error)}`), 400);
   }
   // 词表跟着收益：任何被打上的类别都该在左栏看得见，哪怕以后从所有目录上摘掉也还在。
-  await writeCategories(root, [...(await readCategories(root)), ...next]);
+  await writeCategories(root, [...(await readCategories(root, { protect })), ...next], { protect });
   return updated;
 };
 
 /** 类别词表操作：add 建空类别；rename 改名（有子类别就整枝改）；remove 删整枝。 */
-export const mutateCategories = async (root, { op, name, to }, { index = null } = {}) => {
+export const mutateCategories = async (
+  root,
+  { op, name, to },
+  { index = null, protect = PROTECTED_CATEGORIES } = {},
+) => {
   const regenerate = index ? index : () => runIndex(root);
-  const current = await readCategories(root);
+  const current = await readCategories(root, { protect });
   const target = normalizeCategory(name);
   if (!target) throw withStatus(new Error("类别名不能为空"), 400);
 
   if (op === "add") {
-    return { categories: await writeCategories(root, [...current, target]), touched: 0 };
+    return { categories: await writeCategories(root, [...current, target], { protect }), touched: 0 };
   }
 
   if (op !== "remove" && op !== "rename") {
     throw withStatus(new Error(`未知操作：${op}（只认 add / rename / remove）`), 400);
   }
 
-  // 内置类别（或它的祖先）不许删、不许改名 —— 改名等于绕开删除锁。
-  if (PROTECTED_CATEGORIES.some((p) => isUnder(p, target))) {
+  // 受保护的类别（或它的祖先）不许删、不许改名 —— 改名等于绕开删除锁。
+  // 注意是 `protect`，不是常量：技能仓一个都不护（spec §3.6）。
+  if (protect.some((p) => isUnder(p, target))) {
     throw withStatus(new Error(`「${target}」是内置类别，不能${op === "rename" ? "改名" : "删除"}`), 403);
   }
 
@@ -298,9 +313,9 @@ export const mutateCategories = async (root, { op, name, to }, { index = null } 
       plan.manifest.category = sortCategories(plan.cats.map(renamePath));
       await writeFileAtomic(plan.file, JSON.stringify(plan.manifest, null, 2) + "\n");
     }
-    await writeCategories(root, [...current.map(renamePath), next]);
-    await regenOrRollback(root, snapshots, current, regenerate);
-    return { categories: await readCategories(root), touched: plans.length };
+    await writeCategories(root, [...current.map(renamePath), next], { protect });
+    await regenOrRollback(root, snapshots, current, regenerate, protect);
+    return { categories: await readCategories(root, { protect }), touched: plans.length };
   }
 
   // remove：删的是整棵子树（`工具` 连 `工具/搜索` 一起），词表和所有 nous.json 同时摘。
@@ -317,9 +332,9 @@ export const mutateCategories = async (root, { op, name, to }, { index = null } 
     await writeFileAtomic(found.file, JSON.stringify(found.manifest, null, 2) + "\n");
     touched++;
   }
-  await writeCategories(root, current.filter((c) => !isUnder(c, target)));
-  await regenOrRollback(root, snapshots, current, regenerate);
-  return { categories: await readCategories(root), touched };
+  await writeCategories(root, current.filter((c) => !isUnder(c, target)), { protect });
+  await regenOrRollback(root, snapshots, current, regenerate, protect);
+  return { categories: await readCategories(root, { protect }), touched };
 };
 
 // ── 文件：读 / 写（只落盘）/ 语法闸 ────────────────────────────────────────

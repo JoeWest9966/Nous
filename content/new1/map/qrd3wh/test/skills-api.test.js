@@ -336,8 +336,51 @@ test("root 不存在：GET /v1/skills 仍 200，repo.error 是一行话（不 50
     assert.equal(body.repo.head, null);
     assert.deepEqual(body.skills, []);
     assert.deepEqual(body.archived, []);
-    assert.deepEqual(body.categories, ["Basics"]);
+    // 技能仓不护 Basics（spec §3.6），词表又读不出来 —— 那就是空的，不许凭空造。
+    assert.deepEqual(body.categories, []);
   } finally {
     await rm(path.dirname(root), { recursive: true, force: true });
+  }
+});
+
+// ── 11. 技能仓没有受保护的类别（spec §3.6）─────────────────────────────────
+
+test("POST /v1/skills/categories remove Basics：200，而且它不会自己回魂", async () => {
+  const { root, skills } = await setup();
+  const api1 = api(root, skills);
+  try {
+    assert.deepEqual((await api1.call("GET", "/v1/skills/categories")).body.categories, ["Basics"]);
+
+    const removed = await api1.call("POST", "/v1/skills/categories", { op: "remove", name: "Basics" });
+    assert.equal(removed.status, 200);
+    assert.deepEqual(removed.body.categories, []);
+    assert.deepEqual((await readJson(root, "categories.json")).categories, []);
+
+    // 再读一次：没有注入，没有回魂。
+    assert.deepEqual((await api1.call("GET", "/v1/skills/categories")).body.categories, []);
+    assert.deepEqual((await api1.call("GET", "/v1/skills")).body.categories, []);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 12. 词表 ∪ 每条技能的 category（spec §3.2）────────────────────────────
+
+test("GET /v1/skills 的 categories = 词表 ∪ 所有 skill.category，升序", async () => {
+  const vocab = { v: 1, categories: ["Basics", "只在词表"] };
+  const { root, skills } = await setup({
+    "categories.json": JSON.stringify(vocab, null, 2) + "\n",
+    ...skillFiles("a", { category: ["工具/搜索"] }),
+    ...skillFiles("b"),
+  });
+  const api1 = api(root, skills);
+  try {
+    const { body } = await api1.call("GET", "/v1/skills");
+    const expected = repo.sortCategories(["Basics", "只在词表", "工具/搜索"]);
+    assert.deepEqual(body.categories, expected);
+    // 「只在词表」那条挂不到任何技能上，但它必须在（词表存在的唯一理由）。
+    assert.ok(body.categories.includes("只在词表"));
+  } finally {
+    await cleanup(root);
   }
 });

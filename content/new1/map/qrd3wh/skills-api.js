@@ -164,6 +164,10 @@ const gateMessage = (problems) => {
 
 const skillsIndex = (repo, root) => () => repo.regenIndex(root, { required: false });
 
+// 技能仓**没有**受保护的类别（spec §3.6：别造 PROTECTED_CATEGORIES）。
+// 词表那套工具默认护着扩展仓的 Basics，所以每个调用点都得显式说「一个都不护」。
+const NO_PROTECT = { protect: [] };
+
 // ── 响应里那几块公共拼装 ────────────────────────────────────────────────────
 
 const commitOf = async (repo, root, result) => {
@@ -200,14 +204,21 @@ const overview = async (repo, root, skills) => {
     // 仓库读不了要给页面一句话，不是 500 —— 白屏说不清「是仓库没了还是技能没了」。
     error = errorLine(caught);
   }
-  const [remote, tracked, categories, archived, roster] = await Promise.all([
+  const [remote, tracked, vocab, archived, roster] = await Promise.all([
     repo.remoteUrl(root),
     repo.trackedDirs(root),
-    repo.readCategories(root),
+    repo.readCategories(root, NO_PROTECT),
     repo.archivedEntries(root),
     Promise.resolve()
       .then(() => skills.list())
       .catch(() => []),
+  ]);
+  // 真相是**两份取并集**（spec §3.2）：词表里的（可能有零计数的空类别）
+  // + 每条技能自己挂着的。少一半，左栏就会漏掉「还没挂到任何技能上的类别」
+  // 或者「挂在技能上但词表没登记（手改 nous.json）的类别」。
+  const categories = repo.sortCategories([
+    ...vocab,
+    ...(roster ?? []).flatMap((skill) => (Array.isArray(skill.category) ? skill.category : [])),
   ]);
   return {
     root,
@@ -232,7 +243,7 @@ const createSkill = async (repo, root, body) => {
     throw withStatus(new Error(`${name}/ 在 .archive/ 里 —— 点「恢复」把它捡回来，别建第二个`), 400);
   }
 
-  const beforeVocab = await repo.readCategories(root);
+  const beforeVocab = await repo.readCategories(root, NO_PROTECT);
   // 点开头的目录扫盘器看不见 —— 校验过了才改名进去，中途翻车就整棵删掉（I7：半截不留）。
   const staging = path.join(root, `.new-${name}-${Date.now()}`);
   await mkdir(staging, { recursive: false });
@@ -250,14 +261,14 @@ const createSkill = async (repo, root, body) => {
     const problems = await checkSkillContent(root, name, staging);
     if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
 
-    if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories]);
+    if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories], NO_PROTECT);
     await rename(staging, path.join(root, name));
     landed = true;
     await repo.regenIndex(root, { required: false });
   } catch (error) {
     if (landed) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
     await rm(staging, { recursive: true, force: true }).catch(() => {});
-    if (categories.length) await repo.writeCategories(root, beforeVocab).catch(() => {});
+    if (categories.length) await repo.writeCategories(root, beforeVocab, NO_PROTECT).catch(() => {});
     throw error;
   }
   return { ok: true, name };
@@ -334,11 +345,15 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
     }
 
     if (at[0] === "categories") {
-      if (method === "GET") return send(res, 200, { categories: await repo.readCategories(root) });
+      if (method === "GET") return send(res, 200, { categories: await repo.readCategories(root, NO_PROTECT) });
       if (method !== "POST") return send(res, 405, { error: "类别词表只有 GET / POST" });
       const body = await parseJsonBody(req);
       const result = await repo.serializeRepoWrite(root, () =>
-        repo.mutateCategories(root, { op: body.op, name: body.name, to: body.to }, { index: skillsIndex(repo, root) }),
+        repo.mutateCategories(
+          root,
+          { op: body.op, name: body.name, to: body.to },
+          { index: skillsIndex(repo, root), ...NO_PROTECT },
+        ),
       );
       const loadError = await reloadRoster(skills);
       return send(res, 200, {
@@ -354,14 +369,18 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
       await repo.serializeRepoWrite(root, () =>
-        repo.setNodeCategories(root, name, body.category ?? [], { label: "技能", index: skillsIndex(repo, root) }),
+        repo.setNodeCategories(root, name, body.category ?? [], {
+          label: "技能",
+          index: skillsIndex(repo, root),
+          ...NO_PROTECT,
+        }),
       );
       const loadError = await reloadRoster(skills);
       const roster = skills.list();
       return send(res, 200, {
         skill: roster.find((skill) => skill.name === name) ?? null,
         skills: roster,
-        categories: await repo.readCategories(root),
+        categories: await repo.readCategories(root, NO_PROTECT),
         ...(loadError ? { loadError } : {}),
       });
     }

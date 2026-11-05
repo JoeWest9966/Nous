@@ -169,3 +169,24 @@ test("改名提交是一条完整改名：A（加）和 D（删）都在同一�
     await cleanup(root);
   }
 });
+
+test("类别保护是参数：默认护 Basics（扩展仓），传 protect: [] 就一个都不护（技能仓）", async () => {
+  // spec §3.6：技能仓**没有**受保护的类别。所以「保护谁」不能写死在读词表里 ——
+  // 写死的话，技能仓删掉 Basics 会 403，而且词表里永远回魂一个 Basics。
+  const root = await makeRepo({ files: { "categories.json": JSON.stringify({ categories: ["a"] }) } });
+  try {
+    assert.deepEqual(await repo.readCategories(root), ["a", "Basics"], "默认（扩展仓）必须护着 Basics");
+    assert.deepEqual(await repo.readCategories(root, { protect: [] }), ["a"], "技能仓不该被注入 Basics");
+
+    await repo.writeCategories(root, ["b"], { protect: [] });
+    assert.deepEqual(await repo.readCategories(root, { protect: [] }), ["b"], "写词表时也不许把 Basics 塞回来");
+    assert.deepEqual(JSON.parse(await readFile(`${root}/categories.json`, "utf8")).categories, ["b"]);
+
+    // remove 也不该因为「它是内置类别」被 403 掉。
+    // index 给个空实现：这个仓里没有生成器，这条测的是「保护是参数」，不是重扫。
+    const removed = await repo.mutateCategories(root, { op: "remove", name: "b" }, { protect: [], index: async () => {} });
+    assert.deepEqual(removed.categories, []);
+  } finally {
+    await cleanup(root);
+  }
+});
