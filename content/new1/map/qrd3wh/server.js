@@ -2850,6 +2850,14 @@ const route = async (req, res, url) => {
     const body = {
       repo: { path: EXTEND, lock, head, drift: head !== null && head !== lock, pullError: extendPullError },
       installed: ours,
+      // 能装的名字全集（含变体 `名@变体`）—— 名字就是 API，别让每个块自己去变体表里拼 key。
+      loadable: [
+        ...ours,
+        ...Object.values(variants)
+          .flat()
+          .filter((item) => item.installed)
+          .map((item) => item.key),
+      ],
       builtin: builtins,
       // 名牌单独列：那是 skills 扩展运行时按技能生成的家族，不是独立扩展 ——
       // 混进 installed 会变成 40 行里 38 行是生成物。

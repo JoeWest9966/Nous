@@ -169,6 +169,16 @@
   .skill-desc { color:var(--muted); font-size:clamp(10px,1.35vmin,12.5px); line-height:1.45; margin-top:.15em;
                 display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .skill-meta { display:block; color:var(--faint); font-family:var(--mono); font-size:clamp(9px,1.2vmin,11px); margin-top:.25em; }
+  /* 变体行：缩进 + 一根细引线，读作「这一族底下的另一个注册名」，不是另一条扩展。
+     一族只能选一个，所以方框画成圆的 —— 形状本身就在说 radio。 */
+  .skill-row.variant-row { padding-left:2.4em; position:relative; }
+  .skill-row.variant-row::before { content:""; position:absolute; left:1.05em; top:-.55em; bottom:50%;
+    border-left:1px solid var(--border); border-bottom:1px solid var(--border); border-radius:0 0 0 5px; width:.7em; }
+  .skill-row.variant-row .skill-name { font-size:clamp(10.5px,1.4vmin,12.5px); color:var(--muted); }
+  .skill-row[aria-checked="true"].variant-row .skill-name { color:var(--fg); }
+  .skill-box[data-variant="1"] { border-radius:50%; }
+  .skill-row[aria-disabled="true"] { opacity:.42; cursor:not-allowed; }
+  .skill-row[aria-disabled="true"]:hover { background:none; }
   .skill-none { color:var(--muted); font-size:clamp(10px,1.4vmin,12.5px); padding:2.4vmin 1.2vmin; text-align:center; line-height:1.7; }
   .skill-none a { color:var(--accent); font-size:inherit; }
   .dfoot.skillfoot { display:flex; align-items:center; gap:1vmin; }
@@ -456,8 +466,29 @@ let thinking = "off";
 let installedSkills = [];
 /** 这条新对话要带哪几个。**多选** —— 所以它不进模型弹窗：那个是「点一下就收回」的单选。 */
 const pickedSkills = new Set();
-let installedExtensions = [];
 const pickedExtensions = new Set();
+/**
+ * 按**本体**分组的扩展清单：一族 = 本体 + 它在 registry 里的其它注册名（变体）。
+ *
+ * 一族的名字**互斥**：`123` 和 `123@dev` 是同一份代码的两个注册名，一条会话里同时装两个
+ * 就是同一个扩展在同一个进程里跑两遍 —— 工具名、提示词段全撞。所以族内是 radio，不是 checkbox。
+ */
+let extFamilies = [];
+/** 名字属于哪一族：`123@dev` → `123`。 */
+const familyOf = (name) => {
+  const at = String(name).indexOf("@");
+  return at === -1 ? String(name) : String(name).slice(0, at);
+};
+/** 选一个名字 = 先把它那一族的其它名字摘掉。再点一次已选的那个 = 这一族一个都不要。 */
+const pickExt = (name) => {
+  if (pickedExtensions.has(name)) {
+    pickedExtensions.delete(name);
+    return;
+  }
+  const family = familyOf(name);
+  for (const other of [...pickedExtensions]) if (familyOf(other) === family) pickedExtensions.delete(other);
+  pickedExtensions.add(name);
+};
 
 /** 当前模型支持哪几档。非 reasoning 模型这里就是 ["off"]，长度 1=不出思考列。 */
 const levelsOfPick = () => {
@@ -766,32 +797,76 @@ const renderSkillList = () => {
   $("skillHint").textContent = `${installedSkills.length} 条已装 · ${n ? `已选 ${n}` : "未选"} · 勾完按完成`;
 };
 
+/** 一行：名字 + 一句话 + 灰色元信息。`off` = 灰掉不能选（装载失败 / 进程里没装上）。 */
+const extRow = ({ name, desc, meta, on, off, variant }) => (
+  `<button class="skill-row${variant ? " variant-row" : ""}" type="button" role="radio" aria-checked="${on}"`
+  + ` aria-disabled="${off}" data-e="${esc(name)}"${off ? ' tabindex="-1"' : ""}>`
+  + `<span class="skill-box"${variant ? ' data-variant="1"' : ""}>${on ? "✓" : ""}</span>`
+  + `<span><span class="skill-name">${esc(name)}</span>`
+  + (desc ? `<span class="skill-desc">${esc(desc)}</span>` : "")
+  + (meta ? `<span class="skill-meta">${esc(meta)}</span>` : "")
+  + `</span></button>`
+);
+
+/**
+ * 一族 = 本体一行 + 缩进的变体行。**族内互斥**（radio），族间独立。
+ * 变体的元信息写它的来处：本机给分支名，参数变体给参数，仓库里没绑的给「仓库里」——
+ * 「都是 123」这件事得看得出来，不然人会以为自己在勾两个不相干的扩展。
+ */
 const renderExtList = () => {
   const needle = $("eq").value.trim().toLowerCase();
-  const all = (installedExtensions ?? []).filter((e) => !String(e.name).startsWith("skill:"));
-  const rows = all
-    .filter((e) => !needle || `${e.name} ${e.summary ?? ""}`.toLowerCase().includes(needle))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  const hit = (text) => !needle || String(text).toLowerCase().includes(needle);
+  const shown = extFamilies
+    .map((fam) => {
+      // 本体命中 → 连变体一起显示；本体不命中但变体命中 → 只显示命中的变体（家族行留着当标题）。
+      if (hit(`${fam.name} ${fam.ext.summary ?? ""}`)) return { fam, variants: fam.variants };
+      const variants = fam.variants.filter((v) => hit(v.key ?? `${fam.name}@${v.id}`));
+      return variants.length ? { fam, variants } : null;
+    })
+    .filter(Boolean);
 
-  if (!all.length) {
+  if (!extFamilies.length) {
     $("extList").innerHTML = `<div class="skill-none">进程里一个可选扩展都没有。</div>`;
-  } else if (!rows.length) {
+  } else if (!shown.length) {
     $("extList").innerHTML = `<div class="skill-none">没有匹配的扩展。</div>`;
   } else {
-    $("extList").innerHTML = rows.map((e) => {
-      const on = pickedExtensions.has(e.name);
-      const desc = String(e.summary ?? "").replace(/\s+/g, " ").trim();
-      const meta = e.version ? `v${e.version}` : "";
-      return `<button class="skill-row" type="button" role="checkbox" aria-checked="${on}" data-e="${esc(e.name)}">`
-        + `<span class="skill-box">${on ? "✓" : ""}</span>`
-        + `<span><span class="skill-name">${esc(e.name)}</span>`
-        + `<span class="skill-desc">${esc(desc)}</span>`
-        + (meta ? `<span class="skill-meta">${esc(meta)}</span>` : "")
-        + `</span></button>`;
-    }).join("");
+    $("extList").innerHTML = shown
+      .map(({ fam, variants }) => {
+        const desc = String(fam.ext.summary ?? "").replace(/\s+/g, " ").trim();
+        const body = extRow({
+          name: fam.name,
+          desc,
+          meta: fam.ext.version ? `v${fam.ext.version}` : "",
+          on: pickedExtensions.has(fam.name),
+          off: false,
+          variant: false,
+        });
+        const kids = variants
+          .map((v) => {
+            const key = v.key ?? `${fam.name}@${v.id}`;
+            const failed = v.load?.state === "failed";
+            const meta = [
+              v.source === "repo" ? (Object.keys(v.params ?? {}).length ? `参数 ${JSON.stringify(v.params)}` : "仓库里 · 同代码") : v.branch ? `分支 ${v.branch}` : "本机目录",
+              failed ? `装载失败：${String(v.load?.error ?? "").slice(0, 80)}` : !v.installed ? "进程里没装上" : "",
+            ].filter(Boolean).join(" · ");
+            return extRow({
+              name: key,
+              desc: "",
+              meta,
+              on: pickedExtensions.has(key),
+              off: failed || !v.installed,
+              variant: true,
+            });
+          })
+          .join("");
+        return body + kids;
+      })
+      .join("");
   }
+  const famCount = extFamilies.length;
+  const varCount = extFamilies.reduce((n, fam) => n + fam.variants.length, 0);
   const n = pickedExtensions.size;
-  $("extHint").textContent = `${all.length} 条 · ${n ? `已选 ${n}` : "未选"} · 勾完按完成`;
+  $("extHint").textContent = `${famCount} 个扩展${varCount ? ` · ${varCount} 个变体` : ""} · ${n ? `已选 ${n} 个名字` : "一个都没选"} · 一族只能选一个`;
 };
 
 /** 区域里那个节点显示什么 —— 跟模型域一样，只显示生效的东西，不显示“待定”。 */
@@ -805,15 +880,30 @@ const renderCtx = () => {
   $("pickctx").disabled = !tag;
 };
 
-/** 扩展域：默认全装 —— 所以空集不是“没选”，是“全都要”。 */
+/**
+ * 扩展域：显示的是**已经选定的名字**。默认每个扩展选本体，所以一片 untouched 时读作「全部 N 个」；
+ * 换了变体就点名，因为「123@dev」和「123」在会话里是两件不同的事，不能都算成「装了 123」。
+ */
 const renderExt = () => {
-  const all = (installedExtensions ?? []).filter((e) => !String(e.name).startsWith("skill:"));
-  const off = all.filter((e) => !pickedExtensions.has(e.name));
-  $("ext-id").textContent = !all.length ? "没有可选"
-    : !off.length ? `全部 ${all.length} 条` : `${all.length - off.length}/${all.length}`;
+  const total = extFamilies.length;
+  const picked = [...pickedExtensions];
+  const variantPicked = picked.filter((name) => name.includes("@"));
+  // 按家族顺序取名字：Set 里变体是「删了再插」，直接拿 [0] 会飘到某个不相干的名字上。
+  const ordered = extFamilies.map((fam) => picked.find((name) => familyOf(name) === fam.name)).filter(Boolean);
+  $("ext-id").textContent = !total
+    ? "没有可选"
+    : !ordered.length
+      ? "一个都不装"
+      : !variantPicked.length && ordered.length === total
+        ? `全部 ${total} 个`
+        : ordered.length === 1
+          ? ordered[0]
+          : `${ordered[0]} +${ordered.length - 1}`;
   $("ext-tag").textContent = "改 ›";
-  $("ext-sub").textContent = all.length ? `已装 ${all.length} · 默认全开` : "进程里没有可选扩展";
-  $("pickext").disabled = !tag || !all.length;
+  $("ext-sub").textContent = total
+    ? `已装 ${total} 个 · 选中的 ${picked.length}${variantPicked.length ? `（含 ${variantPicked.length} 个变体）` : ""}`
+    : "进程里没有可选扩展";
+  $("pickext").disabled = !tag || !total;
 };
 
 $( "skillList").addEventListener("click", (e) => {
@@ -837,16 +927,16 @@ $("skillList").addEventListener("keydown", (e) => {
 
 $("extList").addEventListener("click", (e) => {
   const row = e.target.closest?.(".skill-row");
-  if (!row) return;
+  if (!row || row.getAttribute("aria-disabled") === "true") return;
   const name = row.dataset.e;
-  if (pickedExtensions.has(name)) pickedExtensions.delete(name); else pickedExtensions.add(name);
+  pickExt(name);
   renderExtList();
   renderExt();
   $("extList").querySelector(`.skill-row[data-e="${CSS.escape(name)}"]`)?.focus();
 });
 $("extList").addEventListener("keydown", (e) => {
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-  const rows = [...$("extList").querySelectorAll(".skill-row")];
+  const rows = [...$("extList").querySelectorAll('.skill-row:not([aria-disabled="true"])')];
   const at = rows.indexOf(document.activeElement);
   e.preventDefault();
   const i = Math.max(0, Math.min(rows.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
@@ -892,7 +982,7 @@ async function commit() {
       ...(pickedSkills.size ? { skills: [...pickedSkills] } : {}),
       // 扩展：装了什么就发什么（全勾 = 发全部）。空数组也是有效值 —— 表示“一个都不要”，
       // 不能省掉，省掉服务端会按默认全开。
-      ...(installedExtensions.some((e) => !String(e.name).startsWith("skill:")) ? { extensions: [...pickedExtensions] } : {}),
+      ...(extFamilies.length ? { extensions: [...pickedExtensions] } : {}),
       ...(name ? { name } : {}),
     });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
@@ -932,21 +1022,22 @@ if (tag) {
   }
   try {
     const extData = await api("v1/extensions");
-    installedExtensions = (extData.installed ?? []).map((name) => ({ name })).concat(
-      (extData.catalog ?? []).filter((e) => (extData.installed ?? []).includes(e.name)),
-    );
-    // 去重：catalog 里有详情，优先用 catalog 的
-    const byName = new Map();
-    for (const e of installedExtensions) byName.set(e.name, e);
-    for (const e of (extData.catalog ?? [])) if ((extData.installed ?? []).includes(e.name)) byName.set(e.name, e);
-    installedExtensions = [...byName.values()];
+    const installed = extData.installed ?? [];
+    // 变体不在 installed 里（那是「装了哪些扩展」，按本体算），只在 variants 里按本体归位。
+    // 两个来源合成一族：本体一行 + 它那几个可装载的注册名。
+    extFamilies = (extData.catalog ?? [])
+      .filter((e) => installed.includes(e.name) && !String(e.name).startsWith("skill:"))
+      .map((e) => ({
+        name: e.name,
+        ext: e,
+        variants: (extData.variants?.[e.name] ?? []).map((v) => ({ ...v })),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   } catch (error) {
     console.warn("扩展清单拿不到：", error);
   }
-  // 默认全开：扩展是 Nous 的核心功能，新会话不带任何理由地少装一个才是意外。
-  for (const e of installedExtensions) {
-    if (!String(e.name).startsWith("skill:")) pickedExtensions.add(e.name);
-  }
+  // 默认只勾**本体**：变体得人自己点。全勾的话同一族的多个名字会一起上，正文会重复定义。
+  for (const fam of extFamilies) pickedExtensions.add(fam.name);
 }
 renderCurrent();
 renderCtx();

@@ -91,6 +91,9 @@ Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durab
 - **`default: true` 现在真生效**（`POST /v1/sessions`）：新会话默认选中 = harness 里那三个
   硬编码的（`CodingTools` / `nous` / `skills`）**加**清单里 `default === true` 且已装的扩展。
   以前这个字段只有页面拿来画绿角标、没人读 —— 改了没反应，比没有更糟。
+- **`installed` 只列本体，`loadable` 才列全**：变体在 registry 里是独立名字（`123@dev`），
+  但「装了哪些扩展」这张表按本体算 —— 卡片是一张，变体在 `variants` 里按本体归位。
+  谁要列出「这条会话能装哪些名字」，读 `loadable`（本体 + 已装载的变体 key），别自己去拼 `variants`。
 - **`sections` 只是声明，真值在 registry 里**：`GET /v1/extensions` 回一个 `live`
   （`{扩展名: [真装上的 section 键]}`），扩展清单页拿它跟 `nous.json` 对账。
   页面显示的「提示词 N 段」是手写数，代码改了忘改清单时只有 `live` 能拆穿。
