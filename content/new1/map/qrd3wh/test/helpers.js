@@ -239,3 +239,132 @@ export const call = async (handleSkills, { method = "GET", path: target, body, r
   await handleSkills({ req, res, url, parts, root, skills, repo });
   return { status: out.status, body: out.body, raw: out.text };
 };
+
+// ── 提示词模板仓的夹具 ──────────────────────────────────────────────────────
+//
+// 跟技能仓同一套：临时 git 仓 + 一个同形状的迷你生成器 + 一个假 service。
+// 生成器的校验比 `MINI_INDEX` 多两条（正文非空、settings.default 必须存在），
+// 因为那正是模板仓和技能仓唯一不同的地方 —— 模板的正文就是提示词本身。
+export const PROMPTS_MINI_INDEX = `import { readdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const prompts = [];
+for (const entry of await readdir(root, { withFileTypes: true })) {
+  if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+  let body;
+  try {
+    body = await readFile(path.join(root, entry.name, "PROMPT.md"), "utf8");
+  } catch {
+    continue;
+  }
+  if (!body.trim()) {
+    console.error(entry.name + ": PROMPT.md 是空的");
+    process.exit(1);
+  }
+  const manifest = JSON.parse(await readFile(path.join(root, entry.name, "nous.json"), "utf8"));
+  if (manifest.name !== entry.name) {
+    console.error(entry.name + ": name 跟目录名对不上");
+    process.exit(1);
+  }
+  if (typeof manifest.summary !== "string" || !manifest.summary.trim()) {
+    console.error(entry.name + ": summary 是空的");
+    process.exit(1);
+  }
+  prompts.push({ name: entry.name, summary: manifest.summary, category: manifest.category ?? [] });
+}
+prompts.sort((a, b) => a.name.localeCompare(b.name));
+let settings = { default: null };
+try {
+  settings = JSON.parse(await readFile(path.join(root, "settings.json"), "utf8"));
+} catch {}
+if (settings.default && !prompts.some((prompt) => prompt.name === settings.default)) {
+  console.error("settings.json 的 default 指向不存在的模板：" + settings.default);
+  process.exit(1);
+}
+await writeFile(
+  path.join(root, "index.json"),
+  JSON.stringify({ v: 1, prompts, default: settings.default ?? null }, null, 2) + "\\n",
+);
+`;
+
+/** 一条模板（两个文件），可以直接铺进仓里当 fixture。 */
+export const promptFiles = (
+  name,
+  { summary = `${name} 的说明`, category = [], body = "Answer in one sentence.\n" } = {},
+) => ({
+  [`${name}/PROMPT.md`]: body,
+  [`${name}/nous.json`]: JSON.stringify({ name, summary, category }, null, 2) + "\n",
+});
+
+// ── 假的 prompts service ────────────────────────────────────────────────────
+//
+// 真扩展（`Nous-extend/prompts/index.js`）的 `list()` 只做四件事：扫目录、读正文、
+// 读 nous.json 的 category、判 failed。这里照那个形状做一份，好让「写完之后内存名册
+// 有没有跟上」能被断言（`loads` 计数）。
+export const makePrompts = (root) => {
+  const state = { roster: [], loads: 0, failLoad: null };
+  const scan = async () => {
+    let entries;
+    try {
+      entries = await readdir(root, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+    const found = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      const dir = path.join(root, entry.name);
+      let body;
+      try {
+        body = await readFile(path.join(dir, "PROMPT.md"), "utf8");
+      } catch {
+        continue;
+      }
+      let manifest = {};
+      let manifestError = null;
+      try {
+        manifest = JSON.parse(await readFile(path.join(dir, "nous.json"), "utf8"));
+      } catch {
+        manifestError = "缺 nous.json";
+      }
+      const error =
+        manifestError ??
+        (manifest.name !== entry.name
+          ? "name 跟目录名对不上"
+          : !String(manifest.summary ?? "").trim()
+            ? "summary 是空的"
+            : !body.trim()
+              ? "PROMPT.md 是空的"
+              : null);
+      found.push({
+        name: entry.name,
+        summary: manifest.summary ?? "",
+        dir,
+        file: path.join(dir, "PROMPT.md"),
+        bytes: Buffer.byteLength(body, "utf8"),
+        category: Array.isArray(manifest.category) ? manifest.category : [],
+        load: error ? { state: "failed", error } : { state: "ok" },
+      });
+    }
+    return found.sort((a, b) => a.name.localeCompare(b.name));
+  };
+  return {
+    get loads() {
+      return state.loads;
+    },
+    set failLoad(error) {
+      state.failLoad = error;
+    },
+    dir: root,
+    async load() {
+      if (state.failLoad) throw new Error(state.failLoad);
+      state.loads++;
+      state.roster = await scan();
+      return state.roster;
+    },
+    list: () => state.roster,
+    has: (name) => state.roster.some((prompt) => prompt.name === name && prompt.load.state === "ok"),
+  };
+};

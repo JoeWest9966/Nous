@@ -5,3 +5,4 @@
 import "./repo-root.test.js";
 import "./skills-api.test.js";
 import "./catalog.test.js";
+import "./prompts-api.test.js";

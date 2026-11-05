@@ -11,12 +11,14 @@
 //   GET  /v1/models                   编目里登记过的模型（含档位表、窗口、输出上限）
 //   POST /v1/catalog/refresh          重拉编目（换了密钥 / 编目里加了供应商之后用）
 //   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、最后一句）
-//   POST /v1/sessions                 {name, model, thinkingLevel, skills} → 新对话
+//   POST /v1/sessions                 {name, model, thinkingLevel, skills, template} → 新对话
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
-//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills} 只读 = 不给会写的工具
+//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template} 只读 = 不给会写的工具
 //   GET  /v1/skills                   技能仓库全景（repo 状态 + list() + archived + 类别）
 //   …                                全套 /v1/skills* 在 skills-api.js（见那个文件的头）
+//   GET  /v1/prompts                  模板私库全景（repo 状态 + list() + archived + 类别 + 默认值）
+//   …                                全套 /v1/prompts* 在 prompts-api.js（见那个文件的头）
 //   GET  /v1/extensions               进程里装着什么 + 仓库 catalog（扩展清单页吃这个）
 //   POST /v1/extensions/category      {name, category[]} 改扩展类别：写 nous.json + 重扫 index.json
 //   GET  /v1/extensions/categories     类别词表（categories.json）
@@ -61,10 +63,16 @@ const EXTEND = process.env.NOUS_EXTEND ?? "/opt/Nous-extend";
 // 技能仓库的本地副本（票 A 建的那个仓）。跟 EXTEND 并排：两个仓都只有一条真理 —— 盘上的文件。
 // 这里**不**往 data/ 抄一份：技能不是「装进来的包」，仓库里有什么就是什么。
 const SKILLS_ROOT = process.env.NOUS_SKILLS ?? "/opt/Nous-skills";
+// 提示词私库的本地副本。跟技能仓并排：一条模板 = `<名>/PROMPT.md` + `nous.json`。
+// 同样**不**往 data/ 抄一份：仓库里有什么就是什么。
+const PROMPTS_ROOT = process.env.NOUS_PROMPTS ?? "/opt/Nous-prompts";
 // 扩展是造扩展的函数，宿主把 api 递进去 —— 它们不自己 import pi-durable（见仓库 README）。
 const api = { defineExtension, section };
 const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
 const { createSkills, skillNamesOf, SKILL_PREFIX } = await import(`${EXTEND}/skills/index.js`);
+const { createPrompts, templateOf, PROMPT_PREFIX } = await import(`${EXTEND}/prompts/index.js`);
+// 运行时空白名牌的前缀。会话里存的就是这些名字，扩展面板里不该把它们当成「自研扩展」列出来。
+const NAMEPLATE_PREFIXES = [SKILL_PREFIX, PROMPT_PREFIX];
 // 回放提示词增量 —— 自己在 `prompt-log.js`，纯读，能单验。
 import { replayPrompt } from "./prompt-log.js";
 // 仓库工具（参数化过 root 的那套）：本文件用它管扩展仓，`skills-api.js` 用它管技能仓。
@@ -106,6 +114,7 @@ const {
   writeRepoFile,
 } = repo;
 import { handleSkills } from "./skills-api.js";
+import { handlePrompts } from "./prompts-api.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -125,7 +134,7 @@ const startedAt = Date.now();
 //
 // 仓库（HEAD / origin）一个字节都不动：删除只表现为工作区里的 ` D`，而 publish
 // 会把删除过滤掉（见 repo-tools.js 的 syncRepo），绝不会把「本地删除」顺手推上 GitHub。
-const CORE_EXTENSIONS = ["nous", "skills"]; // 引擎启动路径硬编码 import，删了就起不来
+const CORE_EXTENSIONS = ["nous", "skills", "prompts"]; // 引擎启动路径硬编码 import，删了就起不来
 const LOCAL_STATE_FILE = path.join(DATA, "extensions.local.json");
 const TRASH_DIR = path.join(DATA, "extend-trash");
 
@@ -305,7 +314,7 @@ const installVariant = async ({ family, manifest, bag, version, source }) => {
  */
 async function loadCoreVariants(version) {
   const catalog = await readExtendCatalog();
-  const bag = { api, defineExtension, section, dir: path.join(DATA, "skills"), registry };
+  const bag = { api, defineExtension, section, dir: path.join(DATA, "skills"), promptsDir: PROMPTS_ROOT, registry };
   for (const family of CORE_EXTENSIONS) {
     const manifest = catalog.find((item) => item?.name === family);
     if (!manifest) continue; // 清单坏了：本体照样跑，变体下一轮再说
@@ -1349,26 +1358,60 @@ registry.install(CodingTools);
 const nousExtension = createNous(api);
 // skills 的 API 用间接引用：热重载时要换整个 service 对象。直接替换变量不够，
 // 路由里的闭包还指着旧对象——所以所有调用都走代理，读当前那个 service。
-const skillsService = { current: null };
-const skills = new Proxy({}, {
-  get(_, key) {
-    const service = skillsService.current;
-    const value = service[key];
-    return typeof value === "function" ? value.bind(service) : value;
-  },
-});
-skillsService.current = await createSkills({ dir: SKILLS_ROOT, registry, api });
+// skills / prompts 的 API 用间接引用：热重载时要换整个 service 对象。直接替换变量不够，
+// 路由里的闭包还指着旧对象——所以所有调用都走代理，读当前那个 service。
+const serviceProxy = () => {
+  const holder = { current: null };
+  const proxy = new Proxy({}, {
+    get(_, key) {
+      const service = holder.current;
+      const value = service[key];
+      return typeof value === "function" ? value.bind(service) : value;
+    },
+  });
+  return { holder, proxy };
+};
+const skillsService = serviceProxy();
+const skills = skillsService.proxy;
+skillsService.holder.current = await createSkills({ dir: SKILLS_ROOT, registry, api });
 const { skillExtension } = skills;
+// 提示词模板同一套：私库在 /opt/Nous-prompts，每条模板一个 `prompt:<名>` 空白名牌。
+// **不同之处**：正文整段进系统提示词，所以选择是单值（`templateOf` = 第一条），不是集合。
+const promptsService = serviceProxy();
+const prompts = promptsService.proxy;
+promptsService.holder.current = await createPrompts({ promptsDir: PROMPTS_ROOT, registry, api });
+const { promptExtension } = prompts;
+/** 仓库 `settings.json` 的默认模板。只在建会话时读盘（不是每轮请求）—— 改完立刻生效。 */
+const readDefaultTemplate = async () => {
+  try {
+    const parsed = JSON.parse(await readFile(path.join(PROMPTS_ROOT, "settings.json"), "utf8"));
+    return typeof parsed?.default === "string" ? parsed.default : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * `agent.extensions` 既可能是名字也可能是 `{name}`（取决于从哪一层读到的），两种都收。
+ * 名牌（`skill:` / `prompt:`）**不混进「扩展」列表**：它们是运行时生成的家族，
+ * 混进来面板就会多出几十行能点但没意义的「生成物」。
+ */
+const extensionNamesOf = (agent) =>
+  (agent?.extensions ?? [])
+    .map((extension) => (typeof extension === "string" ? extension : extension?.name))
+    .filter((name) => typeof name === "string" && !NAMEPLATE_PREFIXES.some((prefix) => name.startsWith(prefix)));
 registry.install(nousExtension);
 registry.install(skills.extension);
+registry.install(prompts.extension);
 await skills.load();
+await prompts.load();
 // 老收据时代的补版本已经没了（技能没有版本号）。留着 `?.` 是因为：
 // 扩展仓可以比这块新或旧，缺一个方法不该让启动路径炸掉。
 void skills.backfill?.();
-// 核心两条的变体：**启动时就得装**。只靠 installCore 的话，进程一重启它们就没了，
+// 核心的变体：**启动时就得装**。只靠 installCore 的话，进程一重启它们就没了，
 // 得等人点一次「重试装载」或者推一次代码才回来 —— 那是「页面说装了、进程里没有」的翻版。
 await loadCoreVariants("boot");
-// 核心两条之外，按 index.json 装其余扩展。放最后：一个坏扩展不该拖垮启动路径。
+// 核心之外，按 index.json 装其余扩展。放最后：一个坏扩展不该拖垮启动路径。
 await syncExtraExtensions("boot");
 
 // ── B + 自动触发：push 代码，进程里立刻生效，不用点装 ─────────────────────
@@ -1387,11 +1430,21 @@ let extendPullError = ""; // 热重载的 pull 失败要上页面，不能只躺
 const installCore = async (version) => {
   const { default: createNous } = await import(`${EXTEND}/nous/index.js?v=${version}`);
   registry.install(createNous(api));
+  // skills 与 prompts 都换整个 service 对象（路由里的闭包指着代理，不指着变量）。
   const skillsModule = await import(`${EXTEND}/skills/index.js?v=${version}`);
-  skillsService.current = await skillsModule.createSkills({ dir: SKILLS_ROOT, registry, api });
-  registry.install(skillsService.current.extension);
-  await skillsService.current.load();
-  void skillsService.current.backfill?.();
+  skillsService.holder.current = await skillsModule.createSkills({ dir: SKILLS_ROOT, registry, api });
+  registry.install(skillsService.holder.current.extension);
+  await skillsService.holder.current.load();
+  void skillsService.holder.current.backfill?.();
+
+  const promptsModule = await import(`${EXTEND}/prompts/index.js?v=${version}`);
+  promptsService.holder.current = await promptsModule.createPrompts({
+    promptsDir: PROMPTS_ROOT,
+    registry,
+    api,
+  });
+  registry.install(promptsService.holder.current.extension);
+  await promptsService.holder.current.load();
 
   await loadCoreVariants(version);
 };
@@ -1452,7 +1505,7 @@ const reloadExtensions = async () => {
 
     extendRepoHead = head;
     await pinLock(head);
-    console.error("[extend] 热重装：nous + skills + 清单扩展 @" + head.slice(0, 7));
+    console.error("[extend] 热重装：nous + skills + prompts + 清单扩展 @" + head.slice(0, 7));
   } catch (error) {
     // 核心扩展挂了：旧的那套还在跑。页面必须说真话，不能显示成绿卡。
     noteLoad("__reload__", "failed", { error: errorLine(error) });
@@ -1502,7 +1555,7 @@ const harness = await Harness.open(
     env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? HERE }),
     // 默认选择只放**真扩展**：空名牌（skill:<名>）装了但不默认选 —— 否则每条新会话
     // 一出生就吃 38 条描述，progressive disclosure 当场作废。
-    settings: { extensions: [CodingTools, nousExtension, skills.extension] },
+    settings: { extensions: [CodingTools, nousExtension, skills.extension, prompts.extension] },
     // 新会话一出生就带一张自己的名字卡片，省得后面到处判空。
     conversationCreated: async (tx, conversation) => {
       const doc = await tx.doc(Sessions);
@@ -1558,6 +1611,7 @@ const tree = async () => {
       // 生效的技能（从 durable 存的扩展名里读回来，不是从我们的表里读）——
       // 面板该拿这个去画勾，所以列表里就得有它。
       skills: skillNamesOf(agent),
+      template: templateOf(agent),
       readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       busy: busy.get(key(record.id)) ?? null,
       last: last.items[0] ? { id: last.items[0].id, kind: last.items[0].kind, text: textOfEntry(last.items[0]) } : null,
@@ -1703,6 +1757,15 @@ const route = async (req, res, url) => {
       return await handleSkills({ req, res, url, parts, root: SKILLS_ROOT, skills, repo });
     } catch (error) {
       // handleSkills 自己写响应；走到这儿说明是它没接住的意外（读 body 炸了之类）。
+      return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
+  }
+
+  if (parts[0] === "v1" && parts[1] === "prompts") {
+    try {
+      return await handlePrompts({ req, res, url, parts, root: PROMPTS_ROOT, prompts, repo });
+    } catch (error) {
+      // handlePrompts 自己写响应；走到这儿说明是它没接住的意外。
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
   }
@@ -2020,7 +2083,7 @@ const route = async (req, res, url) => {
     // 变体在 registry 里是独立名字，但**卡片是一张**（按本体分组）——
     // 「装了哪些扩展」仍只列本体，变体在 `variants` 里按本体归位。
     const ours = installed.filter(
-      (name) => !name.startsWith(SKILL_PREFIX) && !builtins.includes(name) && !name.includes(VARIANT_SEP),
+      (name) => !NAMEPLATE_PREFIXES.some((prefix) => name.startsWith(prefix)) && !builtins.includes(name) && !name.includes(VARIANT_SEP),
     );
     const variants = {};
     for (const item of catalog) {
@@ -2048,7 +2111,7 @@ const route = async (req, res, url) => {
         }),
       );
     }
-    const nameplates = installed.filter((name) => name.startsWith(SKILL_PREFIX));
+    const nameplates = installed.filter((name) => NAMEPLATE_PREFIXES.some((prefix) => name.startsWith(prefix)));
     let head = null;
     try {
       head = (await run("git", ["-C", EXTEND, "rev-parse", "HEAD"])).stdout.trim();
@@ -2068,10 +2131,10 @@ const route = async (req, res, url) => {
           .map((item) => item.key),
       ],
       builtin: builtins,
-      // 名牌单独列：那是 skills 扩展运行时按技能生成的家族，不是独立扩展 ——
-      // 混进 installed 会变成 40 行里 38 行是生成物。
-      nameplates: { prefix: SKILL_PREFIX, count: nameplates.length, names: nameplates },
-      defaults: [nousExtension.name, skills.extension.name],
+      // 名牌单独列：那是 skills / prompts 运行时按仓里的条目生成的家族，不是独立扩展 ——
+      // 混进 installed 会变成几十行里大半是生成物。
+      nameplates: { prefixes: NAMEPLATE_PREFIXES, count: nameplates.length, names: nameplates },
+      defaults: [nousExtension.name, skills.extension.name, prompts.extension.name],
       categories: await readCategories(EXTEND),
       protected: PROTECTED_CATEGORIES,
       catalog,
@@ -2143,6 +2206,12 @@ const route = async (req, res, url) => {
     // 技能也在这个 commit 里落 —— 跟 thinkingLevel 一条纪律：先建再 configure，中间那一下
     // 第一条消息可能已经跑出去了。没装的技能名直接丢（选了也不生效，不存一个幽灵）。
     const wanted = [...new Set((Array.isArray(body.skills) ? body.skills : []).map(String))].filter((name) => skills.has(name));
+    // 模板是**单值**，不是数组：一条会话最多一个 `prompt:<名>`。三态必须分清 ——
+    //   字符串 = 选它；null = 显式不要；不传 = 用仓库 settings.json 的默认值。
+    // 都归成「不传」的话，「不要」和「没说」会变成同一件事，页面上那句「无模板」就是假的。
+    const asked = body.template === undefined ? await readDefaultTemplate() : body.template;
+    const wantedTemplate = asked === null ? null : String(asked).trim();
+    const template = wantedTemplate && prompts.has(wantedTemplate) ? wantedTemplate : null;
     const wantedExt = [...new Set((Array.isArray(body.extensions) ? body.extensions : []).map(String))].filter((name) =>
       registry.snapshot().installed().some((e) => e.name === name),
     );
@@ -2151,7 +2220,7 @@ const route = async (req, res, url) => {
     // 只是个装饰品（改了没反应，比没有更糟）。这里把它接上：只补「不是那三个」的，
     // 重复 add 同一个扩展没意义。
     if (!body.extensions) {
-      const baseDefaults = [CodingTools.name, nousExtension.name, skills.extension.name];
+      const baseDefaults = [CodingTools.name, nousExtension.name, skills.extension.name, prompts.extension.name];
       const installedNow = registry.snapshot().installed().map((e) => e.name);
       for (const manifest of await readExtendCatalog().catch(() => [])) {
         if (manifest.default !== true) continue;
@@ -2169,6 +2238,7 @@ const route = async (req, res, url) => {
           ...(() => {
           const adds = [
             ...(wanted.length ? wanted.map(skillExtension) : []),
+            ...(template ? [promptExtension(template)] : []),
             ...(wantedExt.length ? wantedExt.map((n) => registry.snapshot().extension(n)) : []),
           ];
           return adds.length ? { extensions: { add: adds } } : {};
@@ -2185,8 +2255,11 @@ const route = async (req, res, url) => {
       model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
       thinkingLevel: agent.thinkingLevel ?? null,
       skills: skillNamesOf(agent),
-      extensions: (agent.extensions ?? []).filter((n) => !String(n).startsWith("skill:")),
+      template: templateOf(agent),
+      extensions: extensionNamesOf(agent),
       missing: skills.missing(wanted),
+      // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有模板」。
+      ...(wantedTemplate && !template ? { missingTemplates: [wantedTemplate] } : {}),
     });
   }
 
@@ -2233,7 +2306,9 @@ const route = async (req, res, url) => {
         );
       }
       if (Array.isArray(body.extensions)) {
-        const current = (await conversation.agent(ctx)).extensions ?? [];
+        // 只动**真扩展**：名牌（skill:/prompt:）不归这里管 —— 它们各有各的写入口，
+        // 否则「换个扩展」会顺手把这条会话的技能和模板一起清掉。
+        const current = extensionNamesOf(await conversation.agent(ctx));
         const wanted = [...new Set(body.extensions.map(String))].filter((name) =>
           registry.snapshot().installed().some((e) => e.name === name),
         );
@@ -2247,6 +2322,27 @@ const route = async (req, res, url) => {
           ctx,
         );
       }
+      // 模板：**单值**。`null` = 清掉，字符串 = 换掉。先移旧的再加新的 —— 一条会话永远只有一个。
+      if (body.template !== undefined) {
+        const now = await conversation.agent(ctx);
+        const current = templateOf(now);
+        const wanted =
+          body.template === null ? null : String(body.template).trim() ? String(body.template).trim() : null;
+        if (wanted !== null && !prompts.has(wanted)) {
+          return json(res, 400, { error: `没有这条模板：${wanted}` });
+        }
+        if (wanted !== current) {
+          await conversation.configure(
+            {
+              extensions: {
+                remove: current ? [promptExtension(current)] : [],
+                add: wanted ? [promptExtension(wanted)] : [],
+              },
+            },
+            ctx,
+          );
+        }
+      }
       // 回的是**生效值**，不是请求值：前端拿它重画，面板和真相就不会分叉。
       const agent = await conversation.agent(ctx);
       return json(res, 200, {
@@ -2254,7 +2350,8 @@ const route = async (req, res, url) => {
         model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
         thinkingLevel: agent.thinkingLevel ?? null,
         skills: skillNamesOf(agent),
-        extensions: (agent.extensions ?? []).filter((n) => !String(n).startsWith("skill:")),
+        template: templateOf(agent),
+        extensions: extensionNamesOf(agent),
         readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       });
     }

@@ -694,7 +694,7 @@ const unitOfPath = (rel, unitKind) => {
   return { key: "__other", kind: "other", name: null };
 };
 
-const UNIT_ORDER = { extension: 0, skill: 0, categories: 1, archive: 2, other: 3 };
+const UNIT_ORDER = { extension: 0, skill: 0, prompt: 0, categories: 1, archive: 2, other: 3 };
 
 // ── 待同步清单：把工作区的脏文件按「改动单元」分组 ─────────────────────────
 //
