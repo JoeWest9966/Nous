@@ -85,9 +85,34 @@
   /* 「对话列表 ›」是个链接，但看起来得跟旁边的 chip 一模一样。 */
   a.chip { text-decoration: none; color: inherit; }
 
-  /* 「从这条分叉」：一直在，不藏在 hover 里 —— 藏起来就等于没有。 */
-  .forkbtn { margin-left: auto; flex: none; opacity: 1; }
-  .forkbtn:hover { color: var(--text); border-color: var(--edge); }
+  /* ── 右键菜单：从哪条消息点的，菜单就挂在哪条上 ──
+     以前这颗是常驻 chip，占着每条消息的头部；现在藏进右键/长按，
+     指向关系由「你点的是哪条」说清，不再靠一颗永远亮着的按钮。 */
+  .ctx-menu {
+    position: fixed; z-index: 60; min-width: 168px; padding: 4px;
+    border: 1px solid var(--hair); border-radius: var(--r-float);
+    background: var(--panel); box-shadow: var(--pop);
+    display: flex; flex-direction: column; gap: 2px;
+    animation: ctx-in 120ms var(--ease-out);
+  }
+  @keyframes ctx-in {
+    from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ctx-menu { animation: none; }
+  }
+  .ctx-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border: 0; border-radius: var(--r-row);
+    background: none; font: inherit; font-size: var(--text-size);
+    color: var(--text); text-align: left; cursor: pointer;
+    transition: background-color var(--t-hover) var(--ease-out);
+  }
+  @media (hover: hover) { .ctx-item:hover { background: var(--hover); } }
+  .ctx-item:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+  .ctx-item:disabled { opacity: 0.5; cursor: default; }
+  .ctx-item .glyph { flex: none; color: var(--muted); }
 
   .transcript > .empty { align-self: center; }
   /* 作者样式里的 display 会赢过 UA 的 [hidden]：[hidden] 得自己再按一次。 */
@@ -246,6 +271,78 @@ const status = (text) => {
   $("status").textContent = text ?? "";
 };
 
+// ── 右键菜单：桌面右键，触屏长按 ────────────────────────────────────────
+// 正在选文字时不拦 —— 右键拖拽选词是浏览器原生能力，菜单别抢。
+const selectingText = () => {
+  const sel = window.getSelection();
+  return Boolean(sel && sel.isCollapsed === false && String(sel).trim());
+};
+
+let openMenu = null;
+const closeMenu = () => {
+  openMenu?.remove();
+  openMenu = null;
+};
+
+const showMenu = (items, x, y) => {
+  closeMenu();
+  const menu = el("div", "ctx-menu");
+  menu.setAttribute("role", "menu");
+  for (const item of items) {
+    const btn = el("button", "ctx-item");
+    btn.type = "button";
+    btn.setAttribute("role", "menuitem");
+    btn.append(el("span", "glyph", item.glyph ?? ""), document.createTextNode(item.label));
+    btn.onclick = () => { closeMenu(); item.run(); };
+    menu.append(btn);
+  }
+  document.body.append(menu);
+  // 先上屏再量尺寸：贴到视口边就往里收，不许长到屏幕外。
+  const r = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(6, Math.min(x, innerWidth - r.width - 6))}px`;
+  menu.style.top = `${Math.max(6, Math.min(y, innerHeight - r.height - 6))}px`;
+  openMenu = menu;
+  menu.querySelector(".ctx-item")?.focus({ preventScroll: true });
+};
+
+// 点外面、Esc、滚动、切标签页 —— 全都收菜单。滚动时位置已经对不上来源，收掉最诚实。
+addEventListener("pointerdown", (e) => { if (openMenu && !e.target.closest(".ctx-menu")) closeMenu(); }, true);
+addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+addEventListener("scroll", closeMenu, true);
+addEventListener("blur", closeMenu);
+
+const attachForkMenu = (prompt, entryId) => {
+  prompt.dataset.entry = String(entryId);   // 这条从哪句长出来的，落点自己带
+
+  prompt.addEventListener("contextmenu", (e) => {
+    if (e.target.closest("a, button, select, textarea") || selectingText()) return;
+    e.preventDefault();
+    showMenu([{ glyph: "⑂", label: "从这条分叉", run: () => forkAt(entryId) }], e.clientX, e.clientY);
+  });
+
+  // 触屏没有右键：长按 500ms 当作右键。一移动手指就是滚动，不算长按。
+  let timer = null;
+  prompt.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    timer = setTimeout(() => showMenu([{ glyph: "⑂", label: "从这条分叉", run: () => forkAt(entryId) }], e.clientX, e.clientY), 500);
+  });
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  prompt.addEventListener("pointermove", (e) => { if (e.pointerType === "touch") cancel(); });
+  prompt.addEventListener("pointerup", cancel);
+  prompt.addEventListener("pointercancel", cancel);
+};
+
+const forkAt = async (entryId) => {
+  try {
+    const made = await post(`v1/sessions/${current}/fork`, { entryId });
+    current = made.id;
+    await refresh();
+    await select(made.id);
+  } catch (error) {
+    status(`分叉失败：${error.message ?? error}`);
+  }
+};
+
 // ── 你说的话：一张卡，头上一行「谁 + 什么时候」 ──────────────────────────
 const addUser = (text, entryId, opts = {}) => {
   const row = el("div", "user-row enter");
@@ -257,25 +354,16 @@ const addUser = (text, entryId, opts = {}) => {
   avatar.style.setProperty("--who", "var(--accent)");
   head.append(avatar, el("b", "prompt-author", "你"));
 
-  if (entryId != null) {
-    // 分叉只挂在具体的一条上：从哪一句长出来的，就得指得清。
-    const fork = el("button", "chip forkbtn", "从这条分叉");
-    fork.type = "button";
-    fork.onclick = async () => {
-      const made = await post(`v1/sessions/${current}/fork`, { entryId });
-      current = made.id;
-      await refresh();
-      await select(made.id);
-    };
-    head.append(fork);
-  }
+  if (entryId != null) attachForkMenu(prompt, entryId);
 
   const body = el("div", "prompt-body");
   body.append(el("div", "user-text", text));
   prompt.append(head, body);
   row.append(prompt);
 
-  group = null;
+  // 收掉上一轮的轨道。必须走 settleGroup：直接置 null 会把 setInterval 漏掉，
+  // 那行「N 步」就永远在读秒。
+  settleGroup();
   transcript.append(row);
 
   // 目录里那一条：编号 + 你的原话，点一下就滚过去。
@@ -300,7 +388,9 @@ const addReply = () => {
   const para = el("p");
   md.append(para);
   reply.append(md);
-  group = null;
+  // 同上：这里一定是 settleGroup()，不是 group = null。这台模型的正文整段落在这条上，
+  // 每一条用过工具的回复都会走到这里 —— 写错一次，每一轮都留一个停不下来的秒表。
+  settleGroup();
   transcript.append(reply);
   follow();
   return { reply, md, para };
@@ -412,7 +502,7 @@ const select = async (id, talk = true) => {
   current = id;
   transcript.replaceChildren();
   clearNav();
-  group = null;
+  settleGroup();
   $("stop").hidden = true;
   status("加载…");
 
