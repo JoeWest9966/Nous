@@ -80,9 +80,9 @@ Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durab
 三条不进清单：
 
 - **pi-durable 自带的**（`CodingTools` 那四件套）—— 不是我们开发的。谁写的代码谁进账。
-- **`skill:<名>` 名牌** —— 运行时 `skillExtension(name)` 现造的家族，装 38 条技能就是 38 个空对象。
-  列进清单会变成 40 行里 38 行是生成物，没人看得懂。它归「skills 扩展派生」这一个条目。
-- **技能内容** —— 落 `data/skills/`，是数据不是代码。
+- **`skill:<名>` 名牌** —— 运行时 `skillExtension(name)` 现造的家族，仓库里有几条技能就是几个空对象。
+  列进清单会变成一行行生成物，没人看得懂。它归「skills 扩展派生」这一个条目。
+- **技能内容** —— 落 `/opt/Nous-skills/<名>/`（另一个 git 仓，见下面「技能」那节），不进清单、不进本块。
 
 **扩展名就是 API**：会话里存的是名字不是对象（durable 的 `AgentState`），改 `name` = 破坏性变更。
 
@@ -159,17 +159,38 @@ Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durab
 变体失败只记它自己那条 `load`（`名@变体` → failed），**不连坐本体**：变体可能指向另一份代码，
 本体那份坏掉不该把它一起判死。
 
-## 技能：内容在盘上，选择在会话里
+## 技能：文件在 `/opt/Nous-skills`，这个块只是写入口
 
-`Nous-extend/skills/index.js`。跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read`
-去读正文、同样按 SKILL.md 所在目录展开相对路径），所以给 pi 写的技能直接能用。
+技能的**仓库是唯一真相**（`docs/spec/skills-own-store.md`，I2）。`/opt/Nous-skills` 是自己的
+git 仓，一条技能 = 一个目录：
+
+```
+/opt/Nous-skills/
+├── categories.json          词表（给面板左栏用，不是事实源）
+├── index.json               生成物：扫盘重写，别手改
+├── index.mjs                扫盘器（CLI 薄壳，仓库自己带）
+├── .archive/<名>/           归档的整目录，git 追踪，能恢复；只有 purge 才真删（I10）
+└── <名>/
+    ├── SKILL.md             frontmatter（name == 目录名、description 非空）+ 正文
+    └── nous.json            {name, summary, category[]}
+```
+
+**没有** `package.json`、`node_modules`、示例技能。空仓就是空仓。
+
+`Nous-extend/skills/index.js` 是这份仓库的**投影**：`createSkills({ dir })` 里的 `dir` 是仓库根
+（`NOUS_SKILLS`，默认 `/opt/Nous-skills`），`load()` 扫 `<dir>/*` 读 frontmatter 进内存名册。
+不联网、不拉 tarball、不读收据、不维护第二份名单 —— 盘上删掉一个目录，下次扫盘它就不在了。
+
+跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read` 去读正文、同样按
+SKILL.md 所在目录展开相对路径），所以给 pi 写的技能直接能用。**`<location>` 是绝对路径**
+`/opt/Nous-skills/<名>/SKILL.md` —— 模型拿它直接 `read`，不用猜前缀。
 
 **三层，只有第三层跟代码有关系：**
 
 | 层 | 是什么 | 在哪 |
 |---|---|---|
-| 内容 | `SKILL.md` + `scripts/` + `references/` | `data/skills/<名>/` 真文件（模型 `read` 它，`bash` 也能跑它） |
-| 名册 | `{name, description, 路径}` + 来源收据 | 内存 Map（启动/装卸时扫一次）+ `data/skills/<名>/.nw.json` |
+| 内容 | `SKILL.md` + 这条技能自带的文档 / 脚本 | `/opt/Nous-skills/<名>/` 真文件（模型 `read` 它，`bash` 也能跑它） |
+| 名册 | `{name, description, 绝对路径}` | 内存 Map（`load()` 扫一次；每个写端点之后重扫） |
 | 钩子 | `defineExtension({ name: "skill:<名>" })` | **空名牌**，不含一个字的技能文本，只为在 `agent.extensions` 里占个名字 |
 
 为什么不自己建一张「哪条会话会哪些技能」的表：`pi.agent.extensions` 就是那张表，而且
@@ -180,37 +201,30 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 
 1. **`render()` 每轮请求都跑**，所以它只查内存 Map —— 不碰文件系统、不碰网络、不看时间、
    顺序按名字排。漏一样进去，就是每轮追加一条 `pi.system` 并打掉提示词缓存。
-2. **空名牌装了但不许进默认选择**（`settings.extensions`）。进了 = 每条新会话一出生就吃
-   38 条描述，progressive disclosure 当场作废。默认只放真扩展（`CodingTools` / `Nous` / `skills`）。
-3. **装失败要说清到哪一步**（编目 / 版本号 / tarball / 仓库里没这条路径）。只回一个红条，
-   人得自己猜。
+2. **空名牌不上默认选择**（`settings.extensions`）。上了 = 每条新会话一出生就吃
+   仓库里每条技能一条描述，progressive disclosure 当场作废。默认只放真扩展（`CodingTools` / `Nous` / `skills`）。
+3. **写失败要说清到哪一步**（多半是内容闸或 git）。只回一个红条，人得自己猜。
 
-按 sha 记收据（编目**没有版本层**，nw 自己说的：不含 ref/@tag —— 所以「上次跑的是哪一版」
-只有我们记）。已经装过同一版就不重拉。
+### 写入口只有一个：`/v1/skills*`（I4）
 
-### 版本：只认收据，不认编目
+面板（`68kazk`）是纯静态视图 —— 不跑 git、不读仓库文件，全部走这里的端点。三种状态的判据是
+**盘 + HEAD**，不是谁记的账：
 
-页面「仓库版本」那一列是 `1.3.2+1` 这样的东西，意思就是 `git describe` 那句话：
-`v1.3.2-1-ga496f55` = 装下的 sha 比 `v1.3.2` 那个 tag 晚 1 个提交。
+| 盘上 | HEAD 里 | 是什么 |
+|---|---|---|
+| 有 `<名>/` | 有 | 已发布（`tracked: true`） |
+| 有 `<名>/` | 没有 | 未发布（`tracked: false`，面板上琥珀虚线） |
+| `.archive/<名>/` | 有 | 已归档，能 `restore` 回来；`purge` 才真删 |
 
-- **来源是收据**（`data/skills/<名>/.nw.json` 的 `version` / `tag` / `commitsSince` /
-  `describe` / `commitAt` / `skillChangedAt`），装的那一刻从**装下的那个 sha** 上读。
-- **不碰 `api.github.com`**：匿名 60 次/小时，38 条就穿。走的是
-  `git clone --bare --filter=blob:none`（git 协议，零配额，一条源 ~1 秒 / 几百 KB），
-  缓存在 `data/.repos/<owner>__<repo>.git` —— **纯缓存，`rm -rf` 掉没关系**，下次装会重建。
-  `git show <sha>:package.json` 拿下上游声明的版本，`git describe --tags --long` 拿下
-  「离 tag 几步」，`git log -1 -- <path>` 拿下这条技能自己最后改动的时间。
-- **编目里那个 `version` 不是版本号，是账面情报**：`/api/source` 的 source 上确实有
-  `version`（今天 `matt` 写着 `v1.3.1`，`mattpocock` 是空串），但它是**注册那一刻**上游
-  latest release 的快照，仓库级、会过期、还跟另一个条目对不上。`extensions/skills/index.js` 把它作为
-  `catalogVersion` 一起带出来，**只用于对照**（「编目录上还写着 v1.3.1」），绝不拿去显示成
-  「你装的是哪一版」。
-- **算不出来就是 null**：上游不打 tag、没写 `package.json`、断网、私有仓 —— 页面显
-  「未标版本」。宁可少一个数字，不要编一个。
-- 老收据（这个字段是后加的）由 `skills.backfill()` 在启动和每次 `GET /v1/skills` 时**后台**
-  补齐，补齐前那一行照实是 null。页面只重试一次，不轮询。
-- 版本是**装的那一刻**的版本。上游发了新版不会自己变 —— 想更新就卸载重装（「检查更新」
-  是另一个功能，现在没有）。
+- **新建**只落工作区（`tracked: false`），**发布**才 commit + push。
+- **发布 = 闸 + 重扫 `index.json` + commit + push，一步**：闸（frontmatter 的 name/description、
+  `nous.json` 的三字段）不过，一个字节都不动（`index.json` 也不重扫，否则留下「扫了一半」的假象）。
+- **每个写端点都在本仓的串行锁里，写完重扫名册**：不重扫的话，面板说有、会话里看不见 ——
+  两份真相就是这么长出来的。
+
+历史一句：连到 2026-10，技能是「从上游编目把 tarball 拉进 `data/skills/`、按 sha 记收据、
+用 bare clone 缓存算版本号」。那套的第二真相（收据 + 缓存 + 编目快照三份会漂的账）就是它
+被删的原因 —— 收据格式、缓存目录、安装/卸载端点全没了，别照着老记忆写。
 
 ## 接口
 
@@ -219,11 +233,21 @@ GET  /                            那棵树
 GET  /v1/device                   我是谁、模型、编目状态
 GET  /v1/models                   items[]（含档位表/窗口/输出上限）+ catalog{base,at,error,providers[],skipped[]}
 POST /v1/catalog/refresh          重拉编目与密钥（换密钥 / 编目里加了供应商之后）
-GET  /skills                     技能页（装 / 卸，给人点的）
-GET  /v1/skills                   已装 + 编目里能装的（按 repo 去重后的 38 条）+ catalog{base,at,error}
-POST /v1/skills/install           {source, entry}（或 {repo, path}）→ 拉到 data/skills/
-POST /v1/skills/uninstall         {name}（会话还选着它的，静默失效，不报错）
-POST /v1/skills/refresh           重拉技能编目
+GET  /v1/skills                   仓库全景：root + repo{head,dirty,ahead,behind,remote} + skills[]（带 tracked）+ archived[] + categories[]
+GET  /v1/skills/categories        词表（受保护类别：一个都不护，见 spec §3.6）
+POST /v1/skills/categories        {op:"add"|"rename"|"remove", name, to}
+POST /v1/skills/category          {name, category[]} → 写这条技能的 nous.json + 并进词表
+GET  /v1/skills/files             ?name= → 这条技能的目录里有什么
+GET  /v1/skills/file              ?name=&path= → { text, etag }
+PUT  /v1/skills/file              {name, path, text, base} → { etag }；base 对不上 = 409
+POST /v1/skills/create            {name, description, category[]} → 只落工作区，不提交
+POST /v1/skills/publish           {message} → 闸 + 重扫 index.json + commit + push
+POST /v1/skills/archive           {name} → 挪进 .archive/ 并提交
+POST /v1/skills/restore           {name} → 从 .archive/ 搬回来并提交
+POST /v1/skills/purge             {name} → 真删（只有这一条会真删）
+GET  /v1/skills/pending           ?diff=&path= / ?commit=&hash=
+POST /v1/skills/sync              {message, paths?} → 只提交点名的路径
+POST /v1/skills/reload            重扫仓库（拿不准的时候用；写端点自己会扫）
 GET  /v1/sessions                 会话树
 POST /v1/sessions                 {name, model, thinkingLevel, skills}
 POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills}
@@ -232,7 +256,9 @@ GET  /v1/sessions/:id/events      SSE
 GET  /v1/sessions/:id/entries     ?system=1 额外给 items[].delta + system（调试提示词用）
 ```
 
-环境：`PORT`（默认 4780）、`NOUS_DATA`、`NW_BASE`（默认 tailnet 8443）、`NW_TOKEN`（走 panel-gate 才要）。
+环境：`PORT`（默认 4780）、`NOUS_DATA`、`NOUS_SKILLS`（技能仓根，默认 `/opt/Nous-skills`）、
+`NOUS_EXTEND`（扩展仓，默认 `/opt/Nous-extend`）、`NW_BASE`（默认 tailnet 8443，**只给模型编目**）、
+`NW_TOKEN`（走 panel-gate 才要）。
 
 ### 提示词是增量的 —— `?system=1` 得回放才看得见
 
@@ -262,7 +288,7 @@ system          { sections, tools, scanned, truncated }  回放后此刻生效�
 - 不读 `~/.pi/agent/models.json` —— 那是 pi CLI 的配置，跟 Nous 无关。
 - 不把密钥写进 `data/` —— 那目录会被 `cp -r` 带走，而块目录不该装秘密。
 - 不按 id 猜 `reasoning` / 上下文窗口。宁可少一档思考，不要连着 400。
-- 不读本机任何 `skills.json` / `~/.pi/agent/skills` —— 技能编目也是 nw 一份，本机那两份
-  （`/var/opt/Data-001/skills.json` 只有 1 条，8443 上有 38 条）是会漂的第二真相。
-- 不把技能做成树节点。技能有上游（repo@sha），树只有四个字段、装不下来源；把别人的
-  38 份 README 导进盘面，盘就不是你的了。
+- 不读本机任何 `skills.json` / `~/.pi/agent/skills` —— 技能只认 `/opt/Nous-skills` 那份仓库，
+  别的地方出现的技能清单都会漂。
+- 不把技能做成树节点。技能是带目录结构的文件、有正文有脚本，树只有四个字段装不下；
+  把别人的 README 导进盘面，盘就不是你的了。

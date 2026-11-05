@@ -1623,12 +1623,6 @@ const route = async (req, res, url) => {
     return res.end(await readFile(new URL("./index.html", import.meta.url), "utf8"));
   }
 
-  // 技能页：装 / 卸。链接写相对的（"skills"），反代前缀由宿主决定。
-  if (req.method === "GET" && parts.length === 1 && parts[0] === "skills") {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-    return res.end(await readFile(new URL("./skills.html", import.meta.url), "utf8"));
-  }
-
   // 页面自己的样式和字体。白名单，不是文件服务器。
   const asset = req.method === "GET" ? assetType(parts.join("/")) : null;
   if (asset) {
