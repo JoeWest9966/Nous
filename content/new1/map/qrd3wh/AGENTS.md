@@ -169,16 +169,25 @@ git 仓，一条技能 = 一个目录：
 ├── categories.json          词表（给面板左栏用，不是事实源）
 ├── index.json               生成物：扫盘重写，别手改
 ├── index.mjs                扫盘器（CLI 薄壳，仓库自己带）
-├── .archive/<名>/           归档的整目录，git 追踪，能恢复；只有 purge 才真删（I10）
+├── .archive/<名>/           归档的整目录（**扁的**，不跟分组），git 追踪，能恢复；只有 purge 才真删（I10）
+├── <分组>/                   可选：只装技能的抽屉（`deprecated` / `engineering`），最多一层
+│   └── <名>/SKILL.md …       形状同上
 └── <名>/
-    ├── SKILL.md             frontmatter（name == 目录名、description 非空）+ 正文
-    └── nous.json            {name, summary, category[]}
+    ├── SKILL.md             frontmatter（name == **最后一段**目录名、description 非空）+ 正文
+    ├── nous.json            {name, summary, category[]}
+    └── …                    可选：自带的文档 / 脚本，**可以分子目录**（`references/x.md`）
 ```
+
+**分组只是抽屉，名字还是最后一段。** `deprecated/demo/` 那条技能叫 `demo`，`index.json` 里
+多一个 `path: "deprecated/demo"`。所以这个块里所有按 `name` 找目录的地方都得先翻一次
+（`skills-api.js` 的 `relOf` / `homeOf`）—— 谁自己拼 `path.join(root, name)`，分组里的技能就全 404。
 
 **没有** `package.json`、`node_modules`、示例技能。空仓就是空仓。
 
 `Nous-extend/skills/index.js` 是这份仓库的**投影**：`createSkills({ dir })` 里的 `dir` 是仓库根
-（`NOUS_SKILLS`，默认 `/opt/Nous-skills`），`load()` 扫 `<dir>/*` 读 frontmatter 进内存名册。
+（`NOUS_SKILLS`，默认 `/opt/Nous-skills`）。`load()` 扫 `<dir>/*`：有 `SKILL.md` 就是技能，
+没有的当分组往里找一层（`MAX_GROUP_DEPTH = 1`），读 frontmatter 进内存名册。两个抽屉里有同名
+技能时，后来的留成 `failed` 并点出先到的那条 —— 名字是会话键，只能有一个生效。
 不联网、不拉 tarball、不读收据、不维护第二份名单 —— 盘上删掉一个目录，下次扫盘它就不在了。
 
 跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read` 去读正文、同样按
@@ -213,8 +222,8 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 
 | 盘上 | HEAD 里 | 是什么 |
 |---|---|---|
-| 有 `<名>/` | 有 | 已发布（`tracked: true`） |
-| 有 `<名>/` | 没有 | 未发布（`tracked: false`，面板上琥珀虚线） |
+| 有 `<path>/` | 有 | 已发布（`tracked: true`）—— 比的是 `path`（`deprecated/demo`），不是 `name` |
+| 有 `<path>/` | 没有 | 未发布（`tracked: false`，面板上琥珀虚线） |
 | `.archive/<名>/` | 有 | 已归档，能 `restore` 回来；`purge` 才真删 |
 
 - **新建**只落工作区（`tracked: false`），**发布**才 commit + push。
@@ -256,13 +265,18 @@ GET  /v1/skills                   仓库全景：root + repo{head,dirty,ahead,be
 GET  /v1/skills/categories        词表（受保护类别：一个都不护，见 spec §3.6）
 POST /v1/skills/categories        {op:"add"|"rename"|"remove", name, to}
 POST /v1/skills/category          {name, category[]} → 写这条技能的 nous.json + 并进词表
-GET  /v1/skills/files             ?name= → 这条技能的目录里有什么
+GET  /v1/skills/files             ?name= → 这条技能的目录里有什么（递归，含子目录）
 GET  /v1/skills/file              ?name=&path= → { text, etag }
-PUT  /v1/skills/file              {name, path, text, base} → { etag }；base 对不上 = 409
-POST /v1/skills/create            {name, description, category[]} → 只落工作区，不提交
+PUT  /v1/skills/file              {name, path, text, base} → { etag, path, created }
+                                  目标不存在 = 新建（中途目录一起造）；base 对不上 = 409
+POST /v1/skills/mkdir             {name, path} → 建空文件夹，里面铺 .gitkeep
+DELETE /v1/skills/file            ?name=&path=[&recursive=1] → 删文件 / 删目录，不提交
+                                  目录非空且没 recursive=1 = 409
+POST /v1/skills/create            {name, description, category[], group?} → 只落工作区，不提交
+                                  group = `deprecated` 那种抽屉（一层），顺手建
 POST /v1/skills/publish           {message} → 闸 + 重扫 index.json + commit + push
-POST /v1/skills/archive           {name} → 挪进 .archive/ 并提交
-POST /v1/skills/restore           {name} → 从 .archive/ 搬回来并提交
+POST /v1/skills/archive           {name} → 挪进扁的 .archive/ 并提交；原址记进 nous.json.archiveOrigin
+POST /v1/skills/restore           {name} → 按 archiveOrigin 搬回原来的分组并提交
 POST /v1/skills/purge             {name} → 真删（只有这一条会真删）
 GET  /v1/skills/pending           待同步清单（按目录分组）
 GET  /v1/skills/pending/diff      ?path= → { path, before, after }（对 HEAD；未跟踪 before: null）

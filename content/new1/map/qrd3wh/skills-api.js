@@ -14,7 +14,7 @@
 //   · `publish` = 内容闸 + 重扫 index.json + commit + push，一步；闸不过不动 index.json。
 //   · 不实现 install / uninstall：技能不是「装进来的包」。
 
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import * as upstream from "./upstream.js";
@@ -84,6 +84,45 @@ const checkName = (raw) => {
   return name;
 };
 
+/**
+ * 分组（`deprecated` / `engineering`）：只用来放技能的抽屉。
+ * 最多一层、每段跟技能名同一套字符规矩 —— 它也是目录名，也得能当路径用。
+ */
+const checkGroup = (raw) => {
+  const group = String(raw ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!group) return "";
+  const segments = group.split("/");
+  if (segments.length > 1) throw withStatus(new Error(`分组只能一层：${group} —— 「deprecated」那种，不是多层目录`), 400);
+  for (const segment of segments) {
+    if (!SKILL_NAME_RE.test(segment)) {
+      throw withStatus(new Error(`分组名只认小写字母、数字、点、下划线、连字符，且以字母或数字开头：${segment}`), 400);
+    }
+    if (segment.length > MAX_NAME) throw withStatus(new Error(`分组名太长（最多 ${MAX_NAME} 字）：${segment}`), 400);
+    if (RESERVED.has(segment)) throw withStatus(new Error(`「${segment}」是仓库自己的名字，不能当分组`), 400);
+  }
+  return segments.join("/");
+};
+
+// ── 名字 → 目录 ─────────────────────────────────────────────────────────────
+//
+// **名字是会话键、是 API 参数；住哪儿是分组的事。** 所有读写都先在这里翻一次 ——
+// 别处一律不许自己拼 `path.join(root, name)`：拼了，分组里的技能就全部 404。
+
+/** 这个技能在仓里的相对目录（`demo` / `deprecated/demo`）。名册里没有就按顶层算。 */
+const relOf = (skills, name) => {
+  let roster = [];
+  try {
+    roster = skills?.list?.() ?? [];
+  } catch {
+    roster = [];
+  }
+  const hit = roster.find((skill) => skill.name === name);
+  return typeof hit?.path === "string" && hit.path ? hit.path : String(name);
+};
+
+/** 同上，给 `repo-tools` 那套要 `dir` 的函数用。 */
+const homeOf = (root, skills, name) => path.join(root, relOf(skills, name));
+
 // ── frontmatter：借扩展仓那一份（spec §2.1「解析器用现成的 parseFrontmatter()」）──
 //
 // **为什么不在这儿手写第二份**：本地那版只认 `key: value` 两个标量，`description: >`
@@ -98,52 +137,72 @@ const { parseFrontmatter } = await import(`${EXTEND}/skills/index.js`);
 
 export { parseFrontmatter };
 
-/** 内容闸：一条技能对不对。返回问题清单（空 = 能发布）。 */
-export const checkSkillContent = async (root, name, dir = null) => {
-  const home = dir ?? path.join(root, name);
+/** 内容闸：一条技能对不对。`rel` 是它在仓里的相对目录（`demo` / `deprecated/demo`）。 */
+export const checkSkillContent = async (root, rel, dir = null) => {
+  const home = dir ?? path.join(root, rel);
+  // 名字比的是**最后一段**：分组只是抽屉，不进名字（`deprecated/demo` 的技能还叫 `demo`）。
+  const leaf = path.posix.basename(String(rel).replace(/\\/g, "/"));
   const problems = [];
   let text = null;
   try {
     text = await readFile(path.join(home, "SKILL.md"), "utf8");
   } catch {
-    problems.push(`${name}: 没有 SKILL.md`);
+    problems.push(`${rel}: 没有 SKILL.md`);
   }
   if (text !== null) {
     const front = parseFrontmatter(text);
-    if (!front) problems.push(`${name}: SKILL.md 开头没有 frontmatter（两行 --- 包起来的那一段）`);
+    if (!front) problems.push(`${rel}: SKILL.md 开头没有 frontmatter（两行 --- 包起来的那一段）`);
     else {
       const declared = String(front.name ?? "").trim();
-      if (declared !== name) problems.push(`${name}: frontmatter 里的 name 是「${declared}」，跟目录名对不上`);
-      if (!String(front.description ?? "").trim()) problems.push(`${name}: description 是空的`);
+      if (declared !== leaf) {
+        problems.push(`${rel}: frontmatter 里的 name 是「${declared}」，跟目录名「${leaf}」对不上`);
+      }
+      if (!String(front.description ?? "").trim()) problems.push(`${rel}: description 是空的`);
     }
   }
   let manifest = null;
   try {
     manifest = JSON.parse(await readFile(path.join(home, "nous.json"), "utf8"));
   } catch {
-    problems.push(`${name}: nous.json 读不出来（不存在或不是合法 JSON）`);
+    problems.push(`${rel}: nous.json 读不出来（不存在或不是合法 JSON）`);
   }
   if (manifest) {
-    if (manifest.name !== name) problems.push(`${name}: nous.json 里的 name 是「${manifest.name}」，跟目录名对不上`);
-    if (typeof manifest.summary !== "string") problems.push(`${name}: nous.json 缺 summary（可以写空串，但得有）`);
-    if (!Array.isArray(manifest.category)) problems.push(`${name}: nous.json 的 category 得是数组（没有就写 []）`);
+    if (manifest.name !== leaf) problems.push(`${rel}: nous.json 里的 name 是「${manifest.name}」，跟目录名对不上`);
+    if (typeof manifest.summary !== "string") problems.push(`${rel}: nous.json 缺 summary（可以写空串，但得有）`);
+    if (!Array.isArray(manifest.category)) problems.push(`${rel}: nous.json 的 category 得是数组（没有就写 []）`);
   }
   return problems;
 };
 
+/**
+ * 仓里所有带 SKILL.md 的目录（相对路径）。分组里的也算 —— 闸得看见它们。
+ * 分组最多一层（跟 `Nous-skills/index.mjs` 同一条规矩）：再深的不扫，生成器那边会报。
+ */
+const skillRels = async (root) => {
+  const out = [];
+  const walk = async (rel, depth) => {
+    const dir = rel ? path.join(root, rel) : root;
+    const kids = (await readdir(dir, { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".") && entry.name !== "node_modules" && entry.name !== "test")
+      .map((entry) => entry.name)
+      .sort();
+    for (const kid of kids) {
+      const kidRel = rel ? `${rel}/${kid}` : kid;
+      if (await stat(path.join(dir, kid, "SKILL.md")).catch(() => null)) {
+        out.push(kidRel);
+        continue;
+      }
+      if (depth < 1) await walk(kidRel, depth + 1);
+    }
+  };
+  await walk("", 0);
+  return out;
+};
+
 /** 仓库里所有带 SKILL.md 的目录 —— 内容闸扫这一圈（没有 SKILL.md 的目录静默跳过）。 */
-const gateRepo = async (repo, root) => {
+const gateRepo = async (root) => {
   const problems = [];
-  let dirs = [];
-  try {
-    dirs = await repo.listDirs(root);
-  } catch {
-    return []; // 仓库都不在：没东西可发布，也就没东西可拦
-  }
-  for (const dir of dirs) {
-    if (!(await stat(path.join(root, dir, "SKILL.md")).catch(() => null))) continue;
-    problems.push(...(await checkSkillContent(root, dir)));
-  }
+  for (const rel of await skillRels(root)) problems.push(...(await checkSkillContent(root, rel)));
   return problems;
 };
 
@@ -214,7 +273,7 @@ const overview = async (repo, root, skills) => {
   }
   const [remote, tracked, vocab, archived, roster] = await Promise.all([
     repo.remoteUrl(root),
-    repo.trackedDirs(root),
+    repo.trackedPaths(root),
     repo.readCategories(root, NO_PROTECT),
     repo.archivedEntries(root),
     Promise.resolve()
@@ -232,20 +291,42 @@ const overview = async (repo, root, skills) => {
     root,
     repo: { ...state, remote, error },
     // `tracked: false` + 目录在 = 未发布。跟面板上的琥珀虚线是同一个判据。
-    skills: (roster ?? []).map((skill) => ({ ...skill, tracked: tracked.has(skill.name) })),
+    // 比的是 `path` 不是 `name`：分组里的技能（`deprecated/demo`）用名字去 HEAD 里找永远找不到。
+    skills: (roster ?? []).map((skill) => ({ ...skill, tracked: tracked.has(skill.path ?? skill.name) })),
     archived: archived.map((entry) => entry.name).sort((a, b) => a.localeCompare(b, "zh-CN")),
     categories,
+    // 抽屉（`deprecated` 这种只装技能的目录）：新建技能时可以直接选，不用手打。
+    groups: await groupsOf(root),
   };
+};
+
+/** 仓里现有的分组：顶层目录里**没有** SKILL.md 的那几个（点开头的、生成的都不算）。 */
+const groupsOf = async (root) => {
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const out = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (entry.name === "node_modules" || entry.name === "test") continue;
+    if (await stat(path.join(root, entry.name, "SKILL.md")).catch(() => null)) continue;
+    out.push(entry.name);
+  }
+  return out.sort((a, b) => a.localeCompare(b, "zh-CN"));
 };
 
 const createSkill = async (repo, root, body) => {
   const name = checkName(body.name);
+  const group = checkGroup(body.group);
+  // 分组只是抽屉，名字还是最后一段：`deprecated/demo` 的技能叫 `demo`。
+  const rel = group ? `${group}/${name}` : name;
   const description = String(body.description ?? "").trim();
   if (!description) throw withStatus(new Error(`${name}: description 不能空 —— 模型靠它判断该不该用这条技能`), 400);
   const categories = repo.sortCategories(repo.normalizeCategories(body.category ?? []));
 
-  if (await stat(path.join(root, name)).catch(() => null)) {
-    throw withStatus(new Error(`${name}/ 已经在了 —— 换个名字，或者直接去改它`), 400);
+  if (group && (await stat(path.join(root, group, "SKILL.md")).catch(() => null))) {
+    throw withStatus(new Error(`「${group}」已经是一条技能了 —— 技能里面不能再套技能`), 400);
+  }
+  if (await stat(path.join(root, rel)).catch(() => null)) {
+    throw withStatus(new Error(`${rel}/ 已经在了 —— 换个名字，或者直接去改它`), 400);
   }
   if (await stat(path.join(root, repo.ARCHIVE_DIR, name)).catch(() => null)) {
     throw withStatus(new Error(`${name}/ 在 .archive/ 里 —— 点「恢复」把它捡回来，别建第二个`), 400);
@@ -266,20 +347,23 @@ const createSkill = async (repo, root, body) => {
     );
 
     // 先自己过一遍闸：一个建出来就装载失败的目录，等于让人工去猜哪里写错了。
-    const problems = await checkSkillContent(root, name, staging);
+    // 闸比的是**最后一段**目录名 —— 这里传 rel，它自己拆。
+    const problems = await checkSkillContent(root, rel, staging);
     if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
 
     if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories], NO_PROTECT);
-    await rename(staging, path.join(root, name));
+    // 分组目录（`deprecated/`）可能还不存在：建之前先把它造出来。
+    if (group) await mkdir(path.join(root, group), { recursive: true });
+    await rename(staging, path.join(root, rel));
     landed = true;
     await repo.regenIndex(root, { required: false });
   } catch (error) {
-    if (landed) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
+    if (landed) await rm(path.join(root, rel), { recursive: true, force: true }).catch(() => {});
     await rm(staging, { recursive: true, force: true }).catch(() => {});
     if (categories.length) await repo.writeCategories(root, beforeVocab, NO_PROTECT).catch(() => {});
     throw error;
   }
-  return { ok: true, name };
+  return { ok: true, name, path: rel };
 };
 
 // ── 上游 ───────────────────────────────────────────────────────────────────
@@ -291,9 +375,9 @@ const createSkill = async (repo, root, body) => {
 /** `nous.json.upstream` 那个注脚：`<source>/<path>@<tree-sha>`。只写不读逻辑。 */
 const upstreamFoot = (source, home, sha) => `${source}/${home}@${sha ?? "unknown"}`;
 
-const footOf = async (root, name) => {
+const footOf = async (root, rel) => {
   try {
-    const manifest = JSON.parse(await readFile(path.join(root, name, "nous.json"), "utf8"));
+    const manifest = JSON.parse(await readFile(path.join(root, rel, "nous.json"), "utf8"));
     return typeof manifest?.upstream === "string" ? manifest.upstream : null;
   } catch {
     return null;
@@ -349,8 +433,14 @@ const adoptSkill = async (repo, root, data, body) => {
   }
 
   const name = checkName(body.name ?? path.posix.basename(home));
-  if (await stat(path.join(root, name)).catch(() => null)) {
-    throw withStatus(new Error(`${name}/ 已经在了 —— 想换成上游这版就改个名字，或者先归档本地这条`), 409);
+  // 取用也能直接放进一个分组（`deprecated`）；不给就是顶层。
+  const group = checkGroup(body.group);
+  const rel = group ? `${group}/${name}` : name;
+  if (group && (await stat(path.join(root, group, "SKILL.md")).catch(() => null))) {
+    throw withStatus(new Error(`「${group}」已经是一条技能了 —— 技能里面不能再套技能`), 400);
+  }
+  if (await stat(path.join(root, rel)).catch(() => null)) {
+    throw withStatus(new Error(`${rel}/ 已经在了 —— 想换成上游这版就改个名字，或者先归档本地这条`), 409);
   }
   if (await stat(path.join(root, repo.ARCHIVE_DIR, name)).catch(() => null)) {
     throw withStatus(new Error(`${name}/ 在 .archive/ 里 —— 先恢复或彻底删掉，别建第二个`), 409);
@@ -396,48 +486,87 @@ const adoptSkill = async (repo, root, data, body) => {
     );
 
     // 闸在这个位置跑：骨架是别人的，名字是我们改的 —— 两件事都可能出问题，一次说清。
-    const problems = await checkSkillContent(root, name, staging);
+    const problems = await checkSkillContent(root, rel, staging);
     if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
 
     if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories], NO_PROTECT);
-    await rename(staging, path.join(root, name));
+    if (group) await mkdir(path.join(root, group), { recursive: true });
+    await rename(staging, path.join(root, rel));
     landed = true;
     await repo.regenIndex(root, { required: false });
   } catch (error) {
-    if (landed) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
+    if (landed) await rm(path.join(root, rel), { recursive: true, force: true }).catch(() => {});
     await rm(staging, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
-  return { ok: true, name, fileCount };
+  return { ok: true, name, path: rel, fileCount };
 };
 
-const archiveSkill = async (repo, root, name) => {
-  if (!(await stat(path.join(root, name)).catch(() => null))) {
+/**
+ * 归档时把**原址**记进 nous.json 的 `archiveOrigin`。分组里的技能（`deprecated/demo`）
+ * 归档后躺在扁的 `.archive/demo/` 里，恢复时得回到那个分组 —— 不记就永远回不去了。
+ * 不另建一张表：这张表迟早会跟目录对不上（跟 index.json 一样的道理，但它没法重扫）。
+ */
+const stampOrigin = async (home, rel) => {
+  const file = path.join(home, "nous.json");
+  try {
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    await writeFile(file, JSON.stringify({ ...manifest, archiveOrigin: rel }, null, 2) + "\n", "utf8");
+  } catch {
+    // 没有 / 读不出来的 nous.json：归档照样做，恢复时落回顶层（它本来就过不了闸）
+  }
+};
+
+/** 读回原址，顺手把 `archiveOrigin` 从 nous.json 里摘掉（那是归档态的字段）。 */
+const takeOrigin = async (home) => {
+  const file = path.join(home, "nous.json");
+  try {
+    const manifest = JSON.parse(await readFile(file, "utf8"));
+    const rel = typeof manifest.archiveOrigin === "string" ? manifest.archiveOrigin.trim() : "";
+    if (rel) {
+      delete manifest.archiveOrigin;
+      await writeFile(file, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+    }
+    return rel;
+  } catch {
+    return "";
+  }
+};
+
+const archiveSkill = async (repo, root, name, skills) => {
+  const rel = relOf(skills, name);
+  if (!(await stat(path.join(root, rel)).catch(() => null))) {
     throw withStatus(new Error(`工作区里没有 ${name}/`), 404);
   }
   const snapshot = await snapshotIndex(root);
   try {
     // 未发布的也搬进 .archive/：那是「删掉的东西不真删」（I10），只有 purge 才真没。
-    await repo.moveIntoArchive(root, name);
+    await repo.moveIntoArchive(root, rel);
+    await stampOrigin(path.join(root, repo.ARCHIVE_DIR, name), rel);
     await repo.regenIndex(root, { required: false });
     return await repo.syncRepo(root, `skill: 归档 ${name}`, { includeDeleted: true, label: "技能", tag: "skill" });
   } catch (error) {
-    await repo.run("git", ["-C", root, "reset", "-q", "--", name, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
-    await repo.moveDir(path.join(root, repo.ARCHIVE_DIR, name), path.join(root, name)).catch(() => {});
+    await repo.run("git", ["-C", root, "reset", "-q", "--", rel, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
+    await repo.moveDir(path.join(root, repo.ARCHIVE_DIR, name), path.join(root, rel)).catch(() => {});
     await restoreIndex(snapshot);
     throw error.status ? error : withStatus(new Error(`归档失败，已回滚：${errorLine(error)}`), 400);
   }
 };
 
 const restoreSkill = async (repo, root, name) => {
+  const home = path.join(root, repo.ARCHIVE_DIR, name);
+  if (!(await stat(home).catch(() => null))) throw withStatus(new Error(`归档区里没有 ${name}`), 404);
+  // 回原来的分组（归档时记下的）；没记过就落回顶层。
+  const to = (await takeOrigin(home)) || name;
   const snapshot = await snapshotIndex(root);
   try {
-    await repo.moveOutOfArchive(root, name);
+    await repo.moveOutOfArchive(root, name, { to });
     await repo.regenIndex(root, { required: false });
     return await repo.syncRepo(root, `skill: 从归档恢复 ${name}`, { includeDeleted: true, label: "技能", tag: "skill" });
   } catch (error) {
-    await repo.run("git", ["-C", root, "reset", "-q", "--", name, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
-    await repo.moveDir(path.join(root, name), path.join(root, repo.ARCHIVE_DIR, name)).catch(() => {});
+    await repo.run("git", ["-C", root, "reset", "-q", "--", to, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
+    await repo.moveDir(path.join(root, to), path.join(root, repo.ARCHIVE_DIR, name)).catch(() => {});
+    if (to !== name) await stampOrigin(path.join(root, repo.ARCHIVE_DIR, name), to).catch(() => {});
     await restoreIndex(snapshot);
     throw error.status ? error : withStatus(new Error(`恢复失败，已回滚：${errorLine(error)}`), 400);
   }
@@ -518,6 +647,8 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       await repo.serializeRepoWrite(root, () =>
         repo.setNodeCategories(root, name, body.category ?? [], {
           label: "技能",
+          // 分组里的技能，nous.json 在 `<root>/<分组>/<名字>/` 下 —— 不传 dir 会改到顶层去。
+          dir: homeOf(root, skills, name),
           index: skillsIndex(repo, root),
           ...NO_PROTECT,
         }),
@@ -535,18 +666,58 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
     if (at[0] === "files") {
       if (method !== "GET") return send(res, 405, { error: "文件列表只有 GET" });
       const name = checkName(url.searchParams.get("name"));
-      const files = await repo.listRepoFiles(root, name, { kinds: null, maxFiles: 200, label: "技能" });
+      const files = await repo.listRepoFiles(root, name, {
+        dir: homeOf(root, skills, name),
+        kinds: null,
+        maxFiles: 200,
+        label: "技能",
+      });
       return send(res, 200, { name, files: files.map((file) => ({ path: file.path, size: file.size })) });
+    }
+
+    // 建一个空目录。**不提交**，跟写文件一样等发布。
+    // 空目录 git 不跟踪，所以里面会铺一份 `.gitkeep` 撑着 —— 第一次写真文件时它会被收掉。
+    if (at[0] === "mkdir") {
+      if (method !== "POST") return send(res, 405, { error: "新建文件夹只有 POST" });
+      const body = await parseJsonBody(req);
+      const name = checkName(body.name);
+      const dir = homeOf(root, skills, name);
+      const made = await repo.serializeRepoWrite(root, () =>
+        repo.mkdirRepoDir(root, { name, rel: body.path, dir, label: "技能" }),
+      );
+      return send(res, 200, made);
     }
 
     if (at[0] === "file") {
       if (method === "GET") {
         const name = checkName(url.searchParams.get("name"));
         const rel = String(url.searchParams.get("path") ?? "");
-        const file = await repo.readRepoFile(root, name, rel, { allowAny: true, label: "技能" });
+        const file = await repo.readRepoFile(root, name, rel, {
+          dir: homeOf(root, skills, name),
+          allowAny: true,
+          label: "技能",
+        });
         return send(res, 200, { name: file.name, path: file.path, text: file.text, etag: file.etag });
       }
-      if (method !== "PUT") return send(res, 405, { error: "文件只有 GET / PUT" });
+      if (method === "DELETE") {
+        // 删文件 / 删目录（`.trash` 那套在技能仓里没必要 —— git 历史就是回收站）。
+        // 目录里还有东西时不带 `recursive=1` 就是 409：一下点掉一堆稿子不是任何人想要的。
+        const name = checkName(url.searchParams.get("name"));
+        const rel = String(url.searchParams.get("path") ?? "");
+        const recursive = url.searchParams.get("recursive") === "1";
+        const gone = await repo.serializeRepoWrite(root, () =>
+          repo.deleteRepoPath(root, {
+            name,
+            rel,
+            dir: homeOf(root, skills, name),
+            label: "技能",
+            recursive,
+          }),
+        );
+        await reloadRoster(skills);
+        return send(res, 200, gone);
+      }
+      if (method !== "PUT") return send(res, 405, { error: "文件只有 GET / PUT / DELETE" });
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
       const saved = await repo.serializeRepoWrite(root, () =>
@@ -555,6 +726,8 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           rel: body.path,
           text: body.text,
           base: body.base,
+          // 路径可以指向一个还不存在的文件 = 新建（中间的目录一起造出来）。
+          dir: homeOf(root, skills, name),
           allowAny: true,
           // 技能里的闸是 frontmatter（publish 时才拦），不是 `node --check`。
           checkCode: false,
@@ -563,7 +736,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         }),
       );
       await reloadRoster(skills);
-      return send(res, 200, { etag: saved.etag });
+      return send(res, 200, { etag: saved.etag, path: saved.path, created: !body.base });
     }
 
     if (at[0] === "create") {
@@ -586,7 +759,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         const snapshot = await snapshotIndex(root);
         try {
           // 闸在最前面：不过就一个字节都不动（index.json 也不重扫，否则会留下「扫了一半」的假象）。
-          const problems = await gateRepo(repo, root);
+          const problems = await gateRepo(root);
           if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
           await repo.regenIndex(root, { required: false });
           return await repo.syncRepo(root, String(body.message ?? "").trim() || "skill: 更新技能仓库", {
@@ -612,7 +785,9 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
       const task = { archive: archiveSkill, restore: restoreSkill, purge: purgeSkill }[at[0]];
-      const result = await repo.serializeRepoWrite(root, () => task(repo, root, name));
+      const result = await repo.serializeRepoWrite(root, () =>
+        at[0] === "archive" ? task(repo, root, name, skills) : task(repo, root, name),
+      );
       await reloadRoster(skills);
       return send(res, 200, { ...(await writeResult(repo, root, result)), name });
     }
@@ -676,7 +851,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           if (!ready) continue;
           try {
             for (const entry of await upstream.listEntries({ data, source, run: repo.run })) {
-              entries.push({ ...entry, local: localStateOf(roster, await footOf(root, entry.name), entry) });
+              entries.push({ ...entry, local: localStateOf(roster, await footOf(root, relOf(skills, entry.name)), entry) });
             }
           } catch (error) {
             errors.push({ source: source.name, error: errorLine(error) });
@@ -716,14 +891,18 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
 
         // 本地对照的那一侧：优先找「从这条取的」那个本地技能（可能取用时改过名）。
         const roster = skills.list() ?? [];
-        const adopted = (await Promise.all(roster.map(async (skill) => ({ skill, foot: await footOf(root, skill.name) })))).find(
+        const adopted = (
+          await Promise.all(roster.map(async (skill) => ({ skill, foot: await footOf(root, skill.path ?? skill.name) })))
+        ).find(
           (item) => item.foot?.startsWith(`${source.name}/${home}@`),
         );
         const localName = adopted?.skill.name ?? path.posix.basename(home);
+        // 本地对照用的是**它住哪儿**（`deprecated/demo`），不是它叫什么 —— 用名字会找错文件。
+        const localRel = adopted?.skill.path ?? localName;
         const files = await upstream.entryFiles({ data: mirrors(), source, run: repo.run, dir: home });
         const out = [];
         for (const file of files) {
-          const localFile = path.join(root, localName, file.path);
+          const localFile = path.join(root, localRel, file.path);
           let state = "missing";
           if (await stat(localFile).catch(() => null)) {
             // 比 git blob sha：内容一致就是 same，一个字节不同就是 diff。

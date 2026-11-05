@@ -685,3 +685,216 @@ test("I7：publish / archive / restore 失败时 index.json 一个字节不差�
     await cleanup(root);
   }
 });
+
+// ── 10. 分组：`deprecated/<名字>/`（mattpocock 那个仓的形状）──────────────────
+//
+// 分组只是抽屉：`name` 还是最后一段、还是会话键；住哪儿由 `path` 说。
+// 所有文件 / 类别 / 归档的读写都得先按 path 找到目录 —— 找不到就全 404。
+
+test("POST /v1/skills/create 带 group：落在 <分组>/<名字>/，name 还是名字", async () => {
+  const { root, skills } = await setup();
+  const api1 = api(root, skills);
+  try {
+    const made = await api1.call("POST", "/v1/skills/create", {
+      name: "old",
+      description: "退休的。",
+      group: "deprecated",
+    });
+    assert.equal(made.status, 200, JSON.stringify(made.body));
+    assert.equal(made.body.skill.name, "old");
+    assert.equal(made.body.skill.path, "deprecated/old");
+
+    assert.match(await read(root, "deprecated/old/SKILL.md"), /name: old/);
+    assert.equal(await exists(path.join(root, "old")), false, "不该在顶层多出一个 old/");
+    // 生成器扫出来的 index.json 也得带 path。
+    assert.equal((await readJson(root, "index.json")).skills[0].path, "deprecated/old");
+
+    const overview = await api1.call("GET", "/v1/skills");
+    assert.deepEqual(overview.body.groups, ["deprecated"]);
+    assert.equal(overview.body.skills[0].tracked, false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("create 的 group 不合法 / 分组已经是一条技能：400，不留下半截", async () => {
+  const { root, skills } = await setup(skillFiles("taken"));
+  const api1 = api(root, skills);
+  try {
+    const deep = await api1.call("POST", "/v1/skills/create", {
+      name: "demo",
+      description: "x",
+      group: "a/b",
+    });
+    assert.equal(deep.status, 400);
+    assert.match(deep.body.error, /一层/);
+
+    const inside = await api1.call("POST", "/v1/skills/create", {
+      name: "demo",
+      description: "x",
+      group: "taken",
+    });
+    assert.equal(inside.status, 400);
+    assert.match(inside.body.error, /taken/);
+    assert.equal(await exists(path.join(root, "taken", "demo")), false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("分组里的技能：files / file / category 都按 path 找得到", async () => {
+  const { root, skills } = await setup({ ...skillFiles("deprecated/demo") });
+  const api1 = api(root, skills);
+  try {
+    const listed = await api1.call("GET", "/v1/skills/files?name=demo");
+    assert.equal(listed.status, 200);
+    assert.deepEqual(
+      listed.body.files.map((file) => file.path).sort(),
+      ["SKILL.md", "nous.json"],
+    );
+
+    const one = await api1.call("GET", "/v1/skills/file?name=demo&path=SKILL.md");
+    assert.equal(one.status, 200);
+    assert.match(one.body.text, /name: demo/);
+
+    const saved = await api1.call("PUT", "/v1/skills/file", {
+      name: "demo",
+      path: "SKILL.md",
+      text: `${one.body.text}\n改一行。\n`,
+      base: one.body.etag,
+    });
+    assert.equal(saved.status, 200);
+    assert.match(await read(root, "deprecated/demo/SKILL.md"), /改一行。/);
+    assert.equal(await exists(path.join(root, "demo")), false);
+
+    const cat = await api1.call("POST", "/v1/skills/category", { name: "demo", category: [] });
+    assert.equal(cat.status, 200);
+    assert.deepEqual(cat.body.skill.category, []);
+    assert.deepEqual((await readJson(root, "deprecated/demo/nous.json")).category, []);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("分组里的技能：归档进扁的 .archive/<名字>，恢复回原来那个分组", async () => {
+  const { root, skills } = await setup({ ...skillFiles("deprecated/demo") });
+  const api1 = api(root, skills);
+  try {
+    const gone = await api1.call("POST", "/v1/skills/archive", { name: "demo" });
+    assert.equal(gone.status, 200, JSON.stringify(gone.body));
+    assert.equal(await exists(path.join(root, "deprecated/demo")), false);
+    assert.equal(await exists(path.join(root, ".archive/demo")), true);
+    assert.equal((await readJson(root, ".archive/demo/nous.json")).archiveOrigin, "deprecated/demo");
+
+    const back = await api1.call("POST", "/v1/skills/restore", { name: "demo" });
+    assert.equal(back.status, 200, JSON.stringify(back.body));
+    assert.equal(await exists(path.join(root, "deprecated/demo/SKILL.md")), true, "恢复必须回到原来的分组");
+    assert.equal(await exists(path.join(root, ".archive/demo")), false);
+    // archiveOrigin 是归档态的字段，回来了就该摘掉。
+    assert.equal(Object.hasOwn(await readJson(root, "deprecated/demo/nous.json"), "archiveOrigin"), false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 11. 写路径：新建文件 / 新建文件夹 / 删除 ────────────────────────────────
+//
+// 「新建文件」= PUT 一个还不存在的路径；「新建文件夹」= 建目录 + 一份 `.gitkeep`
+// （空目录 git 不跟踪，没有它这个文件夹发布那一刻就消失）。删除不提交，git 是回收站。
+
+test("PUT 一个不存在的路径 = 新建；中间的目录一起造出来；.gitkeep 顺手收掉", async () => {
+  const { root, skills } = await setup(skillFiles("grow"));
+  const api1 = api(root, skills);
+  try {
+    const made = await api1.call("POST", "/v1/skills/mkdir", { name: "grow", path: "references" });
+    assert.equal(made.status, 200, JSON.stringify(made.body));
+    assert.match(await read(root, "grow/references/.gitkeep"), /^$/);
+
+    const saved = await api1.call("PUT", "/v1/skills/file", {
+      name: "grow",
+      path: "references/deep/guide.md",
+      text: "# 指南\n",
+    });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    assert.match(await read(root, "grow/references/deep/guide.md"), /# 指南/);
+    assert.equal(await exists(path.join(root, "grow/references/.gitkeep")), false);
+
+    const listed = await api1.call("GET", "/v1/skills/files?name=grow");
+    assert.ok(listed.body.files.some((file) => file.path === "references/deep/guide.md"));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("PUT 的路径跑出技能目录（../）：403，盘上什么都不留", async () => {
+  const { root, skills } = await setup(skillFiles("safe"));
+  const api1 = api(root, skills);
+  try {
+    const bad = await api1.call("PUT", "/v1/skills/file", { name: "safe", path: "../escape.md", text: "x" });
+    assert.ok([400, 403].includes(bad.status), `路径逃逸必须被挡（收到 ${bad.status}）`);
+    assert.equal(await exists(path.join(root, "escape.md")), false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("DELETE 文件：删掉，空掉的父目录一起收；非空目录要显式 recursive", async () => {
+  const { root, skills } = await setup(skillFiles("trim"));
+  const api1 = api(root, skills);
+  try {
+    await api1.call("PUT", "/v1/skills/file", { name: "trim", path: "notes/a.md", text: "a" });
+    await api1.call("PUT", "/v1/skills/file", { name: "trim", path: "notes/b.md", text: "b" });
+
+    const blocked = await api1.call("DELETE", "/v1/skills/file?name=trim&path=notes");
+    assert.equal(blocked.status, 409);
+    assert.match(blocked.body.error, /notes/);
+
+    const one = await api1.call("DELETE", "/v1/skills/file?name=trim&path=notes/a.md");
+    assert.equal(one.status, 200);
+    assert.equal(await exists(path.join(root, "trim/notes/a.md")), false);
+    assert.equal(await exists(path.join(root, "trim/notes")), true, "还有 b.md，目录得留着");
+
+    const last = await api1.call("DELETE", "/v1/skills/file?name=trim&path=notes/b.md");
+    assert.equal(last.status, 200);
+    assert.equal(await exists(path.join(root, "trim/notes")), false, "空了就连目录一起收");
+
+    await api1.call("POST", "/v1/skills/mkdir", { name: "trim", path: "junk" });
+    await api1.call("PUT", "/v1/skills/file", { name: "trim", path: "junk/x.md", text: "x" });
+    const whole = await api1.call("DELETE", "/v1/skills/file?name=trim&path=junk&recursive=1");
+    assert.equal(whole.status, 200, JSON.stringify(whole.body));
+    assert.equal(await exists(path.join(root, "trim/junk")), false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("DELETE 不存在的路径：404，不是 500", async () => {
+  const { root, skills } = await setup(skillFiles("trim"));
+  const api1 = api(root, skills);
+  try {
+    const gone = await api1.call("DELETE", "/v1/skills/file?name=trim&path=nope.md");
+    assert.equal(gone.status, 404);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("tracked：HEAD 里有的算已发布，分组里的也算（不能只看顶层目录）", async () => {
+  const { root, skills } = await setup({
+    ...skillFiles("plain"),
+    ...skillFiles("deprecated/old"),
+    ...skillFiles("deprecated/fresh"),
+  });
+  // `fresh` 还没进 HEAD 那次提交 —— 只有它是「未发布」。
+  await repo.run("git", ["-C", root, "rm", "-r", "-q", "--cached", "--", "deprecated/fresh"]);
+  await repo.run("git", ["-C", root, "commit", "-q", "-m", "只提交 plain + deprecated/old"]);
+  await skills.load();
+
+  const api1 = api(root, skills);
+  const overview = await api1.call("GET", "/v1/skills");
+  const byName = new Map(overview.body.skills.map((skill) => [skill.name, skill]));
+  assert.equal(byName.get("plain").tracked, true);
+  assert.equal(byName.get("old").tracked, true, "分组里的已发布技能不能算未发布");
+  assert.equal(byName.get("fresh").tracked, false, "没进 HEAD 的才是未发布");
+  await cleanup(root);
+});

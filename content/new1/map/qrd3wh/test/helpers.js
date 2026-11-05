@@ -56,20 +56,32 @@ export const cleanup = (root) => rm(root, { recursive: true, force: true });
 // 真仓库里 `index.mjs` 是票 A 的产物（`buildIndex(root)` + CLI）。这里放一个**同形状的
 // 迷你版**：扫非点开头的目录、读 SKILL.md 的 frontmatter、校验失败就非 0 退出且不写文件。
 // 测的是「写完之后有没有真的重扫」，不是那个文件本身 —— 所以它够用就行。
-export const MINI_INDEX = `import { readdir, readFile, writeFile } from "node:fs/promises";
+export const MINI_INDEX = `import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const skills = [];
-for (const entry of await readdir(root, { withFileTypes: true })) {
-  if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-  let text;
-  try {
-    text = await readFile(path.join(root, entry.name, "SKILL.md"), "utf8");
-  } catch {
-    continue;
+// 技能可以住在分组里（\`deprecated/<名字>/\`）。分组最多一层 —— 跟真生成器同一条规矩。
+const findSkillRels = async (dir, rel = "", depth = 0) => {
+  const out = [];
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const childRel = rel ? rel + "/" + entry.name : entry.name;
+    const childDir = path.join(dir, entry.name);
+    if (await stat(path.join(childDir, "SKILL.md")).catch(() => null)) {
+      out.push(childRel);
+      continue;
+    }
+    if (depth < 1) out.push(...(await findSkillRels(childDir, childRel, depth + 1)));
   }
+  return out;
+};
+
+const skills = [];
+for (const rel of await findSkillRels(root)) {
+  const leaf = rel.split("/").at(-1);
+  const text = await readFile(path.join(root, rel, "SKILL.md"), "utf8");
   const front = /^\\uFEFF?---[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n---/.exec(text);
   const fields = {};
   for (const line of (front?.[1] ?? "").split(/\\r?\\n/)) {
@@ -77,16 +89,16 @@ for (const entry of await readdir(root, { withFileTypes: true })) {
     if (at === -1) continue;
     fields[line.slice(0, at).trim()] = line.slice(at + 1).trim().replace(/^"|"$/g, "");
   }
-  if (fields.name !== entry.name) {
-    console.error(entry.name + ": frontmatter 的 name 跟目录名对不上");
+  if (fields.name !== leaf) {
+    console.error(rel + ": frontmatter 的 name 跟目录名对不上");
     process.exit(1);
   }
   if (!fields.description) {
-    console.error(entry.name + ": description 是空的");
+    console.error(rel + ": description 是空的");
     process.exit(1);
   }
-  const manifest = JSON.parse(await readFile(path.join(root, entry.name, "nous.json"), "utf8"));
-  skills.push({ name: entry.name, description: fields.description, category: manifest.category ?? [] });
+  const manifest = JSON.parse(await readFile(path.join(root, rel, "nous.json"), "utf8"));
+  skills.push({ name: leaf, path: rel, description: fields.description, category: manifest.category ?? [] });
 }
 skills.sort((a, b) => a.name.localeCompare(b.name));
 await writeFile(path.join(root, "index.json"), JSON.stringify({ v: 1, skills }, null, 2) + "\\n");
@@ -121,11 +133,17 @@ for (const entry of readdirSync(root, { withFileTypes: true })) {
 writeFileSync(path.join(root, "index.json"), JSON.stringify({ v: 1, skills }, null, 2) + "\\n");
 `;
 
-/** 一个技能目录（三个文件），可以直接铺进仓里当 fixture。 */
-export const skillFiles = (name, { description = `${name} 的说明`, category = [], summary = "" } = {}) => ({
-  [`${name}/SKILL.md`]: `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n# ${name}\n`,
-  [`${name}/nous.json`]: JSON.stringify({ name, summary, category }, null, 2) + "\n",
-});
+/**
+ * 一个技能目录（两个文件），可以直接铺进仓里当 fixture。
+ * `name` 可以是带分组的路径（`deprecated/demo`）—— 文件里写的名字永远是**最后一段**。
+ */
+export const skillFiles = (name, { description = `${name} 的说明`, category = [], summary = "" } = {}) => {
+  const leaf = path.posix.basename(name);
+  return {
+    [`${name}/SKILL.md`]: `---\nname: ${leaf}\ndescription: ${JSON.stringify(description)}\n---\n\n# ${leaf}\n`,
+    [`${name}/nous.json`]: JSON.stringify({ name: leaf, summary, category }, null, 2) + "\n",
+  };
+};
 
 // ── 假的 skills service ─────────────────────────────────────────────────────
 //
@@ -135,16 +153,31 @@ export const skillFiles = (name, { description = `${name} 的说明`, category =
 export const makeSkills = (root) => {
   const state = { roster: [], loads: 0, failLoad: null };
   const scan = async () => {
-    let entries;
-    try {
-      entries = await readdir(root, { withFileTypes: true });
-    } catch {
-      return [];
-    }
+    // 分组（`deprecated/<名字>/`）最多一层：跟真扩展的 findSkillRels 一个形状。
+    const rels = [];
+    const walk = async (base, rel, depth) => {
+      let entries;
+      try {
+        entries = await readdir(base, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries.filter((e) => e.isDirectory() && !e.name.startsWith("."))) {
+        const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+        const childDir = path.join(base, entry.name);
+        if (await stat(path.join(childDir, "SKILL.md")).catch(() => null)) {
+          rels.push(childRel);
+          continue;
+        }
+        if (depth < 1) await walk(childDir, childRel, depth + 1);
+      }
+    };
+    await walk(root, "", 0);
+
     const found = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
-      const dir = path.join(root, entry.name);
+    for (const rel of rels) {
+      const entry = { name: rel.split("/").at(-1) };
+      const dir = path.join(root, rel);
       let text;
       try {
         text = await readFile(path.join(dir, "SKILL.md"), "utf8");
@@ -171,6 +204,7 @@ export const makeSkills = (root) => {
             : null;
       found.push({
         name: entry.name,
+        path: rel,
         description: fields.description ?? "",
         dir,
         file: path.join(dir, "SKILL.md"),

@@ -39,12 +39,19 @@ skill 从「上游编目的投影」变成「我们自己 git 仓库里的文件
 ├── categories.json          {"v":1,"categories":["Basics"]}
 ├── index.json               生成物，别手改
 ├── index.mjs                扫盘器（导出 buildIndex，CLI 薄壳）
-├── .archive/<name>/         废弃的技能整目录搬这儿，git 追踪，能恢复
+├── .archive/<name>/         废弃的技能整目录搬这儿（**扁的**，不跟分组），git 追踪，能恢复
+├── <分组>/                   可选：只装技能的抽屉（`deprecated` / `engineering`），**最多一层**
+│   ├── README.md           分组自己的说明（空抽屉靠它存在）
+│   └── <name>/ …           技能形状同上
 └── <name>/                  一个目录 = 一条技能，目录名 == 技能名 == 会话里的 API 键
     ├── SKILL.md             frontmatter + 正文
     ├── nous.json            {"name","summary","category":[]}
-    └── …                    可选：这条技能自带的参考文档 / 脚本（同目录，相对路径引用）
+    └── …                    可选：这条技能自带的参考文档 / 脚本（**可以再分子目录**，相对路径引用）
 ```
+
+**分组只是抽屉，不进名字。** `deprecated/demo/` 那条技能还叫 `demo`：`name` 是会话里的键
+（`skill:demo`），`index.json` 里多一个 `path: "deprecated/demo"` 记着它住哪儿。
+所以全仓**只能有一个** `demo` —— 两个抽屉各放一个，模型那边只有一个跑得起来，`buildIndex` 直接报错。
 
 **没有** `package.json`、`node_modules`、示例技能。空仓就是空仓。
 
@@ -128,8 +135,11 @@ createSkills({ dir, registry, api })   // 签名只有这三个键，多一个�
 ### 4.2 扫盘规则
 
 - 遍历 `<dir>/*`，只认目录，跳过 `.` 开头（`.archive/` 天然不进）。
-- 没有 `SKILL.md` 的目录跳过（可能是留了别的东西），**静默**，不算坏账。
-- 有 `SKILL.md` 但 frontmatter 缺 `name` / `description`、或 `name !== 目录名` → `failed` + `error`。
+- **有 `SKILL.md` = 一条技能**；没有的当**分组**（`deprecated/` 那种），往里再找一层（最多一层，`MAX_GROUP_DEPTH = 1`）。
+- 分组里只有 `README.md`、一条技能都没有：合法，直接跳过（空抽屉就该空着）。
+- 有 `SKILL.md` 但 frontmatter 缺 `name` / `description`、或 `name !== 最后一段目录名` → `failed` + `error`。
+- 两个抽屉里有同名技能：先扫到的留着，后来的 `failed`，`error` 里点出两条路径（名字是会话键，只能有一个生效）。
+- `list()` 每项多一个 `path`（`demo` / `deprecated/demo`）：面板靠它开文件，会话靠 `name` 认技能。
 - 不读 `.nw.json`、不读任何缓存文件。
 
 ### 4.3 `render(names)` 一个字节都不许变
@@ -212,11 +222,13 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
 | `POST /v1/skills/category` | `{ name, category: string[] }` | `{ skill, skills, categories }` |
 | `GET /v1/skills/files?name=` | — | `{ name, files: [{ path, size }] }`（`<name>/` 下非点开头的文件，递归，最多 200 个） |
 | `GET /v1/skills/file?name=&path=` | — | `{ name, path, text, etag }`；二进制/不存在 → 404 `{error}` |
-| `PUT /v1/skills/file` | `{ name, path, text, base }` | `{ etag }`；`base` 与当前不一致 → 409 |
-| `POST /v1/skills/create` | `{ name, description, category? }` | `{ skill, skills }` |
+| `PUT /v1/skills/file` | `{ name, path, text, base }` | `{ etag, path, created }`；**目标不存在 = 新建**（中途的目录一起造出来），`base` 与当前不一致 → 409 |
+| `DELETE /v1/skills/file?name=&path=[&recursive=1]` | — | `{ name, path, kind }`；目录非空且没 `recursive=1` → 409；文件**不真删**（git 历史就是回收站） |
+| `POST /v1/skills/mkdir` | `{ name, path }` | `{ name, path, kind: "dir" }`；里面铺一份 `.gitkeep`（空目录 git 不跟踪） |
+| `POST /v1/skills/create` | `{ name, description, category?, group? }` | `{ skill, skills }`；`group` = `deprecated` 那种抽屉，建的时候顺手建它 |
 | `POST /v1/skills/publish` | `{ message? }` | `{ ok, commit: {hash,subject} \| null, pushed: bool, warnings: string[] }` |
-| `POST /v1/skills/archive` | `{ name }` | `{ ok, commit, pushed }` |
-| `POST /v1/skills/restore` | `{ name }` | `{ ok, commit, pushed }` |
+| `POST /v1/skills/archive` | `{ name }` | `{ ok, commit, pushed }`；分组里的搬进扁的 `.archive/<name>`，原址记在 `nous.json.archiveOrigin` |
+| `POST /v1/skills/restore` | `{ name }` | `{ ok, commit, pushed }`；按 `archiveOrigin` 搬回原来的分组 |
 | `POST /v1/skills/purge` | `{ name }` | `{ ok, commit, pushed }` |
 | `GET /v1/skills/pending` | — | 见 §6.3 |
 | `GET /v1/skills/pending/diff?path=` | — | `{ path, before, after }`（对 HEAD；未跟踪文件 `before: null`） |
@@ -241,7 +253,9 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
 }
 ```
 
-- `tracked` = `git ls-tree --name-only -d HEAD` 里有这个目录。`tracked: false` 且目录在 = **未发布**。
+- `tracked` = `git ls-tree -r --name-only HEAD` 里有东西住在这个 `path` 下面。`tracked: false` 且目录在 = **未发布**。
+  **按 `path` 比，不是按 `name`** —— 分组里的技能（`deprecated/demo`）用名字去 HEAD 里找永远找不到，全都会被错标成未发布。
+- `groups` = 顶层里**没有** `SKILL.md` 的目录名（`deprecated` 那种抽屉）。面板的新建弹窗拿它做建议，不用手打。
 - `archived` = `.archive/` 下的目录名，升序。只给名字，恢复不需要别的。
 - `repo.error`：git 命令失败时填一行原因，`head` 等给 `null`/`0`，**不要** 500 —— 面板要能显示「仓库读不了」而不是白屏。
 
@@ -268,11 +282,22 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
 
 ### 6.5 `create` 的规矩
 
-1. 只问三样：`name`、`description`、`category`（默认 `[]`）。
+1. 只问三样：`name`、`description`、`category`（默认 `[]`），外加可空的 `group`（`deprecated` 那种抽屉，最多一层）。
 2. 名字：小写优先，允许 `[a-z0-9][a-z0-9._-]*`，≤ 64 字；撞已有目录 / 撞 `.archive/<name>` / 撞词表里的保留名 → 400 且说清撞了谁。
 3. **先建 `.new-<name>-<ts>/`（点开头，扫盘天然跳过）→ 写 `SKILL.md` + `nous.json` → `buildIndex` 校验通过 → `rename` 成正式目录**。任何一步翻车整棵删掉。不留半截。
 4. 骨架只有 frontmatter（`name` + `description`）+ 一行 `# <name>`。**不写示例正文。**
 5. 建完**不提交**（第一个正确状态 = 未发布）。
+6. `group` 非空时落在 `<分组>/<name>/`；分组目录不存在就顺手建，先验它不是一条技能（技能里不许套技能）。
+
+### 6.6 正文抽屉的文件操作
+
+- **新建文件 = `PUT` 一个还不存在的 `path`。** 中途的目录一起造出来 —— 这就是「新建文件夹」的实现，
+  不另给端点。已存在的文件走同一条 PUT，靠 `base` 防覆盖。
+- **新建空文件夹 = `POST /mkdir`**，里面铺一份 `.gitkeep`。空目录 git 不跟踪，没有这份占位，
+  它发布那一刻就消失了（然后用户会来问「我建的文件夹呢」）。写进第一个真文件时服务端顺手收掉它。
+- **删除 = `DELETE`**，直接 `rm`，不套 `.trash/`：git 历史就是回收站，再存一遍是白存。
+  非空目录必须显式 `recursive=1`（409 的原文里说清还有几个东西）。
+- 删完之后空掉的父目录一起收；文件列表是**现扫**的，不存索引。
 
 ---
 
@@ -315,6 +340,8 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 - **I8** 面板不复刻语义闸。校验在服务端一处，UI 只摆结果。
 - **I9** 链接写相对路径（`cp -r map/<id> ~/<id> && npm start` 还是同一页）。
 - **I10** 已删的东西进 `.archive/` 或 `data/` 的垃圾站，不真删；只有 `purge` 才真删。
+  技能**里面的**文件是例外：`DELETE /v1/skills/file` 直接 `rm`，因为 git 历史就是那份回收站
+  —— 再套一层 `.trash/` 等于把已经安全的东西又存一遍。
 
 ---
 

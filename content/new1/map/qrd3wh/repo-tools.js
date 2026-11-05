@@ -230,10 +230,11 @@ export const setNodeCategories = async (
   root,
   name,
   categories,
-  { label = "扩展", index = null, protect = PROTECTED_CATEGORIES } = {},
+  { label = "扩展", dir = null, index = null, protect = PROTECTED_CATEGORIES } = {},
 ) => {
   if (!EXTENSION_NAME_RE.test(name)) throw withStatus(new Error(`${label}名不合法：${name}`), 400);
-  const file = path.join(root, name, "nous.json");
+  // `dir` = 这个条目真正住哪儿（分组里的技能是 `<root>/<分组>/<名字>`），不给就是顶层。
+  const file = path.join(dir ?? path.join(root, name), "nous.json");
   let before;
   try {
     before = await readFile(file, "utf8");
@@ -372,25 +373,46 @@ export const gitRootOf = async (dir, fallback = null) => {
 
 /**
  * 相对路径 → 绝对路径，且 realpath 之后还得在这个目录里（符号链接是逃逸口）。
- * `dir` = 覆盖目录（变体用它）；不给就是 `<root>/<name>`。
+ * `dir` = 覆盖目录（变体 / 分组里的技能用它）；不给就是 `<root>/<name>`。
+ *
+ * `create: true` = 目标可以还没存在（新建文件 / 文件夹）：父目录一路造出来，
+ * 造之前先验「最深的已存在那一层」在不在目录里 —— 不然顺着一个指向外面的
+ * 符号链接，mkdir 会把目录造到别处去。
  */
-export const resolveInside = async (root, name, rel, dir = null, label = "扩展") => {
+export const resolveInside = async (root, name, rel, dir = null, label = "扩展", { create = false } = {}) => {
   const { name: clean, dir: baseDir } = repoDir(root, name, label);
   const base = dir ?? baseDir;
-  const raw = String(rel ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+  const raw = String(rel ?? "").replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "");
   if (!raw || raw.split("/").some((part) => !part || part === "." || part === "..")) {
     throw withStatus(new Error(`路径不合法：${rel}`), 400);
   }
   const target = path.resolve(base, raw);
   if (!target.startsWith(base + path.sep)) throw withStatus(new Error(`路径跑出了${label}目录`), 403);
+  const realBase = await realpath(base).catch(() => base);
   let real;
   try {
     real = await realpath(target);
   } catch {
-    throw withStatus(new Error(`没有这个文件：${clean}/${raw}`), 404);
+    if (!create) throw withStatus(new Error(`没有这个文件：${clean}/${raw}`), 404);
+    const parent = path.dirname(target);
+    // 先找出「最深的已经存在的那一层」验一遍，再建：顺序反过来的话，中途那个 mkdir
+    // 已经能顺着符号链接把东西造到目录外面了。
+    let probe = parent;
+    while (probe !== base && !(await stat(probe).catch(() => null))) probe = path.dirname(probe);
+    const realProbe = await realpath(probe).catch(() => null);
+    if (!realProbe || (realProbe !== realBase && !realProbe.startsWith(realBase + path.sep))) {
+      throw withStatus(new Error(`路径跑出了${label}目录`), 403);
+    }
+    await mkdir(parent, { recursive: true });
+    const realParent = await realpath(parent);
+    if (realParent !== realBase && !realParent.startsWith(realBase + path.sep)) {
+      throw withStatus(new Error(`路径跑出了${label}目录`), 403);
+    }
+    real = path.join(realParent, path.basename(target));
   }
-  const realDir = await realpath(base).catch(() => base);
-  if (!real.startsWith(realDir + path.sep)) throw withStatus(new Error(`路径跑出了${label}目录`), 403);
+  if (real !== realBase && !real.startsWith(realBase + path.sep)) {
+    throw withStatus(new Error(`路径跑出了${label}目录`), 403);
+  }
   return { name: clean, dir: base, file: real, rel: raw };
 };
 
@@ -502,13 +524,19 @@ export const writeRepoFile = async (
   root,
   { name, rel, text, base, dir = null, allowAny = false, checkCode = true, strictIndex = true, label = "扩展" },
 ) => {
-  const { name: clean, file, rel: pathname, dir: baseDir } = await resolveInside(root, name, rel, dir, label);
+  // `create: true`：写一个还不存在的文件 = 新建。中途的目录（`docs/guide.md` 里的
+  // `docs/`）一起造出来，这就是「新建文件夹」的全部实现 —— 空文件夹在 git 里活不下去，
+  // 真正立得住的只有「文件夹里有个文件」。
+  const { name: clean, file, rel: pathname, dir: baseDir } = await resolveInside(root, name, rel, dir, label, {
+    create: true,
+  });
   const kind = kindOfPath(file);
   if (!allowAny && !kind) throw withStatus(new Error("这一页只编辑 .js / .mjs / .json / .md"), 415);
   if (typeof text !== "string") throw withStatus(new Error("text 得是字符串（哪怕是空串）"), 400);
   if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) throw withStatus(new Error("文件太大"), 413);
 
-  const before = await readFile(file, "utf8").catch(() => "");
+  const existed = Boolean(await stat(file).catch(() => null));
+  const before = existed ? await readFile(file, "utf8").catch(() => "") : "";
   // base 是「我改的是哪一版」：别人先改了，这里就 409，别把对方的字盖掉。
   if (base && etagOf(before) !== String(base)) {
     throw withStatus(new Error("这个文件在别处被改过了 —— 先刷新，再改"), 409);
@@ -525,15 +553,32 @@ export const writeRepoFile = async (
 
   await writeFileAtomic(file, text);
 
+  // 这一层（以及上面每一层）有了真文件，之前铺的 `.gitkeep` 就多余了 —— 顺手收掉。
+  // 只收**同一条链上的**：`references/deep/guide.md` 建好之后，`references/.gitkeep`
+  // 和 `references/deep/.gitkeep` 都成了占位垃圾（git 靠那个 md 就看得见这两层）。
+  if (path.basename(file) !== ".gitkeep") {
+    for (let dir = path.dirname(file); ; dir = path.dirname(dir)) {
+      const rel = path.relative(baseDir, dir);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) break;
+      await rm(path.join(dir, ".gitkeep"), { force: true }).catch(() => {});
+      if (!rel) break;
+    }
+  }
+
   // nous.json 不是「普通 JSON」：目录名 == 名字、字段齐全、入口真在 —— 只有 index.mjs 认。
-  // 变体跳过（`dir` 非空）：生成器扫的是主树，拿变体的清单去重扫主树的生成物是错的。
-  if (pathname === "nous.json" && !dir) {
+  // 变体跳过（它那棵树在仓外、有自己的生成器）：拿变体的清单去重扫主树的生成物是错的。
+  // 判据是「目录在不在这个仓里」，**不是**「dir 参数空不空」—— 分组里的技能也带着 dir
+  // （`<root>/deprecated/demo`），它一样得重扫。
+  const insideRoot = path.resolve(baseDir).startsWith(path.resolve(root) + path.sep);
+  if (pathname === "nous.json" && insideRoot) {
     const present = await stat(path.join(root, "index.mjs")).catch(() => null);
     if (strictIndex || present) {
       try {
         await runIndex(root);
       } catch (error) {
-        await writeFileAtomic(file, before);
+        // 新建的文件回滚 = 删掉，不是写一份空的进去（空 nous.json 会一直红在那里）。
+        if (existed) await writeFileAtomic(file, before);
+        else await rm(file, { force: true }).catch(() => {});
         throw withStatus(new Error(`nous.json 没过 index.mjs，已回滚：${errorDetail(error)}`), 400);
       }
     }
@@ -554,6 +599,55 @@ export const writeRepoFile = async (
 
 // ── 工作区现状 ──────────────────────────────────────────────────────────────
 
+/**
+ * 建一个空目录。
+ *
+ * git 不跟踪空目录 —— 一个真正空的文件夹发布那一刻就凭空消失了。所以它的存在感由里面
+ * 那份 `.gitkeep` 撑着（约定俗成，不是我们发明的）。第一次往里面写真文件时，
+ * `writeRepoFile` 会把它收掉。
+ */
+export const mkdirRepoDir = async (root, { name, rel, dir = null, label = "扩展" }) => {
+  const { name: clean, file, rel: pathname } = await resolveInside(root, name, rel, dir, label, { create: true });
+  const info = await stat(file).catch(() => null);
+  if (info && !info.isDirectory()) {
+    throw withStatus(new Error(`${clean}/${pathname} 已经是一个文件了 —— 文件夹不能用这个名字`), 409);
+  }
+  await mkdir(file, { recursive: true });
+  // 已经有的文件夹不重铺占位：那会把用户手删的 `.gitkeep` 又塞回来。
+  const keep = path.join(file, ".gitkeep");
+  if (!(await stat(keep).catch(() => null))) await writeFileAtomic(keep, "");
+  return { name: clean, path: pathname, kind: "dir" };
+};
+
+/**
+ * 删一个文件或一整个目录。**不提交** —— 跟写一样，落盘等发布（git 历史就是回收站）。
+ *
+ * `recursive: false`（默认）时目录里还有东西就 409：一下点掉三个月稿子不是任何人想要的。
+ * 真删整棵要显式说 recursive。删完之后父目录空到只剩 `.gitkeep` 就一起收掉 ——
+ * 空目录 git 不跟踪，留在盘上就是幽灵。
+ */
+export const deleteRepoPath = async (root, { name, rel, dir = null, label = "扩展", recursive = false }) => {
+  const { name: clean, file, rel: pathname, dir: base } = await resolveInside(root, name, rel, dir, label);
+  const info = await stat(file);
+  if (info.isDirectory()) {
+    const left = (await readdir(file)).filter((entry) => entry !== ".gitkeep");
+    if (left.length && !recursive) {
+      throw withStatus(new Error(`「${pathname}/」里还有 ${left.length} 个东西 —— 先清空，或者确认整棵删掉`), 409);
+    }
+    await rm(file, { recursive: true, force: true });
+  } else {
+    await rm(file, { force: true });
+  }
+  // 父目录一层层往上收：删完 `docs/guide.md`，`docs/` 空了就没必要留着。
+  let parent = path.dirname(file);
+  while (parent !== base) {
+    const left = (await readdir(parent).catch(() => null))?.filter((entry) => entry !== ".gitkeep");
+    if (!left || left.length) break;
+    await rm(parent, { recursive: true, force: true });
+    parent = path.dirname(parent);
+  }
+  return { name: clean, path: pathname, kind: info.isDirectory() ? "dir" : "file" };
+};
 /** 工作区里改了哪些文件（porcelain v1：前两位是状态，改名只认 `->` 右边那个）。 */
 export const gitChanges = async (root) => {
   // 别对整份输出 .trim()：第一行是 ` M path`，那个前导空格是状态列的一部分 ——
@@ -593,6 +687,27 @@ export const isTrackedDir = async (root, name) => {
   } catch {
     return false; // 未发布的新目录：还没有任何文件进 index
   }
+};
+
+/**
+ * HEAD 里所有目录（任意深度）。技能可以住在分组里（`deprecated/demo`），
+ * 只看顶层的 `trackedDirs` 会把它一律当成「未发布」—— 那正是面板上最难解释的幻影。
+ */
+export const trackedPaths = async (root) => {
+  const dirs = new Set();
+  try {
+    // `ls-tree -r --name-only` 而不是 `ls-files -z HEAD`：这台机器上的 git 在没有
+    // pathspec 时给 `ls-files <tree>` 回空，于是每条技能都会被错标成「未发布」。
+    const out = await run("git", ["-C", root, "ls-tree", "-r", "--name-only", "HEAD"], { timeout: 20_000 });
+    for (const file of out.stdout.split("\n")) {
+      if (!file) continue;
+      const parts = file.trim().split("/");
+      for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
+    }
+  } catch {
+    return new Set();
+  }
+  return dirs;
 };
 
 /** 某个相对路径在 HEAD 里存在吗（diff 的 `before: null` 靠它判断）。 */
@@ -804,7 +919,10 @@ export const archivedEntries = async (root) => {
 
 /** 把一个目录搬进 / 搬出 .archive/；tracked 的走 git mv（保留历史），否则普搬 + git add。 */
 export const moveIntoArchive = async (root, name) => {
-  const target = `${ARCHIVE_DIR}/${name}`;
+  // `name` 可以是带分组的相对路径（`deprecated/demo`）。归档目标是**扁的**
+  // `.archive/<最后一段>` —— 归档区不跟着分组分层，否则“已删除”里还得再点两层。
+  const leaf = path.basename(name);
+  const target = `${ARCHIVE_DIR}/${leaf}`;
   await mkdir(path.join(root, ARCHIVE_DIR), { recursive: true });
   if (await stat(path.join(root, target)).catch(() => null)) {
     throw withStatus(new Error(`${target} 已经存在 —— 先到「已删除」里处理掉那一条`), 409);
@@ -815,21 +933,35 @@ export const moveIntoArchive = async (root, name) => {
     await moveDir(path.join(root, name), path.join(root, target));
     await run("git", ["-C", root, "add", "--", target], { timeout: 30_000 });
   }
+  // 分组里的最后一条被归档之后，`deprecated/` 会空掉 —— git 不跟踪空目录，
+  // 留着它只会让下一次 `mkdir deprecated` 撞上「已经存在」。
+  for (let parent = path.dirname(name); parent !== "." && parent !== "/"; parent = path.dirname(parent)) {
+    const dir = path.join(root, parent);
+    if ((await readdir(dir).catch(() => ["?"])).length) break;
+    await rm(dir, { recursive: true, force: true });
+  }
 };
 
-export const moveOutOfArchive = async (root, name) => {
+/**
+ * 从 `.archive/<name>` 搬回去。`to` = 目的地（相对仓根），默认就是 `name`。
+ * 分组里的技能归档过、再恢复，得回到原来那个分组里 —— 目的地由调用方给。
+ */
+export const moveOutOfArchive = async (root, name, { to = name } = {}) => {
   const source = `${ARCHIVE_DIR}/${name}`;
   if (!(await stat(path.join(root, source)).catch(() => null))) {
     throw withStatus(new Error(`归档区里没有 ${name}`), 404);
   }
-  if (await stat(path.join(root, name)).catch(() => null)) {
-    throw withStatus(new Error(`工作区里已经有一个叫 ${name} 的目录了`), 409);
+  if (await stat(path.join(root, to)).catch(() => null)) {
+    throw withStatus(new Error(`工作区里已经有一个叫 ${to} 的目录了`), 409);
   }
+  // `git mv` 不接受一个不存在的目标父目录，分组目录可能早就空了（它自己也未跟踪）
+  const parent = path.dirname(to);
+  if (parent !== ".") await mkdir(path.join(root, parent), { recursive: true });
   if (await isTrackedDir(root, source)) {
-    await run("git", ["-C", root, "mv", source, name], { timeout: 30_000 });
+    await run("git", ["-C", root, "mv", source, to], { timeout: 30_000 });
   } else {
-    await moveDir(path.join(root, source), path.join(root, name));
-    await run("git", ["-C", root, "add", "--", name], { timeout: 30_000 });
+    await moveDir(path.join(root, source), path.join(root, to));
+    await run("git", ["-C", root, "add", "--", to], { timeout: 30_000 });
   }
 };
 
@@ -847,16 +979,18 @@ const untrackedIndexNames = async (root) => {
   } catch {
     return [];
   }
-  const tracked = await trackedDirs(root);
-  return entries.filter((item) => !tracked.has(item.name)).map((item) => item.name);
+  // 条目说的「住哪儿」是 `path`（`deprecated/demo`），老文件没有这个字段就是 `name`。
+  const relOf = (item) => String(item.path ?? item.name);
+  const tracked = await trackedPaths(root);
+  return entries.filter((item) => !tracked.has(relOf(item))).map(relOf);
 };
 
 /** 把未发布的目录从 index.json 里摘掉（只动磁盘；提交完再重扫回去）。 */
-const pruneIndex = async (root, names) => {
+const pruneIndex = async (root, paths) => {
   const indexFile = path.join(root, "index.json");
   const doc = JSON.parse(await readFile(indexFile, "utf8"));
   const list = doc.extensions ?? doc.skills ?? [];
-  const kept = list.filter((item) => !names.includes(item.name));
+  const kept = list.filter((item) => !paths.includes(String(item.path ?? item.name)));
   const next = doc.extensions ? { ...doc, extensions: kept } : { ...doc, skills: kept };
   await writeFile(indexFile, JSON.stringify(next, null, 2) + "\n", "utf8");
 };
@@ -902,9 +1036,11 @@ export const syncRepo = async (
   // 该有的样子）。谁进了这次提交，谁就有资格留在索引里。
   let skippedIndex = [];
   if (targets.includes("index.json")) {
-    const incoming = new Set(targets.map((rel) => rel.split("/")[0]));
+    // 「谁进了这次提交，谁就有资格留在索引里」—— 按**路径前缀**比，不是按顶层目录：
+    // 分组里的条目是 `deprecated/demo`，拿 `deprecated` 去比会把半截路径当成命中。
+    const touches = (target, item) => target === item || target.startsWith(`${item}/`);
     const untracked = await untrackedIndexNames(root);
-    const skip = untracked.filter((item) => !incoming.has(item));
+    const skip = untracked.filter((item) => !targets.some((target) => touches(target, item)));
     if (skip.length) {
       await pruneIndex(root, skip);
       skippedIndex = skip;
