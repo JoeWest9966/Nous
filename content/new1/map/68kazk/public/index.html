@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>skills · Nous 技能</title>
+    <link rel="stylesheet" href="./style.css?v=1" />
+    <script>
+      // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
+      if (!location.pathname.endsWith("/")) {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
+          <path d="M13 4h5.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H13" />
+          <path d="M7 8.5h1M7 12h1M16 8.5h1M16 12h1" />
+        </svg>
+        <div class="titles">
+          <h1>skills</h1>
+          <p>new1<span class="sep">/</span>68kazk<span class="sep">·</span><span id="count">—</span></p>
+        </div>
+      </div>
+      <div class="top-right">
+        <span class="hint dim" id="repo">—</span>
+        <button class="chip-status" id="refresh" title="重新问一遍 qrd3wh">
+          <span class="dot" data-state="wait"></span>刷新
+        </button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="rail">
+        <div class="rail-head">
+          <h3>类别</h3>
+          <span class="facet-n" id="cat-count">—</span>
+        </div>
+        <div class="facets" id="facets"></div>
+        <div class="rail-new" id="rail-new"></div>
+        <div class="rail-foot dim small">
+          仓库在 <code id="repo-path">—</code>
+        </div>
+      </aside>
+
+      <main class="results">
+        <div class="filters" id="filters" aria-label="筛选"></div>
+        <div class="toolbar">
+          <span class="result-count" id="result-count">—</span>
+          <button class="btn-new" id="new-skill" type="button" title="建一条空技能（未发布，只有这台有）">
+            <span aria-hidden="true">＋</span>新建技能
+          </button>
+          <label class="search">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <circle cx="8.5" cy="8.5" r="5.2" />
+              <path d="M12.4 12.4 17 17" />
+            </svg>
+            <input id="search" type="search" placeholder="搜技能名 / 说明 / 类别" autocomplete="off" />
+          </label>
+        </div>
+        <div class="grid" id="grid"></div>
+        <!-- 详情：点卡进来，占主区（不是又一个右侧浮层 —— 右边那条边归正文抽屉）。 -->
+        <section class="detail" id="detail" hidden aria-label="技能详情"></section>
+        <datalist id="tag-suggestions"></datalist>
+      </main>
+    </div>
+
+    <div class="ctxmenu" id="ctxmenu" role="menu" hidden></div>
+
+    <!-- 正文抽屉：读 / 改 SKILL.md。保存 = 落盘，发布 = 校验 + commit + push，两个动作别合并。 -->
+    <div class="ed-scrim" id="ed-scrim" hidden></div>
+    <aside class="ed" id="editor" hidden aria-label="技能正文编辑器">
+      <header class="ed-head">
+        <div class="ed-title">
+          <h2 id="ed-name">—</h2>
+          <p class="dim small" id="ed-meta"></p>
+        </div>
+        <div class="ed-head-actions">
+          <span class="ed-state" id="ed-state"></span>
+          <button class="ed-x" id="ed-close" title="关闭（Esc）" aria-label="关闭">×</button>
+        </div>
+      </header>
+      <div class="ed-body">
+        <nav class="ed-files" id="ed-files" aria-label="文件"></nav>
+        <section class="ed-pane">
+          <div class="ed-bar">
+            <span class="ed-path mono" id="ed-path">—</span>
+            <span class="ed-spacer"></span>
+            <span class="ed-delta" id="ed-delta" hidden title="与 HEAD 的差异（git 口径：修改行算 +1 −1）">
+              <span class="d-plus" id="ed-plus">+0</span><span class="d-minus" id="ed-minus">&minus;0</span>
+            </span>
+            <div class="ed-switch" role="tablist" aria-label="视图">
+              <button class="ed-tab on" id="ed-tab-edit" data-mode="edit" role="tab" aria-selected="true" title="编辑（Alt+D 切差异）">编辑</button>
+              <button class="ed-tab" id="ed-tab-diff" data-mode="diff" role="tab" aria-selected="false" title="与 HEAD 的差异（Alt+D 切回编辑）">差异</button>
+            </div>
+            <button class="ed-btn" id="ed-save" title="保存到磁盘（Ctrl/⌘+S）——不提交">保存</button>
+            <button class="ed-btn primary" id="ed-publish" title="内容闸 + commit + push">发布</button>
+          </div>
+          <div class="ed-stage" id="ed-stage">
+            <div class="ed-code" id="ed-code">
+              <div class="ed-gutter" id="ed-gutter" aria-hidden="true"></div>
+              <textarea class="ed-text" id="ed-text" spellcheck="false" wrap="off" disabled
+                        aria-label="文件内容"></textarea>
+            </div>
+            <div class="ed-diff" id="ed-diff" hidden tabindex="0" aria-label="与 HEAD 的差异"></div>
+            <div class="ed-map" id="ed-map" hidden aria-hidden="true"></div>
+          </div>
+          <div class="ed-msg" id="ed-msg" hidden></div>
+          <footer class="ed-foot">
+            <span class="dim small">
+              保存只落盘；发布才 commit + push —— 服务端会先过内容闸
+              （<code>SKILL.md</code> 的 frontmatter、<code>name</code> == 目录名、<code>description</code> 非空、
+              <code>nous.json</code> 能解析）。这里不建文件、不删文件。
+            </span>
+          </footer>
+        </section>
+      </div>
+    </aside>
+
+    <!-- 破坏性动作的确认层：会真提交 + 推送，要求手输技能名。 -->
+    <div class="danger-scrim" id="danger-scrim" hidden></div>
+    <div class="danger" id="danger" hidden role="dialog" aria-modal="true" aria-labelledby="danger-title">
+      <h2 id="danger-title">—</h2>
+      <p class="danger-hint dim" id="danger-hint"></p>
+      <label class="danger-label" for="danger-input">
+        <span>手输技能名 <code id="danger-name">—</code> 确认</span>
+        <input id="danger-input" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="danger-err" id="danger-err" hidden></p>
+      <div class="danger-actions">
+        <button class="btn" id="danger-cancel" type="button">取消</button>
+        <button class="btn btn-bad" id="danger-ok" type="button" disabled>确定</button>
+      </div>
+    </div>
+
+    <!-- 新建技能：只问三样（spec §6.5）。名字是会话里的 API 键，建完改不了。 -->
+    <div class="danger-scrim" id="create-scrim" hidden></div>
+    <form class="create" id="create" hidden role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <h2 id="create-title">新建技能</h2>
+      <p class="create-hint dim">
+        一个目录 + 一份 <code>SKILL.md</code> + 一份 <code>nous.json</code>。建完是<b>未发布</b>：
+        只在你这台、远端上看不到，满意了再点发布。
+      </p>
+
+      <label class="create-label" for="create-name">
+        <span>技能名 <b>建完就改不了 —— 会话里存的就是它</b></span>
+        <input id="create-name" type="text" autocomplete="off" spellcheck="false" placeholder="code-review" />
+      </label>
+      <p class="create-note" id="create-name-note"></p>
+
+      <label class="create-label" for="create-description">
+        <span>一句话说明 <b>模型靠它决定用不用这条技能</b></span>
+        <input id="create-description" type="text" autocomplete="off" maxlength="200"
+               placeholder="审查从某个点以来的改动：标准 + 规格两条轴" />
+      </label>
+
+      <label class="create-label" for="create-cat">
+        <span>类别 <i class="dim">可空 = 未分类；写个不存在的名字就顺手建了</i></span>
+        <input id="create-cat" type="text" autocomplete="off" list="create-cats" placeholder="工具/搜索" />
+        <datalist id="create-cats"></datalist>
+      </label>
+
+      <p class="create-err" id="create-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small mono" id="create-where"></span>
+        <button class="btn" id="create-cancel" type="button">取消</button>
+        <button class="btn btn-good" id="create-ok" type="submit" disabled>建</button>
+      </div>
+    </form>
+
+    <div class="toast" id="toast" hidden></div>
+    <script type="module" src="./app.js?v=1"></script>
+  </body>
+</html>
