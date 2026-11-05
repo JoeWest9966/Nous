@@ -57,10 +57,20 @@ const unwrap = (body, status) => {
   return { ...data, warnings: errors };
 };
 
-async function nw(path, { method = "GET", body, timeout = READ_MS } = {}) {
+// 取明文的请求必须宣告「我是面板」：上游 #220 起 `ls` 永不回显 apiKey，真身只在
+// `X-NW-Reveal: 1` 下过一手。少了这个头，眼睛按钮点下去只会回 PANEL_REVEAL_REQUIRED ——
+// 而「看密钥」这一页的全部意义就是这个按钮。所以它是个 opt-in 参数，不是全局默认：
+// 只有 /secret 那条带，其余请求照旧不带。
+const REVEAL = { "x-nw-reveal": "1" };
+
+async function nw(path, { method = "GET", body, timeout = READ_MS, reveal = false } = {}) {
   const response = await fetch(`${NW_BASE}${path}`, {
     method,
-    headers: { ...nwHeaders(), ...(body ? { "content-type": "application/json" } : {}) },
+    headers: {
+      ...nwHeaders(),
+      ...(reveal ? REVEAL : {}),
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(timeout),
   });
@@ -123,7 +133,7 @@ async function doDelete(name) {
 }
 
 async function doSecret(name) {
-  const data = await nw(`/api/model/${encodeURIComponent(name)}/secret`);
+  const data = await nw(`/api/model/${encodeURIComponent(name)}/secret`, { reveal: true });
   const key = data.key ?? data.apiKey ?? "";
   return { ok: true, name, key: String(key), shape: keyShape(key).shape };
 }
