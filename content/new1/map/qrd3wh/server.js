@@ -1408,6 +1408,129 @@ const createExtension = async ({ name, summary, category }) => {
   return { ok: true, name, manifest };
 };
 
+// ── 复制成新扩展 ───────────────────────────────────────────────────────────
+//
+// 复制 = 新目录 + 新名字 + 新清单，**历史不带**（旧提交留在原扩展里）。落盘即「未发布」，
+// 提交/推送仍走发布那两条路 —— 这里只负责把目录造对。
+//
+// 唯一会咬人的地方：**名字是写死在入口里的**（`defineExtension({ name: "123" })`）。
+// 不换掉它，下次 reload 两个扩展注册同一个名字，新的把原来的顶掉，而页面上两张卡都好好的。
+// 所以：窄匹配只改 `name: "旧名"` 这种字面量；改不到就当场删掉整个副本，绝不留下一个会撞名的目录。
+
+const DUP_SKIP = new Set(["node_modules", ".git"]);
+
+const escapeRe = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** 只认「名字字段」的字符串字面量：`name: "x"` / `"name": "x"`，别的一概不动。 */
+const renameInCode = (code, from, to) => {
+  // 两个模式都是「head = 组 1、引号 = 组 2」，所以反引用统一写 \2。
+  const quote = `(["'\`])`;
+  const patterns = [
+    new RegExp(`(\\bname\\s*:\\s*)${quote}${escapeRe(from)}\\2`, "g"),
+    new RegExp(`(["'\`]name["'\`]\\s*:\\s*)${quote}${escapeRe(from)}\\2`, "g"),
+  ];
+  let hits = 0;
+  let text = String(code);
+  for (const pattern of patterns) {
+    text = text.replace(pattern, (match, head, quote) => {
+      hits++;
+      return `${head}${quote}${to}${quote}`;
+    });
+  }
+  return { text, hits };
+};
+
+const duplicateExtension = async ({ from, name, summary, category }) => {
+  guardExtensionName(from);
+  guardExtensionName(name);
+  if (from === name) throw withStatus(new Error("复制到同名？改个名字"), 400);
+
+  const src = path.join(EXTEND, from);
+  const info = await stat(src).catch(() => null);
+  if (!info?.isDirectory()) throw withStatus(new Error(`${from}/ 不在工作区里`), 404);
+
+  if (await stat(path.join(EXTEND, name)).catch(() => null)) {
+    throw withStatus(new Error(`${name}/ 已经在了 —— 换个名字`), 409);
+  }
+  if (await stat(path.join(EXTEND, ARCHIVE_DIR, name)).catch(() => null)) {
+    throw withStatus(new Error(`.archive/${name} 还留着 —— 那是「恢复」不是「复制」，别同名`), 409);
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(await readFile(path.join(src, "nous.json"), "utf8"));
+  } catch {
+    throw withStatus(new Error(`${from}/ 没有能读的 nous.json`), 409);
+  }
+  if (manifest.name !== from) {
+    throw withStatus(new Error(`${from}/nous.json 里的 name 是 ${manifest.name}，跟目录名对不上 —— 先修它再复制`), 409);
+  }
+
+  const entryFile = String(manifest.file ?? "index.js");
+  const clean = String(summary ?? "").trim() || String(manifest.summary ?? "").trim() || name;
+  if (clean.length > 200) throw withStatus(new Error("说明太长了（200 字以内）"), 400);
+  const picked = Array.isArray(category)
+    ? normalizeCategories(category)
+    : normalizeCategories(String(category ?? "").split(","));
+  const cats = sortCategories(picked.length ? picked : normalizeCategories(manifest.category ?? []));
+
+  // 点开头 = 生成器看不见它。校验过了才改名，中途翻车就整棵删掉。
+  const staging = path.join(EXTEND, `.copy-${name}-${Date.now()}`);
+  let rewritten = [];
+  try {
+    await cp(src, staging, {
+      recursive: true,
+      filter: (source) => !DUP_SKIP.has(path.basename(source)),
+    });
+
+    // ① 入口里写死的名字
+    const entryPath = path.join(staging, entryFile);
+    const code = await readFile(entryPath, "utf8").catch(() => null);
+    if (code === null) {
+      throw withStatus(new Error(`${from}/ 里找不到入口 ${entryFile} —— 清单写着它但不在这儿`), 409);
+    }
+    const patched = renameInCode(code, from, name);
+    if (!patched.hits) {
+      throw withStatus(
+        new Error(`${from}/${entryFile} 里没有写死的 name: "${from}"，可能是从别处读的名字 —— 那样复制过去会跟本体撞名，不敢造`),
+        409,
+      );
+    }
+    if (patched.text !== code) {
+      await writeFile(entryPath, patched.text, "utf8");
+      rewritten.push({ path: `${name}/${entryFile}`, from: `name: "${from}"`, to: `name: "${name}"` });
+    }
+
+    // ② 清单：名字换掉，其余（file/entry/sections/needs/version）原样 —— 代码没变，段落和依赖就没变。
+    const nextManifest = {
+      ...manifest,
+      name,
+      summary: clean,
+      ...(cats.length ? { category: cats } : {}),
+    };
+    if (!cats.length) delete nextManifest.category;
+    await writeFile(path.join(staging, "nous.json"), JSON.stringify(nextManifest, null, 2) + "\n", "utf8");
+
+    // ③ 语法闸：改过的入口得能过（改名字也是改代码）。
+    if (patched.text !== code) await checkSyntax(`${name}/${entryFile}`, patched.text);
+
+    await rename(staging, path.join(EXTEND, name));
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true });
+    throw error.status ? error : withStatus(new Error(`复制不出来，已清干净：${String(error?.message ?? error)}`), 400);
+  }
+
+  try {
+    await runIndexGenerator();
+  } catch (error) {
+    await rm(path.join(EXTEND, name), { recursive: true, force: true });
+    const detail = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
+    throw withStatus(new Error(`index.mjs 不认这个副本，已删掉：${detail}`), 400);
+  }
+  if (cats.length) await writeCategories([...(await readCategories()), ...cats]);
+  return { ok: true, name, from, manifest: { ...manifest, name, summary: clean }, rewritten };
+};
+
 const archiveExtension = async (name) => {
   guardExtensionName(name);
   const local = await readLocalState();
@@ -1647,6 +1770,36 @@ const pendingCommit = async (hash) => {
 };
 
 /**
+ * index.json 里有哪些扩展**不在 HEAD 里** —— 也就是「未发布」：新建的、复制出来的、
+ * 还没发布就躺在盘上的。它们合法地出现在工作区的 index.json 里，但**不该跟着自动提交走**。
+ */
+const untrackedIndexNames = async () => {
+  let entries = [];
+  try {
+    entries = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions ?? [];
+  } catch {
+    return [];
+  }
+  const tracked = new Set(
+    (await run("git", ["-C", EXTEND, "ls-tree", "--name-only", "-d", "HEAD"], { timeout: 20_000 })
+      .then((out) => out.stdout)
+      .catch(() => ""))
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  return entries.filter((item) => !tracked.has(item.name)).map((item) => item.name);
+};
+
+/** 把未发布的扩展从 index.json 里摘掉（只动磁盘；提交完再重扫回去）。 */
+const pruneIndex = async (names) => {
+  const indexFile = path.join(EXTEND, "index.json");
+  const doc = JSON.parse(await readFile(indexFile, "utf8"));
+  doc.extensions = (doc.extensions ?? []).filter((item) => !names.includes(item.name));
+  await writeFile(indexFile, JSON.stringify(doc, null, 2) + "\n", "utf8");
+};
+
+/**
  * 把待提交改动打成一条 commit，然后 push。push 失败要说实话，不能装成功。
  *
  * `only: "categories"` = 只提交词表和清单，**不碰代码**。类别那条 8 秒 debounce 走这个：
@@ -1676,41 +1829,60 @@ const syncExtendRepo = async (message, { only = null, includeDeleted = false, pa
       if (text !== null) await checkSyntax(rel, text);
     }
   }
-  if (targets.length) {
-    // 已删掉的路径不能再 `git add`（“pathspec did not match any files”）；它们的删除
-    // 已经由 `git rm` / `git mv` 暂存好了。只 add 还存在的文件。
-    const addable = [];
-    for (const rel of targets) {
-      if (await stat(path.join(EXTEND, rel)).catch(() => null)) addable.push(rel);
-    }
-    if (addable.length) await run("git", ["add", "--", ...addable], opts);
-    // 用暂存区判断“真有待提交的东西”：纯删除（git rm）不会有 addable，但也得提交。
-    const staged = (await run("git", ["diff", "--cached", "--name-only"], opts)).stdout.trim();
-    if (staged) {
-      // 默认说明按**真改了的文件**生。混着代码改动却写成 `category:` 是骗人
-      // —— 将来的 `git log` 靠这一行找人。
-      const when = new Date().toISOString().slice(0, 19).replace("T", " ");
-      const onlyCategories = targets.every(isCategoryFile);
-      const fallback = onlyCategories
-        ? `category: 更新扩展类别（${when}）`
-        : `extend: 更新 ${targets.slice(0, 4).join("、")}${targets.length > 4 ? ` 等 ${targets.length} 个文件` : ""}`;
-      const msg = String(message ?? "").trim() || fallback;
-      await run("git", ["commit", "-m", msg], opts);
-      committed = true;
+  // 类别那条 debounce 是**自动**提交，它不能替谁发布。未发布的目录也在 index.json 里
+  // （新建的、复制出来的），整份推上去 = 「仓库说我有它，实际没有」。
+  // 所以提交前把不在 HEAD 里的条目从索引里摘掉，提交完再重扫回来（它会重新变脏，正是该有的样子）。
+  let skippedIndex = [];
+  if (only === "categories" && targets.includes("index.json")) {
+    const untracked = await untrackedIndexNames();
+    if (untracked.length) {
+      await pruneIndex(untracked);
+      skippedIndex = untracked;
     }
   }
-  const hash = committed
-    ? (await run("git", ["-C", EXTEND, "rev-parse", "--short", "HEAD"], opts)).stdout.trim()
-    : null;
-  const state = await extendRepoState();
-  if (!state.ahead) return { committed, hash, files: targets, ...state, pushed: null };
+
   try {
-    await run("git", ["push"], opts);
-  } catch (error) {
-    const pushError = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
-    return { committed, hash, files: targets, ...state, pushed: false, pushError };
+    if (targets.length) {
+      // 已删掉的路径不能再 `git add`（“pathspec did not match any files”）；它们的删除
+      // 已经由 `git rm` / `git mv` 暂存好了。只 add 还存在的文件。
+      const addable = [];
+      for (const rel of targets) {
+        if (await stat(path.join(EXTEND, rel)).catch(() => null)) addable.push(rel);
+      }
+      if (addable.length) await run("git", ["add", "--", ...addable], opts);
+      // 用暂存区判断“真有待提交的东西”：纯删除（git rm）不会有 addable，但也得提交。
+      const staged = (await run("git", ["diff", "--cached", "--name-only"], opts)).stdout.trim();
+      if (staged) {
+        // 默认说明按**真改了的文件**生。混着代码改动却写成 `category:` 是骗人
+        // —— 将来的 `git log` 靠这一行找人。
+        const when = new Date().toISOString().slice(0, 19).replace("T", " ");
+        const onlyCategories = targets.every(isCategoryFile);
+        const fallback = onlyCategories
+          ? `category: 更新扩展类别（${when}）`
+          : `extend: 更新 ${targets.slice(0, 4).join("、")}${targets.length > 4 ? ` 等 ${targets.length} 个文件` : ""}`;
+        const msg = String(message ?? "").trim() || fallback;
+        await run("git", ["commit", "-m", msg], opts);
+        committed = true;
+      }
+    }
+    const hash = committed
+      ? (await run("git", ["-C", EXTEND, "rev-parse", "--short", "HEAD"], opts)).stdout.trim()
+      : null;
+    const state = await extendRepoState();
+    if (!state.ahead) return { committed, hash, files: targets, skippedIndex, ...state, pushed: null };
+    try {
+      await run("git", ["push"], opts);
+    } catch (error) {
+      const pushError = (error.stderr || error.stdout || String(error?.message ?? error)).trim();
+      return { committed, hash, files: targets, skippedIndex, ...state, pushed: false, pushError };
+    }
+    return { committed, hash, files: targets, skippedIndex, ...state, ahead: 0, pushed: true };
+  } finally {
+    // 索引必须回到「盘上有什么就写什么」，否则页面和生成器看到的是被摘过的版本。
+    if (skippedIndex.length) {
+      await runIndexGenerator().catch((error) => console.error("[extend] 重扫 index.json 失败：", errorLine(error)));
+    }
   }
-  return { committed, hash, files: targets, ...state, ahead: 0, pushed: true };
 };
 
 // 会话名不在 ConversationRecord 里（那东西没有 name 字段），也不许进 tree.json。
@@ -2492,6 +2664,25 @@ const route = async (req, res, url) => {
     try {
       const made = await serializeExtendWrite(() => createExtension(body));
       // 装不上不算建失败：目录已经在磁盘上了，页面会把它标成「装载失败」并给出重试。
+      let load = null;
+      try {
+        load = await serializeExtendWrite(() => reloadExtensionsNow());
+      } catch (error) {
+        load = { ok: false, error: String(error?.message ?? error) };
+      }
+      const catalog = JSON.parse(await readFile(path.join(EXTEND, "index.json"), "utf8")).extensions;
+      return json(res, 200, { ...made, catalog, categories: await readCategories(), load });
+    } catch (error) {
+      return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
+  }
+
+  if (parts[0] === "v1" && parts[1] === "extensions" && parts[2] === "duplicate") {
+    if (req.method !== "POST") return json(res, 405, { error: "复制只有 POST" });
+    const body = JSON.parse((await readBody(req)) || "{}");
+    try {
+      const made = await serializeExtendWrite(() => duplicateExtension(body));
+      // 和「新建」一样，造完就重装一次：目录已经在盘上了，装不上的话页面会标成装载失败并给重试。
       let load = null;
       try {
         load = await serializeExtendWrite(() => reloadExtensionsNow());

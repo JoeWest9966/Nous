@@ -203,6 +203,40 @@
       </div>
     </form>
 
+    <!-- 复制成新扩展：拷代码、换名字，历史不带。造完是**未发布** —— 发布仍然走抽屉。 -->
+    <div class="danger-scrim" id="dup-scrim" hidden></div>
+    <form class="create" id="dup" hidden role="dialog" aria-modal="true" aria-labelledby="dup-title">
+      <h2 id="dup-title">复制成新扩展</h2>
+      <p class="create-hint dim">
+        拷一份 <b id="dup-from">—</b> 的代码，换掉名字。入口里写死的 <code>name: "…"</code> 会一起改掉
+        —— 不然两个扩展注册同一个名字，新的会悄悄顶掉旧的。历史不带，旧提交还在原扩展里。
+      </p>
+
+      <label class="create-label" for="dup-name">
+        <span>新扩展名 <b>建完就改不了 —— 会话里存的就是它</b></span>
+        <input id="dup-name" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="create-note" id="dup-name-note"></p>
+
+      <label class="create-label" for="dup-summary">
+        <span>一句话说明 <b>卡片上就靠它认人</b></span>
+        <input id="dup-summary" type="text" autocomplete="off" maxlength="200" />
+      </label>
+
+      <label class="create-label" for="dup-cat">
+        <span>类别 <i class="dim">可空 = 未分类；多个用英文逗号</i></span>
+        <input id="dup-cat" type="text" autocomplete="off" list="dup-cats" />
+        <datalist id="dup-cats"></datalist>
+      </label>
+
+      <p class="create-err" id="dup-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small" id="dup-where"></span>
+        <button class="btn" id="dup-cancel" type="button">取消</button>
+        <button class="btn btn-good" id="dup-ok" type="submit" disabled>复制</button>
+      </div>
+    </form>
+
     <!-- 未同步：按**扩展**（不是文件）分组，勾哪个提交哪个。代码默认不勾，勾了要过语法检查。 -->
     <div class="danger-scrim" id="pending-scrim" hidden></div>
     <div class="create pending" id="pending" hidden role="dialog" aria-modal="true" aria-labelledby="pending-title">
@@ -224,6 +258,6 @@
     </div>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=18"></script>
+    <script type="module" src="./app.js?v=19"></script>
   </body>
 </html>

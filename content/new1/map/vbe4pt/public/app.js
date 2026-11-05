@@ -107,6 +107,8 @@ const state = {
   syncError: "",
   editor: null, // 代码抽屉：{name, files, path, text, base, pending, ...}
   variant: null, // 变体弹层：{ext, item}（item 为空 = 新增）
+  duplicate: null, // 复制弹窗：{from}
+  pending: null, // 未同步弹窗：pendingState() + 勾选/展开状态
 };
 
 const SYNC_DEBOUNCE_MS = 8000;
@@ -217,6 +219,10 @@ async function flushSync(force = false) {
     } else {
       state.sync = "idle";
       state.syncError = "";
+      // 索引里有未发布的扩展 —— 那条自动提交没把它们带上（否则 GitHub 会说「我有它」，其实没有）。
+      if (result.skippedIndex?.length) {
+        toast(`已同步；索引里的 ${result.skippedIndex.join("、")} 还没发布，这次没跟着推`);
+      }
     }
   } catch (error) {
     state.sync = "bad";
@@ -260,6 +266,118 @@ addEventListener("beforeunload", flushOnHide);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") void flushSync();
 });
+
+// ── 复制成新扩展 ───────────────────────────────────────────────────────────
+//
+// 复制的是**目录**，不是历史：新名字、新清单、干净起点，旧提交留在原扩展里。
+// 唯一必须机器做对的事是入口里写死的 name —— 不改它，两个扩展注册同一个名字，
+// 新的会悄悄顶掉旧的，而页面上两张卡看起来都好好的。所以这件事交给后端做，
+// 它找不到那个字面量就拒绝复制（宁可失败，也别造出个会撞名的目录）。
+
+function openDuplicate(from) {
+  const ext = oursNow().find((item) => item.name === from);
+  if (!ext) return;
+  state.duplicate = { from };
+  $("dup").reset();
+  $("dup-from").textContent = from;
+  $("dup-name").value = `${from}-copy`;
+  $("dup-summary").value = ext.summary ?? "";
+  $("dup-cat").value = categoriesOf(ext).join(", ");
+  $("dup-err").hidden = true;
+  $("dup-name-note").textContent = "";
+  $("dup-name-note").className = "create-note";
+  $("dup-where").textContent = `${state.data?.repo?.path ?? "/opt/Nous-extend"}/${from}-copy`;
+  const datalist = $("dup-cats");
+  datalist.textContent = "";
+  for (const name of allCategoryNames(oursNow())) {
+    const option = document.createElement("option");
+    option.value = name;
+    datalist.append(option);
+  }
+  $("dup-scrim").hidden = false;
+  $("dup").hidden = false;
+  updateDuplicateOk();
+  setTimeout(() => {
+    $("dup-name").focus();
+    $("dup-name").select();
+  }, 30);
+}
+
+function closeDuplicate() {
+  $("dup").hidden = true;
+  $("dup-scrim").hidden = true;
+  state.duplicate = null;
+}
+
+function updateDuplicateOk() {
+  const value = $("dup-name").value.trim();
+  const taken = (state.data?.catalog ?? []).some((ext) => ext.name === value);
+  const archived = (state.data?.archived ?? []).some((item) => item.name === value);
+  const invalid = value && !/^[a-z0-9][a-z0-9._-]*$/i.test(value);
+  const note = $("dup-name-note");
+  if (invalid) {
+    note.textContent = "名字只能用字母、数字、. _ -，且不能以符号开头";
+    note.className = "create-note bad";
+  } else if (taken) {
+    note.textContent = "这个名字已经在清单里了 —— 换个名字";
+    note.className = "create-note bad";
+  } else if (archived) {
+    note.textContent = "归档里有同名目录 —— 那是「恢复」不是「复制」";
+    note.className = "create-note warn";
+  } else if (value) {
+    note.textContent = value === state.duplicate?.from ? "跟本体同名了" : "可以";
+    note.className = "create-note " + (value === state.duplicate?.from ? "bad" : "ok");
+  } else {
+    note.textContent = "";
+    note.className = "create-note";
+  }
+  $("dup-where").textContent = value
+    ? `${state.data?.repo?.path ?? "/opt/Nous-extend"}/${value}`
+    : "";
+  $("dup-ok").disabled = !value || invalid || taken || archived || value === state.duplicate?.from;
+}
+
+async function submitDuplicate() {
+  const dup = state.duplicate;
+  if (!dup) return;
+  const name = $("dup-name").value.trim();
+  const ok = $("dup-ok");
+  ok.disabled = true;
+  ok.textContent = "复制中…";
+  $("dup-err").hidden = true;
+  try {
+    const result = await post(`${state.base}v1/extensions/duplicate`, {
+      from: dup.from,
+      name,
+      summary: $("dup-summary").value.trim(),
+      category: $("dup-cat").value.trim(),
+    });
+    closeDuplicate();
+    state.query = "";
+    state.filter = "";
+    await load({ quiet: true });
+    const rewritten = result?.rewritten ?? [];
+    toast(
+      `已复制成 ${name}（未发布）\n${
+        rewritten.length ? "入口里写死的名字改成了新名字 —— 抽屉里能看 diff" : "名字本来就不是写死的，代码一个字节没动"
+      }`,
+    );
+  } catch (error) {
+    $("dup-err").textContent = String(error?.message ?? error);
+    $("dup-err").hidden = false;
+  } finally {
+    ok.textContent = "复制";
+    updateDuplicateOk();
+  }
+}
+
+$("dup-name").oninput = () => updateDuplicateOk();
+$("dup").onsubmit = (event) => {
+  event.preventDefault();
+  if (!$("dup-ok").disabled) void submitDuplicate();
+};
+$("dup-cancel").onclick = () => closeDuplicate();
+$("dup-scrim").onclick = () => closeDuplicate();
 
 // ── 未同步：按扩展勾选提交 ─────────────────────────────────────────────────
 //
@@ -954,6 +1072,10 @@ function openCardMenu(x, y, ext) {
     title: ghost ? `${ext.name} 已从本机卸载，源码不在工作区里` : "",
   });
   if (status === "failed") item("重试装载", "立刻重来", () => void retryLoad(ext.name));
+  item("复制成新扩展", "换名字，历史不带", () => openDuplicate(ext.name), {
+    disabled: ghost,
+    title: ghost ? `${ext.name} 已从本机卸载，源码不在工作区里，没得拷` : "",
+  });
 
   menu.append(el("div", "ctx-sep"));
   item("类别", "在详情里勾", () => openDetail(ext.name, { editTags: true }));
@@ -2966,6 +3088,10 @@ addEventListener("keydown", (event) => {
   // 菜单盖在所有层之上（它是最后一次交互）：Esc 先关它。
   if (event.key === "Escape" && menuOpen) {
     closeMenu();
+    return;
+  }
+  if (event.key === "Escape" && !$("dup").hidden) {
+    closeDuplicate();
     return;
   }
   // 未同步弹窗是最外一层（顶栏开的），Esc 先关它。

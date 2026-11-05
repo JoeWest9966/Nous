@@ -106,6 +106,19 @@ Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durab
 - 删除防火墙照旧：`includeDeleted` 为假时，` D` 的文件不进提交 —— 那是「删本地」的私事。
 - 提交失败要说实话：push 挂了回 `{committed: true, hash, pushed: false, pushError}`，
   调用方据此把「已提交但没推」和「什么也没发生」分开显示。
+- **`index.json` 里的未发布条目不上车**：类别那条是自动提交，它不能替谁发布。提交前把
+  「HEAD 里没有这个目录」的条目从索引里摘掉，提交完再 `runIndexGenerator()` 扫回来
+  （磁盘上会重新变脏，这正是该有的样子），回复里带 `skippedIndex[]` 让页面说一句。
+  不这么做的话：新建/复制出来的未发布扩展，会在你下次「改个类别」时被自动推上 GitHub ——
+  仓库说「我有它」，实际没有。踩过一次，见 `353ea42`。
+
+**`publish` 仍然提交整份工作区**（`syncExtendRepo(message)` 不带 `paths`）：它一开始就是
+「把工作区推上去」，所以别的地方的脏东西（别人的未发布目录、`index.json`）会跟着走。
+要收紧的话，`publishExtensions` 得知道是哪个扩展，然后传 `paths` —— 目前没做。
+
+`POST /v1/extensions/duplicate {from, name, summary?, category?}`：复制成新扩展（暂存目录 +
+改名 + 校验 + rename，历史不带）。**名字写死在入口里，所以复制必须先改名**：只认
+`name: "旧名"` 这种字面量，找不到就整体回滚报错 —— 否则两个扩展注册同一个名字，新的顶掉旧的。
 
 配套三个只读接口：`GET /v1/extensions/pending`（按**扩展**分组的改动 + 没推的提交）、
 `/pending/diff?path=`（一个文件对 HEAD 的前后内容）、`/pending/commit?hash=`（一条没推的
