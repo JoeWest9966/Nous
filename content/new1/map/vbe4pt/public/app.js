@@ -1101,6 +1101,10 @@ function openCardMenu(x, y, ext) {
     disabled: ghost,
     title: ghost ? `${ext.name} 已从本机卸载，源码不在工作区里` : "",
   });
+  item("复制信息", "cat 全源码给 AI", () => void copyExtensionInfo(ext), {
+    disabled: ghost,
+    title: ghost ? `${ext.name} 已从本机卸载，源码不在工作区里` : "",
+  });
   if (status === "failed") item("重试装载", "立刻重来", () => void retryLoad(ext.name));
   item("复制成新扩展", "换名字，历史不带", () => openDuplicate(ext.name), {
     disabled: ghost,
@@ -1130,6 +1134,99 @@ function openCardMenu(x, y, ext) {
   });
 
   mountMenu(menu, x, y, first);
+}
+
+// ── 复制信息：给 AI 的一条 cat ───────────────────────────────────────────────
+//
+// 复制的是**命令**，不是路径。路径只说明「去哪儿」，AI 还得自己决定 cat / head / ls ——
+// 三步里任何一步都能让它只读到半截；`cat` 一次拿全，范围写死在参数里，没有发挥余地。
+// 文件清单走 /v1/extensions/files（**变体走它自己的 checkout**），顺序按
+// 「清单 → 入口代码 → 其它代码 → 其它 → 文档」：真撞上输出上限也是截在文档上。
+const CAT_BUDGET = 48_000; // 字符预算。harness 常截 50KB，我们比它更早降级。
+const CODE_RE = /\.(js|mjs|cjs|ts|tsx|jsx)$/;
+
+/** 复制到剪贴板。http 下 `navigator.clipboard` 整个不存在（局域网 IP 就属于这种情况）——
+ *  所以留一条 execCommand 的老路，它不挑协议。别删：删了这页在 100.x 上复制就是个哑巴。 */
+async function copyText(value) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // 权限被拒也继续试老办法，别直接放弃。
+  }
+  const ta = document.createElement("textarea");
+  ta.value = value;
+  ta.setAttribute("readonly", "");
+  ta.style.position = "fixed";
+  ta.style.top = "0";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand?.("copy") ?? false;
+  ta.remove();
+  return ok;
+}
+
+const shellQuote = (value) => (/^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`);
+
+/** 这个扩展 / 变体的绝对目录。变体有自己的 checkout（worktree）时就是那个，不是本体。 */
+function extensionDir(ext, variant) {
+  const own = variant ? state.data?.variants?.[ext.name]?.find((item) => item.id === variant)?.dir : null;
+  if (own) return own;
+  const repo = String(state.data?.repo?.path ?? "").replace(/\/+$/, "");
+  return repo ? `${repo}/${ext.name}` : "";
+}
+
+function catOrder(files, entry) {
+  const rank = (path) =>
+    path === "nous.json" ? 0 : path === entry ? 1 : CODE_RE.test(path) ? 2 : /\.md$/i.test(path) ? 4 : 3;
+  return [...files].sort((a, b) => rank(a.path) - rank(b.path) || a.path.localeCompare(b.path));
+}
+
+async function copyExtensionInfo(ext, variant = null) {
+  if (!state.base) return;
+  let files = [];
+  try {
+    const q = variant ? `&variant=${encodeURIComponent(variant)}` : "";
+    files = (await get(`${state.base}v1/extensions/files?name=${encodeURIComponent(ext.name)}${q}`)).files ?? [];
+  } catch (error) {
+    toast(`读文件清单失败：${error.message}`, "bad");
+    return;
+  }
+
+  const dir = extensionDir(ext, variant);
+  if (!dir) {
+    toast(`${ext.name} 没有可读的源码目录 —— 先装回本机`, "bad");
+    return;
+  }
+  const bytes = files.reduce((sum, file) => sum + (file.size ?? 0), 0);
+
+  // 超预算就别给 cat：输出会被静默截断，AI 会以为那就是全部。给目录，让它自己分段读。
+  if (!files.length || bytes > CAT_BUDGET) {
+    const ok = await copyText(dir);
+    toast(
+      ok
+        ? files.length
+          ? `${Math.round(bytes / 1024)}KB 超过 cat 预算，复制了目录 —— 让 AI 自己分段读`
+          : "目录里没有文件，复制了目录路径"
+        : "复制失败 —— 浏览器不给剪贴板",
+      ok ? "" : "bad",
+    );
+    return;
+  }
+
+  const paths = catOrder(files, ext.file ?? "index.js").map((file) => shellQuote(`${dir}/${file.path}`));
+  // 变体的代码常常就是本体那一份，参数才是差别 —— 给一行注释，AI 才知道该看哪个名字。
+  const params = variant
+    ? state.data?.variants?.[ext.name]?.find((item) => item.id === variant)?.params ?? {}
+    : null;
+  const head = variant ? [`# ${ext.name}@${variant}${Object.keys(params).length ? ` \u00b7 参数 ${JSON.stringify(params)}` : ""}`] : [];
+  const text = [...head, `cat ${paths.join(" ")}`].join("\n");
+
+  const ok = await copyText(text);
+  toast(ok ? `已复制 \u00b7 cat ${files.length} 个文件` : "复制失败 —— 浏览器不给剪贴板", ok ? "" : "bad");
 }
 
 // 长按（手机）/ 右键（桌面）都走同一个回调：卡片和左栏类别行用的是同一套手势。
@@ -1198,6 +1295,40 @@ async function renameCategory(name, next) {
   } catch (error) {
     toast(`改名失败：${error.message}`, "bad");
   }
+}
+
+// 变体行的菜单：只有一个动作，复制的是这个变体自己的源码。
+function openVariantMenu(x, y, ext, item) {
+  closeMenu();
+
+  const menu = $("ctxmenu");
+  menu.textContent = "";
+  menu.hidden = false;
+  menuOpen = true;
+
+  const head = el("div", "ctx-head");
+  head.append(el("span", "ctx-head-name", `${ext.name}@${item.id}`));
+  head.append(
+    el(
+      "span",
+      "ctx-badge",
+      item.source === "repo" ? (Object.keys(item.params ?? {}).length ? "参数" : "同代码") : item.branch ? "分支" : "目录",
+    ),
+  );
+  menu.append(head);
+
+  const copy = el("button", "ctx-item");
+  copy.type = "button";
+  copy.setAttribute("role", "menuitem");
+  copy.append(el("span", "ctx-item-label", "复制信息"));
+  copy.append(el("span", "ctx-item-hint", item.dir ? "只这个变体的 cat" : "代码同本体"));
+  copy.onclick = () => {
+    closeMenu();
+    void copyExtensionInfo(ext, item.id);
+  };
+  menu.append(copy);
+
+  mountMenu(menu, x, y, copy);
 }
 
 // ── 卡片上的类别编辑 ───────────────────────────────────────────────────────
@@ -1558,6 +1689,13 @@ function variantStrip(ext, variants) {
         ? `${ext.name}@${item.id} · 参数变体（写在 nous.json 的 variants 里）`
         : `${ext.name}@${item.id}\n${item.dir ?? ""}${item.branch ? `\n分支 ${item.branch}` : ""}`;
     row.onclick = () => openVariantDialog(ext, item);
+    // 变体一出生就只看自己那棵树：右键 / 长按复制的是它的 cat，不是本体的。
+    const openThis = (mx, my) => openVariantMenu(mx, my, ext, item);
+    row.oncontextmenu = (event) => {
+      event.preventDefault();
+      openThis(event.clientX, event.clientY);
+    };
+    attachMenuGesture(row, openThis);
     wrap.append(row);
   }
   const add = el("button", "variant-add", "+");
