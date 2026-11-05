@@ -2607,7 +2607,7 @@ async function publishEditor() {
     // 客户端只知道「现在开着哪个文件」，发布推的却是整个工作区 —— 两者很容易不是一回事。
     const result = ed.variant
       ? await post(`${state.base}v1/extensions/publish`, { name: ed.name, variant: ed.variant })
-      : await post(`${state.base}v1/extensions/publish`, {});
+      : await post(`${state.base}v1/extensions/publish`, { name: ed.name });
     ed.pending.clear();
     state.codeDirty = false;
     // 发布成功 = HEAD 变了。重读这个文件拿新基线，否则差异视图还在跟旧 HEAD 比。

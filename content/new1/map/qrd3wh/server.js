@@ -1069,26 +1069,12 @@ const gitChanges = async () => {
 const changedPaths = async () => (await gitChanges()).map((item) => item.path);
 
 /**
- * 语法闸：工作区里每个 .js / .mjs 都得能过 `node --check`。
+ * 语法闸（`checkSyntax`）：代码要过 `node --check` 才允许进仓库。
  *
- * 只挂在发布这条路上 —— 类别那条 debounce 只 `git add` 词表/清单（见 syncExtendRepo），
- * 碰不到代码，所以不用陪跑。这里查的是**整个工作区**，不只是正在编辑的那个文件：
- * 发布推的是工作区，不是「现在开着的那个 tab」。
+ * 挂三处，口径一致：发布（`publishExtensions`，只查这次要提交的 js）、变体发布
+ * （`publishVariant`，查那棵树里改过的 js）、未同步弹窗的显式提交（`syncExtendRepo` 的
+ * `paths` 分支）。类别那条 debounce 碰不到代码，不用陪跑。
  */
-const gateChangedCode = async () => {
-  const changes = await gitChanges();
-  const changed = changes.map((item) => item.path);
-  const checked = [];
-  for (const { status, path: rel } of changes) {
-    if (!/\.(js|mjs)$/.test(rel)) continue;
-    if (status.includes("D")) continue; // 本地删掉的扩展：文件没了，没什么好查的
-    const text = await readFile(path.join(EXTEND, rel), "utf8").catch(() => null);
-    if (text === null) continue;
-    await checkSyntax(rel, text);
-    checked.push(rel);
-  }
-  return { changed, checked };
-};
 
 /** 重扫 index.json；失败不提交（提交了就是一份红账）。 */
 const regenIndex = async () => {
@@ -1101,12 +1087,28 @@ const regenIndex = async () => {
 };
 
 /** 发布：校验工作区里改过的每个 .js，重扫 index.json，然后 commit + push。 */
-const publishExtensions = async (message) => {
-  const { changed, checked } = await gateChangedCode();
-  if (!changed.length) return { committed: false, ...(await extendRepoState()), pushed: null, checked, changed };
+const publishExtensions = async ({ name = null, message = null } = {}) => {
+  // 发布**只发这一个扩展**（`name/` 底下的一切）+ 重扫出来的 index.json。
+  // 以前是「把整份工作区推上去」：抽屉里点一次发布，别人未发布的目录、你正在试的副本
+  // 会一起上 GitHub —— 踩过，测试副本就是这么上去的。
+  const changes = await gitChanges();
+  const scoped = name ? changes.filter((item) => item.path === name || item.path.startsWith(`${name}/`)) : changes;
+  if (!scoped.length) {
+    return { committed: false, ...(await extendRepoState()), pushed: null, checked: [], changed: [] };
+  }
+  const checked = [];
+  for (const { status, path: rel } of scoped) {
+    if (!/\.(js|mjs)$/.test(rel)) continue;
+    if (status.includes("D")) continue; // 删掉的文件没什么好查的
+    const text = await readFile(path.join(EXTEND, rel), "utf8").catch(() => null);
+    if (text === null) continue;
+    await checkSyntax(rel, text);
+    checked.push(rel);
+  }
   await regenIndex();
-  const result = await syncExtendRepo(String(message ?? "").trim() || null);
-  return { ...result, checked, changed };
+  const paths = [...new Set([...scoped.map((item) => item.path), "index.json"])];
+  const result = await syncExtendRepo(String(message ?? "").trim() || null, { paths });
+  return { ...result, checked, changed: scoped.map((item) => item.path) };
 };
 
 /** 当前分支名（变体的发布要知道推到哪儿）。 */
@@ -1832,12 +1834,17 @@ const syncExtendRepo = async (message, { only = null, includeDeleted = false, pa
   // 类别那条 debounce 是**自动**提交，它不能替谁发布。未发布的目录也在 index.json 里
   // （新建的、复制出来的），整份推上去 = 「仓库说我有它，实际没有」。
   // 所以提交前把不在 HEAD 里的条目从索引里摘掉，提交完再重扫回来（它会重新变脏，正是该有的样子）。
+  // 谁进了这次提交，谁就有资格留在索引里：index.json 里的未发布条目，只要「HEAD 里没有
+  // 这个目录」且「这次的 paths 里也没有它」，就摘掉 —— 自动提交不能替谁发布。
+  // （发布一个新扩展时它的目录也在 paths 里，于是照常进索引。）
   let skippedIndex = [];
-  if (only === "categories" && targets.includes("index.json")) {
+  if (targets.includes("index.json")) {
+    const incoming = new Set(targets.map((rel) => rel.split("/")[0]));
     const untracked = await untrackedIndexNames();
-    if (untracked.length) {
-      await pruneIndex(untracked);
-      skippedIndex = untracked;
+    const skip = untracked.filter((item) => !incoming.has(item));
+    if (skip.length) {
+      await pruneIndex(skip);
+      skippedIndex = skip;
     }
   }
 
@@ -2548,7 +2555,7 @@ const route = async (req, res, url) => {
       const result = await serializeExtendWrite(() =>
         body.variant
           ? publishVariant({ name: body.name, variant: body.variant, message: body.message })
-          : publishExtensions(body.message),
+          : publishExtensions({ name: body.name, message: body.message }),
       );
       // 发布之后立刻重装：commit + push 只挪了 git 指针，进程里跑的仍是旧代码。
       // 不在这里装一次，页头会挂 30 秒「⚠ 不一致」，而改代码的人正要马上看效果。

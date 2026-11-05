@@ -112,9 +112,13 @@ Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durab
   不这么做的话：新建/复制出来的未发布扩展，会在你下次「改个类别」时被自动推上 GitHub ——
   仓库说「我有它」，实际没有。踩过一次，见 `353ea42`。
 
-**`publish` 仍然提交整份工作区**（`syncExtendRepo(message)` 不带 `paths`）：它一开始就是
-「把工作区推上去」，所以别的地方的脏东西（别人的未发布目录、`index.json`）会跟着走。
-要收紧的话，`publishExtensions` 得知道是哪个扩展，然后传 `paths` —— 目前没做。
+**`publish` 只发被发布的那个扩展**：`publishExtensions({name})` 收窄成
+`name/` 底下的一切 + `index.json`，语法闸也只查这些 js（别人工作区里的语法错误不再拖住
+你的发布）。以前是「提交整份工作区」，抽屉里点一次发布能把别人未发布的目录带走 ——
+测试副本就是这么上过 GitHub（`319fd58` → `748dcf5` 清掉）。
+
+`index.json` 的摘除规则一句话：**「HEAD 里没有它」且「这次的 paths 里也没有它」才摘**。
+所以发布一个新扩展时它的条目照常进索引，别人的未发布条目照常被摘。
 
 `POST /v1/extensions/duplicate {from, name, summary?, category?}`：复制成新扩展（暂存目录 +
 改名 + 校验 + rename，历史不带）。**名字写死在入口里，所以复制必须先改名**：只认
