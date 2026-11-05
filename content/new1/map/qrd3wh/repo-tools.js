@@ -241,16 +241,20 @@ export const setNodeCategories = async (
   const manifest = JSON.parse(before);
   const next = sortCategories(normalizeCategories(categories));
   const updated = { ...manifest, category: next };
+  // 词表先落地，再写 nous.json —— 顺序不能反：生成器会拿 `categories.json` 校验每条
+  // nous.json 的类别（`工具/搜索` 得先在词表里，连同祖先 `工具`）。反过来的话，给一条
+  // 技能打一个新类别永远是「校验失败，已回滚」，那个输入框等于假的。
+  const beforeVocab = await readCategories(root, { protect });
+  await writeCategories(root, [...beforeVocab, ...next], { protect });
   await writeFileAtomic(file, JSON.stringify(updated, null, 2) + "\n");
   try {
     // index.json 是生成物：跑生成器，顺带校验（目录名==名字、字段齐全）。
     await (index ? index() : runIndex(root));
   } catch (error) {
     await writeFileAtomic(file, before);
+    await writeCategories(root, beforeVocab, { protect });
     throw withStatus(new Error(`index.mjs 校验失败，已回滚：${errorDetail(error)}`), 400);
   }
-  // 词表跟着收益：任何被打上的类别都该在左栏看得见，哪怕以后从所有目录上摘掉也还在。
-  await writeCategories(root, [...(await readCategories(root, { protect })), ...next], { protect });
   return updated;
 };
 

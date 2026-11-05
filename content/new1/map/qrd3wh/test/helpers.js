@@ -94,6 +94,33 @@ await writeFile(path.join(root, "index.json"), JSON.stringify({ v: 1, skills }, 
 
 export const CATEGORIES = JSON.stringify({ v: 1, categories: ["Basics"] }, null, 2) + "\n";
 
+/**
+ * 跟真 `Nous-skills/index.mjs` 同一道闸的生成器：**类别不在词表里就红**。
+ *
+ * `MINI_INDEX` 不查词表，于是「先写 nous.json 再补词表」那个顺序错误在它底下是绿的 ——
+ * 真仓里却是永远 400（真生成器先拿词表校验）。这条测试专门钉死那个顺序。
+ */
+export const STRICT_INDEX = `import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.dirname(fileURLToPath(import.meta.url));
+const vocab = new Set(JSON.parse(readFileSync(path.join(root, "categories.json"), "utf8")).categories ?? []);
+const skills = [];
+for (const entry of readdirSync(root, { withFileTypes: true })) {
+  if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+  const manifest = JSON.parse(readFileSync(path.join(root, entry.name, "nous.json"), "utf8"));
+  for (const category of manifest.category ?? []) {
+    if (!vocab.has(category)) {
+      console.error(entry.name + "/nous.json 的类别「" + category + "」不在 categories.json 词表里 —— 先登记类别");
+      process.exit(1);
+    }
+  }
+  skills.push({ name: entry.name, category: manifest.category ?? [] });
+}
+writeFileSync(path.join(root, "index.json"), JSON.stringify({ v: 1, skills }, null, 2) + "\\n");
+`;
+
 /** 一个技能目录（三个文件），可以直接铺进仓里当 fixture。 */
 export const skillFiles = (name, { description = `${name} 的说明`, category = [], summary = "" } = {}) => ({
   [`${name}/SKILL.md`]: `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n# ${name}\n`,

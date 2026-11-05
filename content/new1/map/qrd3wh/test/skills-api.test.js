@@ -14,6 +14,7 @@ import * as repo from "../repo-tools.js";
 import {
   CATEGORIES,
   MINI_INDEX,
+  STRICT_INDEX,
   call,
   cleanup,
   exists,
@@ -143,6 +144,30 @@ test("POST /v1/skills/category：nous.json 改了、词表补齐祖先、index.j
     assert.ok(vocab.includes("工具/搜索"));
     // index.json 是生成器扫出来的 —— 它必须已经跟着改。
     assert.deepEqual((await readJson(root, "index.json")).skills[0].category, ["工具/搜索"]);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("POST /v1/skills/category：新类别先登记词表 —— 生成器会校验，顺序反了就永远 400", async () => {
+  // 真 index.mjs 拿 categories.json 校验每条 nous.json 的类别。先写 nous.json、后补词表
+  // 的顺序在真仓里是死路（`工具/搜索` 不在词表 → 生成器红 → 整体回滚）。
+  const root = await makeRepo({
+    files: { "categories.json": CATEGORIES, "index.mjs": STRICT_INDEX, ...skillFiles("cat") },
+  });
+  const skills = makeSkills(root);
+  await skills.load();
+  const api1 = api(root, skills);
+  try {
+    const { status: code, body } = await api1.call("POST", "/v1/skills/category", {
+      name: "cat",
+      category: ["工具/搜索"],
+    });
+    assert.equal(code, 200, `词表顺序不对就会 400：${JSON.stringify(body)}`);
+    assert.deepEqual(body.skill.category, ["工具/搜索"]);
+    const vocab = (await readJson(root, "categories.json")).categories;
+    assert.ok(vocab.includes("工具"), `词表里没有祖先「工具」：${vocab.join(",")}`);
+    assert.ok(vocab.includes("工具/搜索"));
   } finally {
     await cleanup(root);
   }
