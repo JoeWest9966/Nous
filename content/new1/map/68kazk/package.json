@@ -5,7 +5,7 @@
   "description": "skills · Nous 自持技能的清单面板：一张技能卡网格，只发静态文件，读写全在 qrd3wh。",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/"
   },
   "engines": {
     "node": ">=22.19.0"

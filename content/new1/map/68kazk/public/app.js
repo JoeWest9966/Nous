@@ -50,6 +50,16 @@ function toast(message, kind = "") {
   toastTimer = setTimeout(() => (node.hidden = true), 3600);
 }
 
+/**
+ * 「提交了但没推成」那一行说什么。
+ *
+ * 原因在服务端的 `error` 里（`pushed: false` + `error`，见 spec §6.3 第 6 条）；
+ * `warnings` 是另一类东西（「未发布的不跟着走」「已提交但装载失败」）。早先只读
+ * warnings，于是断网的时候页面上写着「未知原因」—— 真正的理由就在响应体里躺着。
+ */
+const pushFailure = (result) =>
+  result?.error || (Array.isArray(result?.warnings) ? result.warnings.filter(Boolean).join("；") : "") || "未知原因";
+
 // 商品砖：字母砖的色相由名字决定，同一条技能永远同一个颜色。
 const hueOf = (name) => {
   let hash = 0;
@@ -358,14 +368,9 @@ function openCardMenu(x, y, skill) {
   menuItem(menu, "类别", "在详情里勾", () => openDetail(skill.name, { editTags: true }));
 
   menu.append(el("div", "ctx-sep"));
-  const unpublished = skill.tracked === false;
-  menuItem(
-    menu,
-    unpublished ? "删掉" : "归档",
-    unpublished ? "没有历史可找" : "可从归档恢复",
-    () => void archiveSkill(skill.name, { unpublished }),
-    { danger: true },
-  );
+  // 「未发布」也走归档：盘上删掉的东西一律进 `.archive/`（I10），只有「彻底删除」才真删。
+  // 所以这里没有第二条更狠的路，菜单里也就不写「删掉」那种话。
+  menuItem(menu, "归档", "可从归档恢复", () => void archiveSkill(skill.name), { danger: true });
 
   mountMenu(menu, x, y, first);
 }
@@ -964,10 +969,15 @@ function renderDetail() {
     const line = alertLine("bad", "装载失败", skill.load.error);
     line.title = "";
     host.append(line);
-    // 「重试装载」= 把文件改回去，再让 qrd3wh 重扫一遍仓库（POST /v1/skills/reload）。
-    const retry = el("button", "btn btn-small", "重试装载");
+    // 「重试装载」只做一件事：`POST v1/skills/reload` —— 让 qrd3wh 把仓库重扫一遍。
+    // 它不修文件、不撤改动、不 commit。所以按钮旁边必须写清「先改回去，再点这里」：
+    // 点一百次也不会让一个写坏的 frontmatter 自己变好。
+    host.append(
+      el("p", "detail-sum", "这个按钮只是让 qrd3wh 重扫仓库 —— 它不会替你修文件。先把 SKILL.md 改回来，再点这里。"),
+    );
+    const retry = el("button", "btn btn-small", "重试装载（重扫仓库）");
     retry.type = "button";
-    retry.title = "先「改正文」把文件改对，再点这里让 qrd3wh 重扫（不 commit）";
+    retry.title = "POST v1/skills/reload：只重扫，不改文件、不提交";
     retry.onclick = () => void reloadSkill(skill.name);
     host.append(retry);
   }
@@ -1179,21 +1189,21 @@ function confirmName({ title, hint, name, label = "确定", onConfirm }) {
   document.addEventListener("keydown", onKey, true);
 }
 
-async function archiveSkill(name, { unpublished = false } = {}) {
+async function archiveSkill(name) {
   confirmName({
-    // 未发布的技能没有历史可留 —— 归档它会是「先把半成品推上去再归档」，所以后端直接删掉。
-    title: unpublished ? `删掉 ${name}？` : `把 ${name} 归档？`,
-    hint: unpublished
-      ? "它还没发布过，远端上从来就没有它 —— 所以没有备份、没有历史可找。这一步就是把这台磁盘上的目录删掉。"
-      : "目录会移到仓库的 .archive/ 并提交 + 推送。远端上不再有它，但备份还在仓库里，随时可以恢复。",
+    // 文案说真话（I10）：**未发布的也进 .archive/**。它没发布过不代表可以悄悄 rm ——
+    // 盘上删掉的东西只有「彻底删除」才真没，别的都得留个能捡回来的地方。
+    // （早先这里对未发布的分支写「删掉 / 没有历史可找」，那是旧行为留下的谎。）
+    title: `把 ${name} 归档？`,
+    hint: "未发布的技能也会移进 `.archive/` —— 只有「彻底删除」才真删（I10）。",
     name,
-    label: unpublished ? "删掉" : "归档并推送",
+    label: "归档并推送",
     onConfirm: async () => {
       try {
         const result = await transport.post("v1/skills/archive", { name });
         if (state.detail === name) leaveDetail();
-        if (result.pushed === false) toast(`已在本地提交，但推送失败：${result.warnings?.join("；") || "未知原因"}`, "bad");
-        else toast(unpublished ? `已删掉 ${name}（从没发布过，仓库里本来就没有）` : `已归档 ${name} · 右上「已归档」里可以恢复`);
+        if (result.pushed === false) toast(`已在本地提交，但推送失败：${pushFailure(result)}`, "bad");
+        else toast(`已归档 ${name} · 右上「已归档」里可以恢复`);
         await load({ quiet: true });
       } catch (error) {
         toast(`归档失败：${error.message}`, "bad");
@@ -1205,7 +1215,7 @@ async function archiveSkill(name, { unpublished = false } = {}) {
 async function restoreArchived(name) {
   try {
     const result = await transport.post("v1/skills/restore", { name });
-    if (result.pushed === false) toast(`已恢复，但推送失败：${result.warnings?.join("；") || "未知原因"}`, "bad");
+    if (result.pushed === false) toast(`已恢复，但推送失败：${pushFailure(result)}`, "bad");
     else toast(`${name} 已从归档恢复（未提交前的状态就是未发布）`);
     await load({ quiet: true });
   } catch (error) {
@@ -1222,7 +1232,7 @@ async function purgeArchived(name) {
     onConfirm: async () => {
       try {
         const result = await transport.post("v1/skills/purge", { name });
-        if (result.pushed === false) toast(`已提交，但推送失败：${result.warnings?.join("；") || "未知原因"}`, "bad");
+        if (result.pushed === false) toast(`已提交，但推送失败：${pushFailure(result)}`, "bad");
         else toast(`${name} 已彻底删除`);
         await load({ quiet: true });
       } catch (error) {
@@ -1510,7 +1520,7 @@ async function publishEditor() {
     const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : [];
     if (result.pushed === false) {
       // 提交在本地、远端没动 —— 最坏的一种「假成功」，必须红着说出来。
-      ed.error = `本地已提交，但推送失败：\n${warnings.join("\n") || "未知原因"}\n点「发布」再试一次。`;
+      ed.error = `本地已提交，但推送失败：\n${pushFailure(result)}\n点「发布」再试一次。`;
     } else if (result.commit) {
       ed.notice = `已发布 · ${short(result.commit.hash)} · ${result.commit.subject}${
         warnings.length ? `\n${warnings.join("\n")}` : ""
@@ -1766,27 +1776,31 @@ function gotoChange(dir) {
 
 // ── 新建技能 ──────────────────────────────────────────────────────────────
 //
-// 只问三样：名字、一句 description、类别（spec §6.5）。服务端才是闸 —— 这里贴着输入框
-// 先跑一遍同样的规则，是为了不让人等服务端 400 回来才知道名字撞了。
+// 只问三样：名字、一句 description、类别（spec §6.5）。
+//
+// **这里不复刻语义闸（I8）。** 名字的字符集、撞已有目录、撞 `.archive/<名>`、撞仓库自己的
+// 保留名（`index.json` 这类）全部由 qrd3wh 的 `POST v1/skills/create` 一处判定；这一页
+// 只播报结果 —— 服务端的 400 原文直接进 `#create-err`（`api.js` 原样往上抛）。
+// 本地多一套规则就是第二份真相：改了一边忘了另一边，两边就会说不同的话。
 //
 // 建完**不发布**：新技能的第一个正确状态是「未发布」（tracked: false）。
-
-const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 
 function validateCreate() {
   const name = $("create-name").value.trim();
   const description = $("create-description").value.trim();
-  const set = (tone, message) => ({ ok: tone === "ok", tone, message });
   const root = state.data?.root ?? "技能仓库";
 
-  if (!name) return set("bad", `先起个名字（小写字母开头最好）。会建在 ${root}/&lt;名字&gt;/`);
-  if (!NAME_RE.test(name)) return set("bad", "只能字母数字和 . _ -，而且得字母数字开头");
-  if (skillNow(name)) return set("bad", `已经有一条叫 ${name} 的了`);
-  if ((state.data?.archived ?? []).includes(name)) {
-    return set("bad", `.archive/${name} 还留着 —— 去「已归档」里点恢复，别建第二条`);
+  // 空名字是唯一拦下来的东西：没名字连「建什么」都说不清。
+  if (!name) return { ok: false, tone: "bad", message: `先起个名字。会建在 ${root}/&lt;名字&gt;/` };
+  // 空说明只提醒，**不拦**：拦不拦是服务端的事（它会回 400 并把原因写在 #create-err 里）。
+  if (!description) {
+    return {
+      ok: true,
+      tone: "warn",
+      message: "还差一句说明 —— 模型靠它决定用不用这条技能。空着提交的话服务端会拦。",
+    };
   }
-  if (!description) return set("warn", "名字可用。还差一句说明 —— 模型靠它决定用不用这条技能");
-  return set("ok", `会建在 ${root}/<b>${name}</b>/`);
+  return { ok: true, tone: "ok", message: `会建在 ${root}/<b>${name}</b>/` };
 }
 
 function renderCreate() {
