@@ -341,6 +341,72 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 
 ---
 
+## 12. 上游（订阅 / 镜像 / 取用）
+
+一句话：**上游就是一个 git remote。** 这一节之前不存在，是因为那时候上游是 warehouse 的编目 + tarball + 收据 —— 那是在用 HTTP 重建 git 已有的事实。
+
+| 东西 | 存哪 | 进版本库 | 是什么 |
+|---|---|---|---|
+| `sources.json` | 仓根，跟 `categories.json` 并列 | **是** | 订阅了谁。内容，不是配置 —— 换台机器 clone 下来照样知道 |
+| `data/upstream/<name>` | 块的 `NOUS_DATA` | 否 | bare 镜像。**缓存**，删了下次 fetch 重 clone |
+| `nous.json.upstream` | 每条技能自己的目录 | **是** | 注脚 `matt/skills/x/code-review@<tree-sha>`，只写不读逻辑 |
+
+### 12.1 `sources.json`
+
+```json
+{ "v": 1, "sources": [
+  { "name": "matt", "url": "https://github.com/mattpocock/skills", "prefix": "skills" }
+]}
+```
+
+- `name`：`[a-z0-9][a-z0-9._-]{0,31}`，唯一。进 URL、进目录名、进注脚。
+- `url`：git 认识的一切（`https://` / `ssh://` / `git@host:path` / `file://` / **绝对路径**）。最后一种让「另一台机器上的 Nous-skills」也能当上游。
+- `prefix`：可选，只看仓库里的这一段。
+- `branch`：可选，不给就用镜像 HEAD。
+- 用 `POST /v1/skills/sources` 整份替换写入，**不提交** —— 「多订阅了一个上游」跟加一条技能一样，走发布。
+
+### 12.2 端点
+
+| 方法 · 路径 | 说明 |
+|---|---|
+| `GET /v1/skills/upstream` | `{sources:[{…, mirror:"ready"｜"missing"}], entries:[…], errors:[{source,error}]}`。**不联网**：镜像不在就报 `missing` |
+| `POST /v1/skills/upstream/refresh` | `{name?}` → 唯一联网动作（clone/fetch）。逐个 source 各报 `ok/error` |
+| `GET /v1/skills/upstream/files?source=&path=` | 逐文件跟本地比 git blob sha → `same` / `diff` / `missing` |
+| `POST /v1/skills/upstream/adopt` | `{source, path, name?}` → 取用（见 12.4） |
+
+`entries[]` 的 `local` 字段（**服务端算，前端只摆**）：
+
+| local | 意思 | 面板上的动作 |
+|---|---|---|
+| `none` | 本地没有这条 | 取用 |
+| `changed` | 取用过，上游这个目录的 tree sha 又变了 | 看差在哪 + 说明「要跟这版得先归档本地那条」 |
+| `taken` | 本地有同名但不是从这条取的 | 改名取用（输入框） |
+| `same` | 取用过，上游没动 | 无（按钮灰着） |
+
+### 12.3 镜像纪律
+
+- 只在 `refresh` 里 clone/fetch。**`GET /v1/skills/upstream` 的调用路径上没有联网代码** —— 打开面板不打 GitHub。
+- 清单从 `git ls-tree -r` + `git cat-file` 读，**不 checkout**：一条技能的清单是一次 tree walk。
+- `--filter=blob:none` 省空间；服务端不支持就退回全量 clone（「省空间失败」不等于「上游用不了」）。
+
+### 12.4 `adopt` 的规矩
+
+跟 `create` 同一个形状（I7 半截不留），区别只有一个：骨架不是空的，是从 `cat-file` 里摊出来的。
+
+1. 摊到 `.new-<name>-<ts>/`（点开头，扫盘看不见）——逐 blob 写，二进制原样，不用 tar/shell。
+2. **名字对齐**：`name` 默认取上游目录名；给了别的就把 frontmatter 的 `name:` 和 `nous.json.name` 一起改（I3：目录名 == 名字 == 会话里的键）。
+3. 写 `nous.json`：`summary` / `category` 取上游的（没有就空），加 `upstream` 注脚。
+4. 上游的类别补进词表（跟 `create` 一样的顺序：先词表后 `nous.json` 的地方不能反）。
+5. 过内容闸（§6.4）→ 才 rename 进正式目录 → `regenIndex`。
+6. **不提交。** 第一个正确状态是「未发布」；发布仍然只有一个按钮。
+7. 目标名已存在 / 在 `.archive/` 里 → 409，不覆盖。
+
+### 12.5 不做
+
+- 定时同步、后台 fetch、双向推送（撞 I1 / I6）。
+- 「上游一改，本地自动跟着改」。取用是**一次性拷贝**：`nous.json.upstream` 只回答「这条哪来的」，不参与任何判断。让它变成活的追踪关系 = 回到会漂的第二份真相。
+- 覆盖式取用。要跟上游的新版本：归档本地那条 → 再取用。
+
 ## 11. 不在范围内
 
 - 技能之间的依赖声明（`needs` 那套）。
