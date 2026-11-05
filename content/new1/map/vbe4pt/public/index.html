@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>extend · Nous 扩展</title>
-    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./style.css?v=12" />
     <script>
       // 宿主把这块挂在 /p/new1/vbe4pt（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -28,37 +28,202 @@
       </div>
       <div class="top-right">
         <span class="hint dim" id="repo">—</span>
+        <button class="chip-status" id="sync" hidden title="点开看未同步的改动（类别词表仍 8 秒自动推）">
+          <span class="dot" data-state="ok"></span><span class="sync-label">已同步</span>
+        </button>
         <button class="chip-status" id="refresh" title="重新问一遍">
           <span class="dot" data-state="wait"></span>刷新
         </button>
       </div>
     </header>
 
-    <main>
-      <p class="lede">
-        这一页是<b>只读</b>的：扩展装在 qrd3wh 那个进程里（<code>registry.install()</code>），
-        不落盘、没有安装位、不靠 <code>/reload</code>。所以下面每一样都是
-        <b>问进程要的</b>，不是扫目录扫出来的 —— 仓库里写着什么，和这一刻装着什么，是两件事。
+    <div class="layout">
+      <aside class="rail">
+        <div class="rail-head">
+          <h3>类别</h3>
+          <span class="facet-n" id="cat-count">—</span>
+        </div>
+        <div class="facets" id="facets"></div>
+        <div class="rail-new" id="rail-new"></div>
+        <div class="rail-foot dim small">
+          源码在 <code id="repo-path">—</code>
+        </div>
+      </aside>
+
+      <main class="results">
+        <div class="filters" id="filters" aria-label="筛选"></div>
+        <div class="toolbar">
+          <span class="result-count" id="result-count">—</span>
+          <button class="btn-new" id="new-ext" type="button" title="建一个空扩展（未发布，只有这台有）">
+            <span aria-hidden="true">＋</span>新建扩展
+          </button>
+          <label class="search">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <circle cx="8.5" cy="8.5" r="5.2" />
+              <path d="M12.4 12.4 17 17" />
+            </svg>
+            <input id="search" type="search" placeholder="搜扩展名 / 说明 / 类别" autocomplete="off" />
+          </label>
+        </div>
+        <div class="grid" id="grid"></div>
+        <!-- 详情：点卡进来，占主区（不是又一个右侧浮层 —— 右边那条边归代码抽屉）。 -->
+        <section class="detail" id="detail" hidden aria-label="扩展详情"></section>
+        <datalist id="tag-suggestions"></datalist>
+      </main>
+    </div>
+
+    <div class="ctxmenu" id="ctxmenu" role="menu" hidden></div>
+
+    <!-- 代码编辑器：点商品卡上的「代码」打开。保存 / 发布是两个动作，别合并。 -->
+    <div class="ed-scrim" id="ed-scrim" hidden></div>
+    <aside class="ed" id="editor" hidden aria-label="扩展代码编辑器">
+      <header class="ed-head">
+        <div class="ed-title">
+          <h2 id="ed-name">—</h2>
+          <p class="dim small" id="ed-meta"></p>
+        </div>
+        <div class="ed-head-actions">
+          <span class="ed-state" id="ed-state"></span>
+          <button class="ed-x" id="ed-close" title="关闭（Esc）" aria-label="关闭">×</button>
+        </div>
+      </header>
+      <div class="ed-body">
+        <nav class="ed-files" id="ed-files" aria-label="文件"></nav>
+        <section class="ed-pane">
+          <div class="ed-bar">
+            <span class="ed-path mono" id="ed-path">—</span>
+            <span class="ed-spacer"></span>
+            <span class="ed-delta" id="ed-delta" hidden title="与 HEAD 的差异（git 口径：修改行算 +1 −1）">
+              <span class="d-plus" id="ed-plus">+0</span><span class="d-minus" id="ed-minus">&minus;0</span>
+            </span>
+            <div class="ed-switch" role="tablist" aria-label="视图">
+              <button class="ed-tab on" id="ed-tab-edit" data-mode="edit" role="tab" aria-selected="true" title="编辑（Alt+D 切差异）">编辑</button>
+              <button class="ed-tab" id="ed-tab-diff" data-mode="diff" role="tab" aria-selected="false" title="与 HEAD 的差异（Alt+D 切回编辑）">差异</button>
+            </div>
+            <button class="ed-btn" id="ed-save" title="保存到磁盘（Ctrl/⌘+S）——不提交">保存</button>
+            <button class="ed-btn primary" id="ed-publish" title="校验 + commit + push">发布</button>
+          </div>
+          <div class="ed-stage" id="ed-stage">
+            <div class="ed-code" id="ed-code">
+              <div class="ed-gutter" id="ed-gutter" aria-hidden="true"></div>
+              <textarea class="ed-text" id="ed-text" spellcheck="false" wrap="off" disabled
+                        aria-label="文件内容"></textarea>
+            </div>
+            <div class="ed-diff" id="ed-diff" hidden tabindex="0" aria-label="与 HEAD 的差异"></div>
+            <div class="ed-map" id="ed-map" hidden aria-hidden="true"></div>
+          </div>
+          <div class="ed-msg" id="ed-msg" hidden></div>
+          <footer class="ed-foot">
+            <span class="dim small">
+              保存只落盘；发布才 commit + push（先过 <code>node --check</code> 和 <code>index.mjs</code>）。
+            </span>
+            <button class="ed-btn" id="ed-dev" title="在 qrd3wh 里开一个会话，cwd 指着扩展仓库">开个会话开发它</button>
+          </footer>
+        </section>
+      </div>
+    </aside>
+
+    <!-- 破坏性动作的确认层：删库会真提交 + 推送，要求手输扩展名。 -->
+    <div class="danger-scrim" id="danger-scrim" hidden></div>
+    <div class="danger" id="danger" hidden role="dialog" aria-modal="true" aria-labelledby="danger-title">
+      <h2 id="danger-title">—</h2>
+      <p class="danger-hint dim" id="danger-hint"></p>
+      <label class="danger-label" for="danger-input">
+        <span>手输扩展名 <code id="danger-name">—</code> 确认</span>
+        <input id="danger-input" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="danger-err" id="danger-err" hidden></p>
+      <div class="danger-actions">
+        <button class="btn" id="danger-cancel" type="button">取消</button>
+        <button class="btn btn-bad" id="danger-ok" type="button" disabled>确定</button>
+      </div>
+    </div>
+
+    <!-- 新建扩展：只问三样。名字是 API，建完改不了 —— 这句必须挂在输入框上。 -->
+    <div class="danger-scrim" id="create-scrim" hidden></div>
+    <form class="create" id="create" hidden role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <h2 id="create-title">新建扩展</h2>
+      <p class="create-hint dim">
+        一个目录 + 一份清单 + 一个空入口。建完是<b>未发布</b>：只在你这台、GitHub 上看不到，满意了再点发布。
       </p>
 
-      <section class="card" id="ours">
-        <div class="card-head">
-          <h2>我们开发的</h2>
-          <span class="dim small">源码在 <code id="repo-path">—</code></span>
-        </div>
-        <ul class="exts" id="ours-list"></ul>
-      </section>
+      <label class="create-label" for="create-name">
+        <span>扩展名 <b>建完就改不了 —— 会话里存的就是它</b></span>
+        <input id="create-name" type="text" autocomplete="off" spellcheck="false" placeholder="weather" />
+      </label>
+      <p class="create-note" id="create-name-note"></p>
 
-      <section class="card muted" id="others">
-        <div class="card-head">
-          <h2>不归这一页管</h2>
-          <span class="dim small">列出来只为让人知道它们存在，别以为是漏了</span>
-        </div>
-        <ul class="exts" id="others-list"></ul>
-      </section>
-    </main>
+      <label class="create-label" for="create-summary">
+        <span>一句话说明 <b>卡片上就靠它认人</b></span>
+        <input id="create-summary" type="text" autocomplete="off" maxlength="200"
+               placeholder="看天气：给 agent 一个查本地天气的工具" />
+      </label>
+
+      <label class="create-label" for="create-cat">
+        <span>类别 <i class="dim">可空 = 未分类；写个不存在的名字就顺手建了</i></span>
+        <input id="create-cat" type="text" autocomplete="off" list="create-cats" placeholder="工具/网络" />
+        <datalist id="create-cats"></datalist>
+      </label>
+
+      <p class="create-err" id="create-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small mono" id="create-where"></span>
+        <button class="btn" id="create-cancel" type="button">取消</button>
+        <button class="btn btn-good" id="create-ok" type="submit" disabled>建</button>
+      </div>
+    </form>
+
+    <div class="danger-scrim" id="variant-scrim" hidden></div>
+    <form class="create" id="variant" hidden role="dialog" aria-modal="true" aria-labelledby="variant-title">
+      <h2 id="variant-title">变体</h2>
+      <div id="variant-fields">
+        <p class="create-hint dim">
+          变体 = 同一个扩展的<b>另一个可装载名字</b>（<span class="mono">名@变体</span>）。开对话时挑哪个，跑的就是哪个。
+        </p>
+        <label class="create-label" for="variant-id">
+          <span>变体 id <b>只进名字，不进代码</b></span>
+          <input id="variant-id" type="text" autocomplete="off" spellcheck="false" placeholder="review" />
+        </label>
+        <label class="create-label" for="variant-branch" id="variant-branch-wrap">
+          <span>分支名 <i class="dim">空 = ext/扩展名-变体 id；已存在就 checkout 那一条</i></span>
+          <input id="variant-branch" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="create-hint dim">
+          会新建一份 checkout（<span class="mono">git worktree add</span>）挂在一条分支上，主树一个字节不动。
+        </p>
+      </div>
+      <p class="variant-info mono" id="variant-info" hidden></p>
+      <p class="create-err" id="variant-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small" id="variant-where"></span>
+        <button class="btn" id="variant-close" type="button">取消</button>
+        <button class="btn" id="variant-code" type="button" hidden>改代码 ›</button>
+        <button class="btn btn-bad" id="variant-remove" type="button" hidden>解绑</button>
+        <button class="btn btn-good" id="variant-ok" type="submit">绑定</button>
+      </div>
+    </form>
+
+    <!-- 未同步：按**扩展**（不是文件）分组，勾哪个提交哪个。代码默认不勾，勾了要过语法检查。 -->
+    <div class="danger-scrim" id="pending-scrim" hidden></div>
+    <div class="create pending" id="pending" hidden role="dialog" aria-modal="true" aria-labelledby="pending-title">
+      <h2 id="pending-title">未同步</h2>
+      <p class="create-hint dim" id="pending-summary">—</p>
+      <div class="pending-body" id="pending-body"></div>
+      <label class="create-label" id="pending-msg-wrap" for="pending-message">
+        <span>提交说明 <i class="dim">默认按勾中的改动生成</i></span>
+        <input id="pending-message" type="text" autocomplete="off" spellcheck="false" placeholder="extend: …" />
+      </label>
+      <p class="create-err" id="pending-err" hidden></p>
+      <div class="create-actions">
+        <button class="btn" id="pending-all" type="button">全选</button>
+        <button class="btn" id="pending-none" type="button">全不选</button>
+        <span class="dim small" id="pending-stat"></span>
+        <button class="btn" id="pending-cancel" type="button">关闭</button>
+        <button class="btn btn-good" id="pending-ok" type="button" disabled>提交并推送</button>
+      </div>
+    </div>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=18"></script>
   </body>
 </html>

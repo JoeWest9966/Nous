@@ -2,7 +2,7 @@
   "name": "vbe4pt",
   "private": true,
   "type": "module",
-  "description": "extend · Nous 自研扩展的只读清单前端：仓库里有什么 vs qrd3wh 进程里装着什么。没有后端状态，server.js 只发 public/。",
+  "description": "extend · Nous 自研扩展清单：仓库里有什么 vs qrd3wh 进程里装着什么；类别写回仓库并由 qrd3wh 提交推送。",
   "scripts": {
     "start": "node server.js"
   },
