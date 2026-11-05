@@ -474,6 +474,20 @@ const pickedExtensions = new Set();
  * 就是同一个扩展在同一个进程里跑两遍 —— 工具名、提示词段全撞。所以族内是 radio，不是 checkbox。
  */
 let extFamilies = [];
+/** 默认勾选的类别。空集不是意外 —— 见下面 `inCategory` 的注释。 */
+const DEFAULT_CATEGORY = "Basics";
+/**
+ * 扩展是不是这个类别。`Basics/xxx` 也算 Basics：类别是**树**（词表里真的存在
+ * `Basics/234` 这种子类别），拿 `===` 一刀切会漏掉整棵子树。
+ */
+const inCategory = (ext, wanted) => {
+  const want = String(wanted).toLowerCase();
+  return (ext?.category ?? []).some((label) => {
+    const got = String(label ?? "").trim().toLowerCase();
+    return got === want || got.startsWith(`${want}/`);
+  });
+};
+
 /** 名字属于哪一族：`123@dev` → `123`。 */
 const familyOf = (name) => {
   const at = String(name).indexOf("@");
@@ -833,10 +847,16 @@ const renderExtList = () => {
     $("extList").innerHTML = shown
       .map(({ fam, variants }) => {
         const desc = String(fam.ext.summary ?? "").replace(/\s+/g, " ").trim();
+        // 行里带上类别：默认为什么勾上它、这条扩展归哪一档，一行字就能自己解释，
+        // 不用回头翻卡片页。没类别就只有版本。
+        const meta = [
+          (fam.ext.category ?? []).filter(Boolean).join(" · "),
+          fam.ext.version ? `v${fam.ext.version}` : "",
+        ].filter(Boolean).join(" · ");
         const body = extRow({
           name: fam.name,
           desc,
-          meta: fam.ext.version ? `v${fam.ext.version}` : "",
+          meta,
           on: pickedExtensions.has(fam.name),
           off: false,
           variant: false,
@@ -866,7 +886,7 @@ const renderExtList = () => {
   const famCount = extFamilies.length;
   const varCount = extFamilies.reduce((n, fam) => n + fam.variants.length, 0);
   const n = pickedExtensions.size;
-  $("extHint").textContent = `${famCount} 个扩展${varCount ? ` · ${varCount} 个变体` : ""} · ${n ? `已选 ${n} 个名字` : "一个都没选"} · 一族只能选一个`;
+  $("extHint").textContent = `${famCount} 个扩展${varCount ? ` · ${varCount} 个变体` : ""} · ${n ? `已选 ${n}` : "一个都没选"}`;
 };
 
 /** 区域里那个节点显示什么 —— 跟模型域一样，只显示生效的东西，不显示“待定”。 */
@@ -900,8 +920,10 @@ const renderExt = () => {
           ? ordered[0]
           : `${ordered[0]} +${ordered.length - 1}`;
   $("ext-tag").textContent = "改 ›";
+  // 「默认勾 Basics」写在盘面的副标题里，不放弹窗底部：那句话是解释默认值的，
+  // 摆在开弹窗之前就该看得见；弹窗底部留给计数和「完成」。
   $("ext-sub").textContent = total
-    ? `已装 ${total} 个 · 选中的 ${picked.length}${variantPicked.length ? `（含 ${variantPicked.length} 个变体）` : ""}`
+    ? `已装 ${total} 个 · 选中的 ${picked.length}${variantPicked.length ? `（含 ${variantPicked.length} 个变体）` : ""} · 默认 ${DEFAULT_CATEGORY}`
     : "进程里没有可选扩展";
   $("pickext").disabled = !tag || !total;
 };
@@ -1036,8 +1058,9 @@ if (tag) {
   } catch (error) {
     console.warn("扩展清单拿不到：", error);
   }
-  // 默认只勾**本体**：变体得人自己点。全勾的话同一族的多个名字会一起上，正文会重复定义。
-  for (const fam of extFamilies) pickedExtensions.add(fam.name);
+  // 默认只勾 **Basics 类别**的本体：变体是人自己点的事，默认值不替人做「装哪一版」的决定。
+  // Basics 里一个都没有 → 一个都不勾，不偷偷兜底勾 nous/skills：那样这条规则就是假的。
+  for (const fam of extFamilies) if (inCategory(fam.ext, DEFAULT_CATEGORY)) pickedExtensions.add(fam.name);
 }
 renderCurrent();
 renderCtx();
