@@ -86,6 +86,55 @@ Why 不是直接 `import nous from "..."`：扩展**不许自己 import pi-durab
 
 **扩展名就是 API**：会话里存的是名字不是对象（durable 的 `AgentState`），改 `name` = 破坏性变更。
 
+两条与清单字段有关的约定（都是「别让字段当装饰品」）：
+
+- **`default: true` 现在真生效**（`POST /v1/sessions`）：新会话默认选中 = harness 里那三个
+  硬编码的（`CodingTools` / `nous` / `skills`）**加**清单里 `default === true` 且已装的扩展。
+  以前这个字段只有页面拿来画绿角标、没人读 —— 改了没反应，比没有更糟。
+- **`sections` 只是声明，真值在 registry 里**：`GET /v1/extensions` 回一个 `live`
+  （`{扩展名: [真装上的 section 键]}`），扩展清单页拿它跟 `nous.json` 对账。
+  页面显示的「提示词 N 段」是手写数，代码改了忘改清单时只有 `live` 能拆穿。
+
+### 提交范围由调用方选：`paths`
+
+`syncExtendRepo(message, { paths })` 只提交**点名的那几条路径**（不在 `paths` 里的脏文件
+一个字节都不碰），并逐个对 `.js` 跑 `node --check` —— 这是面板「未同步」弹窗的实现，
+也是把「一次点击推整个工作区」换掉的代价。
+
+- 不带 `paths` = 老行为：`only: "categories"`（只词表/清单），类别那 8 秒 debounce 走它。
+- 带 `paths: []` = 纯推送：没有新提交就只 `push`（「已提交没推」那一段用它）。
+- 删除防火墙照旧：`includeDeleted` 为假时，` D` 的文件不进提交 —— 那是「删本地」的私事。
+- 提交失败要说实话：push 挂了回 `{committed: true, hash, pushed: false, pushError}`，
+  调用方据此把「已提交但没推」和「什么也没发生」分开显示。
+
+配套三个只读接口：`GET /v1/extensions/pending`（按**扩展**分组的改动 + 没推的提交）、
+`/pending/diff?path=`（一个文件对 HEAD 的前后内容）、`/pending/commit?hash=`（一条没推的
+提交改了哪些文件）。分组的单元是扩展不是文件 —— 人想的是「把 123 发出去」。
+
+### 变体：`名称@变体` 就是一个注册名
+
+会话里存的是名字，所以「同一扩展的多个版本 / 模式」在运行时只能是**多个注册名**：
+`nous` 之外再装一个 `nous@review`。装载层只做三件事：
+
+1. **来源两处**：`nous.json` 的 `variants`（只带 `params`，跟着仓库走）+
+   `data/extensions.local.json` 的 `variants`（指向本机某棵 checkout，不跟着仓库走）。
+   同一个 id 以本机为准，因为本机那份是「现在这台的代码在哪」。
+2. **造法一样**：同一个工厂多递一个 `{ variant, ...params }`，装之前把 `name` 覆盖成
+   `名@变体`（`{...extension, name}`）。扩展不用知道 `@` 的存在，registry 也只是按名字索引。
+3. **核心两条的变体要装两处**：`nous` / `skills` 的本体在启动路径上硬编码 import，所以它们的
+   变体走 `loadCoreVariants()` —— `syncExtraExtensions` 的过滤会把核心家族整体跳过。
+   `installCore`（重装）和**启动序列**都要调它：只挂在前者上，进程一重启 `nous@review` 就没了，
+   得等人点「重试装载」或推一次代码才回来 —— 又一个「页面说装了、进程里没有」。
+
+**变体有自己的文件面**：`/v1/extensions/files`、`/file`、`/publish` 都认 `variant` 参数 ——
+根目录换成那棵绑定目录，差异基线取**那棵树自己的** `HEAD`（拿主树 HEAD 比会显示成整篇重写），
+发布则在那棵树上 `add` + commit + `push -u origin <分支>`。主树的发布路径一个字没改：
+两条路都串在 `serializeExtendWrite` 里，但碰的是不同仓库。
+
+`@` 是分隔符，别用 `:`：`skill:` 是运行时空白名牌的前缀，`skillNamesOf` 会误伤。
+变体失败只记它自己那条 `load`（`名@变体` → failed），**不连坐本体**：变体可能指向另一份代码，
+本体那份坏掉不该把它一起判死。
+
 ## 技能：内容在盘上，选择在会话里
 
 `Nous-extend/skills/index.js`。跟 pi CLI 同一套规矩（同一份 `<available_skills>` XML、同样让模型用 `read`
