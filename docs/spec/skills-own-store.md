@@ -214,7 +214,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
 | `GET /v1/skills/file?name=&path=` | — | `{ name, path, text, etag }`；二进制/不存在 → 404 `{error}` |
 | `PUT /v1/skills/file` | `{ name, path, text, base }` | `{ etag }`；`base` 与当前不一致 → 409 |
 | `POST /v1/skills/create` | `{ name, description, category? }` | `{ skill, skills }` |
-| `POST /v1/skills/publish` | `{ message? }` | `{ ok, commit: {hash,subject} &#124; null, pushed: bool, warnings: string[] }` |
+| `POST /v1/skills/publish` | `{ message? }` | `{ ok, commit: {hash,subject} \| null, pushed: bool, warnings: string[] }` |
 | `POST /v1/skills/archive` | `{ name }` | `{ ok, commit, pushed }` |
 | `POST /v1/skills/restore` | `{ name }` | `{ ok, commit, pushed }` |
 | `POST /v1/skills/purge` | `{ name }` | `{ ok, commit, pushed }` |
