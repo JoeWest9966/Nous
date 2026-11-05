@@ -1,111 +1,125 @@
 ---
-name: nous-skill-catalog-panel
-description: "本块（68kazk）是一个 skill 编目管理面板：读 nw-panel 的 REST API，写同一套端点（改类别 / 重扫 / 删源 / register 两段式）。要改它、部署它、或排查「面板一片空」时读这一份。"
+name: nous-skills-panel
+description: "本块（68kazk）是 Nous 自持技能的清单面板：一张技能卡网格 + 左栏类别 facet + 正文抽屉。只发静态文件，读写全在 qrd3wh。要改它、部署它、或排查「面板一片空 / 点不动」时读这一份。"
 ---
 
-# skill 编目面板（68kazk）
+# skills 面板（68kazk）
 
-一个块的独立进程：`node server.js`，零依赖、零构建。它**不碰数据仓**，也不 import
-`nw` 的任何代码 —— 一切读写都经 `https://j1900.tail8d0018.ts.net:8443` 的 REST，
-和 `nw` CLI 是同一批端点（`nw source` 命令组的 HTTP 皮）。
+**`Nous-skills` 仓库里现在有哪些技能**，摆成一页卡片。左栏类别 facet，主区技能卡网格，
+点卡进详情（类别 / 正文 / 仓库），`正文 ›` 打开右边抽屉读写 `SKILL.md`。
 
-一句话区别：这是**另一块屏幕**，不是第二个后端。编目仍然只有 `nw` 一个写入口。
+上一版是「技能编目」的店面：反代到上游编目服务、Bearer token、源卡 + 对账报告 + 版本漂移 +
+重新登记。上游编目整个退场了（技能变成我们自己 git 仓库里的文件），那套代码在 git 历史里。
+
+## 为什么只剩发静态文件
+
+数据不走这个进程。页面自己去问 qrd3wh 的 `GET /v1/skills`，地址从宿主的 `__nous/ctx` 里
+找 `qrd3wh` 那个块拿 —— **这一块里不拼任何绝对路径**。所以 `server.js` 只剩一件事：
+把 `public/` 发出去（剥 `NOUS_SELF`、目录穿越 403、目录 → `index.html`、`cache-control: no-store`）。
+
+这一块**没有** `data/`、没有配置、没有 token、没有后端状态。它不在 `/v1/skills` 那个仓库上跑
+任何 git：写盘、重扫、commit、push 都是 qrd3wh 的事（spec I4）。
+
+## 页面上每一栏在说什么
+
+- **顶栏**：仓库 HEAD + `有未提交改动` / `N 个提交没推` / `远端多 N 个` / `已同步`。
+  `repo.error` 有值时那行变红 —— git 命令失败也要能显示「仓库读不了」，而不是白屏（spec §6.2）。
+- **左栏类别**：缩进的类别树（`/` 分段），每个类别带计数 + 底部「+ 新建类别」。
+  点一下筛选，**父级筛出整枝**（点「工具」连「工具/搜索」一起出来；结果区显示「工具 · 含 N 个子级」）。
+  每行右侧常驻 `⋯`：新建子类别 / 编辑类别名称（填**全路径**，改前缀就等于搬家）/ 删除类别
+  （带影响范围「N 条技能」，删除是删整枝）。右键 / 长按只是快捷方式。
+- **顶部筛选**：全部 / 未分类 / 未发布 / 装载失败 / 已归档 N。后两个非零才出现。
+  状态图例就是筛选，不另写说明。
+- **技能卡**：字母砖（颜色由名字 hash，永远同一个色）+ 名字（`不进提示词` 的会标出来）+
+  说明 + 类别 chip + 右上角常驻 `⋯`。状态只有三种：
+  **正常** = 实边；**未发布**（`tracked: false`）= 琥珀虚线边 + 琥珀角标；
+  **装载失败** = 实线红边 + 实心红角标 + 卡上一行 `error`。
+  判据在 `public/model.js` 的 `cardState()`，**优先级 failed > unpublished > ok**（spec §7.1）。
+- **「已归档 N」**：沉到列表最后，点开就是回收站：一行一条，`恢复` / `彻底删除`（手输名字才亮）。
+  归档项**不在网格里**。
+- **详情**（点卡进主区，不是浮层）：类别（唯一可编辑的地方）/ 正文（`description` + `SKILL.md`
+  正文按需读，`改正文 ›` 开抽屉）/ 仓库（发没发布、目录、文件）。
+- **`＋ 新建技能`**：只问三样 —— 名字、一句 `description`、类别（spec §6.5）。
+  建完**不发布**：新技能的第一个正确状态是「未发布」。
+
+## 写路径全在 qrd3wh（这一页只发请求）
+
+```
+GET  /v1/skills                              清单 + repo + archived + categories
+GET  /v1/skills/files?name=                  <name>/ 下的文件
+GET  /v1/skills/file?name=&path=             一份文件（text + etag）
+PUT  /v1/skills/file {name,path,text,base}   落盘，不提交；base 对不上 → 409
+GET  /v1/skills/pending/diff?path=           对 HEAD 的基线（未跟踪 → before: null）
+POST /v1/skills/category {name,category[]}   改一条技能的类别
+POST /v1/skills/categories {op,name,to?}     建 / 改名（整枝）/ 删（整枝）
+POST /v1/skills/create {name,description,category?}
+POST /v1/skills/publish {message?}           内容闸 + 重扫 + commit + push
+POST /v1/skills/archive | restore | purge {name}
+```
+
+**保存 ≠ 发布，两个按钮不许合成一个。** 保存只落盘（敲到一半可以停）；发布才 commit + push，
+而且要过服务端的内容闸（frontmatter / `name` == 目录名 / `description` 非空 / `nous.json` 能解析）。
+这一页不复刻那道闸（spec I8）—— 输赢由服务端说了算，UI 只摆结果。
+
+**抽屉不建文件、不删文件。** 它只读写已经存在的文件。想加文件就 `touch`，列表下一次读就有了。
 
 ## 文件
 
 ```
-package.json   scripts.start = node server.js（宿主凭这一条起进程）
-server.js      /api/nw/* 反代到 warehouse + 发 public/ + 存 base/token
-public/        index.html / app.js / styles.css（原生 JS，无构建步骤）
-               UI 照 nw-panel SourcePane 的 #205 店面裁定：网格主体 = **源（仓库）卡**
-               （字母砖 + 物种角标 + N 条目 + 版本 + 标签色点），不是 skill 条目卡；
-               左栏 facets（类别树/标签，**计数对全量算** —— facet 是导航不是结果统计；
-               物种 facet 砍掉了 —— 这块只管 skill 那本账，extension 是另一本，j1900 上
-               也一本 ext 都没有，摆着就是空转的摆设）；
-               抽屉 = 源详情（字段 + 条目列表带内搜 + 条目级标签，ref 两段 id 整段 encode）；
-               对账是独立报告视图（400 + 漂移照样渲染，不落错误页）。
-               **版本漂移那一行挂「重新登记」**：打开同一个 register 预览弹窗，把账面那
-               一条的 repo / name / category 预填进去（只预填，不预跑）—— 写路径还是 register
-               两段式，闸还是那道闸；漏填类别就会把分类清掉，所以弹窗里明说这一句。
-               落账按钮**预览通过且表单未变才可点**（SourcePane 那条「红的不让确认」纪律）。
-data/          跑起来之后才有：config.json（base + 可选 token）、upstream.json（上游 tag 缓存）
+package.json       type: module + scripts.start（宿主凭这一条起进程；测试也靠 type: module）
+server.js          纯静态（57 行那种，没有反代、没有配置）
+public/index.html  骨架：顶栏 / 左栏 / 网格 / 详情 / 抽屉 / 确认框 / 新建
+public/model.js    纯计算：卡片状态、facet 计数、排序、删除类别影响范围、未分类桶
+public/app.js      DOM 那一半：渲染、菜单、手势、抽屉、diff 视图、Esc 层级
+public/diff.js     行级对齐 + 词级高亮 + 折叠（不碰 DOM）
+public/vendor/diff  jsdiff 8（MIT），逐文件拷的 ESM —— 这页没有打包器
+public/mock/       ⚠️ D1 的 mock：skills.json + api.js（接真端点时整个删掉）
+test/model.test.js 测 model.js，不测 DOM
 ```
 
-## 为什么中间要有一个反代
+## 踩过的坑（改之前先读这几条）
 
-浏览器的页面在 `NOUS_ORIGIN/p/...` 下，warehouse 在另一个 origin（tailnet 8443）。
-直接 `fetch` 它 = 跨域 + 要 CORS + 备用入口的 Bearer token 泄漏到页面里。
-所以浏览器只跟本块说话，`server.js` 那一跳带上 token。**token 永远不进 `public/`**，
-只活在进程内存和 `data/config.json`。
-
-两档超时（照 nw-panel 自己的 #156 裁定）：读 20s，写 180s。超时回 504 时说的是真话 ——
-「上游可能已经写了」，不要凭猜重跑。
-
-## 端点对照（面板动作 → warehouse 端点 → CLI）
-
-| 面板上的动作 | HTTP | CLI |
-|---|---|---|
-| 读全部源 | `GET /api/source` | `nw ls sources` |
-| 改类别 | `PUT /api/source/skill/{名}/category` | `nw source category` |
-| 重扫（源 / 全部） | `POST /api/source/recheck` | `nw source recheck` |
-| 登记·预览 | `POST /api/source` | `nw source register`（不带 `--yes`） |
-| 登记·落账 | `PUT /api/source/{名}` | 同上 + `--yes` |
-| 删源 | `DELETE /api/source/skill/{名}` | `nw source rm` |
-| 标签增摘 | `POST` / `DELETE /api/source/skill/{名}/tags[/{标签}]` | `nw tag add/rm` |
-| 读上游 tag（面板自己） | `GET` / `POST /api/upstream` | 无 —— 见下 |
-
-envelope 原样透传：`{schema,nw,ok,errors[],warnings[],data}`。**面板不复刻语义闸** ——
-kind 值域、类别词法、验收 6 行全归上游；面板只负责把它们摆到屏幕上。
-
-纪律照抄编目：`sources[]` 与 `entries[]` 按 name 排序；类别空数组就是「未分类」（读取时算的，
-文件里没有这两个字）；`version` 是登记那一刻的上游 release tag，抓不到就是 `""`，不参与比对。
-
-### 版本两个数字：账上 vs 上游（**不合并**）
-
-```
-账上  = 编目里那条 version  = nw 注册那一刻抓的 latest **release** 的 tag（会过期，今天 matt 是 v1.3.1）
-上游  = 面板自己查的        = 最新 **semver tag**（git ls-remote，今天 v1.3.2）
-```
-
-**这一列为什么不由 nw 给**：nw 的 `source recheck` 也报版本漂移，但它在 j1900 上今天是红的
-（真 clone 上游，那台机器出网坏，91 秒后失败）。本块跑在 Nous 这台机器上，出网正常，
-一条仓库 `git ls-remote --tags` 一次 ~1 秒，**而且 git 协议不占 api.github.com 那 60 次/小时**
-（整台机器共享，页面开几次就穿）。
-
-所以 `GET /api/upstream`（读缓存 + `stale[]`）/ `POST /api/upstream`（`{repos[], force}`，
-并发 3、每仓库 12s 超时）：
-
-- 只认 semver（`mattpocock-skills@1.0.0` 这种不算版本号），按数字排取最大；
-- **按 repo 去重** —— `matt` 和 `mattpocock` 是同一条仓库的两份账，只查一次；
-- 查不到只记 `error`，**不算「落后」**（断网 / 私有仓 ≠ 版本落后，这是两种病）；
-- 缓存落 `data/upstream.json`，TTL 30 分钟，重启不丢、不冷启动就打 GitHub；TTL 过期由人点
-  「检查上游」，**不每次开页面就查**。
-
-显示成 `v1.3.1 → v1.3.2` 这样一个 chip：绿（一致）/ 黄（落后）/ 灰（`→ ?` 或 `未打 tag`）。
-**不写编目**：改账还是走那个「重新登记」弹窗 —— nw 的写入口，闸还是那道闸。
-
-## 踩过的坑（面板自己的）
-
-1. **前端请求必须是相对这块自己的根。** 写成 `/api/nw/...` 在「自己跑」时是对的，搬进
-   Nous（`/p/<board>/<id>/`）就**越出前缀打到宿主身上**：Nous 的 SPA 回退回一张 200 的
-   `index.html`，于是面板报「上游回了非 JSON（200）」并吐一堆 HTML。`app.js` 里的
-   `ROOT` / `api()` 就是为这一脚设的；新加请求一律走 `api("/…")`，别手写 `"/api/…"`。
-2. **忙碌期渲染出来的按钮是 `disabled` 的。** `runOp` 必须在 `busy` 清掉之后再画一次，
-   否则按钮永远按不动 —— 看起来像「面板没反应」，其实是自己把自己锁死了。
-3. **`append()` / `replaceChildren(null)` 会得到一个字面量 `"null"` 文本节点。**
-   条件渲染一律走 `mount()`（本仓 `app.js` 里那个小函数），别直接传 `null`。
-4. **预览 → 落账是两份意图时不能落。** 预览是快照；表单改了就重来，不然写进去的是上一版参数。
-5. **recheck 在这台机器上今天是红的**：`git clone` 取不到上游（2026-10-29 实测，单源 91 秒后
-   返回 `取回 … 失败(git clone)`）。面板照样把它完整摆出来 —— 那是机器的病，不是面板的病。
-   修它要修 j1900 上的 git 认证 / 出网，不是改这里。
-6. **`--root` 那类旗子面板一概不带**：base 是唯一的连接参数，其余由 nw-panel 启动时的
-   `--root /opt/Data-001` 决定。面板一片空先怀疑那个 root，不是这里的 base。
+1. **尾斜杠。** 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。`index.html` 顶部那段一跳是必须的，
+   不然 `./style.css` 会解析到上一层去，页面没样式、`app.js` 直接 404。
+2. **`SELF` 只从 `location.pathname` 来，邻居地址只从 `__nous/ctx` 来。** 老版本写死过路径：
+   请求越出前缀打到宿主的 SPA，回了 200 的 `index.html`，面板报「上游回了非 JSON」。
+   现在 `transport` 两套实现（真 fetch / mock），路径都只有短的 `v1/skills…`。
+3. **Esc 的层级**：菜单 → 新建弹层 → 抽屉 → 详情 → 列表。菜单排最前，因为它是最后一次交互；
+   不这么排的话，Esc 关菜单会顺手把背后的详情也关了。抽屉里差异态先回编辑态再关。
+   左栏输入框 / 类别输入框 / 正文类别输入框的 Esc 自己 `stopPropagation()`，否则一次 Esc 关两层。
+4. **长按 520ms、挪 10px 当滚动、松手吞掉那个 `click`。** 不吞就是「松手即误触」——
+   菜单就在手指底下弹出。菜单件（`mountMenu`）负责贴边夹紧 + 点外面 / `Esc` / 滚动 / 改窗口大小都关；
+   卡片和类别行共用同一份，两套各自算位置的代码必然一套对一套错。
+5. **输入框要等整串挂进文档之后再 `focus()`。** 行还在内存里时聚焦会落空（左栏踩过）。
+6. **差异的基线走 `pending/diff` 的 `before`**，不是文件接口的字段：`§6.1` 的
+   `GET /v1/skills/file` 只回 `{name,path,text,etag}`。未跟踪的文件 `before: null` → 整份算新增，
+   抽屉里会写一句「发布之后才有基线」。发布成功后必须重读文件 + 重取基线，否则 diff 还在跟旧 HEAD 比。
+7. **`mock` 只活在 D1 分支上。** `app.js` 顶上一个 `MOCK` 开关 + `public/mock/`；
+   接真端点（D2）时**连文件一起删**。留着它就是「看起来发布了，其实没连上」。
+   mock 的写操作全落内存，刷新页面回到原样 —— 它验证的是这一页，不是服务端。
+8. **测试命令。** `node --test test/*.test.js`（或裸 `node --test`）。
+   这台机器的 node（v22.23.2）把位置参数当 glob，`node --test test/` 会命中目录本身、
+   报 `Cannot find module …/test` —— 那是 Node 的行为，不是这个块的问题。
+   也别忘了 `node --check server.js && node --check public/model.js && node --check public/app.js`。
+9. **别 import `server.js`。** 它有顶层 `listen`。能纯算的东西放 `model.js`，测试只测它；
+   DOM 归合并后的 `code-review` 看（spec §9：不测 DOM）。
+10. **窄屏 375px 不横滚。** 760px 以下左栏折到上面、网格 `minmax(150px,1fr)`、抽屉整屏。
+    别往卡里塞长路径 —— 需要的都放 `title` 和详情里。
 
 ## 搬出去跑
 
-```sh
-cd map/68kazk
-NW_PANEL_BASE=https://j1900.tail8d0018.ts.net:8443 PORT=8080 node server.js
+```
+cp -r content/new1/map/68kazk ~/68kazk && cd ~/68kazk && npm start   # → http://127.0.0.1:4784/
 ```
 
-链接全是相对路径，不依赖宿主前缀。`data/` 跟着文件夹走。
+`MOCK` 开着就直接能看（数据来自 `public/mock/skills.json`）。要连真 qrd3wh：`MOCK = false`，
+但 `__nous/ctx` 只有宿主给得出来 —— 所以真模式只在宿主里跑得起来，这是设计。
+`data/` 不预建、不需要：这一块没有后端状态。
+
+## 不做的事
+
+- **不装别人的技能、不搜市场。** 仓库里有就是装着；从别处「导入」等于 `cp -r` 再 commit。
+- **不读仓库文件来回答「有哪些技能」。** 真相在 qrd3wh 的 `list()` 里。
+- **不给技能改名按钮。** `name` == 目录名 == 会话里的 API 键（spec I3），改名会断掉所有老会话。
+- **不复刻服务端校验。** UI 只贴输入框做防手滑，闸在服务端一处。
+- **不做版本号 / 变体 / 上游漂移。** 技能没有这些（spec §11）。
