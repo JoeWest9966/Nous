@@ -1891,6 +1891,18 @@ $("search").oninput = (event) => {
 };
 $("refresh").onclick = () => void load();
 $("new-skill").onclick = () => openCreate();
+
+// 命令行里 `git pull` / 手改 SKILL.md 之后，内存名册和盘会分叉 —— 因为 `render()` 只查内存。
+// 这不是 bug 是设计（每轮提示词都不许碰盘），代价就是需要一个显式的重扫按钮。
+$("rescan").onclick = async () => {
+  try {
+    await transport.post("v1/skills/reload", {});
+    await load({ quiet: true });
+    toast(`已重扫：${state.view?.skillCount ?? 0} 条`);
+  } catch (error) {
+    toast(`重扫失败：${error.message}`, "bad");
+  }
+};
 $("create-cancel").onclick = () => closeCreate();
 $("create-scrim").onclick = () => closeCreate();
 $("create").addEventListener("submit", submitCreate);
