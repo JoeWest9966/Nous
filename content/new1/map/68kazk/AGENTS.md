@@ -42,16 +42,19 @@ description: "本块（68kazk）是 Nous 自持技能的清单面板：一张技
   宽 `min(720px, 100vw)`，`z` 30/31，在正文抽屉（40/41）**下面** —— 所以详情里开抽屉是盖上，
   关抽屉回详情，关详情才回网格；关掉列表滚动位置、筛选、搜索词一个不动。窄屏整屏从右出。
   上游清单**不**走这套：它列的是「一整张表」，还是主区换页。
-- **`＋ 新建技能`**：只问三样 —— 名字、一句 `description`、类别（spec §6.5）。
-  建完**不发布**：新技能的第一个正确状态是「未发布」。
+- **`＋ 新建技能`**：只问三样 —— 名字、一句 `description`、类别，外加可空的**分组**
+  （`deprecated` 那种只装技能的抽屉，一层；spec §6.5）。建完**不发布**：新技能的第一个正确状态是「未发布」。
 
 ## 写路径全在 qrd3wh（这一页只发请求）
 
 ```
 GET  /v1/skills                              清单 + repo + archived + categories
-GET  /v1/skills/files?name=                  <name>/ 下的文件
+GET  /v1/skills/files?name=                  <name>/ 下的文件（递归，含子目录）
 GET  /v1/skills/file?name=&path=             一份文件（text + etag）
 PUT  /v1/skills/file {name,path,text,base}   落盘，不提交；base 对不上 → 409
+                                             **目标不存在 = 新建**（中途目录一起造）
+POST /v1/skills/mkdir {name,path}            建空文件夹（里面铺 .gitkeep）
+DELETE /v1/skills/file?name=&path=[&recursive=1]  删文件 / 删目录，不提交
 GET  /v1/skills/pending/diff?path=           对 HEAD 的基线（未跟踪 → before: null）
 POST /v1/skills/category {name,category[]}   改一条技能的类别
 POST /v1/skills/categories {op,name,to?}     建 / 改名（整枝）/ 删（整枝）
@@ -64,7 +67,11 @@ POST /v1/skills/archive | restore | purge {name}
 而且要过服务端的内容闸（frontmatter / `name` == 目录名 / `description` 非空 / `nous.json` 能解析）。
 这一页不复刻那道闸（spec I8）—— 输赢由服务端说了算，UI 只摆结果。
 
-**抽屉不建文件、不删文件。** 它只读写已经存在的文件。想加文件就 `touch`，列表下一次读就有了。
+**抽屉能建文件、也能删。** 左栏是一棵树（文件夹由「有文件住在这儿」推出来，`model.js` 的
+`fileTree()`）：`＋ 文件` 写一个还不存在的路径，`＋ 文件夹` 建目录 + 一份 `.gitkeep`
+（空目录 git 不跟踪，没有它发布那一刻文件夹就没了；写进第一个真文件时服务端会收掉它）。
+行尾的 `×` 删文件 / 删整棵，要手输路径确认。**都只落盘、不提交** —— 删掉的东西在 git 历史里，
+发布之前都捡得回来。文件列表是现扫的，不存索引。
 
 ## 文件
 
@@ -72,7 +79,7 @@ POST /v1/skills/archive | restore | purge {name}
 package.json       type: module + scripts.start（宿主凭这一条起进程；测试也靠 type: module）
 server.js          纯静态（57 行那种，没有反代、没有配置）
 public/index.html  骨架：顶栏 / 左栏 / 网格 / 上游 / 详情浮层 / 抽屉 / 确认框 / 新建
-public/model.js    纯计算：卡片状态、facet 计数、排序、删除类别影响范围、未分类桶
+public/model.js    纯计算：卡片状态、facet 计数、排序、删除类别影响范围、未分类桶、**文件树**
 public/api.js      数据层：`createApi`（可注入 fetch）、ctx 解析、错误信封 / 409、类别 debounce、
                    发布后重读。不碰 DOM —— 测试拿假 fetch 打的就是这一层
 public/app.js      DOM 那一半：渲染、菜单、手势、抽屉、diff 视图、Esc 层级
@@ -111,6 +118,16 @@ test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
    DOM 归合并后的 `code-review` 看（spec §9：不测 DOM）。
 10. **窄屏 375px 不横滚。** 760px 以下左栏折到上面、网格 `minmax(150px,1fr)`、抽屉整屏。
     别往卡里塞长路径 —— 需要的都放 `title` 和详情里。
+11. **文件夹是算出来的，不是存出来的。** `state.editor.files` 永远是服务端那份扁平列表，
+    树由 `fileTree()` 现算（`ed.dirs` 只存「哪几个展开了」）。在状态里另存一棵树，第一次
+    删除之后两边就对不上 —— 那种 bug 的现场是「文件没了，文件夹还在」。
+12. **新建 = PUT 一个还不存在的路径。** 已存在就不能拿空串盖掉它：前端在 `submitNewEntry`
+    里先把同名的挡下来（那是「新建」不是「清空」），服务端靠 `base` 兜底。
+    空文件夹靠 `.gitkeep` 撑着，但它在文件列表里看不见（点开头的文件本来就跳过）——
+    所以「建完什么都没出现」是正常的，别去修它。
+13. **删除要 `recursive=1` 才动非空目录。** 不带时服务端 409 并说「还有 N 个东西」；
+    界面上的 × 一律带 `recursive=1`，靠手输路径那一步挡人（跟归档、彻底删除同一套骨头）。
+    删的是盘上的文件，**不是**归档：git 历史就是回收站，没发布之前都捡得回来。
 
 ## 搬出去跑
 

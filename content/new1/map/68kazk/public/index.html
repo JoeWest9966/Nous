@@ -27,6 +27,9 @@
       </div>
       <div class="top-right">
         <span class="hint dim" id="repo">—</span>
+        <button class="chip-status" id="sync" hidden type="button" title="点开看未同步的改动">
+          <span class="dot" data-state="ok"></span><span class="sync-label">已同步</span>
+        </button>
         <button class="chip-status" id="refresh" title="重新问一遍 qrd3wh">
           <span class="dot" data-state="wait"></span>刷新
         </button>
@@ -172,7 +175,7 @@
       <h2 id="danger-title">—</h2>
       <p class="danger-hint dim" id="danger-hint"></p>
       <label class="danger-label" for="danger-input">
-        <span>手输技能名 <code id="danger-name">—</code> 确认</span>
+        <span><span id="danger-field">手输技能名</span> <code id="danger-name">—</code> 确认</span>
         <input id="danger-input" type="text" autocomplete="off" spellcheck="false" />
       </label>
       <p class="danger-err" id="danger-err" hidden></p>
@@ -207,6 +210,12 @@
         <span>类别 <i class="dim">可空 = 未分类；写个不存在的名字就顺手建了</i></span>
         <input id="create-cat" type="text" autocomplete="off" list="create-cats" placeholder="工具/搜索" />
         <datalist id="create-cats"></datalist>
+      </label>
+
+      <label class="create-label" for="create-group">
+        <span>分组 <i class="dim">可空 = 放在仓根。`deprecated` 那种只用来放技能的文件夹，一层</i></span>
+        <input id="create-group" type="text" autocomplete="off" list="create-groups" placeholder="deprecated" />
+        <datalist id="create-groups"></datalist>
       </label>
 
       <p class="create-err" id="create-err" hidden></p>

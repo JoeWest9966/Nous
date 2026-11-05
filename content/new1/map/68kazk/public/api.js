@@ -120,6 +120,8 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
     get: request("GET"),
     post: request("POST"),
     put: request("PUT"),
+    // 删除只落盘，不提交 —— 跟写一样等发布（git 历史就是回收站）。
+    del: request("DELETE"),
   };
 }
 

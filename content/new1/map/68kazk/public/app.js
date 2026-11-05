@@ -19,7 +19,10 @@ import {
   childCount,
   compareCategories,
   depthOf,
+  dirPaths,
+  fileTree,
   filterCards,
+  flattenTree,
   isUnder,
   leafOf,
   normalizeCategory,
@@ -97,6 +100,9 @@ const state = {
   detailBody: null, // 详情里那份 SKILL.md：{name, loading, text, error}
   editor: null, // 正文抽屉
   publishing: false,
+  pending: null, // GET v1/skills/pending 的原样（未同步的改动单元）
+  pendingOpen: false, // 未同步改动那扇浮层开着
+  pendingMessage: "", // 发布时那条 commit message
   upstream: null, // GET v1/skills/upstream 的原样（订阅 + 清单 + 每个 source 的报错）
   upstreamOpen: false, // 主区顶上来的是上游这块视图（不是筛出来的列表）
   upstreamSource: null, // 在看哪个订阅
@@ -155,8 +161,11 @@ async function load({ quiet = false } = {}) {
     refreshView();
     render();
     dot.dataset.state = "ok";
+    // 顶栏那颗 sync chip 的数要它；不挡住首屏，回来再画一次。
+    void loadPending();
   } catch (error) {
     dot.dataset.state = "bad";
+    state.pending = null;
     $("count").textContent = "拿不到";
     $("result-count").textContent = "";
     $("grid").textContent = "";
@@ -164,8 +173,6 @@ async function load({ quiet = false } = {}) {
     const retry = el("button", "btn btn-small", "重试");
     retry.type = "button";
     retry.onclick = () => void load();
-// 上游清单跟着一起读（服务端只读本地镜像，所以这一条不联网、也不会拖慢首屏）。
-void loadUpstream({ quiet: true });
     box.append(el("br"), retry);
     $("grid").append(box);
     if (!quiet) toast(String(error?.message ?? error), "bad");
@@ -1034,6 +1041,7 @@ function renderDetail() {
 
   const where = detailSection("仓库", "HEAD 里有没有");
   where.body.append(detailRow("发布", skill.tracked === false ? "未发布 · HEAD 里没有" : "已进 HEAD"));
+  where.body.append(detailRow("路径", skill.path ?? skill.name));
   where.body.append(detailRow("目录", skill.dir ?? skill.name));
   where.body.append(detailRow("文件", skill.file ?? `${skill.name}/SKILL.md`, skill.file ?? ""));
   grid.append(where.node);
@@ -1144,7 +1152,8 @@ function renderRepo() {
  */
 function setBehindInert() {
   const layout = document.querySelector(".layout");
-  if (layout) layout.inert = Boolean(state.detail || state.upstreamDetail) || !$("editor").hidden;
+  if (layout) layout.inert =
+    Boolean(state.detail || state.upstreamDetail || state.pendingOpen) || !$("editor").hidden;
 }
 
 function render() {
@@ -1152,6 +1161,7 @@ function render() {
   closeMenu();
 
   renderRepo();
+  renderSync();
   renderFilters();
   renderFacets();
   renderRailNew();
@@ -1164,7 +1174,7 @@ function render() {
   $("toolbar-grid").hidden = Boolean(state.upstreamOpen);
   $("toolbar-up").hidden = !state.upstreamOpen;
   $("upstream").hidden = !state.upstreamOpen;
-  const sheet = Boolean(state.detail || state.upstreamDetail);
+  const sheet = Boolean(state.detail || state.upstreamDetail || state.pendingOpen);
   $("detail").hidden = !sheet;
   $("dt-scrim").hidden = !sheet;
   if (state.upstreamOpen) renderUpstreamPanel();
@@ -1173,6 +1183,8 @@ function render() {
     // 详情重画在网格之后：两边读同一份 view，但 result-count 归网格写。
     if (state.detail) renderDetail();
   }
+  // 「未同步的改动」也住在这扇浮层里。
+  if (state.pendingOpen) renderPending();
   // 上游那条技能也住在同一扇浮层里 —— 上面那条分支不管浮层，这里统一画。
   if (state.upstreamDetail && !renderUpstreamDetail()) {
     state.upstreamDetail = null;
@@ -1543,6 +1555,7 @@ function closeUpstreamDetail() {
 
 /** 浮层只有一个开关：正在看哪条就关哪条。 */
 function closeSheet() {
+  if (state.pendingOpen) return closePending();
   if (state.upstreamDetail) return closeUpstreamDetail();
   closeDetail();
 }
@@ -1774,14 +1787,186 @@ async function reloadSkill(name) {
   }
 }
 
+// ── 未同步的改动（唯一的发布入口） ──────────────────────────────────────────
+//
+// 顶栏那颗 sync chip 是这一页的账：仓库读不了 / 远端有新提交 / 装载失败 /
+// 未发布 / 没推的提交 —— 一档一档往下掉，只说最要紧的那一条。点开是同一份事实的清单：
+// 哪些单元脏了、每个文件增删几行、一条 message，一个按钮。
+//
+// **发布只有一个动作**：内容闸 → 重扫 index.json → commit → push（`POST /v1/skills/publish`）。
+// 归档 / 彻底删除不跟发布走 —— 那是另外两个显式动作，各有各的弹窗。
+
+const PENDING_KIND = { skill: "技能", categories: "类别清单", archive: "归档区", other: "其它文件" };
+
+async function loadPending() {
+  const repo = state.data?.repo ?? {};
+  // 干净的时候不必去算（那是三条 git 命令）；脏了才问值不值当摆清单。
+  if (!repo.dirty && !(repo.ahead > 0)) {
+    state.pending = { units: [], head: repo.head, dirty: false, ahead: repo.ahead ?? 0, behind: repo.behind ?? 0, remote: repo.remote };
+    renderSync();
+    return;
+  }
+  try {
+    state.pending = await transport.get("v1/skills/pending");
+  } catch (error) {
+    state.pending = { units: [], error: String(error?.message ?? error) };
+  }
+  renderSync();
+  if (state.pendingOpen) renderPending();
+}
+
+/** 一档一档往下掉，只说最要紧的那一条 —— 跟 vbe4pt 那颗 chip 同一套优先级。 */
+function syncState() {
+  const repo = state.data?.repo ?? {};
+  const units = state.pending?.units ?? [];
+  const failed = (state.view?.cards ?? []).filter((card) => card.state === "failed").length;
+  if (repo.error) return { tone: "bad", text: "仓库读不了", title: repo.error };
+  if ((repo.behind ?? 0) > 0) {
+    return { tone: "bad", text: "远端有新提交", title: `origin 比本地多 ${repo.behind} 个提交 —— 先拉，否则推送会被挡` };
+  }
+  if (failed) {
+    return { tone: "bad", text: `${failed} 条装载失败`, title: "装不上就进不了提示词：打开那条技能看卡上的原因" };
+  }
+  if (repo.dirty) {
+    return {
+      tone: "wait",
+      text: state.pending ? `${units.length} 处未发布` : "有未发布改动",
+      title: "点开看清单：发布 = 内容闸 + commit + push",
+    };
+  }
+  if ((repo.ahead ?? 0) > 0) return { tone: "wait", text: `${repo.ahead} 个提交没推`, title: "本地有提交还没推上去" };
+  return { tone: "ok", text: "已同步", title: "工作区干净，远端一致" };
+}
+
+function renderSync() {
+  const chip = $("sync");
+  if (!chip) return;
+  const { tone, text, title } = syncState();
+  chip.hidden = !state.data;
+  chip.dataset.state = tone;
+  const dot = $sel("#sync .dot");
+  if (dot) dot.dataset.state = tone;
+  const label = chip.querySelector(".sync-label");
+  if (label) label.textContent = text;
+  chip.title = title;
+}
+
+function openPending() {
+  if (!state.data) return;
+  state.pendingOpen = true;
+  // `#pending` 也能直接落到这扇浮层上（贴给别人、或者测试里省一次点击）。
+  if (location.hash !== "#pending") history.replaceState(null, "", "#pending");
+  state.pendingMessage = "";
+  render();
+  $("dt-body").scrollTop = 0;
+  $("detail").focus({ preventScroll: true });
+  if (!state.pending) void loadPending();
+}
+
+function closePending() {
+  if (!state.pendingOpen) return;
+  state.pendingOpen = false;
+  if (location.hash === "#pending") history.replaceState(null, "", location.pathname + location.search);
+  render();
+}
+
+async function publishAll() {
+  if (state.publishing) return;
+  state.publishing = true;
+  renderPending();
+  try {
+    const out = await transport.post("v1/skills/publish", { message: state.pendingMessage });
+    const hash = String(out.commit?.hash ?? "").slice(0, 7);
+    if (out.pushed) toast(`已发布 ${hash} —— 推上去了`);
+    else if (out.commit) toast(`已提交 ${hash}，但没推上去${out.error ? `：${out.error}` : ""}`, "bad");
+    else toast("没有要提交的");
+    for (const warning of out.warnings ?? []) toast(warning, "bad");
+    state.pendingMessage = "";
+    state.pendingOpen = false;
+    await load({ quiet: true });
+    await loadUpstream({ quiet: true });
+  } catch (error) {
+    toast(`发布失败：${error.message}`, "bad");
+  } finally {
+    state.publishing = false;
+    render();
+  }
+}
+
+function renderPending() {
+  const repo = state.data?.repo ?? {};
+  const pending = state.pending;
+  const units = pending?.units ?? [];
+  const { tone, text } = syncState();
+
+  $("dt-mono").textContent = "≠";
+  $("dt-name").textContent = "未同步的改动";
+  const badges = $("dt-badges");
+  badges.textContent = "";
+  const chip = el("span", "detail-badge", text);
+  chip.dataset.tone = tone === "wait" ? "unpub" : tone === "ok" ? "ok" : "bad";
+  badges.append(chip);
+  $("dt-meta").textContent = repo.remote ?? "（没有远端）";
+
+  const body = $("dt-body");
+  body.textContent = "";
+
+  if (pending?.error) body.append(alertLine("bad", "算不出来", pending.error));
+  const repoRows = el("div", "up-detail");
+  repoRows.append(detailRow("远端", repo.remote || "没有配 origin"));
+  repoRows.append(detailRow("HEAD", String(repo.head ?? "—").slice(0, 7) || "—"));
+  if (repo.ahead) repoRows.append(detailRow("没推的提交", String(repo.ahead)));
+  if (repo.behind) repoRows.append(detailRow("远端多出来", String(repo.behind)));
+  body.append(repoRows);
+
+  if (!units.length) {
+    body.append(el("p", "detail-sum", repo.dirty ? "读不到改动清单 —— 面板重启一下试试。" : "工作区干净，没有要发布的。"));
+    return;
+  }
+
+  for (const unit of units) {
+    const kind = PENDING_KIND[unit.kind] ?? "改动";
+    const title = unit.name ? `${kind} · ${unit.name}` : kind;
+    const { node, body: rows } = detailSection(title, unit.tracked === false ? "HEAD 里没有" : "");
+    for (const file of unit.files ?? []) {
+      const delta = [file.added ? `+${file.added}` : "", file.removed ? `−${file.removed}` : ""].filter(Boolean).join(" ");
+      rows.append(detailRow(file.path, [file.status, delta].filter(Boolean).join(" · ")));
+    }
+    if (!(unit.files ?? []).length) rows.append(el("p", "detail-sum", "（没有文件级信息）"));
+    body.append(node);
+  }
+
+  // 发布：一个输入框 + 一个按钮。没有「勾选一半」—— 技能仓不该有半截提交。
+  const box = el("div", "up-detail");
+  const message = el("input", "rail-input");
+  message.type = "text";
+  message.placeholder = "这条提交叫什么（空着就写「skill: 更新技能仓库」）";
+  message.value = state.pendingMessage;
+  message.oninput = () => {
+    state.pendingMessage = message.value;
+  };
+  box.append(message);
+  const acts = el("div", "detail-sec-acts");
+  const go = el("button", "btn btn-small primary", state.publishing ? "发布中…" : "发布");
+  go.type = "button";
+  go.disabled = state.publishing;
+  go.title = "内容闸 → 重扫 index.json → commit → push";
+  go.onclick = () => void publishAll();
+  acts.append(go);
+  box.append(acts);
+  box.append(el("p", "detail-sum", "发布推的是工作区里改过的东西；归档 / 彻底删除各有各的弹窗，不跟这一下走。"));
+  body.append(box);
+}
+
 // ── 归档 / 恢复 / 彻底删除（会改仓库） ────────────────────────────────────
 
 // 破坏性且会推上远端：要求手输技能名。
-function confirmName({ title, hint, name, label = "确定", onConfirm }) {
+function confirmName({ title, hint, name, label = "确定", fieldLabel = "手输技能名", onConfirm }) {
   const modal = $("danger");
   const input = $("danger-input");
   const ok = $("danger-ok");
   $("danger-title").textContent = title;
+  $("danger-field").textContent = fieldLabel;
   $("danger-hint").textContent = hint;
   $("danger-name").textContent = name;
   $("danger-ok").textContent = label;
@@ -1909,6 +2094,8 @@ async function openEditor(skill, { path = null } = {}) {
     expanded: new Set(),
     lineCount: 1,
     diffTimer: null,
+    // 文件树里展开了哪些文件夹（打开抽屉时默认全展开）。
+    dirs: new Set(),
   };
   state.publishing = false;
   $("ed-text").value = "";
@@ -1918,7 +2105,10 @@ async function openEditor(skill, { path = null } = {}) {
   $("editor").hidden = false;
   setBehindInert();
   $("ed-name").textContent = skill.name;
-  $("ed-meta").textContent = `SKILL.md · ${skill.tracked === false ? "未发布" : "已进 HEAD"}`;
+  $("ed-meta").textContent = `${skill.path && skill.path !== skill.name ? `${skill.path} · ` : ""}SKILL.md · ${
+    skill.tracked === false ? "未发布" : "已进 HEAD"
+  }`;
+  closeNewEntry();
   setEditorMode("edit");
   renderEditorFiles();
   renderEditorState();
@@ -1927,6 +2117,8 @@ async function openEditor(skill, { path = null } = {}) {
     const list = await transport.get(`v1/skills/files?name=${encodeURIComponent(skill.name)}`);
     state.editor.files = list.files ?? [];
     state.editor.filesLoading = false;
+    // 默认全展开：一进来就看见树，不用一层层点。
+    state.editor.dirs = new Set(dirPaths(fileTree(state.editor.files)));
     renderEditorFiles();
     // 先开 SKILL.md（正文最常改），指定了就跟指定的走。
     const first =
@@ -1947,11 +2139,19 @@ function closeEditor({ force = false } = {}) {
   if (!state.editor) return;
   if (!force && editorDirty() && !confirm("这个文件有没保存的改动，关掉就丢了。继续？")) return;
   state.editor = null;
+  closeNewEntry();
   $("editor").hidden = true;
   $("ed-scrim").hidden = true;
   setBehindInert();
 }
 
+/**
+ * 左栏的文件树。列表是扁的（`docs/a.md`），这里长成树 —— 纯计算全在 model.js
+ * 的 `fileTree` / `flattenTree`，这一层只管画和点。
+ *
+ * 文件夹**不是存出来的**：有文件住在这儿它才在。所以「新建文件夹」在服务端落成
+ * 一个带 `.gitkeep` 的目录（空目录 git 不跟踪），写进第一个真文件时那份占位会自己没。
+ */
 function renderEditorFiles() {
   const ed = state.editor;
   if (!ed) return;
@@ -1965,17 +2165,194 @@ function renderEditorFiles() {
     nav.append(el("div", "ed-files-empty", "这个目录里没有文件"));
     return;
   }
-  for (const file of ed.files) {
-    const btn = el("button", "ed-file");
-    btn.type = "button";
-    btn.dataset.kind = file.path.endsWith(".md") ? "markdown" : "other";
-    btn.setAttribute("aria-current", String(file.path === ed.path));
-    btn.append(el("span", "ed-file-name", file.path));
-    btn.append(el("span", "ed-file-size", bytes(file.size)));
-    btn.title = `${file.path} · ${bytes(file.size)}`;
-    btn.onclick = () => void openEditorFile(file.path);
-    nav.append(btn);
+  const tree = fileTree(ed.files);
+  for (const node of flattenTree(tree, (path) => ed.dirs.has(path))) {
+    nav.append(node.type === "dir" ? editorDirRow(node) : editorFileRow(node));
   }
+}
+
+/** 一行的壳：缩进靠 `--depth`，行尾那个 × 是删除。 */
+function editorRowShell(node) {
+  const row = el("div", "ed-row");
+  row.style.setProperty("--depth", String(node.depth));
+  return row;
+}
+
+function editorRowDelete(node) {
+  const btn = el("button", "ed-file-del", "×");
+  btn.type = "button";
+  btn.title = `删除 ${node.path}${node.type === "dir" ? "/（整棵）" : ""}`;
+  btn.setAttribute("aria-label", btn.title);
+  btn.onclick = (event) => {
+    event.stopPropagation();
+    void deleteEditorEntry(node);
+  };
+  return btn;
+}
+
+function editorFileRow(node) {
+  const ed = state.editor;
+  const row = editorRowShell(node);
+  const main = el("button", "ed-file");
+  main.type = "button";
+  main.dataset.kind = node.path.endsWith(".md") ? "markdown" : "other";
+  main.setAttribute("aria-current", String(node.path === ed.path));
+  main.append(el("span", "ed-file-caret"));
+  main.append(el("span", "ed-file-name", node.name));
+  main.append(el("span", "ed-file-size", bytes(node.size)));
+  main.title = `${node.path} · ${bytes(node.size)}`;
+  main.onclick = () => void openEditorFile(node.path);
+  row.append(main, editorRowDelete(node));
+  return row;
+}
+
+function editorDirRow(node) {
+  const ed = state.editor;
+  const open = ed.dirs.has(node.path);
+  const row = editorRowShell(node);
+  const main = el("button", "ed-file");
+  main.type = "button";
+  main.dataset.kind = "dir";
+  main.setAttribute("aria-expanded", String(open));
+  main.append(el("span", "ed-file-caret", open ? "▾" : "▸"));
+  main.append(el("span", "ed-file-name", node.name));
+  main.append(el("span", "ed-file-size", String(node.children.length)));
+  main.title = `${node.path}/ · 点一下${open ? "收起" : "展开"}`;
+  main.onclick = () => {
+    if (open) ed.dirs.delete(node.path);
+    else ed.dirs.add(node.path);
+    renderEditorFiles();
+  };
+  row.append(main, editorRowDelete(node));
+  return row;
+}
+
+/** 重新问一遍文件列表（新建 / 删除之后）。新出现的父目录顺手展开，不然建完看不见。 */
+async function reloadEditorFiles() {
+  const ed = state.editor;
+  if (!ed) return;
+  try {
+    const list = await transport.get(`v1/skills/files?name=${encodeURIComponent(ed.name)}`);
+    ed.files = list.files ?? [];
+    ed.filesLoading = false;
+    for (const path of dirPaths(fileTree(ed.files))) ed.dirs.add(path);
+    renderEditorFiles();
+    renderEditorState();
+  } catch (error) {
+    ed.error = `读文件列表失败：${error.message}`;
+    renderEditorState();
+  }
+}
+
+// ── 新建 / 删除 ───────────────────────────────────────────────────────────
+
+/**
+ * 打开「新建」那一格。`kind` = file | dir。
+ * 路径里带 `/` 就是顺手建文件夹 —— 所以「新建文件夹」本质上只是「建一个带 .gitkeep 的目录」。
+ */
+function openNewEntry(kind) {
+  const ed = state.editor;
+  if (!ed) return;
+  state.newKind = kind;
+  const form = $("ed-new");
+  form.hidden = false;
+  $("ed-new-kind").textContent = kind === "dir" ? "文件夹" : "文件";
+  const input = $("ed-new-path");
+  input.value = "";
+  input.placeholder = kind === "dir" ? "references" : "docs/guide.md";
+  const hint = $("ed-new-hint");
+  hint.hidden = false;
+  hint.dataset.tone = "";
+  hint.textContent =
+    kind === "dir"
+      ? "空文件夹里会铺一份 .gitkeep 撑着 —— 空目录 git 不跟踪，发布那一刻它就没了。"
+      : "路径里带 / 就等于顺手建文件夹。建出来是一份空文件：写点什么，再发布。";
+  input.focus();
+}
+
+function closeNewEntry() {
+  const form = $("ed-new");
+  if (form) form.hidden = true;
+  const hint = $("ed-new-hint");
+  if (hint) hint.hidden = true;
+  state.newKind = null;
+}
+
+async function submitNewEntry(event) {
+  event.preventDefault();
+  const ed = state.editor;
+  if (!ed) return;
+  const kind = state.newKind;
+  const hint = $("ed-new-hint");
+  const fail = (message) => {
+    hint.hidden = false;
+    hint.dataset.tone = "bad";
+    hint.textContent = message;
+  };
+  const raw = $("ed-new-path").value.trim().replace(/^\/+|\/+$/g, "");
+  if (!raw) return fail("先写个路径。");
+  if (raw.split("/").some((part) => !part || part === "." || part === "..")) {
+    return fail("路径里不能有空段、`.` 或 `..`。");
+  }
+  // 已存在的文件不能让 PUT 拿空串把它盖掉 —— 这是「新建」，不是「清空」。
+  if (kind !== "dir" && ed.files.some((file) => file.path === raw)) {
+    return fail(`已经有 ${raw} 了 —— 在左边点它去改。`);
+  }
+  $("ed-new-ok").disabled = true;
+  try {
+    if (kind === "dir") {
+      await transport.post("v1/skills/mkdir", { name: ed.name, path: raw });
+      await reloadEditorFiles();
+      closeNewEntry();
+      toast(`建了文件夹 ${raw}/`);
+      return;
+    }
+    await transport.put("v1/skills/file", { name: ed.name, path: raw, text: "" });
+    await reloadEditorFiles();
+    closeNewEntry();
+    if (editorDirty() && !confirm(`「${ed.path}」有没保存的改动，切过去会丢掉。继续？`)) return;
+    await openEditorFile(raw, { force: true });
+    toast(`建了 ${raw} —— 空文件，写点什么再发布`);
+  } catch (error) {
+    fail(String(error?.message ?? error));
+  } finally {
+    $("ed-new-ok").disabled = false;
+  }
+}
+
+/** 删文件 / 删文件夹。都要手输路径确认 —— 跟归档、彻底删除同一套骨头。 */
+async function deleteEditorEntry(node) {
+  const ed = state.editor;
+  if (!ed) return;
+  const isDir = node.type === "dir";
+  const query =
+    `name=${encodeURIComponent(ed.name)}&path=${encodeURIComponent(node.path)}` + (isDir ? "&recursive=1" : "");
+  confirmName({
+    title: isDir ? `删掉文件夹 ${node.path}/？` : `删掉 ${node.path}？`,
+    hint: isDir
+      ? `底下 ${node.children.length} 个条目跟着走。只落盘、不提交 —— 发布之前都在 git 历史里捡得回来。`
+      : "只落盘、不提交 —— 发布之前都在 git 历史里捡得回来。",
+    name: node.path,
+    fieldLabel: isDir ? "手输路径" : "手输文件名",
+    label: isDir ? "删除整棵" : "删除",
+    onConfirm: async () => {
+      try {
+        await transport.del(`v1/skills/file?${query}`);
+        if (ed.path === node.path || (isDir && String(ed.path ?? "").startsWith(`${node.path}/`))) {
+          ed.path = null;
+          ed.text = "";
+          ed.base = null;
+          $("ed-text").value = "";
+          $("ed-text").disabled = true;
+          $("ed-path").textContent = "—";
+        }
+        await reloadEditorFiles();
+        toast(`删了 ${node.path} —— 没发布之前都还在 git 里`);
+      } catch (error) {
+        toast(`删除失败：${error.message}`, "bad");
+      }
+    },
+  });
 }
 
 function renderEditorState() {
@@ -2034,6 +2411,7 @@ function renderEditorState() {
 async function openEditorFile(path, { force = false } = {}) {
   const ed = state.editor;
   if (!ed) return;
+  closeNewEntry();
   if (!force && editorDirty() && !confirm(`「${ed.path}」有没保存的改动，切过去会丢掉。继续？`)) return;
   try {
     const file = await transport.get(
@@ -2425,10 +2803,12 @@ function gotoChange(dir) {
 function validateCreate() {
   const name = $("create-name").value.trim();
   const description = $("create-description").value.trim();
+  const group = normalizeCategory($("create-group").value);
   const root = state.data?.root ?? "技能仓库";
+  const where = group ? `${group}/<b>${name || "&lt;名字&gt;"}</b>/` : `<b>${name || "&lt;名字&gt;"}</b>/`;
 
   // 空名字是唯一拦下来的东西：没名字连「建什么」都说不清。
-  if (!name) return { ok: false, tone: "bad", message: `先起个名字。会建在 ${root}/&lt;名字&gt;/` };
+  if (!name) return { ok: false, tone: "bad", message: `先起个名字。会建在 ${root}/${where}` };
   // 空说明只提醒，**不拦**：拦不拦是服务端的事（它会回 400 并把原因写在 #create-err 里）。
   if (!description) {
     return {
@@ -2437,7 +2817,7 @@ function validateCreate() {
       message: "还差一句说明 —— 模型靠它决定用不用这条技能。空着提交的话服务端会拦。",
     };
   }
-  return { ok: true, tone: "ok", message: `会建在 ${root}/<b>${name}</b>/` };
+  return { ok: true, tone: "ok", message: `会建在 ${root}/${where}` };
 }
 
 function renderCreate() {
@@ -2465,6 +2845,13 @@ function openCreate() {
       return option;
     }),
   );
+  $("create-groups").replaceChildren(
+    ...(state.data?.groups ?? []).map((name) => {
+      const option = el("option");
+      option.value = name;
+      return option;
+    }),
+  );
   $("create-scrim").hidden = false;
   $("create").hidden = false;
   renderCreate();
@@ -2484,6 +2871,7 @@ async function submitCreate(event) {
   const name = $("create-name").value.trim();
   const description = $("create-description").value.trim();
   const category = normalizeCategory($("create-cat").value);
+  const group = normalizeCategory($("create-group").value);
   state.creating = true;
   renderCreate();
   $("create-err").hidden = true;
@@ -2493,6 +2881,7 @@ async function submitCreate(event) {
       name,
       description,
       category: category ? [category] : [],
+      group,
     });
     closeCreate();
     await load({ quiet: true });
@@ -2545,7 +2934,7 @@ $("rescan").onclick = async () => {
 $("create-cancel").onclick = () => closeCreate();
 $("create-scrim").onclick = () => closeCreate();
 $("create").addEventListener("submit", submitCreate);
-for (const id of ["create-name", "create-description", "create-cat"]) {
+for (const id of ["create-name", "create-description", "create-cat", "create-group"]) {
   const node = $(id);
   node.addEventListener("input", renderCreate);
   node.addEventListener("change", renderCreate);
@@ -2554,6 +2943,7 @@ for (const id of ["create-name", "create-description", "create-cat"]) {
 for (const [id, next] of [
   ["create-name", "create-description"],
   ["create-description", "create-cat"],
+  ["create-cat", "create-group"],
 ]) {
   $(id).addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
@@ -2567,8 +2957,21 @@ $("ed-close").onclick = () => closeEditor();
 $("ed-scrim").onclick = () => closeEditor();
 
 // 详情浮层：遮罩和 × 都只是「关掉」一个动作。
+$("sync").onclick = () => (state.pendingOpen ? closePending() : openPending());
 $("dt-scrim").onclick = () => closeSheet();
 $("dt-close").onclick = () => closeSheet();
+$("ed-add-file").onclick = () => openNewEntry("file");
+$("ed-add-dir").onclick = () => openNewEntry("dir");
+$("ed-new-cancel").onclick = () => closeNewEntry();
+$("ed-new").addEventListener("submit", submitNewEntry);
+$("ed-new-path").addEventListener("keydown", (event) => {
+  // Esc 在这一格自己收掉，别再往上传 —— 一次 Esc 关两层是最烦的那种。
+  if (event.key === "Escape") {
+    event.preventDefault();
+    event.stopPropagation();
+    closeNewEntry();
+  }
+});
 $("ed-save").onclick = () => void saveEditorFile();
 $("ed-publish").onclick = () => void publishEditor();
 $("ed-text").addEventListener("input", renderEditorState);
@@ -2616,6 +3019,10 @@ addEventListener("keydown", (event) => {
   }
   if (menuOpen) return closeMenu();
   if (!$("danger").hidden) return;
+  if (!$("ed-new").hidden) {
+    closeNewEntry();
+    return;
+  }
   if (!$("create").hidden) return closeCreate();
   if (state.editor) {
     if (state.editor.mode === "diff") setEditorMode("edit");
@@ -2648,6 +3055,7 @@ load();
 // 地址上带 `#upstream` 就直接把那一块顶上来。
 // 地址上带 `#upstream[/订阅[/路径]]` 就直接落到那一层（贴给别人、测试里也靠它）。
 void loadUpstream({ quiet: true }).then(() => {
+  if (location.hash === "#pending") openPending();
   const target = hashTarget();
   if (target && !state.upstreamOpen) openUpstream(target.source ?? undefined, target.path);
   // `#upstream/matt/skills/engineering/codebase-design` —— 路径正好落在某条技能上，
