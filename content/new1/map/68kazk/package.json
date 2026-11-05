@@ -1,0 +1,10 @@
+{
+  "name": "nous-skill-catalog-panel",
+  "private": true,
+  "type": "module",
+  "description": "skill 编目管理面板：读 nw /api/source，写走同一套 REST（category / recheck / rm / register 两段式）",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

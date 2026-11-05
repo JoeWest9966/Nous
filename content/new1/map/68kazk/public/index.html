@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>skill 编目</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        <span class="mark">nw</span>
+        <span class="title">skill 编目</span>
+        <span id="health" class="pill pill-idle">连接中…</span>
+      </div>
+
+      <div class="search">
+        <input id="q" type="search" placeholder="搜 skill 名 / 路径 / 源（按 / 聚焦）" autocomplete="off" />
+      </div>
+
+      <div class="actions">
+        <button id="btn-recheck-all" class="btn" title="POST /api/source/recheck（全部源）">全量重扫</button>
+        <button id="btn-new" class="btn btn-primary">＋ 登记源</button>
+        <button id="btn-settings" class="btn btn-icon" title="warehouse 地址">⚙</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside id="rail" class="rail"></aside>
+      <section id="results" class="results"></section>
+    </main>
+
+    <div id="drawer-root" class="drawer-root" hidden></div>
+    <div id="modal-root" class="modal-root" hidden></div>
+    <div id="toasts" class="toasts"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
