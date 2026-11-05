@@ -6,7 +6,6 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 
 import {
   ARCHIVED,
@@ -21,12 +20,34 @@ import {
   stateFilterOf,
 } from "../public/model.js";
 
-const MOCK_URL = new URL("../public/mock/skills.json", import.meta.url);
-const mock = async () => JSON.parse(await readFile(MOCK_URL, "utf8"));
+// fixture 就在这个文件里（以前读 public/mock/skills.json，那个目录已经删了 ——
+// spec I2：前端连副本都不许有）。形状抄 `GET /v1/skills`（§6.2）：正常 ×3、未发布 ×1、
+// 装载失败 ×1、未分类 ×1、归档 ×1。
+const FIXTURE = {
+  root: "/opt/Nous-skills",
+  repo: { head: "4f1c2ab", dirty: true, ahead: 1, behind: 0, remote: "https://github.com/JoeWest9966/Nous-skills", error: null },
+  skills: [
+    { name: "code-review", description: "审查从某个固定点以来的改动。", category: ["Basics"], load: { state: "ok" }, tracked: true },
+    { name: "write-tests", description: "先写失败的那个测试。", category: ["工具"], load: { state: "ok" }, tracked: true },
+    { name: "search-docs", description: "按关键词翻文档。", category: ["工具/搜索"], load: { state: "ok" }, tracked: true },
+    { name: "draft-mail", description: "起草一封邮件。", category: ["工具"], load: { state: "ok" }, tracked: false },
+    {
+      name: "broken-notes",
+      description: "故意写坏的：用来看红卡。",
+      category: ["工具"],
+      load: { state: "failed", error: "broken-notes: SKILL.md 的 name 跟目录名对不上" },
+      tracked: false,
+    },
+    { name: "notes-to-self", description: "没挂类别的一条。", category: [], hidden: true, load: { state: "ok" }, tracked: true },
+  ],
+  archived: ["legacy-helper"],
+  categories: ["Basics", "工具", "工具/搜索", "工具/爬虫"],
+};
+const fixture = async () => JSON.parse(JSON.stringify(FIXTURE));
 const names = (list) => list.map((item) => item.name);
 
 test("七条 fixture：卡片状态照 spec §7.1，归档的不在网格里", async () => {
-  const data = await mock();
+  const data = await fixture();
   const view = buildView(data);
 
   assert.equal(view.total, 7);
@@ -59,7 +80,7 @@ test("failed 优先于 unpublished（一条既没发布又装载失败 → faile
 });
 
 test("facet 计数对全量算：筛出一半，计数还是全量的", async () => {
-  const data = await mock();
+  const data = await fixture();
   const view = buildView(data);
 
   const onlyBasics = filterCards(view.cards, { filter: "Basics" });
@@ -75,7 +96,7 @@ test("facet 计数对全量算：筛出一半，计数还是全量的", async ()
 });
 
 test("类别路径：`工具/搜索` 挂在 `工具` 下，父级计数含子树；词表里的空类别仍然出现", async () => {
-  const data = await mock();
+  const data = await fixture();
   const view = buildView(data);
 
   const search = view.rows.find((row) => row.path === "工具/搜索");
@@ -104,7 +125,7 @@ test("类别路径：`工具/搜索` 挂在 `工具` 下，父级计数含子树
 });
 
 test("排序：正常 → 未发布 → 装载失败，同类按 name 升序；归档沉到最后", async () => {
-  const data = await mock();
+  const data = await fixture();
   const view = buildView(data);
   const ranks = { ok: 0, unpublished: 1, failed: 2 };
   const states = view.cards.map((card) => card.state);
@@ -120,7 +141,7 @@ test("排序：正常 → 未发布 → 装载失败，同类按 name 升序；�
 });
 
 test("删除类别的影响范围 = 整枝命中的技能数", async () => {
-  const data = await mock();
+  const data = await fixture();
   // 删「工具」连「工具/搜索」一起 —— 影响的是整枝，不是只挂「工具」那三条。
   assert.equal(categoryImpact(data.skills, "工具"), 4);
   assert.equal(categoryImpact(data.skills, "工具/搜索"), 1);
@@ -132,7 +153,7 @@ test("删除类别的影响范围 = 整枝命中的技能数", async () => {
 });
 
 test("未分类（category: []）落在「未分类」桶里，而不是消失", async () => {
-  const data = await mock();
+  const data = await fixture();
   const view = buildView(data);
 
   assert.equal(view.uncategorized, 1);
