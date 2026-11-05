@@ -4,3 +4,4 @@
 // 别在这里写断言：这个文件只是名单。
 import "./repo-root.test.js";
 import "./skills-api.test.js";
+import "./catalog.test.js";

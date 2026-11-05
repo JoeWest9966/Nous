@@ -108,6 +108,14 @@ const toModel = (providerId, entry, m) => {
   };
 };
 
+/**
+ * 取密钥要显式宣告意图：上游从 `nw` #220 起 `ls` 永不回显 apiKey，真身只在
+ * `X-NW-Reveal: 1` 下过一手（没有就 `PANEL_REVEAL_REQUIRED`）。qrd3wh 就是那个面板，
+ * 所以这个头是**常备**的，不是开关 —— 缺了它的症状是三个 provider 全静默 `hasKey:false`，
+ * 面板上 243 个模型一个都跑不了。只加在取密钥那一条上，列编目的请求不带。
+ */
+const REVEAL = { "x-nw-reveal": "1" };
+
 /** 面板的 envelope → data；ok:false 也认（partial 时 data 里仍有一半事实），错误单独回。 */
 const unwrap = (body) => {
   if (body && typeof body === "object" && "ok" in body) {
@@ -173,7 +181,9 @@ export async function installCatalog(models, opts = {}) {
     // 密钥：明文只在这次请求里过一手，落进内存 Map。
     let hasKey = false;
     try {
-      const secretRes = await fetchImpl(`${base}/api/model/${encodeURIComponent(id)}/secret`, { headers });
+      const secretRes = await fetchImpl(`${base}/api/model/${encodeURIComponent(id)}/secret`, {
+        headers: { ...headers, ...REVEAL },
+      });
       const secret = unwrap(await secretRes.json());
       const value = String(secret.data?.key ?? "").trim();
       if (value) {
