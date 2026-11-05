@@ -1074,6 +1074,8 @@ function confirmDelete(s) {
 // ── 登记源（两段式）──────────────────────────────────────────────────
 
 function openRegister(seed) {
+  // 只认「长得像一条源记录」的 seed —— 事件对象、字符串都不算（误传时当没预填）。
+  seed = seed && typeof seed === "object" && seed.name ? seed : null;
   const state = { result: null, body: null };
   const form = {
     repo: seed?.repo || "",
@@ -1401,7 +1403,7 @@ window.addEventListener("keydown", (ev) => {
 });
 
 $("#btn-recheck-all").addEventListener("click", () => recheckRun());
-$("#btn-new").addEventListener("click", openRegister);
+$("#btn-new").addEventListener("click", () => openRegister()); // 不能直接递函数：事件对象会被当成 seed
 $("#btn-settings").addEventListener("click", openSettings);
 
 bootLoad();
