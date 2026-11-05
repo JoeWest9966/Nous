@@ -15,9 +15,8 @@
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
 //   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills} 只读 = 不给会写的工具
-//   GET  /v1/skills                   已装技能 + 编目里能装的（skills.js）
-//   POST /v1/skills/install           {source, entry} → 拉下来落到 data/skills/
-//   POST /v1/skills/uninstall         {name}
+//   GET  /v1/skills                   技能仓库全景（repo 状态 + list() + archived + 类别）
+//   …                                全套 /v1/skills* 在 skills-api.js（见那个文件的头）
 //   GET  /v1/extensions               进程里装着什么 + 仓库 catalog（扩展清单页吃这个）
 //   POST /v1/extensions/category      {name, category[]} 改扩展类别：写 nous.json + 重扫 index.json
 //   GET  /v1/extensions/categories     类别词表（categories.json）
@@ -59,6 +58,9 @@ import { installCatalog } from "./catalog.js";
 // 块里只留两件事：去哪儿拿（下面这两行）+ 钉着哪个 commit（extensions.lock.json）。
 // 用动态 import 是因为路径得能配；静态 import 只能写字面量，一换机器就炸。
 const EXTEND = process.env.NOUS_EXTEND ?? "/opt/Nous-extend";
+// 技能仓库的本地副本（票 A 建的那个仓）。跟 EXTEND 并排：两个仓都只有一条真理 —— 盘上的文件。
+// 这里**不**往 data/ 抄一份：技能不是「装进来的包」，仓库里有什么就是什么。
+const SKILLS_ROOT = process.env.NOUS_SKILLS ?? "/opt/Nous-skills";
 // 扩展是造扩展的函数，宿主把 api 递进去 —— 它们不自己 import pi-durable（见仓库 README）。
 const api = { defineExtension, section };
 const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
@@ -67,12 +69,14 @@ const { createSkills, skillNamesOf, SKILL_PREFIX } = await import(`${EXTEND}/ski
 import { replayPrompt } from "./prompt-log.js";
 // 仓库工具（参数化过 root 的那套）：本文件用它管扩展仓，`skills-api.js` 用它管技能仓。
 // 抽成独立模块是因为这个文件有顶层 await、会起服务 —— 测试永远不能 import 它。
-// 这里把常用的一串名字拆出来（本文件到处在用）；整包也留着，好递给别的模块。
+// 这里既要把常用的一串名字拆出来（本文件到处在用），又要留着整包递进 handleSkills。
 import * as repo from "./repo-tools.js";
 
 const {
   ARCHIVE_DIR,
+  EXTENSION_NAME_RE,
   PROTECTED_CATEGORIES,
+  archivedEntries,
   checkSyntax,
   gitChanges,
   gitRootOf,
@@ -82,6 +86,7 @@ const {
   moveIntoArchive,
   moveOutOfArchive,
   mutateCategories,
+  normalizeCategories,
   pendingCommit,
   pendingFileDiff,
   pendingState,
@@ -93,12 +98,14 @@ const {
   run,
   serializeRepoWrite,
   setNodeCategories,
+  sortCategories,
   syncRepo,
   withStatus,
   writeCategories,
   writeFileAtomic,
   writeRepoFile,
 } = repo;
+import { handleSkills } from "./skills-api.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -1350,13 +1357,14 @@ const skills = new Proxy({}, {
     return typeof value === "function" ? value.bind(service) : value;
   },
 });
-skillsService.current = await createSkills({ dir: path.join(DATA, "skills"), registry, api });
+skillsService.current = await createSkills({ dir: SKILLS_ROOT, registry, api });
 const { skillExtension } = skills;
 registry.install(nousExtension);
 registry.install(skills.extension);
 await skills.load();
-// 老收据补齐版本：后台跑，别把启动卡在 clone 上。
-void skills.backfill();
+// 老收据时代的补版本已经没了（技能没有版本号）。留着 `?.` 是因为：
+// 扩展仓可以比这块新或旧，缺一个方法不该让启动路径炸掉。
+void skills.backfill?.();
 // 核心两条的变体：**启动时就得装**。只靠 installCore 的话，进程一重启它们就没了，
 // 得等人点一次「重试装载」或者推一次代码才回来 —— 那是「页面说装了、进程里没有」的翻版。
 await loadCoreVariants("boot");
@@ -1380,10 +1388,10 @@ const installCore = async (version) => {
   const { default: createNous } = await import(`${EXTEND}/nous/index.js?v=${version}`);
   registry.install(createNous(api));
   const skillsModule = await import(`${EXTEND}/skills/index.js?v=${version}`);
-  skillsService.current = await skillsModule.createSkills({ dir: path.join(DATA, "skills"), registry, api });
+  skillsService.current = await skillsModule.createSkills({ dir: SKILLS_ROOT, registry, api });
   registry.install(skillsService.current.extension);
   await skillsService.current.load();
-  void skillsService.current.backfill();
+  void skillsService.current.backfill?.();
 
   await loadCoreVariants(version);
 };
@@ -1686,6 +1694,23 @@ const route = async (req, res, url) => {
     if (!models.getModel(provider, modelId)) return json(res, 400, { error: `没有这个模型：${provider}/${modelId}` });
     await setDefault({ provider, modelId });
     return json(res, 200, { default: defaultModel });
+  }
+
+  // ── 技能 ────────────────────────────────────────────────────────────────
+  //
+  // 全套 `/v1/skills*` 在 `skills-api.js`。这里只有接线：`root` 定死，测试注不进来。
+  // **必须放在 `parts[1] === "extensions"` 那一串路由之前** —— 老代码踩过：
+  // 只看 `parts[1]` 的列表接口会把 `GET /v1/extensions/sync` 先接走。
+  //
+  // 老的三条（`GET /v1/skills` 编目版、`POST refresh|install|uninstall`）已删干净：
+  // 仓库里有什么就是装着什么，没有「装」这个动作，也没有上游编目要刷新。
+  if (parts[0] === "v1" && parts[1] === "skills") {
+    try {
+      return await handleSkills({ req, res, url, parts, root: SKILLS_ROOT, skills, repo });
+    } catch (error) {
+      // handleSkills 自己写响应；走到这儿说明是它没接住的意外（读 body 炸了之类）。
+      return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
   }
 
   // 扩展类别：改 nous.json + 重扫 index.json（立刻生效）；commit/push 走 /sync。

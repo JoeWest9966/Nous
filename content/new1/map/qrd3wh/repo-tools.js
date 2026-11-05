@@ -541,8 +541,13 @@ export const gitChanges = async (root) => {
     .split("\n")
     .map((line) => {
       let rel = line.slice(3).trim().replace(/^"|"$/g, "");
-      if (rel.includes(" -> ")) rel = rel.split(" -> ").pop();
-      return { status: line.slice(0, 2), path: rel };
+      let from = null;
+      if (rel.includes(" -> ")) {
+        const sides = rel.split(" -> ");
+        from = sides[sides.length - 2];
+        rel = sides[sides.length - 1];
+      }
+      return { status: line.slice(0, 2), path: rel, ...(from ? { from } : {}) };
     })
     .filter((item) => item.path);
 };
@@ -847,6 +852,7 @@ export const syncRepo = async (
   // 「本地删了某个目录」必然让 tracked 文件变成 ` D`。这条过滤是「本地删除」和「发布」
   // 之间的防火墙：发布推的是工作区，不挡住的话，你删了 demo、隔天改一行点发布，
   // 删除就跟着上 GitHub。
+  const renamedFrom = new Map(changes.filter((item) => item.from).map((item) => [item.path, item.from]));
   const deleted = new Set(changes.filter((item) => item.status.includes("D")).map((item) => item.path));
   const changed = changes.map((item) => item.path);
   let targets = (only === "categories" ? changed.filter(isCategoryFile) : changed).filter(
@@ -888,8 +894,23 @@ export const syncRepo = async (
       }
       if (addable.length) await run("git", ["add", "--", ...addable], opts);
       // 用暂存区判断“真有待提交的东西”：纯删除（git rm）不会有 addable，但也得提交。
-      const staged = (await run("git", ["diff", "--cached", "--name-only"], opts)).stdout.trim();
-      if (staged) {
+      // `--no-renames` 不是省事：改名默认只报目标侧，而 `git commit -- <pathspec>`
+      // 必须拿到**两侧**才提交得出一条完整改名。少了源侧，HEAD 里会留一个
+      // 「新目录有了、旧目录没删」的半截 —— 踩过：归档的提交只剩 A，D 留在暂存区。
+      const stagedAll = (await run("git", ["diff", "--cached", "--name-only", "--no-renames"], opts)).stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      // **commit 必须带 pathspec。** 不带的话 `git commit` 提交的是整个暂存区 ——
+      // 工作区里那条被挡下来的删除（别人 `git rm` 掉的旧目录）就搭着这次发布一起上了。
+      // 改名的两侧都要列：只给目标侧会在 HEAD 里留一个「只加不删」的半截改名。
+      // 未跟踪目录在 porcelain 里被折成一条 `?? dir/`，而暂存区里是它下面的文件名 ——
+      // 所以「这条 pathspec 有没有东西可提交」要按前缀比，不是按等号比。
+      const covers = (rel, stagedRel) => stagedRel === rel || stagedRel.startsWith(rel.endsWith("/") ? rel : `${rel}/`);
+      const pathspec = [...new Set(targets.flatMap((rel) => [rel, renamedFrom.get(rel)])).values()]
+        .filter(Boolean)
+        .filter((rel) => rel === "index.json" || addable.includes(rel) || stagedAll.some((staged) => covers(rel, staged)));
+      if (pathspec.some((rel) => stagedAll.some((staged) => covers(rel, staged)))) {
         // 默认说明按**真改了的文件**生。混着代码改动却写成 `category:` 是骗人
         // —— 将来的 `git log` 靠这一行找人。
         const when = new Date().toISOString().slice(0, 19).replace("T", " ");
@@ -898,7 +919,7 @@ export const syncRepo = async (
           ? `category: 更新${label}类别（${when}）`
           : `${tag}: 更新 ${targets.slice(0, 4).join("、")}${targets.length > 4 ? ` 等 ${targets.length} 个文件` : ""}`;
         const msg = String(message ?? "").trim() || fallback;
-        await run("git", ["commit", "-m", msg], opts);
+        await run("git", ["commit", "-m", msg, "--", ...pathspec], opts);
         committed = true;
       }
     }

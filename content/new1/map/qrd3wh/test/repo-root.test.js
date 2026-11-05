@@ -152,3 +152,20 @@ test("moveIntoArchive / moveOutOfArchive 也认 root", async () => {
     await cleanup(b);
   }
 });
+
+test("改名提交是一条完整改名：A（加）和 D（删）都在同一条 commit 里", async () => {
+  // 踩过的坑：`git commit -- <pathspec>` 只拿到目标侧时，HEAD 里会留一个
+  // 「新目录有了、旧目录没删」的半截 —— 归档之后就一直是这个姿势，下一个人
+  // 一 publish 就把它当删除推上去（或者永远推不上去）。
+  const root = await makeRepo({ files: { "x/SKILL.md": "x\n" } });
+  try {
+    await repo.moveIntoArchive(root, "x");
+    const result = await repo.syncRepo(root, "test: 归档 x", { includeDeleted: true });
+    assert.equal(result.committed, true);
+    const shown = (await run("git", ["show", "--name-status", "--format=", "HEAD"], { cwd: root })).stdout.trim();
+    assert.match(shown, /^R100\s+x\/SKILL\.md\s+\.archive\/x\/SKILL\.md$/m);
+    assert.equal((await status(root)).trim(), "");
+  } finally {
+    await cleanup(root);
+  }
+});
