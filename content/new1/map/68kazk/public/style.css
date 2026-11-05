@@ -226,6 +226,9 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   background: var(--paper);
 }
 .result-count { font-size: 12.5px; color: var(--ink-2); }
+/* 一格两组按钮：网格的和上游的。谁在场谁撑满这一行 —— 这样切视图时按钮不会左右乱跳。 */
+.toolbar-group { display: flex; align-items: center; gap: 14px; flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+.toolbar-group[hidden] { display: none; }
 .search {
   margin-left: auto;
   display: flex; align-items: center; gap: 8px;
@@ -411,7 +414,21 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 }
 
 /* 主区换页的另一个：上游清单（它列的不是「某一条」，是一整张表）。 */
-.upstream { display: flex; flex-direction: column; gap: 14px; max-width: 940px; padding-bottom: 40px; }
+.upstream { display: flex; flex-direction: column; gap: 10px; padding-bottom: 40px; }
+
+/* 上游那块视图：面屑 + 网格。卡片复用 .product，只有目录卡是虚线（能钻进去）。 */
+.up-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.up-crumb { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; }
+.up-crumb-at {
+  border: 0; background: none; color: var(--dim); cursor: pointer;
+  padding: 3px 5px; border-radius: 5px; font: inherit;
+}
+.up-crumb-at:hover, .up-crumb-at:focus-visible { color: var(--ink); background: var(--wash); outline: none; }
+.up-crumb-at:not(:last-child)::after { content: "/"; color: var(--dimmer); margin-left: 5px; }
+.up-src { margin: 0; }
+.product.up-dir { border-style: dashed; }
+.badge-float.dir { background: var(--wash); color: var(--dim); border-color: var(--line); }
+.up-detail { display: flex; flex-direction: column; gap: 10px; }
 
 /* 下面这几个 `detail-*` 头部件归**上游**用（它是主区页，头就铺在正文里）。
    详情那边同名的那套已经搬到 `.dt-*` —— 它是浮层，头是固定的。 */
@@ -476,7 +493,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .detail-sec-hint { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
 .detail-sec-body { display: flex; flex-direction: column; gap: 7px; }
 .detail-row { display: flex; gap: 10px; align-items: baseline; font-size: 12px; }
-.detail-row-k { flex: none; width: 44px; color: var(--dim); }
+.detail-row-k { flex: none; width: 52px; color: var(--dim); white-space: nowrap; }
 .detail-row-v { min-width: 0; color: var(--ink-2); overflow-wrap: anywhere; }
 .detail-tags { padding: 0; }
 
@@ -581,19 +598,52 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .ed-x:hover { color: var(--ink); background: var(--wash); }
 
 .ed-body { flex: 1; display: flex; min-height: 0; }
-.ed-files {
-  flex: none; width: 190px; overflow: auto;
-  border-right: 1px solid var(--line); background: var(--paper); padding: 8px;
+
+/* 左栏：两个新建按钮 + 一条表单 + 树。宽度固定，树自己滚。 */
+.ed-side {
+  flex: none; width: 190px; min-height: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--line); background: var(--paper);
 }
+.ed-newbar { flex: none; display: flex; gap: 4px; padding: 8px 8px 4px; }
+.ed-newbar .ed-btn { flex: 1; padding: 3px 6px; font-size: 11px; }
+.ed-new { flex: none; display: flex; gap: 4px; align-items: center; padding: 0 8px 6px; }
+.ed-new[hidden] { display: none; }
+.ed-new-kind {
+  flex: none; font-size: 10px; color: var(--dim); border: 1px solid var(--line);
+  border-radius: 4px; padding: 1px 4px; background: var(--card);
+}
+.ed-new input {
+  flex: 1; min-width: 0; font-family: var(--mono); font-size: 11px;
+  border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px;
+  background: var(--card); color: var(--ink); outline: none;
+}
+.ed-new input:focus { border-color: var(--ink-2); }
+.ed-new .ed-btn { padding: 2px 7px; font-size: 11px; }
+.ed-new-hint { margin: 0 8px 6px; font-size: 10.5px; line-height: 1.5; word-break: break-word; }
+.ed-new-hint[data-tone="bad"] { color: var(--bad); }
+
+.ed-files { flex: 1; min-height: 0; overflow: auto; padding: 2px 6px 8px; }
+.ed-row { display: flex; align-items: center; gap: 2px; }
+.ed-row .ed-file { flex: 1; min-width: 0; }
 .ed-file {
   display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left;
   border: 0; background: none; border-radius: 6px; padding: 5px 7px;
+  padding-left: calc(7px + var(--depth, 0) * 13px);
   font: inherit; font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); cursor: pointer;
 }
 .ed-file:hover, .ed-file:focus-visible { background: var(--wash); color: var(--ink); outline: none; }
 .ed-file[aria-current="true"] { background: var(--wash); color: var(--ink); font-weight: 600; }
+.ed-file .ed-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ed-file .ed-file-size { margin-left: auto; color: var(--dim); font-size: 10px; }
+.ed-file .ed-file-caret { flex: none; width: 8px; color: var(--dim); font-size: 9px; }
 .ed-file[data-kind="markdown"] { color: var(--ink-2); }
+.ed-file[data-kind="dir"] { color: var(--ink); font-weight: 600; }
+.ed-file-del {
+  flex: none; border: 0; background: none; color: var(--dim); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 2px 5px; border-radius: 5px; opacity: 0;
+}
+.ed-row:hover .ed-file-del, .ed-row:focus-within .ed-file-del { opacity: 1; }
+.ed-file-del:hover, .ed-file-del:focus-visible { background: #fbeeec; color: var(--bad); outline: none; }
 .ed-files-empty { padding: 8px; color: var(--dim); font-size: 11.5px; }
 
 .ed-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -639,11 +689,13 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   .dt-head { padding: 10px 12px; }
   .dt-body { padding: 12px 12px 32px; }
   .ed-body { flex-direction: column; }
-  .ed-files {
-    width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--line);
-    display: flex; flex-wrap: wrap; gap: 4px;
+  .ed-side {
+    width: auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line);
   }
+  .ed-files { overflow: auto; }
   .ed-file { width: auto; }
+  /* 触屏没有 hover：删除按钮常驻，不然手机上永远点不到。 */
+  .ed-file-del { opacity: 1; }
   .ed-foot { flex-direction: column; align-items: flex-start; }
 }
 

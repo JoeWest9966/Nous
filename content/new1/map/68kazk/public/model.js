@@ -187,6 +187,84 @@ export function childCount(names, path) {
   return (Array.isArray(names) ? names : []).filter((name) => name !== target && isUnder(name, target)).length;
 }
 
+// ── 正文抽屉里的文件树 ──────────────────────────────────────────────────────
+//
+// 文件列表是扁的（`docs/a.md`），抽屉里要长成一棵树。`/` 是唯一的分隔符 ——
+// 目录**不**单独存一行，它由「有文件住在这儿」推出来：文件夹里没文件，它本来就不该在。
+// 所以这里没有「空目录」这种状态：建文件夹就是建一个带 `.gitkeep` 的目录（服务端的事）。
+
+/** 同一层：文件夹在前、文件在后，各自按名字排（zh-CN）。 */
+function sortTree(node) {
+  node.children.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+    return a.name.localeCompare(b.name, "zh-CN");
+  });
+  for (const child of node.children) if (child.type === "dir") sortTree(child);
+}
+
+/**
+ * 扁平文件列表 → 树。返回一个虚拟根（`path: ""`），孩子才是要渲染的行。
+ *
+ * @param {Array<{path: string, size?: number}>} files
+ * @returns {{type: "dir", path: string, name: string, depth: number, children: Array<object>}}
+ */
+export function fileTree(files) {
+  const root = { type: "dir", path: "", name: "", depth: -1, children: [] };
+  const dirs = new Map([["", root]]);
+  for (const file of Array.isArray(files) ? files : []) {
+    const path = String(file?.path ?? "").trim().replace(/^\/+/, "");
+    const parts = path.split("/").filter(Boolean);
+    if (!parts.length) continue;
+    let parent = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const dirPath = parts.slice(0, i + 1).join("/");
+      let node = dirs.get(dirPath);
+      if (!node) {
+        node = { type: "dir", path: dirPath, name: parts[i], depth: i, children: [] };
+        dirs.set(dirPath, node);
+        parent.children.push(node);
+      }
+      parent = node;
+    }
+    parent.children.push({
+      type: "file",
+      path,
+      name: parts.at(-1),
+      depth: parts.length - 1,
+      size: Number(file?.size) || 0,
+    });
+  }
+  sortTree(root);
+  return root;
+}
+
+/** 树 → 当前该显示的行（折叠起来的文件夹不往里走）。`isOpen(path)` 由调用方给。 */
+export function flattenTree(node, isOpen = () => true) {
+  const out = [];
+  const walk = (parent) => {
+    for (const child of parent.children) {
+      out.push(child);
+      if (child.type === "dir" && isOpen(child.path)) walk(child);
+    }
+  };
+  walk(node);
+  return out;
+}
+
+/** 树里所有文件夹的 path（打开抽屉时默认全展开）。 */
+export function dirPaths(node) {
+  const out = [];
+  const walk = (parent) => {
+    for (const child of parent.children) {
+      if (child.type !== "dir") continue;
+      out.push(child.path);
+      walk(child);
+    }
+  };
+  walk(node);
+  return out;
+}
+
 // ── 上游 ────────────────────────────────────────────────────────────────────
 //
 // 上游那条技能的四种关系由**服务端**算（`local` 字段，判据是 `nous.json.upstream`
@@ -252,4 +330,104 @@ export function sourceNameFromUrl(url) {
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^[-._]+|[-._]+$/g, "")
     .slice(0, 32);
+}
+
+// ── 上游的树 ────────────────────────────────────────────────────────────────
+//
+// 上游不该是「一列条目」。别人的仓跟我们一样会长成多级目录：`plugins/x/skills/y`，
+// 而且往下一层一层钻才是人看仓库的方式。所以把清单折成**跟本地同一副骨头**：
+// 目录是组，带 SKILL.md 的那一层是叶子。
+//
+// 为什么在客户端算而不是服务端算：本地那棵树（`buildView`）也是这儿算的。
+// 两处算法长在一起，改口径时不会只改一边 —— 服务端只管「git 里有什么」。
+
+/**
+ * 清单 → 树。返回根节点（`path: ""`），`children` 是一级。
+ *
+ * 每个节点：`{ name, path, kind: "dir"|"skill", children, n, todo, entry? }`
+ * - `n`：这一层往下有多少条技能（目录卡片上那个数）
+ * - `todo`：其中值得看一眼的（未取用 / 有更新 / 名字被占）
+ *
+ * 边角：一个目录自己就是技能、底下还套着子目录（`x/SKILL.md` + `x/y/SKILL.md`）。
+ * 这种节点 `kind` 留 `"dir"`，单独的 `entry` 挂在它身上 —— 卡片上给「本层也是技能」。
+ */
+export function upstreamTree(entries) {
+  const root = { name: "", path: "", kind: "dir", children: [] };
+  // 一个路径只有一个节点 —— 技能和目录共用这张表，撞上就地升级成目录，
+  // 否则「x 是技能、x/y 也是技能」会长出两个 x。
+  const nodes = new Map([["", root]]);
+  const parentPath = (full) => (full.includes("/") ? full.slice(0, full.lastIndexOf("/")) : "");
+  const dir = (path) => {
+    if (nodes.has(path)) {
+      // 先来过一条同路径的技能，现在它底下又冒出一个子目录：就地升级成目录，
+      // 它自己的那一条留在 `entry` 上（面板会写成「本层也是技能」）。
+      const found = nodes.get(path);
+      if (found.kind === "skill") found.kind = "dir";
+      return found;
+    }
+    const parent = dir(parentPath(path));
+    const node = { name: path.split("/").at(-1), path, kind: "dir", children: [] };
+    parent.children.push(node);
+    nodes.set(path, node);
+    return node;
+  };
+
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const full = String(entry?.path ?? entry?.name ?? "").replace(/^\/+|\/+$/g, "");
+    if (!full) continue;
+    const existing = nodes.get(full);
+    if (existing) {
+      // 已经在树上了（另一种形态）：把这条技能挂上去，别丢掉。
+      if (existing.kind === "skill") existing.kind = "dir";
+      existing.entry = entry;
+      continue;
+    }
+    const node = { name: full.split("/").at(-1), path: full, kind: "skill", children: [], entry };
+    dir(parentPath(full)).children.push(node);
+    nodes.set(full, node);
+  }
+
+  const roll = (node) => {
+    if (node.kind === "skill") {
+      node.n = 1;
+      node.todo = node.entry?.local === "same" ? 0 : 1;
+      return node;
+    }
+    // 目录在前、技能在后，各自按名字。跟文件管理器一个顺序。
+    node.children.sort(
+      (a, b) => (a.kind === b.kind ? 0 : a.kind === "dir" ? -1 : 1) || a.name.localeCompare(b.name, "zh-CN"),
+    );
+    node.n = 0;
+    node.todo = 0;
+    for (const child of node.children) {
+      roll(child);
+      node.n += child.n;
+      node.todo += child.todo;
+    }
+    if (node.entry) {
+      node.n += 1;
+      node.todo += node.entry.local === "same" ? 0 : 1;
+    }
+    return node;
+  };
+  roll(root);
+  return root;
+}
+
+/** 树里按路径找节点；找不到给根（`path` 是脏的、上游变了，都不该炸成白屏）。 */
+export function upstreamAt(tree, path) {
+  const want = String(path ?? "").replace(/^\/+|\/+$/g, "");
+  if (!tree || !want) return tree ?? null;
+  // 路径是绝对的（`skills/a/b`），所以往下钻时把同一个 `want` 传下去。
+  for (const child of tree.children ?? []) {
+    if (child.path === want) return child;
+    if (want.startsWith(`${child.path}/`)) return upstreamAt(child, want) ?? tree;
+  }
+  return tree;
+}
+
+/** 面包屑：`skills/a/b` → 可从根点回去的一串。 */
+export function upstreamCrumb(path) {
+  const parts = String(path ?? "").split("/").filter(Boolean);
+  return parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join("/") }));
 }

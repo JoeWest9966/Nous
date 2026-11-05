@@ -20,7 +20,10 @@ import {
   sortUpstream,
   stateFilterOf,
   suggestedAdoptName,
+  upstreamAt,
+  upstreamCrumb,
   upstreamSummary,
+  upstreamTree,
 } from "../public/model.js";
 
 // fixture 就在这个文件里（以前读 public/mock/skills.json，那个目录已经删了 ——
@@ -207,4 +210,137 @@ test("suggestedAdoptName：名字被占时退一格", () => {
   assert.equal(suggestedAdoptName({ name: "code-review", local: "none" }), "code-review");
   assert.equal(suggestedAdoptName({ name: "code-review", local: "taken" }), "code-review-upstream");
   assert.equal(suggestedAdoptName({ name: "", local: "none" }), "");
+});
+
+// ── 上游的树 ────────────────────────────────────────────────────────────────
+
+const up = (path, local = "none") => ({ source: "matt", path, name: path.split("/").at(-1), local });
+
+test("upstreamTree：平铺清单退化成一层", () => {
+  const tree = upstreamTree([up("code-review"), up("weekly-report")]);
+  assert.equal(tree.n, 2);
+  assert.deepEqual(
+    tree.children.map((node) => [node.kind, node.name]),
+    [["skill", "code-review"], ["skill", "weekly-report"]],
+  );
+});
+
+test("upstreamTree：多层路径自己长出目录，目录在前技能在后", () => {
+  const tree = upstreamTree([up("skills/b"), up("plugins/x/skills/c"), up("aaa")]);
+  assert.equal(tree.n, 3);
+  assert.deepEqual(
+    tree.children.map((node) => node.name),
+    ["plugins", "skills", "aaa"],
+  );
+  const plugins = tree.children[0];
+  assert.equal(plugins.kind, "dir");
+  assert.equal(plugins.n, 1);
+  assert.equal(plugins.children[0].path, "plugins/x");
+  assert.equal(plugins.children[0].children[0].path, "plugins/x/skills");
+  assert.equal(plugins.children[0].children[0].children[0].kind, "skill");
+});
+
+test("upstreamTree：目录上那个数是「这一层往下的技能条数」，todo 只数要动手的", () => {
+  const tree = upstreamTree([up("a/x", "none"), up("a/y", "same"), up("a/z", "changed")]);
+  const a = tree.children[0];
+  assert.equal(a.n, 3);
+  assert.equal(a.todo, 2);
+  assert.equal(tree.n, 3);
+  assert.equal(tree.todo, 2);
+});
+
+test("upstreamTree：一个目录自己就是技能、里面还有子目录，不丢那一条", () => {
+  const tree = upstreamTree([up("x"), up("x/y")]);
+  const x = tree.children[0];
+  assert.equal(x.kind, "dir");
+  assert.equal(x.entry.path, "x");
+  assert.equal(x.n, 2);
+  assert.equal(x.children[0].path, "x/y");
+});
+
+test("upstreamAt：钻到任意一层；路径脏了就退回根，不炸", () => {
+  const tree = upstreamTree([up("a/b/c"), up("a/d")]);
+  assert.equal(upstreamAt(tree, "a").path, "a");
+  assert.equal(upstreamAt(tree, "a/b/c").name, "c");
+  assert.equal(upstreamAt(tree, "").path, "");
+  assert.equal(upstreamAt(tree, "不存在/xxx").path, "");
+  assert.equal(upstreamAt(tree, "a/nope").path, "a");
+});
+
+test("upstreamCrumb：面包屑每一层都能点回去", () => {
+  assert.deepEqual(upstreamCrumb("a/b/c"), [
+    { name: "a", path: "a" },
+    { name: "b", path: "a/b" },
+    { name: "c", path: "a/b/c" },
+  ]);
+  assert.deepEqual(upstreamCrumb(""), []);
+});
+
+// ── 正文抽屉的文件树 ────────────────────────────────────────────────────────
+//
+// 列表是扁的（`docs/a.md`），抽屉里要长成树。文件夹不是存出来的：有文件住在这儿它才在。
+
+import { dirPaths, fileTree, flattenTree } from "../public/model.js";
+
+test("fileTree：/ 拆成层级，同层目录在前、文件在后", () => {
+  const tree = fileTree([
+    { path: "SKILL.md", size: 10 },
+    { path: "nous.json", size: 2 },
+    { path: "docs/guide.md", size: 5 },
+    { path: "docs/deep/a.md", size: 1 },
+  ]);
+  assert.deepEqual(
+    tree.children.map((node) => [node.type, node.path, node.depth]),
+    [
+      ["dir", "docs", 0],
+      ["file", "nous.json", 0],
+      ["file", "SKILL.md", 0],
+    ],
+  );
+  const docs = tree.children[0];
+  assert.deepEqual(
+    docs.children.map((node) => [node.type, node.path]),
+    [
+      ["dir", "docs/deep"],
+      ["file", "docs/guide.md"],
+    ],
+  );
+});
+
+test("fileTree：没有文件的目录不会凭空出现", () => {
+  const tree = fileTree([{ path: "a/b/c.md" }]);
+  assert.deepEqual(
+    tree.children.map((node) => node.path),
+    ["a"],
+  );
+  assert.deepEqual(
+    tree.children[0].children.map((node) => node.path),
+    ["a/b"],
+  );
+});
+
+test("fileTree：隔层也能对上 —— 先深后浅的文件不会建出两个 docs", () => {
+  const tree = fileTree([{ path: "docs/deep/a.md" }, { path: "docs/b.md" }]);
+  assert.equal(tree.children.length, 1);
+  assert.deepEqual(
+    tree.children[0].children.map((node) => node.path),
+    ["docs/deep", "docs/b.md"],
+  );
+});
+
+test("flattenTree：折叠的目录不展开它下面那几层", () => {
+  const tree = fileTree([{ path: "docs/a.md" }, { path: "docs/b.md" }, { path: "top.md" }]);
+  assert.deepEqual(
+    flattenTree(tree).map((node) => node.path),
+    ["docs", "docs/a.md", "docs/b.md", "top.md"],
+  );
+  assert.deepEqual(
+    flattenTree(tree, () => false).map((node) => node.path),
+    ["docs", "top.md"],
+  );
+});
+
+test("dirPaths：所有文件夹（打开抽屉时默认全展开）", () => {
+  const tree = fileTree([{ path: "a/b/c.md" }, { path: "d.md" }]);
+  assert.deepEqual(dirPaths(tree), ["a", "a/b"]);
 });

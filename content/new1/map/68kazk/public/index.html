@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>skills · Nous 技能</title>
-    <link rel="stylesheet" href="./style.css?v=2" />
+    <link rel="stylesheet" href="./style.css?v=3" />
     <script>
       // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -36,7 +36,7 @@
     <div class="layout">
       <aside class="rail">
         <div class="rail-head">
-          <h3>类别</h3>
+          <h3 id="rail-title">类别</h3>
           <span class="facet-n" id="cat-count">—</span>
         </div>
         <div class="facets" id="facets"></div>
@@ -50,19 +50,24 @@
         <div class="filters" id="filters" aria-label="筛选"></div>
         <div class="toolbar">
           <span class="result-count" id="result-count">—</span>
-          <button class="btn-new" id="new-skill" type="button" title="建一条空技能（未发布，只有这台有）">
-            <span aria-hidden="true">＋</span>新建技能
-          </button>
-          <button class="btn btn-small" id="rescan" type="button" title="重扫仓库：命令行里改过 SKILL.md 之后按这个（不改文件、不提交）">
-            重扫
-          </button>
-          <label class="search">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
-              <circle cx="8.5" cy="8.5" r="5.2" />
-              <path d="M12.4 12.4 17 17" />
-            </svg>
-            <input id="search" type="search" placeholder="搜技能名 / 说明 / 类别" autocomplete="off" />
-          </label>
+          <!-- 网格的动作。上游那一屏没有技能可建、也没东西可搜，整组让位。 -->
+          <div class="toolbar-group" id="toolbar-grid">
+            <button class="btn-new" id="new-skill" type="button" title="建一条空技能（未发布，只有这台有）">
+              <span aria-hidden="true">＋</span>新建技能
+            </button>
+            <button class="btn btn-small" id="rescan" type="button" title="重扫仓库：命令行里改过 SKILL.md 之后按这个（不改文件、不提交）">
+              重扫
+            </button>
+            <label class="search">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <circle cx="8.5" cy="8.5" r="5.2" />
+                <path d="M12.4 12.4 17 17" />
+              </svg>
+              <input id="search" type="search" placeholder="搜技能名 / 说明 / 类别" autocomplete="off" />
+            </label>
+          </div>
+          <!-- 上游的动作，摆在同一格：换的是「这一屏能做什么」，不是换一屏布局。 -->
+          <div class="toolbar-group" id="toolbar-up" hidden></div>
         </div>
         <div class="grid" id="grid"></div>
         <!-- 上游是主区换页：它列的不是「某一条」，是一整张清单。详情才是浮层。 -->
@@ -106,7 +111,25 @@
         </div>
       </header>
       <div class="ed-body">
-        <nav class="ed-files" id="ed-files" aria-label="文件"></nav>
+        <div class="ed-side">
+          <!-- 文件树的两个动作。新建 = 往技能目录里写一个还不存在的路径；
+               文件夹 = 建目录 + 一份 .gitkeep（空目录 git 不跟踪，发布时就没了）。 -->
+          <div class="ed-newbar">
+            <button class="ed-btn" id="ed-add-file" type="button"
+                    title="新建文件。路径里带 / 就等于顺手建文件夹（docs/guide.md）">＋ 文件</button>
+            <button class="ed-btn" id="ed-add-dir" type="button"
+                    title="新建文件夹。里面会铺一份 .gitkeep —— 空目录 git 不跟踪">＋ 文件夹</button>
+          </div>
+          <form class="ed-new" id="ed-new" hidden>
+            <span class="ed-new-kind" id="ed-new-kind">文件</span>
+            <input id="ed-new-path" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="docs/guide.md" aria-label="路径" />
+            <button class="ed-btn primary" id="ed-new-ok" type="submit">建</button>
+            <button class="ed-btn" id="ed-new-cancel" type="button" title="取消（Esc）">×</button>
+          </form>
+          <p class="ed-new-hint dim small" id="ed-new-hint" hidden></p>
+          <nav class="ed-files" id="ed-files" aria-label="文件"></nav>
+        </div>
         <section class="ed-pane">
           <div class="ed-bar">
             <span class="ed-path mono" id="ed-path">—</span>
@@ -135,7 +158,8 @@
             <span class="dim small">
               保存只落盘；发布才 commit + push —— 服务端会先过内容闸
               （<code>SKILL.md</code> 的 frontmatter、<code>name</code> == 目录名、<code>description</code> 非空、
-              <code>nous.json</code> 能解析）。这里不建文件、不删文件。
+              <code>nous.json</code> 能解析）。新建 / 删除也只落盘：删掉的东西在 git 历史里，
+              没发布之前都还在。
             </span>
           </footer>
         </section>
@@ -194,6 +218,6 @@
     </form>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=2"></script>
+    <script type="module" src="./app.js?v=3"></script>
   </body>
 </html>
