@@ -165,7 +165,9 @@ export const writeCategories = async (root, list, { protect = PROTECTED_CATEGORI
   // 受保护的类别永远写进去 —— 词表被人清空也丢不了。（技能仓传 `protect: []`。）
   for (const item of normalizeCategories([...list, ...protect])) expanded.push(...ancestorsOf(item), item);
   const unique = sortCategories(expanded);
-  await writeFileAtomic(categoriesFile(root), JSON.stringify({ categories: unique }, null, 2) + "\n");
+  // `v: 1` 是形状版本（spec §2.3）：扩展仓和技能仓的词表长得一模一样，读的那边才敢
+  // 按同一个解析器读。不写它的话，一个格式变更就只能在两边猜。
+  await writeFileAtomic(categoriesFile(root), JSON.stringify({ v: 1, categories: unique }, null, 2) + "\n");
   return unique;
 };
 
@@ -405,8 +407,10 @@ export const listRepoFiles = async (root, name, { dir = null, kinds = FILE_KINDS
   if (!exists?.isDirectory()) throw withStatus(new Error(`仓库里没有这个${label}：${clean}`), 404);
 
   const files = [];
-  const walk = async (base, relBase, depth) => {
-    if (depth > 4 || files.length >= maxFiles) return;
+  // 递归到底：技能目录里可能有 `/references/a/b/c.md` 这种参考文档，截到第 4 层
+  // 就等于「文件在盘上、面板里看不见」。真正刹住的是 `maxFiles`（spec §6.1：200 个）。
+  const walk = async (base, relBase) => {
+    if (files.length >= maxFiles) return;
     const entries = await readdir(base, { withFileTypes: true }).catch(() => []);
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
@@ -414,7 +418,7 @@ export const listRepoFiles = async (root, name, { dir = null, kinds = FILE_KINDS
       if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
       const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        await walk(path.join(base, entry.name), rel, depth + 1);
+        await walk(path.join(base, entry.name), rel);
         continue;
       }
       const kind = kindOfPath(entry.name);
@@ -424,7 +428,7 @@ export const listRepoFiles = async (root, name, { dir = null, kinds = FILE_KINDS
       files.push({ path: rel, kind: kind ?? "text", size: info.size, mtime: Math.round(info.mtimeMs) });
     }
   };
-  await walk(base0, "", 0);
+  await walk(base0, "");
   return files;
 };
 
@@ -644,14 +648,18 @@ export const pendingCommit = async (root, hash) => {
     timeout: 20_000,
   })).stdout.trim();
   const [full, author, date, ...subject] = meta.split("\t");
-  const numstat = (await run("git", ["-C", root, "show", "--numstat", "--format=", sha], { timeout: 60_000 })).stdout;
-  const files = numstat
+  // `--name-status` 而不是 `--numstat`：弹窗要的是「这文件是加了还是删了」，不是行数
+  // （spec §6.1 的 `files: [{path, status}]`）。`--format=` 把 commit 头整段打空，
+  // 剩下的每一行就是 `状态\t路径`（改名是 `R100\t旧\t新`）。
+  const files = (await run("git", ["-C", root, "show", "--name-status", "--format=", sha], { timeout: 60_000 })).stdout
     .split("\n")
     .filter(Boolean)
     .map((line) => {
-      const [adds, dels, ...rest] = line.split("\t");
-      return { path: rest.join("\t"), added: adds === "-" ? 0 : Number(adds), removed: dels === "-" ? 0 : Number(dels) };
-    });
+      const [code, ...paths] = line.split("\t");
+      // 改名 / 复制有两个路径：取最后一个（= 现在盘上叫的那个名字）。
+      return { path: paths[paths.length - 1] ?? "", status: String(code ?? "").charAt(0) || "?" };
+    })
+    .filter((file) => file.path);
   return { hash: full, short: full.slice(0, 7), author, date, subject: subject.join("\t"), files };
 };
 

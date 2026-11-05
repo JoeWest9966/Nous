@@ -81,30 +81,19 @@ const checkName = (raw) => {
   return name;
 };
 
-// ── frontmatter：只读 `name` / `description` 这两个标量 ─────────────────────
+// ── frontmatter：借扩展仓那一份（spec §2.1「解析器用现成的 parseFrontmatter()」）──
 //
-// 为什么这儿还有一份解析：**内容闸是服务端的，不能挂在扩展模块上**。
-// 它是发布前的最后一道门（§6.4），测试也要能直接跑它 —— 所以不 import
-// `Nous-extend/skills/index.js`（那个文件的路径由 NOUS_EXTEND 决定，测试环境里不一定对）。
-// 只认 `key: value`（和引号包裹的标量）：写错了就该红，而不是被宽容地猜过去。
+// **为什么不在这儿手写第二份**：本地那版只认 `key: value` 两个标量，`description: >`
+// 这种折叠块会被读成一个 `>`（内容闸看见「非空」就放过去了，扩展那边却把这段折成
+// 空串），引号里的 `\"` 也不解转义 —— 于是同一份文件，闸说能发、名册说是坏账。
+// `>` / `|` 折叠、去壳解转义，现成那份都支持，那就用它。
+//
+// 来源跟 `server.js` 顶部那几行动态 import 是同一个（`NOUS_EXTEND`）；同一个模块已经
+// 在进程里加载过，这次 import 不会多加载一份。
+const EXTEND = process.env.NOUS_EXTEND ?? "/opt/Nous-extend";
+const { parseFrontmatter } = await import(`${EXTEND}/skills/index.js`);
 
-export const parseFrontmatter = (text) => {
-  const match = /^\uFEFF?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(String(text ?? ""));
-  if (!match) return undefined;
-  const out = {};
-  for (const line of match[1].split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const at = trimmed.indexOf(":");
-    if (at === -1) continue;
-    const key = trimmed.slice(0, at).trim();
-    let value = trimmed.slice(at + 1).trim();
-    const quote = value[0];
-    if (value.length > 1 && (quote === '"' || quote === "'") && value.endsWith(quote)) value = value.slice(1, -1);
-    out[key] = value;
-  }
-  return out;
-};
+export { parseFrontmatter };
 
 /** 内容闸：一条技能对不对。返回问题清单（空 = 能发布）。 */
 export const checkSkillContent = async (root, name, dir = null) => {
@@ -177,11 +166,27 @@ const commitOf = async (repo, root, result) => {
 };
 
 const writeResult = async (repo, root, result) => ({
-  ok: result.pushed !== false,
+  // `ok` 的语义是「这一步做完了」，**不是**「推上去了」：没东西可提交（工作区本来就是
+  // 干净的）和推成功都算做完了；只有「提交了但没推成」才是 false（那时另有 `error`）。
+  ok: result.committed ? result.pushed !== false : true,
   commit: await commitOf(repo, root, result),
   pushed: result.pushed === true,
   ...(result.pushError ? { error: String(result.pushError).slice(0, 400) } : {}),
 });
+
+// index.json 的快照 / 复原（I7：半截不留）。
+// 发布 / 归档 / 恢复都是「重扫 → commit → push」三步，第一步就已经改了 index.json；
+// 后面任一步翻车，盘上会留一份「索引说改了、git 里没有」的账。所以进 try 之前
+// 把它的原文抄下来，失败时原样写回（本来就没有这个文件就删掉）。
+const snapshotIndex = async (root) => {
+  const file = path.join(root, "index.json");
+  return { file, text: await readFile(file, "utf8").catch(() => null) };
+};
+
+const restoreIndex = async ({ file, text }) => {
+  if (text === null) await rm(file, { force: true }).catch(() => {});
+  else await writeFile(file, text, "utf8").catch(() => {});
+};
 
 /** 写完盘让内存名册跟上。跟不上的话面板说有、会话里没有。 */
 const reloadRoster = async (skills) => {
@@ -278,6 +283,7 @@ const archiveSkill = async (repo, root, name) => {
   if (!(await stat(path.join(root, name)).catch(() => null))) {
     throw withStatus(new Error(`工作区里没有 ${name}/`), 404);
   }
+  const snapshot = await snapshotIndex(root);
   try {
     // 未发布的也搬进 .archive/：那是「删掉的东西不真删」（I10），只有 purge 才真没。
     await repo.moveIntoArchive(root, name);
@@ -286,11 +292,13 @@ const archiveSkill = async (repo, root, name) => {
   } catch (error) {
     await repo.run("git", ["-C", root, "reset", "-q", "--", name, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
     await repo.moveDir(path.join(root, repo.ARCHIVE_DIR, name), path.join(root, name)).catch(() => {});
+    await restoreIndex(snapshot);
     throw error.status ? error : withStatus(new Error(`归档失败，已回滚：${errorLine(error)}`), 400);
   }
 };
 
 const restoreSkill = async (repo, root, name) => {
+  const snapshot = await snapshotIndex(root);
   try {
     await repo.moveOutOfArchive(root, name);
     await repo.regenIndex(root, { required: false });
@@ -298,6 +306,7 @@ const restoreSkill = async (repo, root, name) => {
   } catch (error) {
     await repo.run("git", ["-C", root, "reset", "-q", "--", name, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
     await repo.moveDir(path.join(root, name), path.join(root, repo.ARCHIVE_DIR, name)).catch(() => {});
+    await restoreIndex(snapshot);
     throw error.status ? error : withStatus(new Error(`恢复失败，已回滚：${errorLine(error)}`), 400);
   }
 };
@@ -436,14 +445,20 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo })
       if (method !== "POST") return send(res, 405, { error: "发布只有 POST" });
       const body = await parseJsonBody(req);
       const result = await repo.serializeRepoWrite(root, async () => {
-        // 闸在最前面：不过就一个字节都不动（index.json 也不重扫，否则会留下「扫了一半」的假象）。
-        const problems = await gateRepo(repo, root);
-        if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
-        await repo.regenIndex(root, { required: false });
-        return repo.syncRepo(root, String(body.message ?? "").trim() || "skill: 更新技能仓库", {
-          label: "技能",
-          tag: "skill",
-        });
+        const snapshot = await snapshotIndex(root);
+        try {
+          // 闸在最前面：不过就一个字节都不动（index.json 也不重扫，否则会留下「扫了一半」的假象）。
+          const problems = await gateRepo(repo, root);
+          if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
+          await repo.regenIndex(root, { required: false });
+          return await repo.syncRepo(root, String(body.message ?? "").trim() || "skill: 更新技能仓库", {
+            label: "技能",
+            tag: "skill",
+          });
+        } catch (error) {
+          await restoreIndex(snapshot);
+          throw error;
+        }
       });
       const loadError = await reloadRoster(skills);
       const warnings = [];

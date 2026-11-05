@@ -207,8 +207,9 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 
 ### 写入口只有一个：`/v1/skills*`（I4）
 
-面板（`68kazk`）是纯静态视图 —— 不跑 git、不读仓库文件，全部走这里的端点。三种状态的判据是
-**盘 + HEAD**，不是谁记的账：
+**技能正文和名册住在 `/opt/Nous-skills` 这个仓库里，`qrd3wh` 是它唯一的写入口；`68kazk` 只是视图。**
+面板不跑 git、不读仓库文件、也不复刻语义闸（I8）—— 校验只在这里一处，UI 只摆结果。
+三种状态的判据是**盘 + HEAD**，不是谁记的账：
 
 | 盘上 | HEAD 里 | 是什么 |
 |---|---|---|
@@ -245,7 +246,9 @@ POST /v1/skills/publish           {message} → 闸 + 重扫 index.json + commit
 POST /v1/skills/archive           {name} → 挪进 .archive/ 并提交
 POST /v1/skills/restore           {name} → 从 .archive/ 搬回来并提交
 POST /v1/skills/purge             {name} → 真删（只有这一条会真删）
-GET  /v1/skills/pending           ?diff=&path= / ?commit=&hash=
+GET  /v1/skills/pending           待同步清单（按目录分组）
+GET  /v1/skills/pending/diff      ?path= → { path, before, after }（对 HEAD；未跟踪 before: null）
+GET  /v1/skills/pending/commit    ?hash= → { hash, subject, files:[{path,status}] }（status 是 A/M/D/R）
 POST /v1/skills/sync              {message, paths?} → 只提交点名的路径
 POST /v1/skills/reload            重扫仓库（拿不准的时候用；写端点自己会扫）
 GET  /v1/sessions                 会话树

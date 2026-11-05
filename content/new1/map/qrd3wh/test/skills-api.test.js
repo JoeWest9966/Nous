@@ -5,11 +5,11 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { handleSkills } from "../skills-api.js";
+import { handleSkills, parseFrontmatter } from "../skills-api.js";
 import * as repo from "../repo-tools.js";
 import {
   CATEGORIES,
@@ -405,6 +405,282 @@ test("GET /v1/skills 的 categories = 词表 ∪ 所有 skill.category，升序"
     assert.deepEqual(body.categories, expected);
     // 「只在词表」那条挂不到任何技能上，但它必须在（词表存在的唯一理由）。
     assert.ok(body.categories.includes("只在词表"));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 13. frontmatter：用扩展仓那一份（spec §2.1「解析器用现成的」）─────────────
+//
+// 这一节钉的是**为什么换**：本地那版只认 `key: value`，`>` / `|` 折叠块会把 `>`
+// 当成值，引号里的 `\"` 也不会解 —— 结果就是内容闸看见一个「非空」的假值。
+
+test("frontmatter 支持 `>` 折叠块、`|` 保留换行、引号解转义", () => {
+  const folded = parseFrontmatter('---\nname: demo\ndescription: >\n  第一段\n  第二段\n---\n\n正文\n');
+  assert.equal(folded.description, "第一段 第二段");
+
+  const literal = parseFrontmatter("---\nname: demo\ndescription: |\n  第一行\n  第二行\n---\n");
+  assert.equal(literal.description, "第一行\n第二行");
+
+  const quoted = parseFrontmatter('---\nname: "demo"\ndescription: "他说 \\"这样\\""\n---\n');
+  assert.equal(quoted.name, "demo");
+  assert.equal(quoted.description, '他说 "这样"');
+});
+
+// ── 14. 内容闸看得见折叠块里的空描述（换成扩展仓那版之后才拦得住）──────────
+
+test("内容闸：`description: >` 折出来是空的，照样 400", async () => {
+  const { root, skills } = await setup({
+    // `>` 折出来是空串：引用式折叠块里一个字都没有。
+    "empty/SKILL.md": "---\nname: empty\ndescription: >\n---\n\n# empty\n",
+    "empty/nous.json": JSON.stringify({ name: "empty", summary: "", category: [] }, null, 2) + "\n",
+  });
+  const api1 = api(root, skills);
+  try {
+    const denied = await api1.call("POST", "/v1/skills/publish", { message: "skill: 发布" });
+    assert.equal(denied.status, 400);
+    assert.match(denied.body.error, /empty/);
+    assert.match(denied.body.error, /description/);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 15. 文件列表：递归到底（spec §6.1 没有深度上限，只有 200 个的上限）───────
+
+test("GET /v1/skills/files：深层文件照样列，点开头 / node_modules 跳过", async () => {
+  const { root, skills } = await setup(skillFiles("deep"));
+  const api1 = api(root, skills);
+  try {
+    const nested = path.join("deep", "a/b/c/d/e/f/note.md");
+    await mkdir(path.dirname(path.join(root, nested)), { recursive: true });
+    await writeFile(path.join(root, nested), "深六层\n");
+    await writeFile(path.join(root, "deep/.hidden"), "点开头\n");
+    await mkdir(path.join(root, "deep/node_modules/dep"), { recursive: true });
+    await writeFile(path.join(root, "deep/node_modules/dep/index.js"), "x\n");
+
+    const { status: code, body } = await api1.call("GET", "/v1/skills/files?name=deep");
+    assert.equal(code, 200);
+    assert.equal(body.name, "deep");
+    const paths = body.files.map((file) => file.path);
+    assert.ok(paths.includes("a/b/c/d/e/f/note.md"), `深六层的文件没列出来：${paths.join(",")}`);
+    assert.equal(paths.some((item) => item.includes(".hidden")), false);
+    assert.equal(paths.some((item) => item.includes("node_modules")), false);
+    for (const file of body.files) assert.deepEqual(Object.keys(file).sort(), ["path", "size"]);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("GET /v1/skills/files 最多 200 个（spec 的上限还在）", async () => {
+  const { root, skills } = await setup(skillFiles("many"));
+  const api1 = api(root, skills);
+  try {
+    for (let i = 0; i < 205; i += 1) {
+      await writeFile(path.join(root, "many", `n-${String(i).padStart(3, "0")}.md`), "x\n");
+    }
+    const { body } = await api1.call("GET", "/v1/skills/files?name=many");
+    assert.equal(body.files.length, 200);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 16. 读文件：不存在 / 二进制都是 404 + {error} ───────────────────────────
+
+test("GET /v1/skills/file：不存在 → 404 {error}，二进制 → 404 {error}", async () => {
+  const { root, skills } = await setup(skillFiles("bin"));
+  const api1 = api(root, skills);
+  try {
+    await writeFile(path.join(root, "bin/blob.bin"), Buffer.from([0, 1, 2, 3]));
+    const missing = await api1.call("GET", "/v1/skills/file?name=bin&path=nope.md");
+    assert.equal(missing.status, 404);
+    assert.equal(typeof missing.body.error, "string");
+
+    const binary = await api1.call("GET", "/v1/skills/file?name=bin&path=blob.bin");
+    assert.equal(binary.status, 404);
+    assert.match(binary.body.error, /二进制/);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 17. sync / reload ──────────────────────────────────────────────────────
+
+test("POST /v1/skills/sync：点名的路径提交，返回 ok/commit/pushed", async () => {
+  const { root, skills } = await setup();
+  const api1 = api(root, skills);
+  try {
+    await api1.call("POST", "/v1/skills/create", { name: "syncme", description: "要同步的" });
+    // `paths` 是**抽屉里勾的那几条文件**（不是目录名）：先照 `/pending` 给的清单取。
+    const pending = await api1.call("GET", "/v1/skills/pending");
+    const unit = pending.body.units.find((item) => item.name === "syncme");
+    assert.ok(unit, `没有 syncme 这个单元：${JSON.stringify(pending.body.units)}`);
+    const paths = unit.files.map((file) => file.path);
+
+    const { status: code, body } = await api1.call("POST", "/v1/skills/sync", {
+      paths,
+      message: "skill: 手动同步 syncme",
+    });
+    assert.equal(code, 200);
+    assert.equal(body.ok, true, "没有远端的时候 pushed:false 也算 ok");
+    assert.match(body.commit.hash, /^[0-9a-f]{7,}$/);
+    assert.equal(body.pushed, false);
+    const names = await showNames(root);
+    assert.ok(names.some((line) => line.includes("syncme/SKILL.md")), names.join(" | "));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("POST /v1/skills/reload：重扫一次，回 {ok, skills}", async () => {
+  const { root, skills } = await setup(skillFiles("r1"));
+  const api1 = api(root, skills);
+  try {
+    const loadsBefore = skills.loads;
+    const { status: code, body } = await api1.call("POST", "/v1/skills/reload");
+    assert.equal(code, 200);
+    assert.equal(body.ok, true);
+    assert.deepEqual(
+      body.skills.map((skill) => skill.name),
+      ["r1"],
+    );
+    assert.equal(skills.loads, loadsBefore + 1);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 18. create 撞仓库自己的文件名 ──────────────────────────────────────────
+
+test("POST /v1/skills/create 撞 RESERVED（index.json）：400 且点得出那个名字", async () => {
+  const { root, skills } = await setup();
+  const api1 = api(root, skills);
+  try {
+    const { status: code, body } = await api1.call("POST", "/v1/skills/create", {
+      name: "index.json",
+      description: "想当技能名",
+    });
+    assert.equal(code, 400);
+    assert.match(body.error, /index\.json/);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 19. categories.json 带 v:1（spec §2.3，两份仓统一）─────────────────────
+
+test("POST /v1/skills/categories 写出的 categories.json 是 {v:1, categories}", async () => {
+  const { root, skills } = await setup();
+  const api1 = api(root, skills);
+  try {
+    await api1.call("POST", "/v1/skills/categories", { op: "add", name: "工具/搜索" });
+    const doc = await readJson(root, "categories.json");
+    assert.equal(doc.v, 1);
+    assert.deepEqual(doc.categories, repo.sortCategories(["Basics", "工具", "工具/搜索"]));
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 20. pending/commit 的 files 是 {path,status}（spec §6.1）────────────────
+
+test("GET /v1/skills/pending/commit：files 是 {path,status}，A/M/D/R 从 --name-status 取", async () => {
+  const { root, skills } = await setup(skillFiles("first"));
+  const api1 = api(root, skills);
+  try {
+    const published = await api1.call("POST", "/v1/skills/publish", { message: "skill: 初始化" });
+    const initial = await api1.call("GET", `/v1/skills/pending/commit?hash=${published.body.commit.hash}`);
+    assert.equal(initial.status, 200);
+    assert.ok(initial.body.files.length > 0);
+    for (const file of initial.body.files) {
+      assert.deepEqual(Object.keys(file).sort(), ["path", "status"]);
+      assert.match(file.status, /^[AMDR]$/);
+    }
+    assert.ok(initial.body.files.every((file) => file.status === "A"));
+
+    // 一条混合改动的 commit：改名（R）、新增（A）、删除（D）。
+    // 改名检测有体量门槛：三行的 SKILL.md 会被报成 A + D，所以先给它一点正文。
+    const body = Array.from({ length: 40 }, (_, i) => `第 ${i} 行`).join("\n");
+    const front = '---\nname: first\ndescription: "原来的说明"\n---\n';
+    await writeFile(path.join(root, "first/SKILL.md"), `${front}\n${body}\n`);
+    await run("git", ["add", "-A"], { cwd: root });
+    await run("git", ["commit", "-q", "-m", "正文"], { cwd: root });
+
+    await run("git", ["mv", "first", "renamed"], { cwd: root });
+    await writeFile(path.join(root, "renamed/SKILL.md"), `${front.replace("原来的说明", "改过的")}\n${body}\n`);
+    await mkdir(path.join(root, "added"), { recursive: true });
+    await writeFile(path.join(root, "added/SKILL.md"), '---\nname: added\ndescription: "新的"\n---\n\n# added\n');
+    await run("git", ["rm", "-q", "-f", "--", "renamed/nous.json"], { cwd: root });
+    await run("git", ["add", "-A"], { cwd: root });
+    await run("git", ["commit", "-q", "-m", "mix"], { cwd: root });
+
+    const mixedHash = (await run("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    const mix = await api1.call("GET", `/v1/skills/pending/commit?hash=${mixedHash}`);
+    assert.equal(mix.status, 200);
+    const byPath = new Map(mix.body.files.map((file) => [file.path, file.status]));
+    assert.equal(byPath.get("added/SKILL.md"), "A");
+    // 删除报的是 HEAD 里那个路径（= 改名前的那一侧），改名报的是新名字。
+    assert.equal(byPath.get("first/nous.json"), "D");
+    assert.equal(byPath.get("renamed/SKILL.md"), "R");
+    for (const file of mix.body.files) assert.equal("added" in file || "removed" in file, false);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+// ── 21. I7 半截：syncRepo 抛错时 index.json 必须退回原样 ────────────────────
+//
+// 发布 = 重扫 + commit + push。commit 之前的重扫已经把 index.json 改了；
+// 后面挂了却不复原，盘上就留着一份「说已经改了、其实没提交」的索引 —— 半截。
+
+test("I7：publish / archive / restore 失败时 index.json 一个字节不差地复原", async () => {
+  const { root, skills } = await setup(skillFiles("keeper", { description: "原来的说明" }));
+  const good = api(root, skills);
+  const brokenRepo = {
+    ...repo,
+    syncRepo: async () => {
+      throw new Error("断网了");
+    },
+  };
+  const broken = (method, target, body) =>
+    call(handleSkills, { method, path: target, body, root, skills, repo: brokenRepo });
+
+  try {
+    // 先有一条正常的发布，index.json 才有底版。
+    assert.equal((await good.call("POST", "/v1/skills/publish", { message: "skill: 初始化" })).status, 200);
+    const baseline = await read(root, "index.json");
+
+    // 改描述 → 下次重扫会写出不同的 index.json。
+    const file = await good.call("GET", "/v1/skills/file?name=keeper&path=SKILL.md");
+    assert.equal(file.status, 200);
+    await good.call("PUT", "/v1/skills/file", {
+      name: "keeper",
+      path: "SKILL.md",
+      text: file.body.text.replace("原来的说明", "换过的说明"),
+      base: file.body.etag,
+    });
+
+    const published = await broken("POST", "/v1/skills/publish", { message: "skill: 发布" });
+    assert.match(published.body.error, /断网了/);
+    assert.equal(await read(root, "index.json"), baseline, "发布失败却把 index.json 留在了半截");
+
+    // 归档失败：目录要搬回来，索引也要回来。
+    const archived = await broken("POST", "/v1/skills/archive", { name: "keeper" });
+    assert.match(archived.body.error, /断网了/);
+    assert.equal(await read(root, "index.json"), baseline, "归档失败却把 index.json 留在了半截");
+    assert.equal(await exists(path.join(root, "keeper")), true, "归档失败要把目录搬回来");
+    assert.equal(await exists(path.join(root, ".archive/keeper")), false);
+
+    // 真的归档一次，拿到「归档后」的底版，再测恢复失败。
+    assert.equal((await good.call("POST", "/v1/skills/archive", { name: "keeper" })).status, 200);
+    const archivedBaseline = await read(root, "index.json");
+
+    const restored = await broken("POST", "/v1/skills/restore", { name: "keeper" });
+    assert.match(restored.body.error, /断网了/);
+    assert.equal(await read(root, "index.json"), archivedBaseline, "恢复失败却把 index.json 留在了半截");
+    assert.equal(await exists(path.join(root, ".archive/keeper")), true, "恢复失败要把目录搬回去");
+    assert.equal(await exists(path.join(root, "keeper")), false);
   } finally {
     await cleanup(root);
   }
