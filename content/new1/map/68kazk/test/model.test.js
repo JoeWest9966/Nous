@@ -12,12 +12,15 @@ import {
   UNCATEGORIZED,
   buildView,
   cardState,
+  categoriesOf,
   categoryImpact,
   childCount,
-  categoriesOf,
   facetCounts,
   filterCards,
+  sortUpstream,
   stateFilterOf,
+  suggestedAdoptName,
+  upstreamSummary,
 } from "../public/model.js";
 
 // fixture 就在这个文件里（以前读 public/mock/skills.json，那个目录已经删了 ——
@@ -172,4 +175,36 @@ test("未分类（category: []）落在「未分类」桶里，而不是消失",
   assert.equal(stateFilterOf("__state__:failed"), "failed");
   assert.equal(stateFilterOf("工具"), null);
   assert.deepEqual(names(filterCards(view.cards, { filter: "__state__:unpublished" })), ["draft-mail"]);
+});
+
+// ── 上游 ────────────────────────────────────────────────────────────────────
+// 四种关系（未取用 / 上游有更新 / 名字被占 / 已取用）是服务端算的，这里只测「怎么摆」：
+// 摘要把 `same` 排除在待办外，排序把要动手的放前面。
+
+test("upstreamSummary：same 不算待办", () => {
+  const entries = [{ local: "none" }, { local: "none" }, { local: "changed" }, { local: "taken" }, { local: "same" }];
+  assert.deepEqual(upstreamSummary(entries), { none: 2, changed: 1, taken: 1, same: 1, todo: 4, total: 5 });
+  assert.deepEqual(upstreamSummary([]), { none: 0, changed: 0, taken: 0, same: 0, todo: 0, total: 0 });
+});
+
+test("upstreamSummary：不认识的 local 当成未取用，不静默丢掉", () => {
+  assert.equal(upstreamSummary([{ local: undefined }]).none, 1);
+  assert.equal(upstreamSummary([{ local: "weird" }]).total, 1);
+});
+
+test("sortUpstream：未取用 → 有更新 → 名字被占 → 已取用；同档按路径", () => {
+  const sorted = sortUpstream([
+    { path: "b/same", local: "same" },
+    { path: "c/taken", local: "taken" },
+    { path: "a/none", local: "none" },
+    { path: "a/none2", local: "none" },
+    { path: "b/changed", local: "changed" },
+  ]).map((entry) => entry.path);
+  assert.deepEqual(sorted, ["a/none", "a/none2", "b/changed", "c/taken", "b/same"]);
+});
+
+test("suggestedAdoptName：名字被占时退一格", () => {
+  assert.equal(suggestedAdoptName({ name: "code-review", local: "none" }), "code-review");
+  assert.equal(suggestedAdoptName({ name: "code-review", local: "taken" }), "code-review-upstream");
+  assert.equal(suggestedAdoptName({ name: "", local: "none" }), "");
 });

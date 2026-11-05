@@ -186,3 +186,47 @@ export function childCount(names, path) {
   const target = normalizeCategory(path);
   return (Array.isArray(names) ? names : []).filter((name) => name !== target && isUnder(name, target)).length;
 }
+
+// ── 上游 ────────────────────────────────────────────────────────────────────
+//
+// 上游那条技能的四种关系由**服务端**算（`local` 字段，判据是 `nous.json.upstream`
+// 注脚里的 tree sha 跟镜像里那个 tree sha 比）。前端只摆，不重算 —— 两边各算一次
+// 就会对不上，然后没人知道该信谁（I8）。
+
+/** 排序：需要动手的在前（未取用 → 上游有更新 → 名字被占），已取用的沉底。 */
+const UPSTREAM_RANK = { none: 0, changed: 1, taken: 2, same: 3 };
+
+export const UPSTREAM_LABEL = {
+  none: "未取用",
+  changed: "上游有更新",
+  taken: "名字被占",
+  same: "已取用",
+};
+
+/** 上游清单的摘要：左栏那个数字说的是「有多少条值得你看一眼」。 */
+export function upstreamSummary(entries) {
+  const out = { none: 0, changed: 0, taken: 0, same: 0, todo: 0, total: 0 };
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const state = UPSTREAM_LABEL[entry?.local] ? entry.local : "none";
+    out[state] += 1;
+    out.total += 1;
+  }
+  // `same` 不算待办：取用过了、上游也没动，那一条现在只是「还在上游住着」。
+  out.todo = out.none + out.changed + out.taken;
+  return out;
+}
+
+export function sortUpstream(entries) {
+  return [...(Array.isArray(entries) ? entries : [])].sort((a, b) => {
+    const rank = (UPSTREAM_RANK[a?.local] ?? 0) - (UPSTREAM_RANK[b?.local] ?? 0);
+    if (rank) return rank;
+    return String(a?.path ?? "").localeCompare(String(b?.path ?? ""), "zh-CN");
+  });
+}
+
+/** 取用时默认叫什么：名字被占就退一格，别让人一开始就撞墙。 */
+export function suggestedAdoptName(entry) {
+  const name = String(entry?.name ?? "").trim();
+  if (!name) return "";
+  return entry?.local === "taken" ? `${name}-upstream` : name;
+}
