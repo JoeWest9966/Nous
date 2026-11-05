@@ -681,17 +681,54 @@ $("new").onclick = async () => {
   await select(made.id);
 };
 
+/**
+ * 编目健不健康，一句话说清；空串 = 一切正常。
+ *
+ * `/v1/models` 的 `catalog` 块里本来就有这三个事实（`error` / `providers[].hasKey` /
+ * `skipped[].reason`），以前前端一个都没看 —— 于是编目断了、或者密钥取不回，
+ * 界面上是两百多个能点的模型，点下去全 401，人只会以为是自己配错了。
+ * 这里不许升级成「校验」：它只负责把服务端已经说过的话摆出来。
+ */
+const catalogComplaint = (catalog, items) => {
+  const providers = Array.isArray(catalog?.providers) ? catalog.providers : [];
+  const keyless = providers.filter((p) => !p.hasKey).map((p) => p.id);
+  // catalog.error 已经是整句话（「编目取不回：…」/「编目里一条供应商都没有」），别再套一层前缀。
+  if (catalog?.error) return catalog.error;
+  if (providers.length && keyless.length === providers.length) return `密钥取不回：${keyless.join("、")}`;
+  if (!items.length) return "编目里没有可用模型";
+  if (keyless.length) return `${keyless.join("、")} 没有密钥，这些模型点了会 401`;
+  return "";
+};
+
 // 新对话用哪个模型：默认值落在这块自己的 data/default-model.json 里。
 const loadModels = async () => {
   try {
     const data = await api("v1/models");
     const pick = $("pick");
+    const items = Array.isArray(data.items) ? data.items : [];
+    const complaint = catalogComplaint(data.catalog ?? {}, items);
+    const chip = pick.closest(".model-chip");
+    if (chip) {
+      chip.classList.toggle("warn", Boolean(complaint));
+      chip.title = complaint || "新对话用哪个模型";
+    }
+    if (complaint) status(complaint);
     pick.replaceChildren();
-    for (const item of data.items) {
+    if (!items.length) {
+      // 空下拉框是「什么都没说」；给一条灰的选项把原因写在上面。
+      const option = document.createElement("option");
+      option.textContent = complaint || "没有可用模型";
+      option.disabled = true;
+      option.selected = true;
+      pick.append(option);
+      return;
+    }
+    const def = data.default ?? {};
+    for (const item of items) {
       const option = document.createElement("option");
       option.value = `${item.provider}/${item.modelId}`;
       option.textContent = `${item.provider}/${item.modelId}`;
-      option.selected = item.provider === data.default.provider && item.modelId === data.default.modelId;
+      option.selected = item.provider === def.provider && item.modelId === def.modelId;
       pick.append(option);
     }
     pick.onchange = async () => {
