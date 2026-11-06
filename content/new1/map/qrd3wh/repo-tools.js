@@ -179,9 +179,12 @@ export const listDirs = async (root) =>
     .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && e.name !== "scripts")
     .map((e) => e.name);
 
-/** 一个目录的 nous.json（扩展和技能同名不同内容，这里只负责读）。 */
-export const readManifest = async (root, dir) => {
-  const file = path.join(root, dir, "nous.json");
+/**
+ * 一个目录的清单文件。扩展 / 技能 / 模板都叫 `nous.json`；预设叫 `preset.json`
+ * （它是纯配置，没有正文，所以清单就是那个文件本身）。
+ */
+export const readManifest = async (root, dir, { manifest = "nous.json" } = {}) => {
+  const file = path.join(root, dir, manifest);
   try {
     const text = await readFile(file, "utf8");
     return { file, text, manifest: JSON.parse(text) };
@@ -230,20 +233,22 @@ export const setNodeCategories = async (
   root,
   name,
   categories,
-  { label = "扩展", dir = null, index = null, protect = PROTECTED_CATEGORIES } = {},
+  { label = "扩展", dir = null, index = null, protect = PROTECTED_CATEGORIES, manifest = "nous.json" } = {},
 ) => {
   if (!EXTENSION_NAME_RE.test(name)) throw withStatus(new Error(`${label}名不合法：${name}`), 400);
   // `dir` = 这个条目真正住哪儿（分组里的技能是 `<root>/<分组>/<名字>`），不给就是顶层。
-  const file = path.join(dir ?? path.join(root, name), "nous.json");
+  // `manifest` = 这份清单叫什么 —— 扩展 / 技能 / 模板都是 `nous.json`，预设是 `preset.json`
+  // （它是纯配置，没有正文，所以清单就是那个文件本身）。
+  const file = path.join(dir ?? path.join(root, name), manifest);
   let before;
   try {
     before = await readFile(file, "utf8");
   } catch {
     throw withStatus(new Error(`仓库里没有这个${label}：${name}`), 404);
   }
-  const manifest = JSON.parse(before);
+  const doc = JSON.parse(before);
   const next = sortCategories(normalizeCategories(categories));
-  const updated = { ...manifest, category: next };
+  const updated = { ...doc, category: next };
   // 词表先落地，再写 nous.json —— 顺序不能反：生成器会拿 `categories.json` 校验每条
   // nous.json 的类别（`工具/搜索` 得先在词表里，连同祖先 `工具`）。反过来的话，给一条
   // 技能打一个新类别永远是「校验失败，已回滚」，那个输入框等于假的。
@@ -891,7 +896,7 @@ export const pendingState = async (root, { unitKind = "extension" } = {}) => {
 // 可逆的。`purge` 才是真没。
 
 /** 归档区里有什么（按归档时间新→旧）。仓库里没有 .archive/ 就返回空。 */
-export const archivedEntries = async (root) => {
+export const archivedEntries = async (root, { manifest = "nous.json" } = {}) => {
   const base = path.join(root, ARCHIVE_DIR);
   let dirs = [];
   try {
@@ -901,7 +906,7 @@ export const archivedEntries = async (root) => {
   }
   const out = [];
   for (const name of dirs) {
-    const info = await readManifest(root, path.join(ARCHIVE_DIR, name));
+    const info = await readManifest(root, path.join(ARCHIVE_DIR, name), { manifest });
     let archivedAt = null;
     try {
       archivedAt = (await run("git", ["-C", root, "log", "-1", "--format=%cI", "--", `${ARCHIVE_DIR}/${name}`])).stdout.trim() || null;
