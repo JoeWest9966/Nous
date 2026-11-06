@@ -623,7 +623,7 @@ a.filter-chip { text-decoration: none; }
 /* 左栏：两个新建按钮 + 一条表单 + 树。宽度固定，树自己滚。 */
 .ed-side {
   /* 190px 时 `mocking.md` 只剩下 `mocking…` —— 上游那棵树有三层缩进，名字比按钮重要。 */
-  flex: none; width: 240px; min-height: 0; display: flex; flex-direction: column;
+  flex: none; width: 260px; min-height: 0; display: flex; flex-direction: column;
   border-right: 1px solid var(--line); background: var(--paper);
 }
 .ed-newbar { flex: none; display: flex; gap: 4px; padding: 8px 8px 4px; }
@@ -690,18 +690,13 @@ a.filter-chip { text-decoration: none; }
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 9%, transparent);
   cursor: pointer;
-  /* 两件事一起说：
-     ① 一行一个「抄」× 108 行 = 一堵噪音墙 —— 名字先说话，鼠标移上来它才露头；
-     ② 它**不参与布局**（绝对定位在文件大小那个位置上），否则 `mocking.md` 会被压成
-        `mock…`：左栏就 250px，缩进吃掉一大半，名字和徽标抢同一条命。 */
-  position: absolute; right: 26px; top: 50%; transform: translateY(-50%);
-  z-index: 2;
-  opacity: 0;
+  /* **常驻可见**，不藏起来。藏过一版（`opacity: 0` + hover 才露头），结果是主人自己
+     都找不到这个功能 —— 一个要 hover 才存在的东西，等于不存在。
+     代价是 108 行各一个「抄」字，所以压得很淡：`.55`，鼠标移上来才实。
+     不绝对定位：左栏现在 240px，`mocking.md` + 抄 + 大小一排放得下。 */
+  opacity: 0.75;
   transition: opacity 90ms ease;
 }
-/* 它站的那个位置本来是文件大小 —— 腾开，别让两个数字叠成一坨。 */
-.ed-row:hover .ed-file-size,
-.ed-row:focus-within .ed-file-size { opacity: 0; }
 .ed-row:hover .ed-file-mark[data-tone="copy"],
 .ed-row:focus-within .ed-file-mark[data-tone="copy"] { opacity: 1; }
 .ed-file-mark[data-tone="copy"]:hover { background: color-mix(in srgb, var(--ink) 17%, transparent); }
