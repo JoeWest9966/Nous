@@ -170,7 +170,8 @@ export function createBoard(deps) {
   function render() {
     const d = cur();
     const name = getName?.() ?? "";
-    $("b-name").textContent = name || "—";
+    // name 是机器键（小写、只留 . _ -）；显示时把下划线读成空格：session_template → Session Template。
+    $("b-name").textContent = name ? name.replace(/_/g, " ") : "—";
     $("b-name").title = name;
 
     // 模型（照 hb7k3j：节点 = modelId + provider，副标题 = N available · thinking X）

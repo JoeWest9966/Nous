@@ -55,6 +55,9 @@ function el(tag, className, text) {
   return node;
 }
 
+/** 机器键 name → 人读名：session_template 读作 Session Template（下划线转空格）。 */
+const displayName = (name) => String(name ?? "").replace(/_/g, " ");
+
 /** 名字 → 色相。同一个名字永远同一个颜色（跟 68kazk / 6ysg01 / vbe4pt 同一个算法）。 */
 function hueOf(name) {
   let hash = 0;
@@ -390,7 +393,7 @@ function cardFor(preset, index) {
   const tile = el("div", "tile", monoOf(preset.name));
   tile.style.cssText = tileStyle(preset.name);
   const titles = el("div", "card-titles");
-  const name = el("h3", "card-name", preset.name);
+  const name = el("h3", "card-name", displayName(preset.name));
   const summary = el("p", "card-summary", preset.summary || "（没有摘要）");
   summary.title = preset.summary ?? "";
   titles.append(name, summary);
@@ -565,7 +568,7 @@ function renderDetail(name) {
 
   $("dt-mono").textContent = monoOf(preset.name);
   $("dt-tile").style.cssText = tileStyle(preset.name);
-  $("dt-name").textContent = preset.name;
+  $("dt-name").textContent = displayName(preset.name);
   const badges = $("dt-badges");
   badges.innerHTML = "";
   for (const badge of badgesFor(preset, status)) badges.append(badge);
