@@ -232,9 +232,6 @@ export function fileTree(files) {
       name: parts.at(-1),
       depth: parts.length - 1,
       size: Number(file?.size) || 0,
-      // 上游那条取用过的才有：`same` / `diff` / `missing`（跟本地那份比）。
-      // 本地目录里没有这一列，所以是 `null` —— 别在本地树上凭空标出个记号来。
-      mark: typeof file?.state === "string" ? file.state : null,
     });
   }
   sortTree(root);
@@ -270,12 +267,12 @@ export function dirPaths(node) {
 
 // ── 上游 ────────────────────────────────────────────────────────────────────
 //
-// 上游那条技能的四种关系由**服务端**算（`local` 字段，判据是 `nous.json.upstream`
-// 注脚里的 tree sha 跟镜像里那个 tree sha 比）。前端只摆，不重算 —— 两边各算一次
-// 就会对不上，然后没人知道该信谁（I8）。
-
-/** 排序：需要动手的在前（未取用 → 上游有更新 → 名字被占），已取用的沉底。 */
-const UPSTREAM_RANK = { none: 0, changed: 1, taken: 2, same: 3 };
+// **一个订阅 = 一条「技能」**（整个仓）。所以这一层没有「清单折成树」这回事：
+// 目录只活在抽屉里那棵用 `fileTree` 算出来的树上。
+//
+// 每条上游技能跟我们本地是什么关系（`local`）由**服务端**算（判据是
+// `nous.json.upstream` 注脚里的 tree sha 跟镜像里那个 tree sha 比），前端只摆，
+// 不重算 —— 两边各算一次就会对不上，然后没人知道该信谁（I8）。
 
 export const UPSTREAM_LABEL = {
   none: "未取用",
@@ -284,7 +281,7 @@ export const UPSTREAM_LABEL = {
   same: "已取用",
 };
 
-/** 上游清单的摘要：左栏那个数字说的是「有多少条值得你看一眼」。 */
+/** 上游清单的摘要：卡上那个数字说的是「有多少条值得你看一眼」。 */
 export function upstreamSummary(entries) {
   const out = { none: 0, changed: 0, taken: 0, same: 0, todo: 0, total: 0 };
   for (const entry of Array.isArray(entries) ? entries : []) {
@@ -295,14 +292,6 @@ export function upstreamSummary(entries) {
   // `same` 不算待办：取用过了、上游也没动，那一条现在只是「还在上游住着」。
   out.todo = out.none + out.changed + out.taken;
   return out;
-}
-
-export function sortUpstream(entries) {
-  return [...(Array.isArray(entries) ? entries : [])].sort((a, b) => {
-    const rank = (UPSTREAM_RANK[a?.local] ?? 0) - (UPSTREAM_RANK[b?.local] ?? 0);
-    if (rank) return rank;
-    return String(a?.path ?? "").localeCompare(String(b?.path ?? ""), "zh-CN");
-  });
 }
 
 /** 取用时默认叫什么：名字被占就退一格，别让人一开始就撞墙。 */
@@ -334,86 +323,3 @@ export function sourceNameFromUrl(url) {
     .replace(/^[-._]+|[-._]+$/g, "")
     .slice(0, 32);
 }
-
-// ── 上游的树 ────────────────────────────────────────────────────────────────
-//
-// 上游不该是「一列条目」。别人的仓跟我们一样会长成多级目录：`plugins/x/skills/y`，
-// 而且往下一层一层钻才是人看仓库的方式。所以把清单折成**跟本地同一副骨头**：
-// 目录是组，带 SKILL.md 的那一层是叶子。
-//
-// 为什么在客户端算而不是服务端算：本地那棵树（`buildView`）也是这儿算的。
-// 两处算法长在一起，改口径时不会只改一边 —— 服务端只管「git 里有什么」。
-
-/**
- * 清单 → 树。返回根节点（`path: ""`），`children` 是一级。
- *
- * 每个节点：`{ name, path, kind: "dir"|"skill", children, n, todo, entry? }`
- * - `n`：这一层往下有多少条技能（目录卡片上那个数）
- * - `todo`：其中值得看一眼的（未取用 / 有更新 / 名字被占）
- *
- * 边角：一个目录自己就是技能、底下还套着子目录（`x/SKILL.md` + `x/y/SKILL.md`）。
- * 这种节点 `kind` 留 `"dir"`，单独的 `entry` 挂在它身上 —— 卡片上给「本层也是技能」。
- */
-export function upstreamTree(entries) {
-  const root = { name: "", path: "", kind: "dir", children: [] };
-  // 一个路径只有一个节点 —— 技能和目录共用这张表，撞上就地升级成目录，
-  // 否则「x 是技能、x/y 也是技能」会长出两个 x。
-  const nodes = new Map([["", root]]);
-  const parentPath = (full) => (full.includes("/") ? full.slice(0, full.lastIndexOf("/")) : "");
-  const dir = (path) => {
-    if (nodes.has(path)) {
-      // 先来过一条同路径的技能，现在它底下又冒出一个子目录：就地升级成目录，
-      // 它自己的那一条留在 `entry` 上（面板会写成「本层也是技能」）。
-      const found = nodes.get(path);
-      if (found.kind === "skill") found.kind = "dir";
-      return found;
-    }
-    const parent = dir(parentPath(path));
-    const node = { name: path.split("/").at(-1), path, kind: "dir", children: [] };
-    parent.children.push(node);
-    nodes.set(path, node);
-    return node;
-  };
-
-  for (const entry of Array.isArray(entries) ? entries : []) {
-    const full = String(entry?.path ?? entry?.name ?? "").replace(/^\/+|\/+$/g, "");
-    if (!full) continue;
-    const existing = nodes.get(full);
-    if (existing) {
-      // 已经在树上了（另一种形态）：把这条技能挂上去，别丢掉。
-      if (existing.kind === "skill") existing.kind = "dir";
-      existing.entry = entry;
-      continue;
-    }
-    const node = { name: full.split("/").at(-1), path: full, kind: "skill", children: [], entry };
-    dir(parentPath(full)).children.push(node);
-    nodes.set(full, node);
-  }
-
-  const roll = (node) => {
-    if (node.kind === "skill") {
-      node.n = 1;
-      node.todo = node.entry?.local === "same" ? 0 : 1;
-      return node;
-    }
-    // 目录在前、技能在后，各自按名字。跟文件管理器一个顺序。
-    node.children.sort(
-      (a, b) => (a.kind === b.kind ? 0 : a.kind === "dir" ? -1 : 1) || a.name.localeCompare(b.name, "zh-CN"),
-    );
-    node.n = 0;
-    node.todo = 0;
-    for (const child of node.children) {
-      roll(child);
-      node.n += child.n;
-      node.todo += child.todo;
-    }
-    if (node.entry) {
-      node.n += 1;
-      node.todo += node.entry.local === "same" ? 0 : 1;
-    }
-    return node;
-  };
-  roll(root);
-  return root;
-}
-

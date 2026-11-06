@@ -280,7 +280,26 @@ export const listEntries = async ({ data, source, run }) => {
   return entries.sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
 };
 
-/** 一条上游技能里的文件清单（对照 + 抽屉里那棵树都吃它）。 */
+/**
+ * **整个仓**的文件清单 —— 上游是按「一个仓 = 一条技能」来理解的，
+ * 所以抽屉里那棵树的根是仓根（`skills/engineering/x/SKILL.md` 一路展开），
+ * 不是某一条技能。只列 blob（目录由面板从路径推出来，跟本地那条一样）。
+ */
+export const repoFiles = async ({ data, source, run, maxFiles = 2000 }) => {
+  const head = await resolveHead({ data, source, run });
+  const dir = mirrorPath(data, source.name);
+  const rows = await treeOf(run, dir, head, { long: true });
+  const files = rows
+    .filter((row) => row.type === "blob")
+    .map((row) => ({ path: row.path, size: row.size ?? 0 }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  if (files.length > maxFiles) {
+    throw withStatus(new Error(`${source.name}: 这个仓有 ${files.length} 个文件，超过 ${maxFiles} —— 面板里不展开`), 400);
+  }
+  return { head, files };
+};
+
+/** 一条上游技能里的文件清单（对照 + 取用前的核对都吃它）。 */
 export const entryFiles = async ({ data, source, run, dir: home }) => {
   const head = await resolveHead({ data, source, run });
   const dir = mirrorPath(data, source.name);

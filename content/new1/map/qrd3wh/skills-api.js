@@ -880,22 +880,44 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         return send(res, 200, { ok: out.every((item) => item.ok), sources: out });
       }
 
+      // 一整个仓的文件清单。「一个订阅 = 一条技能」，所以抽屉里那棵树的根是**仓根**。
+      if (at[1] === "tree") {
+        if (method !== "GET") return send(res, 405, { error: "上游文件树只有 GET" });
+        const sourceName = String(url.searchParams.get("source") ?? "").trim();
+        const { sources } = await upstream.readSources(root);
+        const source = sources.find((item) => item.name === sourceName);
+        if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+        if (!(await upstream.hasMirror({ data: mirrors(), source }))) {
+          throw withStatus(new Error(`${sourceName}: 还没拉过镜像 —— 先点刷新`), 400);
+        }
+        const tree = await upstream.repoFiles({ data: mirrors(), source, run: repo.run });
+        return send(res, 200, { source: source.name, head: tree.head, files: tree.files });
+      }
+
       // 上游的正文：**只读**。抽屉里那棵文件树吃这一条，一条一条点也是这一条。
       // 别人的仓我们没有写入口 —— 这条路上只有 GET。POST 是 405，不是 400。
+      // `path` 是仓里的绝对路径（`skills/x/SKILL.md`）；也认「目录 + 文件名」两个参数的老形状。
       if (at[1] === "file") {
         if (method !== "GET") return send(res, 405, { error: "上游正文只有 GET —— 别人的仓我们只读" });
         const sourceName = String(url.searchParams.get("source") ?? "").trim();
         const home = String(url.searchParams.get("path") ?? "").trim().replace(/^\/+|\/+$/g, "");
-        const rel = String(url.searchParams.get("file") ?? "").trim() || "SKILL.md";
+        const named = String(url.searchParams.get("file") ?? "").trim();
+        const rel = named || (home ? "SKILL.md" : "");
         const { sources } = await upstream.readSources(root);
         const source = sources.find((item) => item.name === sourceName);
         if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
-        if (!home) throw withStatus(new Error("没说看哪一条（path 是空的）"), 400);
+        if (!rel) throw withStatus(new Error("没说看哪个文件（file 是空的）"), 400);
         if (!(await upstream.hasMirror({ data: mirrors(), source }))) {
           throw withStatus(new Error(`${sourceName}: 还没拉过镜像 —— 先点刷新`), 400);
         }
         const file = await upstream.entryText({ data: mirrors(), source, run: repo.run, home, rel });
-        return send(res, 200, { source: source.name, path: home, file: rel, text: file.text, size: file.size });
+        return send(res, 200, {
+          source: source.name,
+          path: home,
+          file: home ? `${home}/${file.path}` : file.path,
+          text: file.text,
+          size: file.size,
+        });
       }
 
       if (at[1] === "files") {

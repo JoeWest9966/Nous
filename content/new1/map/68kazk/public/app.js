@@ -11,7 +11,6 @@ import { buildDiff } from "./diff.js";
 import {
   ARCHIVED,
   STATE_LABEL,
-  UPSTREAM_LABEL,
   UNCATEGORIZED,
   buildView,
   categoriesOf,
@@ -30,9 +29,7 @@ import {
   stateFilterOf,
   sourceNameFromUrl,
   suggestedAdoptName,
-  sortUpstream,
   upstreamSummary,
-  upstreamTree,
 } from "./model.js";
 import { CONFLICT_MESSAGE, createApi, createCategoryDebounce, publishWithRefresh } from "./api.js";
 
@@ -104,7 +101,7 @@ const state = {
   upstream: null, // GET v1/skills/upstream 的原样（订阅 + 清单 + 每个 source 的报错）
   upstreamOpen: false, // 主区顶上来的是上游这块视图（不是筛出来的列表）
   upstreamSource: null, // 在看哪个订阅
-  upFilter: "", // 左栏目录树筛到哪一枝（"" = 全部）—— 筛子，不是页面
+
   upstreamDetail: null, // 哪一条上游技能开着浮层
   upstreamBusy: null, // 正在取用 / 刷新 / 添加（按钮上的转圈）
   addingSource: false, // 添加上游那个表单开着
@@ -1201,7 +1198,7 @@ function render() {
 //
 // **它跟本地那个网格长同一个样子**：别人的仓也是多级目录（`plugins/x/skills/y`），
 // 所以这里是「左栏目录树 + 网格 + 半扇浮层」，不是一列条目配一排按钮。
-// 树在 model.js 里算（`upstreamTree`），跟本地 `buildView` 同一套做法。
+// 一个订阅 = 一张卡，代表**整个仓**：点开是浮层，看正文是抽屉（整仓的文件树）。
 //
 // 三个动作，边界很清楚：
 //   1. 看清单 / 钻目录 —— 读本地镜像，**打开页面不联网**；
@@ -1228,17 +1225,10 @@ const upstreamEntriesOf = (sourceName) =>
 const upstreamSourceNow = () =>
   (state.upstream?.sources ?? []).find((item) => item.name === state.upstreamSource) ?? null;
 
-const upstreamTreeNow = () => upstreamTree(upstreamEntriesOf(state.upstreamSource));
-
-const upstreamEntryAt = (path) =>
-  (state.upstream?.entries ?? []).find(
-    (entry) => entry.source === state.upstreamSource && entry.path === path,
-  ) ?? null;
-
 // ── 地址 ────────────────────────────────────────────────────────────────────
 //
-// `#upstream` / `#upstream/matt` / `#upstream/matt/skills/code-review`。
-// 有它才能贴给别人，也才能在没有点击的测试里直接落到某一层。
+// `#upstream` / `#upstream/matt` —— **只到订阅**。一个订阅 = 一条「技能」（整个仓），
+// 所以地址里没有「哪一条」。
 
 const hashTarget = () => {
   const raw = location.hash.replace(/^#/, "");
@@ -1266,7 +1256,6 @@ function openUpstream(name = undefined) {
   state.upstreamOpen = true;
   // 没说看哪个就落到第一个订阅；一个都没有就停在「添加上游」那张空状态上。
   state.upstreamSource = name ?? state.upstreamSource ?? state.upstream?.sources?.[0]?.name ?? null;
-  state.upFilter = "";
   writeHash();
   render();
   $("results")?.scrollTo({ top: 0 });
@@ -1281,17 +1270,8 @@ function closeUpstream() {
   $("results")?.scrollTo({ top: 0 });
 }
 
-/** 左栏点一个目录 = 把主区缩到那一枝（再点一下取消）。空串 = 整个仓。 */
-function filterUpstream(path) {
-  const next = String(path ?? "");
-  state.upFilter = state.upFilter === next ? "" : next;
-  render();
-  $("results")?.scrollTo({ top: 0 });
-}
-
 function switchSource(name) {
   state.upstreamSource = name;
-  state.upFilter = "";
   state.upstreamDetail = null;
   writeHash();
   render();
@@ -1350,7 +1330,6 @@ async function addSource({ url, prefix }) {
     await transport.post("v1/skills/sources", { sources: next });
     await loadUpstream({ quiet: true });
     state.upstreamSource = name;
-    state.upFilter = "";
     state.addingSource = false;
     toast(`订阅了 ${name}（未发布）—— 顺手拉一下镜像`);
     await refreshSource(name);
@@ -1381,203 +1360,72 @@ async function adoptEntry(entry, name) {
   }
 }
 
-/** 逐文件对照：服务端拿 git blob sha 比的，这里是同一份事实的展示。 */
-async function showUpstreamDiff(entry, host) {
-  const old = host.querySelector(".upstream-files");
-  if (old) {
-    old.remove();
-    return;
-  }
-  const box = el("div", "upstream-files");
-  box.append(el("p", "detail-sum", "比对中…"));
-  host.append(box);
-  try {
-    const out = await transport.get(
-      `v1/skills/upstream/files?source=${encodeURIComponent(entry.source)}&path=${encodeURIComponent(entry.path)}`,
-    );
-    box.textContent = "";
-    box.append(el("p", "detail-sum", `跟本地 ${out.localName} 比：`));
-    for (const file of out.files ?? []) {
-      box.append(
-        detailRow(file.path, file.state === "same" ? "一样" : file.state === "diff" ? "本地改过" : "本地没有"),
-      );
-    }
-  } catch (error) {
-    box.textContent = "";
-    box.append(alertLine("bad", "比不了", error.message));
-  }
-}
-
-// ── 卡片 / 浮层 ─────────────────────────────────────────────────────────────
-
-/** 一条上游技能在这个面板里的状态 → 徽章文字 + 色调。 */
-const upstreamBadge = (entry) => {
-  const label = UPSTREAM_LABEL[entry.local] ?? "未取用";
-  const tone = entry.local === "changed" ? "unpub" : entry.local === "same" ? "ok" : "fail";
-  return { label, tone: entry.local === "none" ? "unpub" : tone };
-};
-
 const upstreamBusyOn = (entry) => state.upstreamBusy === `adopt:${entry.source}/${entry.path}`;
 
-/**
- * 上游那条的菜单：跟本地卡片同一个位置、同一副骨头，少两样（归档 / 删除 ——
- * 别人的东西我们删不掉），多一样（取用）。**第一项是看正文**，跟本地一致。
- */
-function openUpstreamMenu(x, y, entry) {
+/** 上游那张卡的菜单：看正文（整个仓）/ 刷新 / 复制地址。别人的仓，没有删除。 */
+function openUpstreamMenu(x, y, source) {
   closeMenu();
   const menu = $("ctxmenu");
   menu.textContent = "";
   menu.hidden = false;
   menuOpen = true;
 
-  const badge = upstreamBadge(entry);
-  menuHead(menu, entry.name, `上游 · ${badge.label}`);
-  const first = menuItem(menu, "看正文", `${entry.source} · 只读`, () => void openUpstreamEditor(entry));
-  menuItem(menu, "查看详情", "版本 / 跟本地 / 取用", () => {
-    state.upstreamDetail = entry.path;
-    writeHash();
-    render();
-    $("dt-body").scrollTop = 0;
-    $("detail").focus({ preventScroll: true });
+  const mine = upstreamSummary(upstreamEntriesOf(source.name));
+  menuHead(menu, source.name, `上游 · 整个仓 · ${mine.total} 条`);
+  const first = menuItem(menu, "看正文", "整个仓的文件树 · 只读", () => void openUpstreamEditor(source));
+  menuItem(menu, "刷新", "git fetch（唯一联网动作）", () => void refreshSource(source.name));
+  menuItem(menu, "复制地址", source.url, () => {
+    navigator.clipboard?.writeText(source.url).then(
+      () => toast("地址已复制"),
+      () => toast(source.url),
+    );
   });
-  menu.append(el("div", "ctx-sep"));
-  if (entry.local === "none") {
-    menuItem(menu, "取用", "拷进我们仓里（不提交）", () => void adoptEntry(entry));
-  } else if (entry.local === "changed") {
-    menuItem(menu, "看差在哪", "跟本地那条比", () => {
-      state.upstreamDetail = entry.path;
-      writeHash();
-      render();
-      void showUpstreamDiff(entry, $("dt-body"));
-      $("detail").focus({ preventScroll: true });
-    });
-  }
   mountMenu(menu, x, y, first);
 }
 
-function upstreamSkillCard(entry) {
-  const badge = upstreamBadge(entry);
-  const card = el("article", "product");
-  card.tabIndex = 0;
-  card.setAttribute("role", "button");
-  card.setAttribute("aria-label", `${entry.name} · ${badge.label}`);
-  card.title = entry.path;
-  card.onclick = () => {
-    state.upstreamDetail = entry.path;
-    writeHash();
-    render();
-    $("dt-body").scrollTop = 0;
-    $("detail").focus({ preventScroll: true });
-  };
-  const openMenuAt = (mx, my) => openUpstreamMenu(mx, my, entry);
-  card.oncontextmenu = (event) => {
-    event.preventDefault();
-    openMenuAt(event.clientX, event.clientY);
-  };
-  card.onkeydown = (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      card.click();
-    } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-      event.preventDefault();
-      const rect = card.getBoundingClientRect();
-      openMenuAt(rect.left + 8, rect.bottom - 6);
-    }
-  };
-  attachMenuGesture(card, openMenuAt);
-
-  const visual = el("div", "visual");
-  visual.style.setProperty("--hue", String(hueOf(entry.name)));
-  visual.append(el("span", "visual-mono", initialsOf(entry.name)));
-  if (entry.local !== "same") visual.append(el("span", `badge-float ${badge.tone}`, badge.label));
-  card.append(visual);
-
-  const body = el("div", "product-body");
-  const title = el("div", "product-title");
-  title.append(el("span", "product-name", entry.name));
-
-  // 卡上唯一可见的菜单入口：桌面 hover 出现、触屏常驻（跟本地那张一个规矩）。
-  const menuBtn = el("button", "product-menu", "⋯");
-  menuBtn.type = "button";
-  menuBtn.title = `${entry.name} 的菜单：正文 / 详情 / 取用`;
-  menuBtn.setAttribute("aria-label", `${entry.name} 的菜单`);
-  menuBtn.onclick = (event) => {
-    event.stopPropagation();
-    const rect = menuBtn.getBoundingClientRect();
-    openMenuAt(rect.left, rect.bottom + 4);
-  };
-  menuBtn.onkeydown = (event) => {
-    if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-  };
-  title.append(menuBtn);
-  body.append(title);
-  const sum = entry.description || entry.summary;
-  if (sum) body.append(el("p", "product-sum", sum));
-  card.append(body);
-  return card;
-}
-
-/** 浮层里的正文：说明、上游路径、版本、动作（取用 / 看差在哪 / 已取用）。 */
-function upstreamDetailBody(entry) {
+/** 浮层里的正文：**整个仓**那一层的事（订阅 / 地址 / 多少条 / 版本 / 动作）。 */
+function upstreamDetailBody(source) {
   const wrap = el("div", "up-detail");
-  const badge = upstreamBadge(entry);
-  if (entry.description) wrap.append(detailRow("说明", entry.description));
-  if (entry.summary && entry.summary !== entry.description) wrap.append(detailRow("摘要", entry.summary));
-  if (entry.category?.length) wrap.append(detailRow("类别", entry.category.join(" · ")));
-  wrap.append(detailRow("上游", `${entry.source}/${entry.path}`, entry.path));
-  wrap.append(
-    detailRow("上游版本", `${String(entry.sha ?? "").slice(0, 8)} · ${entry.files} 个文件`, entry.sha ?? ""),
-  );
-  wrap.append(detailRow("跟本地", badge.label));
-
-  let input = null;
-  if (entry.local === "taken") {
-    input = el("input", "rail-input");
-    input.type = "text";
-    input.value = suggestedAdoptName(entry);
-    input.placeholder = "换个名字取用";
-    wrap.append(input);
+  const entries = upstreamEntriesOf(source.name);
+  const mine = upstreamSummary(entries);
+  wrap.append(detailRow("上游", source.name, source.url));
+  wrap.append(detailRow("地址", source.url));
+  if (source.prefix) wrap.append(detailRow("只看", `${source.prefix}/`, "仓里的这一段才算技能"));
+  wrap.append(detailRow("技能", `${mine.total} 条${mine.todo ? ` · ${mine.todo} 条待看` : ""}`));
+  if (source.mirror === "missing") {
+    wrap.append(alertLine("warn", "还没镜像", "点「刷新（fetch）」把它拉下来。第一次要联网。"));
   }
+
+  wrap.append(
+    el("p", "detail-sum", "取用不在这儿：进正文，找到那条的 SKILL.md，行尾有「取用」——一个仓里是一条一条拿的。"),
+  );
 
   const acts = el("div", "detail-sec-acts");
-  const busy = upstreamBusyOn(entry);
-  // 看正文：跟我们自己那条同一个抽屉（只读）。入口放第一个，它是最常点的。
   const read = el("button", "btn btn-small", "看正文 ›");
   read.type = "button";
-  read.title = "这一条的整个目录：SKILL.md + 里面的文件 / 文件夹（只读）";
-  read.onclick = () => void openUpstreamEditor(entry);
+  read.title = "整个仓的文件树：SKILL.md + 里面的文件 / 文件夹（只读）";
+  read.onclick = () => void openUpstreamEditor(source);
   acts.append(read);
-  if (entry.local === "none" || entry.local === "taken") {
-    const take = el("button", "btn btn-small", busy ? "取用中…" : "取用");
-    take.type = "button";
-    take.disabled = busy || Boolean(state.upstreamBusy);
-    take.title = "拷进我们仓里（不提交）—— 取用之后它是我们自己的一条技能";
-    take.onclick = () => void adoptEntry(entry, input?.value);
-    acts.append(take);
-  } else if (entry.local === "changed") {
-    const look = el("button", "btn btn-small", "看差在哪");
-    look.type = "button";
-    look.onclick = () => void showUpstreamDiff(entry, wrap);
-    acts.append(look);
-    wrap.append(el("p", "detail-sum", "要跟上游这版：先把本地那条归档，再取用 —— 这里没有「静默覆盖」。"));
-  } else {
-    const done = el("button", "btn btn-small", "已取用");
-    done.type = "button";
-    done.disabled = true;
-    acts.append(done);
-  }
+
+  const sync = el("button", "btn btn-small", state.upstreamBusy === `fetch:${source.name}` ? "刷新中…" : "刷新（fetch）");
+  sync.type = "button";
+  sync.disabled = Boolean(state.upstreamBusy);
+  sync.onclick = () => void refreshSource(source.name);
+  acts.append(sync);
   wrap.append(acts);
   return wrap;
 }
 
 function closeUpstreamDetail() {
   if (!state.upstreamDetail) return;
-  const path = state.upstreamDetail;
+  const name = state.upstreamDetail;
   state.upstreamDetail = null;
   writeHash();
   render();
-  // 焦点还回那张卡（卡片是重画过的，所以按路径重新找一遍）。
-  const card = [...document.querySelectorAll("#upstream .product")].find((node) => node.title === path);
+  // 焦点还回那张卡（卡片是重画过的，所以按订阅名重新找一遍）。
+  const card = [...document.querySelectorAll("#upstream .product")].find(
+    (node) => node.dataset.source === name,
+  );
   card?.focus({ preventScroll: true });
 }
 
@@ -1589,21 +1437,23 @@ function closeSheet() {
 }
 
 function renderUpstreamDetail() {
-  const entry = upstreamEntryAt(state.upstreamDetail);
+  const entry = (state.upstream?.sources ?? []).find((item) => item.name === state.upstreamDetail) ?? null;
   if (!entry) {
     state.upstreamDetail = null;
     return false;
   }
+  const mine = upstreamSummary(upstreamEntriesOf(entry.name));
   $("dt-mono").textContent = initialsOf(entry.name);
   $("dt-tile").style?.setProperty?.("--hue", String(hueOf(entry.name)));
   $("dt-name").textContent = entry.name;
   const badges = $("dt-badges");
   badges.textContent = "";
-  const badge = upstreamBadge(entry);
-  const chip = el("span", "detail-badge", badge.label);
-  chip.dataset.tone = badge.tone;
+  // 上游那一层的徽章说的是「这是整个仓」，不是某一条的取用状态（那在抽屉里按文件标）。
+  const chip = el("span", "detail-badge", "整个仓");
+  chip.dataset.tone = entry.mirror === "missing" ? "unpub" : "ok";
+  chip.title = "上游按「一个仓 = 一条技能」算：看正文打开的是整个仓";
   badges.append(chip);
-  $("dt-meta").textContent = `${entry.source} · ${entry.path}`;
+  $("dt-meta").textContent = `${mine.total} 条技能 · ${entry.url}`;
   const body = $("dt-body");
   body.textContent = "";
   body.append(upstreamDetailBody(entry));
@@ -1646,78 +1496,53 @@ function sourceForm() {
 // 跟本地类别栏同构：一行一个目录，缩进说明深浅，数字是「这一层往下有多少条技能」。
 // 只在主区是上游的时候出现 —— 左栏永远只说当前主区那一件事。
 
+/**
+ * 左栏：**订阅列表**。一个订阅 = 一条「技能」（整个仓），所以这里不摆目录 ——
+ * 目录住在抽屉那棵树里（`看正文`）。
+ */
 function renderUpstreamFacets() {
   const host = $("facets");
   host.textContent = "";
-  const source = upstreamSourceNow();
-  const tree = upstreamTreeNow();
+  const sources = state.upstream?.sources ?? [];
 
-  // 目录是**筛子**，跟本地那栏的类别一个语义：点一下把主区缩到这一枝，再点取消。
-  // 它不换页、不进地址栏 —— 这一页的规矩是「列表不动，点开的东西盖在上面」。
-  const row = (node, depth) => {
-    const on = state.upFilter === node.path;
-    const item = el(
-      "div",
-      "facet" + (on ? " on" : "") + (state.upFilter.startsWith(`${node.path}/`) ? " parent" : ""),
-    );
+  for (const source of sources) {
+    const on = source.name === state.upstreamSource;
+    const item = el("div", "facet" + (on ? " on" : ""));
     const main = el("button", "facet-main");
     main.type = "button";
-    main.append(el("span", "facet-label", node.name));
-    const n = el("span", "facet-n", String(node.n));
-    if (node.todo) n.dataset.tone = "warn";
+    main.append(el("span", "facet-label", source.name));
+    const mine = upstreamSummary(upstreamEntriesOf(source.name));
+    const n = el("span", "facet-n", source.mirror === "missing" ? "未镜像" : String(mine.total));
+    if (source.mirror === "missing" || mine.todo) n.dataset.tone = "warn";
     main.append(n);
-    main.title = node.path ? `${node.path} · 只看这一枝` : "整个仓";
-    main.style.paddingLeft = `${8 + Math.min(depth, 3) * 11}px`;
-    main.onclick = () => filterUpstream(node.path);
+    main.title = `${source.url}${source.prefix ? ` · 只看 ${source.prefix}/` : ""}`;
+    main.onclick = () => switchSource(source.name);
     item.append(main);
     host.append(item);
-    for (const child of node.children) if (child.kind === "dir") row(child, depth + 1);
-  };
-
-  if (source) {
-    // 根那一行 = 「整个仓」，点它清掉筛选。
-    row({ name: "全部", path: "", n: tree.n, todo: tree.todo, children: tree.children }, 0);
-    // 根那一行自己不摆子目录（它们是下一层），`row` 里已经递归过了。
-  } else {
-    host.append(el("p", "facet-empty dim small", "还没订阅任何一个上游。"));
   }
-  $("rail-title").textContent = "目录";
+
+  if (!sources.length) host.append(el("p", "facet-empty dim small", "还没订阅任何一个上游。"));
+  $("rail-title").textContent = "订阅";
   // 「+ 新建类别」在上游这一屏没有意义：那改的是我们自己的词表。
   $("rail-new").hidden = true;
-  $("cat-count").textContent = String(tree.children.filter((child) => child.kind === "dir").length);
+  $("cat-count").textContent = String(sources.length);
 }
-
-// ── 主区：面屑 + 订阅头 + 卡片 ───────────────────────────────────────────────
 
 function renderUpstreamPanel() {
   const host = $("upstream");
   const sources = state.upstream?.sources ?? [];
   const source = upstreamSourceNow();
-  const tree = upstreamTreeNow();
+  const entries = upstreamEntriesOf(state.upstreamSource);
+  const mine = upstreamSummary(entries);
 
   host.textContent = "";
-  const all = upstreamEntriesOf(state.upstreamSource);
-  const scope = state.upFilter;
-  const shown = sortUpstream(
-    all.filter((entry) => !scope || entry.path === scope || entry.path.startsWith(`${scope}/`)),
-  );
   $("result-count").textContent = source
-    ? `${scope ? `${scope} · ` : ""}${shown.length}${shown.length === all.length ? "" : ` / ${all.length}`} 条技能`
+    ? `${mine.total} 条技能${mine.todo ? ` · ${mine.todo} 条待看` : ""}`
     : "还没订阅";
 
-  // 没有面包屑、也没有「上一层」：这一屏不钻。目录在左栏当筛子，
-  // 主区永远是这个仓的一份清单，点开的那条盖在上面（半扇浮层）。
-  const bar = el("div", "up-bar");
-  const back = el("button", "detail-back", "‹ 返回列表");
-  back.type = "button";
-  back.title = "回到技能列表（Esc）";
-  back.onclick = () => closeUpstream();
-  bar.append(back);
-  host.append(bar);
-
   // 动作摆在工具栏那一格（跟「新建技能 / 重扫」同一个位置）—— 换的是这一屏能做什么。
-  const bar2 = $("toolbar-up");
-  bar2.textContent = "";
+  const bar = $("toolbar-up");
+  bar.textContent = "";
   const add = el("button", "btn btn-small", state.addingSource ? "填地址…" : "+ 添加上游");
   add.type = "button";
   add.title = "往 sources.json 里加一行（未发布，跟技能一样走发布）";
@@ -1725,7 +1550,7 @@ function renderUpstreamPanel() {
     state.addingSource = !state.addingSource;
     render();
   };
-  bar2.append(add);
+  bar.append(add);
   if (source) {
     const sync = el(
       "button",
@@ -1736,63 +1561,92 @@ function renderUpstreamPanel() {
     sync.disabled = Boolean(state.upstreamBusy);
     sync.title = "git fetch 这个上游 —— 打开这一页不会联网，所以更新要手动拉";
     sync.onclick = () => void refreshSource(source.name);
-    bar2.append(sync);
-  }
-  if (source) {
-    host.append(
-      el(
-        "p",
-        "up-src dim small",
-        `${source.url}${source.prefix ? ` · 只看 ${source.prefix}/` : ""}`,
-      ),
-    );
-  } else {
-    host.append(el("p", "detail-sum", "别的 git 仓库里的技能：看一眼，觉得有用就取用过来。"));
+    bar.append(sync);
   }
 
   if (state.addingSource || !sources.length) host.append(sourceForm());
 
-  // 订阅切换：一排药丸，跟顶部那排同一个手感。多于一个才出现。
-  if (sources.length > 1) {
-    const row = el("div", "source-row");
-    for (const item of sources) {
-      const mine = upstreamSummary(upstreamEntriesOf(item.name));
-      const chip = el("button", "filter-chip" + (item.name === state.upstreamSource ? " on" : ""));
-      chip.type = "button";
-      chip.append(el("span", "filter-label", item.name));
-      const count = el("span", "filter-n", item.mirror === "missing" ? "未镜像" : String(mine.total));
-      if (item.mirror === "missing" || mine.todo) count.dataset.tone = "warn";
-      chip.append(count);
-      chip.onclick = () => switchSource(item.name);
-      row.append(chip);
-    }
-    host.append(row);
+  if (!source) {
+    host.append(el("p", "detail-sum", "别的 git 仓库里的技能：一眼看整个仓，觉得有用就取用过来。"));
+    return;
   }
 
-  if (source?.mirror === "missing") {
-    host.append(alertLine("warn", "还没镜像", "点「刷新（fetch）」把它拉下来。第一次要联网，之后每次更新也走这个按钮。"));
-  }
-  const failure = (state.upstream?.errors ?? []).find((item) => item.source === state.upstreamSource);
-  if (failure) host.append(alertLine("bad", "读不出来", failure.error));
-
+  // 一个订阅 = 一张卡。卡上写的是「整个仓」那一层的事。
   const grid = el("div", "grid");
-  for (const entry of shown) grid.append(upstreamSkillCard(entry));
-  if (!grid.childNodes.length) {
-    grid.append(
-      el(
-        "div",
-        "empty",
-        source
-          ? source.mirror === "missing"
-            ? "镜像还没有 —— 先点「刷新（fetch）」。"
-            : scope
-              ? "这一枝里没有技能。"
-              : "这个上游里没有技能（或者 prefix 把范围筛空了）。"
-          : "还没订阅任何上游 —— 点「+ 添加上游」填个地址。",
-      ),
-    );
-  }
+  grid.append(upstreamRepoCard(source));
   host.append(grid);
+}
+
+/**
+ * 上游那张卡：**一个订阅一张**。它代表整个仓 —— 点开是半扇浮层，
+ * 浮层里 `看正文 ›` 是那只抽屉，左栏是**整个仓的文件树**。
+ *
+ * 上游按「一个仓 = 一条技能」理解：所以这里没有一条一条的卡片，
+ * 也没有目录卡（目录只在抽屉那棵树里）。
+ */
+function upstreamRepoCard(source) {
+  const entries = upstreamEntriesOf(source.name);
+  const mine = upstreamSummary(entries);
+  const card = el("article", "product up-card up-repo");
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.setAttribute("aria-label", `${source.name} · 整个仓 · ${mine.total} 条技能`);
+  card.dataset.source = source.name;
+  card.title = source.url;
+
+  const openMenuAt = (mx, my) => openUpstreamMenu(mx, my, source);
+  const open = () => {
+    state.upstreamDetail = source.name;
+    render();
+    $("dt-body").scrollTop = 0;
+    $("detail").focus({ preventScroll: true });
+  };
+  card.onclick = open;
+  card.oncontextmenu = (event) => {
+    event.preventDefault();
+    openMenuAt(event.clientX, event.clientY);
+  };
+  card.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      const rect = card.getBoundingClientRect();
+      openMenuAt(rect.left + 8, rect.bottom - 6);
+    }
+  };
+  attachMenuGesture(card, openMenuAt);
+
+  const visual = el("div", "visual");
+  visual.append(el("span", "visual-mono", initialsOf(source.name)));
+  visual.append(el("span", "badge-float dir", `${mine.total} 条`));
+  card.append(visual);
+
+  const body = el("div", "product-body");
+  const title = el("div", "product-title");
+  title.append(el("span", "product-name", source.name));
+  const kind = el("span", "product-hidden", "整个仓");
+  kind.title = "上游按「一个仓 = 一条技能」算：看正文打开的是整个仓的树";
+  title.append(kind);
+
+  const menuBtn = el("button", "product-menu", "⋯");
+  menuBtn.type = "button";
+  menuBtn.title = `${source.name} 的菜单：看正文 / 刷新 / 地址`;
+  menuBtn.setAttribute("aria-label", `${source.name} 的菜单`);
+  menuBtn.onclick = (event) => {
+    event.stopPropagation();
+    const rect = menuBtn.getBoundingClientRect();
+    openMenuAt(rect.left, rect.bottom + 4);
+  };
+  menuBtn.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+  };
+  title.append(menuBtn);
+  body.append(title);
+  body.append(el("p", "product-sum", source.url));
+  card.append(body);
+  return card;
 }
 
 /** 重扫仓库：修好的 SKILL.md 得重新进名册，别让人刷新整页才能看到。 */
@@ -2165,14 +2019,13 @@ async function openEditor(skill, { path = null } = {}) {
  * （没有 HEAD 可比：那是别人的仓）。内容从镜像里读（`git cat-file`），
  * **不摊进我们的仓** —— 看正文不等于取用。
  */
-async function openUpstreamEditor(entry, { path = null } = {}) {
+async function openUpstreamEditor(source, { path = null } = {}) {
   closeMenu();
   state.editor = {
     kind: "upstream",
     readOnly: true,
-    source: entry.source,
-    entryPath: entry.path,
-    name: entry.name,
+    source: source.name,
+    name: source.name,
     files: [],
     filesLoading: true,
     path: null,
@@ -2183,8 +2036,6 @@ async function openUpstreamEditor(entry, { path = null } = {}) {
     expanded: new Set(),
     lineCount: 1,
     dirs: new Set(),
-    // 取用过的才有「这份跟本地不一样」可言；没取用过就一律不标。
-    adopted: false,
   };
   state.publishing = false;
   $("ed-text").value = "";
@@ -2195,27 +2046,29 @@ async function openUpstreamEditor(entry, { path = null } = {}) {
   $("editor").hidden = false;
   $("editor").dataset.readonly = "1";
   setBehindInert();
-  $("ed-name").textContent = entry.name;
-  $("ed-meta").textContent = `${entry.source}/${entry.path} · 上游 · 只读`;
+  $("ed-name").textContent = source.name;
+  $("ed-meta").textContent = `${source.url} · 上游 · 只读`;
   closeNewEntry();
   setEditorMode("edit");
   renderEditorFiles();
   renderEditorState();
 
-  const query = `v1/skills/upstream/files?source=${encodeURIComponent(entry.source)}&path=${encodeURIComponent(entry.path)}`;
   try {
-    const list = await transport.get(query);
-    state.editor.files = list.files ?? [];
-    state.editor.adopted = Boolean(list.adopted);
+    const tree = await transport.get(`v1/skills/upstream/tree?source=${encodeURIComponent(source.name)}`);
+    state.editor.files = tree.files ?? [];
     state.editor.filesLoading = false;
-    state.editor.dirs = new Set(dirPaths(fileTree(state.editor.files)));
+    // 一个仓几百个文件，全展开等于没展开：只展开头两层（`skills/` 和它下面那一层），
+    // 剩下的谁想看谁点。
+    state.editor.dirs = new Set(dirPaths(fileTree(state.editor.files)).filter((dir) => dir.split("/").length <= 2));
     renderEditorFiles();
-    const first =
-      (path && state.editor.files.find((file) => file.path === path)) ??
-      state.editor.files.find((file) => file.path === "SKILL.md") ??
-      state.editor.files[0];
+    // 整仓的树第一屏会从 `.agents` / `.github` 开始（字母序），把视线带到真正的那一段。
+    const hint = source.prefix ? $("ed-files").querySelector(`.ed-row[data-path="${source.prefix}"]`) : null;
+    hint?.scrollIntoView({ block: "start" });
+    const first = path
+      ? state.editor.files.find((file) => file.path === path || file.path.endsWith(`/${path}`))
+      : null;
     if (first) await openEditorFile(first.path, { force: true });
-    else $("ed-path").textContent = "这条上游里没有文件";
+    else $("ed-path").textContent = "左边挑一个文件看";
   } catch (error) {
     state.editor.filesLoading = false;
     state.editor.error = `读文件列表失败：${error.message}`;
@@ -2266,6 +2119,7 @@ function renderEditorFiles() {
 function editorRowShell(node) {
   const row = el("div", "ed-row");
   row.style.setProperty("--depth", String(node.depth));
+  row.dataset.path = node.path;
   return row;
 }
 
@@ -2281,18 +2135,36 @@ function editorRowDelete(node) {
   return btn;
 }
 
-/** 取用过的上游那条：这份文件跟本地那份比下来是什么（`same` / `diff` / `missing`）。 */
-function editorFileMark(node) {
+/**
+ * 上游那棵树里的一条技能 = 一个装着 `SKILL.md` 的目录。
+ * 整仓都摆进抽屉之后，**只有取用这件事还按「一条」算**，所以它挂在 `SKILL.md` 那一行。
+ */
+function upstreamEntryOfFile(node) {
   const ed = state.editor;
-  if (!ed?.readOnly || !ed.adopted || !node.mark) return null;
-  const label = { diff: "≠", missing: "+", same: "" }[node.mark];
-  if (!label) return null;
-  const mark = el("span", "ed-file-mark", label);
-  mark.title =
-    node.mark === "diff"
-      ? "跟本地那份不一样（上游这版更新）"
-      : "本地那份里没有这个文件";
-  mark.dataset.tone = node.mark;
+  if (ed?.kind !== "upstream" || node.type !== "file" || node.name !== "SKILL.md") return null;
+  const home = node.path.slice(0, -"/SKILL.md".length);
+  if (!home) return null;
+  return (state.upstream?.entries ?? []).find(
+    (entry) => entry.source === ed.source && entry.path === home,
+  ) ?? null;
+}
+
+function editorFileMark(node) {
+  const entry = upstreamEntryOfFile(node);
+  if (!entry) return null;
+  const busy = upstreamBusyOn(entry);
+  const taken = entry.local === "same" || entry.local === "changed";
+  const mark = el("button", "ed-file-mark", busy ? "取用中…" : taken ? "已取用" : "取用");
+  mark.type = "button";
+  mark.disabled = busy || taken || Boolean(state.upstreamBusy);
+  mark.title = taken
+    ? "本地已经有这一条了"
+    : "拷进我们仓里（不提交）—— 取用之后它是我们自己的一条技能";
+  mark.dataset.tone = taken ? "missing" : "diff";
+  mark.onclick = (event) => {
+    event.stopPropagation();
+    void adoptEntry(entry, entry.local === "taken" ? suggestedAdoptName(entry) : undefined);
+  };
   return mark;
 }
 
@@ -2560,8 +2432,7 @@ async function openUpstreamFile(path) {
   if (!ed) return;
   try {
     const file = await transport.get(
-      `v1/skills/upstream/file?source=${encodeURIComponent(ed.source)}` +
-        `&path=${encodeURIComponent(ed.entryPath)}&file=${encodeURIComponent(path)}`,
+      `v1/skills/upstream/file?source=${encodeURIComponent(ed.source)}&file=${encodeURIComponent(path)}`,
     );
     if (state.editor !== ed) return;
     ed.path = file.file;
@@ -2574,7 +2445,7 @@ async function openUpstreamFile(path) {
     area.readOnly = true;
     area.disabled = false;
     area.value = file.text;
-    $("ed-path").textContent = `${ed.source}/${ed.entryPath}/${file.file}`;
+    $("ed-path").textContent = `${ed.source}/${file.file}`;
     renderGutter();
     renderDelta();
     renderEditorFiles();
@@ -2740,6 +2611,12 @@ function renderGutter() {
   const gutter = $("ed-gutter");
   const area = $("ed-text");
   if (!ed || !gutter) return;
+  // 还没点开任何文件（整仓那棵树刚打开时）：别画一个孤零零的「1」。
+  if (!ed.path) {
+    ed.lineCount = 0;
+    gutter.textContent = "";
+    return;
+  }
   const total = Math.max(1, ed.lineCount);
   gutter.style.width = `${Math.max(2, String(total).length) * 7.5 + 26}px`;
   const frag = document.createDocumentFragment();

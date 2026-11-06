@@ -20,11 +20,9 @@ import {
   fileTree,
   filterCards,
   flattenTree,
-  sortUpstream,
   stateFilterOf,
   suggestedAdoptName,
   upstreamSummary,
-  upstreamTree,
 } from "../public/model.js";
 
 // fixture 就在这个文件里（以前读 public/mock/skills.json，那个目录已经删了 ——
@@ -196,17 +194,6 @@ test("upstreamSummary：不认识的 local 当成未取用，不静默丢掉", (
   assert.equal(upstreamSummary([{ local: "weird" }]).total, 1);
 });
 
-test("sortUpstream：未取用 → 有更新 → 名字被占 → 已取用；同档按路径", () => {
-  const sorted = sortUpstream([
-    { path: "b/same", local: "same" },
-    { path: "c/taken", local: "taken" },
-    { path: "a/none", local: "none" },
-    { path: "a/none2", local: "none" },
-    { path: "b/changed", local: "changed" },
-  ]).map((entry) => entry.path);
-  assert.deepEqual(sorted, ["a/none", "a/none2", "b/changed", "c/taken", "b/same"]);
-});
-
 test("suggestedAdoptName：名字被占时退一格", () => {
   assert.equal(suggestedAdoptName({ name: "code-review", local: "none" }), "code-review");
   assert.equal(suggestedAdoptName({ name: "code-review", local: "taken" }), "code-review-upstream");
@@ -217,47 +204,8 @@ test("suggestedAdoptName：名字被占时退一格", () => {
 
 const up = (path, local = "none") => ({ source: "matt", path, name: path.split("/").at(-1), local });
 
-test("upstreamTree：平铺清单退化成一层", () => {
-  const tree = upstreamTree([up("code-review"), up("weekly-report")]);
-  assert.equal(tree.n, 2);
-  assert.deepEqual(
-    tree.children.map((node) => [node.kind, node.name]),
-    [["skill", "code-review"], ["skill", "weekly-report"]],
-  );
-});
-
-test("upstreamTree：多层路径自己长出目录，目录在前技能在后", () => {
-  const tree = upstreamTree([up("skills/b"), up("plugins/x/skills/c"), up("aaa")]);
-  assert.equal(tree.n, 3);
-  assert.deepEqual(
-    tree.children.map((node) => node.name),
-    ["plugins", "skills", "aaa"],
-  );
-  const plugins = tree.children[0];
-  assert.equal(plugins.kind, "dir");
-  assert.equal(plugins.n, 1);
-  assert.equal(plugins.children[0].path, "plugins/x");
-  assert.equal(plugins.children[0].children[0].path, "plugins/x/skills");
-  assert.equal(plugins.children[0].children[0].children[0].kind, "skill");
-});
-
-test("upstreamTree：目录上那个数是「这一层往下的技能条数」，todo 只数要动手的", () => {
-  const tree = upstreamTree([up("a/x", "none"), up("a/y", "same"), up("a/z", "changed")]);
-  const a = tree.children[0];
-  assert.equal(a.n, 3);
-  assert.equal(a.todo, 2);
-  assert.equal(tree.n, 3);
-  assert.equal(tree.todo, 2);
-});
-
-test("upstreamTree：一个目录自己就是技能、里面还有子目录，不丢那一条", () => {
-  const tree = upstreamTree([up("x"), up("x/y")]);
-  const x = tree.children[0];
-  assert.equal(x.kind, "dir");
-  assert.equal(x.entry.path, "x");
-  assert.equal(x.n, 2);
-  assert.equal(x.children[0].path, "x/y");
-});
+// 上游那一层不再有「清单折成树」这件事：一个订阅 = 一条技能（整个仓），
+// 目录只活在抽屉里那棵用 `fileTree` 算出来的树里。`upstreamTree` 跟着删了。
 
 // 目录是**筛子**不是页面：上游那一屏的地址只到订阅（`#upstream/matt`），
 // 所以「钻到某一层」「面包屑」这两个纯函数跟着一起去掉了 —— 那套是文件管理器的形状。
@@ -329,18 +277,3 @@ test("dirPaths：所有文件夹（打开抽屉时默认全展开）", () => {
   assert.deepEqual(dirPaths(tree), ["a", "a/b"]);
 });
 
-test("fileTree：上游那份「跟本地不一样」的记号挂在文件节点上，本地树一律 null", () => {
-  const upstream = fileTree([
-    { path: "SKILL.md", size: 10, state: "diff" },
-    { path: "references/a.md", size: 5, state: "missing" },
-  ]);
-  const files = upstream.children.filter((node) => node.type === "file");
-  assert.deepEqual(
-    files.map((node) => [node.path, node.mark]),
-    [["SKILL.md", "diff"]],
-  );
-  assert.equal(upstream.children.find((node) => node.name === "references").children[0].mark, "missing");
-  // 本地目录没有 state 这一列 —— 不许凭空标出记号
-  const local = fileTree([{ path: "SKILL.md", size: 3 }]);
-  assert.equal(local.children[0].mark, null);
-});

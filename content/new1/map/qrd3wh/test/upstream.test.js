@@ -325,7 +325,8 @@ test("上游正文从镜像里读：GET 拿得到，POST 是 405 —— 别人�
     await ctx.call("POST", "/v1/skills/upstream/refresh", {});
     const out = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/tdd");
     assert.equal(out.status, 200, out.body?.error);
-    assert.equal(out.body.file, "SKILL.md");
+    // `file` 回的是**仓里的路径**（不带上「哪一条」那一层，那层在 path 里）
+    assert.equal(out.body.file, "skills/engineering/tdd/SKILL.md");
     assert.match(out.body.text, /name: tdd/);
     assert.ok(out.body.size > 0);
 
@@ -370,6 +371,47 @@ test("上游的文件清单带大小和子目录 —— 抽屉里那棵树要的
     const deep = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/x&file=references/deep/b.md");
     assert.equal(deep.status, 200, deep.body?.error);
     assert.equal(deep.body.text, "# b\n");
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
+  }
+});
+
+test("整个仓的树：一个订阅 = 一条技能，根是仓根", async () => {
+  const source = await makeRepo({
+    files: {
+      "skills/engineering/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n`,
+      "skills/engineering/x/references/a.md": "# a\n",
+      "skills/in-progress/y/SKILL.md": `---\nname: y\ndescription: "y"\n---\n\n正文\n`,
+      "README.md": "别人的仓\n",
+    },
+  });
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("GET", "/v1/skills/upstream/tree?source=matt");
+    assert.equal(out.status, 200, out.body?.error);
+    // 整仓：README 也在（prefix 只筛「哪些是技能」，不筛「仓里有什么」）
+    assert.deepEqual(out.body.files.map((file) => file.path).sort(), [
+      "README.md",
+      "skills/engineering/x/SKILL.md",
+      "skills/engineering/x/references/a.md",
+      "skills/in-progress/y/SKILL.md",
+    ]);
+    assert.ok(out.body.files.every((file) => file.size > 0));
+
+    // 从仓根读：`path` 空 + `file` 是仓里的路径
+    const text = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&file=skills/engineering/x/references/a.md");
+    assert.equal(text.status, 200, text.body?.error);
+    assert.equal(text.body.text, "# a\n");
+    assert.equal(text.body.file, "skills/engineering/x/references/a.md");
+
+    // 老形状（目录 + 文件名）也还认
+    const old = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/x&file=SKILL.md");
+    assert.equal(old.status, 200, old.body?.error);
+    assert.match(old.body.text, /name: x/);
+
+    const escape = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&file=../../../etc/passwd");
+    assert.equal(escape.status, 400);
   } finally {
     await teardown(ctx.root, ctx.data, source);
   }
