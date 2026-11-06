@@ -226,6 +226,10 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 | 有 `<path>/` | 没有 | 未发布（`tracked: false`，面板上琥珀虚线） |
 | `.archive/<名>/` | 有 | 已归档，能 `restore` 回来；`purge` 才真删 |
 
+`skills[]` 每条还带 **`files: N`** —— 这条技能里有几个文件（面板卡底和抽屉头那个「文件 N 个」）。
+数的是「装得进去的东西」（`SKILL.md` + 附件），跳过 `.git`、`node_modules`、点开头的，只数文件。
+变体的树各算各的（走各自的 `dir`），所以同一个数永远是**那一棵**的。
+
 - **新建**只落工作区（`tracked: false`），**发布**才 commit + push。
 - **发布 = 闸 + 重扫 `index.json` + commit + push，一步**：闸（frontmatter 的 name/description、
   `nous.json` 的三字段）不过，一个字节都不动（`index.json` 也不重扫，否则留下「扫了一半」的假象）。
@@ -293,7 +297,7 @@ GET  /                            那棵树
 GET  /v1/device                   我是谁、模型、编目状态
 GET  /v1/models                   items[]（含档位表/窗口/输出上限）+ catalog{base,at,error,providers[],skipped[]}
 POST /v1/catalog/refresh          重拉编目与密钥（换密钥 / 编目里加了供应商之后）
-GET  /v1/skills                   仓库全景：root + repo{head,dirty,ahead,behind,remote} + skills[]（带 tracked）+ archived[] + categories[]
+GET  /v1/skills                   仓库全景：root + repo{head,dirty,ahead,behind,remote} + skills[]（带 tracked + files）+ archived[] + categories[]
 GET  /v1/skills/categories        词表（受保护类别：一个都不护，见 spec §3.6）
 POST /v1/skills/categories        {op:"add"|"rename"|"remove", name, to}
 POST /v1/skills/category          {name, category[]} → 写这条技能的 nous.json + 并进词表

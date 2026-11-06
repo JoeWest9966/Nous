@@ -344,6 +344,13 @@ a.filter-chip { text-decoration: none; }
 }
 /* 有卡底的时候正文那块的下边距要让出来，不然细线上方空一大条。 */
 .product-body:has(+ .product-foot) { padding-bottom: 4px; }
+/* 卡底那颗「N 条」：样子直接借上游卡左上角那颗角标（`badge-float dir`）——
+   mono 10px、洗过的底色、5px 圆角。数的是这条技能代表几个 `SKILL.md`。 */
+.badge-count {
+  font: 600 10px/1 var(--mono); letter-spacing: 0.04em;
+  padding: 3px 7px; border-radius: 5px;
+  background: color-mix(in srgb, var(--ink) 7%, var(--wash)); color: var(--ink-2);
+}
 .pmeta { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
 .pmeta-k { color: var(--dim); }
 .pmeta-v { color: var(--ink-2); }
@@ -525,6 +532,12 @@ a.filter-chip { text-decoration: none; }
 :root[data-theme="dark"] .badge-float.up-new { color: #1a1206; }
 
 /* 上游版本：跟认的不一样时那个箭头 —— 用 warn 色，别用红（不是错误，是「动了」）。 */
+/* 版本号旁边那个日期：比版本号淡一档 —— 它是注解，不是身份。
+   这一行是 flex（每个 token `nowrap`，间距交给 `gap`）：窄屏上它会在**空格处**折行，
+   而不是把 `2026-11-06` 从中间劈成 `2026-11-` / `06`。别改回纯文本。 */
+.up-card .product-sum { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.up-card .product-sum > span { white-space: nowrap; }
+.up-date { color: var(--dim); }
 .up-drift { color: var(--warn); }
 .up-drift:hover { text-decoration: none; }
 

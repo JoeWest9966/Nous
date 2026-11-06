@@ -986,3 +986,22 @@ test("tracked：HEAD 里有的算已发布，分组里的也算（不能只看�
   assert.equal(byName.get("fresh").tracked, false, "没进 HEAD 的才是未发布");
   await cleanup(root);
 });
+
+test("files：卡底那个「文件 N 个」—— 数文件不数目录，`.git` / `node_modules` / 点开头的不算", async () => {
+  const { root, skills } = await setup({
+    ...skillFiles("counted"),
+    "counted/references/deep/more.md": "深一层也算",
+    "counted/.hidden": "点开头的不算（那是本机杂碎，不是技能内容）",
+    "counted/node_modules/pkg/index.js": "依赖也不算",
+    "counted/empty-dir/.keep": "",
+  });
+  const api1 = api(root, skills);
+  try {
+    const overview = await api1.call("GET", "/v1/skills");
+    const skill = overview.body.skills.find((item) => item.name === "counted");
+    // SKILL.md + nous.json + references/deep/more.md + empty-dir/.keep 里那个点开头的也不算
+    assert.equal(skill.files, 3, "应该只数 SKILL.md、nous.json、references/deep/more.md");
+  } finally {
+    await cleanup(root);
+  }
+});

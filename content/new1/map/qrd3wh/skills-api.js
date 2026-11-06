@@ -314,6 +314,25 @@ const restoreIndex = async ({ file, text }) => {
   else await writeFile(file, text, "utf8").catch(() => {});
 };
 
+/**
+ * 这条技能里有几个文件 —— 卡底和抽屉头上那个「文件 N 个」。
+ *
+ * 数的是**装得进去的东西**（`SKILL.md` + 附件），所以跳过点开头的和 `node_modules`：
+ * 数到 `.git` 里几千个对象只会让人以为这条技能很大。目录本身不算，只数文件。
+ * 深度封顶，别让一个环（软链）把这一页拖死 —— 一层层往下的技能不存在，八层够了。
+ */
+const countFiles = async (dir, depth = 0) => {
+  if (!dir || depth > 8) return 0;
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  let total = 0;
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    if (entry.isDirectory()) total += await countFiles(path.join(dir, entry.name), depth + 1);
+    else if (entry.isFile()) total += 1;
+  }
+  return total;
+};
+
 /** 写完盘让内存名册跟上。跟不上的话面板说有、会话里没有。 */
 const reloadRoster = async (skills) => {
   try {
@@ -356,7 +375,15 @@ const overview = async (repo, root, skills) => {
     repo: { ...state, remote, error },
     // `tracked: false` + 目录在 = 未发布。跟面板上的琥珀虚线是同一个判据。
     // 比的是 `path` 不是 `name`：分组里的技能（`deprecated/demo`）用名字去 HEAD 里找永远找不到。
-    skills: (roster ?? []).map((skill) => ({ ...skill, tracked: tracked.has(skill.path ?? skill.name) })),
+    skills: await Promise.all(
+      (roster ?? []).map(async (skill) => ({
+        ...skill,
+        tracked: tracked.has(skill.path ?? skill.name),
+        // 卡底那行「文件 N 个」：正文里能看到树，但卡片上得先知道这条技能有几斤。
+        // 变体的树走各自的 `dir`，所以同一个数永远是**这一棵**的。
+        files: await countFiles(skill.dir),
+      })),
+    ),
     archived: archived.map((entry) => entry.name).sort((a, b) => a.localeCompare(b, "zh-CN")),
     categories,
     // 抽屉（`deprecated` 这种只装技能的目录）：新建技能时可以直接选，不用手打。

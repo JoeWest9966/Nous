@@ -47,8 +47,13 @@ const SELF = (() => {
   const injected = typeof window === "undefined" ? null : window.__nous_self;
   const fromBase =
     typeof document === "undefined" ? null : document.querySelector("base")?.getAttribute("href") ?? null;
-  const fallback = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
-  const path = String(injected || fromBase || fallback);
+  const self = () => {
+    // 裸跑（`node server.js`，没有宿主注入）时路径本来就是根。但 `/upstream` 这种是**路由**，
+    // 不是根 —— 认出来就当根在 `/`，不然 `routeOf` 会把这截路径当成块名。
+    if (/^\/(upstream|pending)(\/|$)/.test(location.pathname)) return "/";
+    return location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+  };
+  const path = String(injected || fromBase || self());
   return path.endsWith("/") ? path : `${path}/`;
 })();
 const $ = (id) => document.getElementById(id);
@@ -64,13 +69,25 @@ const el = (tag, className, text) => {
 const short = (sha) => (sha ? sha.slice(0, 7) : "—");
 
 let toastTimer;
-function toast(message, kind = "") {
+function toast(message, kind = "", action = null) {
   const node = $("toast");
-  node.textContent = message;
+  node.textContent = "";
+  node.append(document.createTextNode(message));
+  // 一件事做完，得给一条去路。「抄好了：tdd」之后人想知道的是「它在哪、我怎么进去」，
+  // 不是一句恭喜。动作是可选的，不带就是个普通提示。
+  if (action) {
+    const go = el("button", "toast-action", action.label);
+    go.type = "button";
+    go.onclick = () => {
+      node.hidden = true;
+      action.run();
+    };
+    node.append(go);
+  }
   node.dataset.kind = kind;
   node.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (node.hidden = true), 3600);
+  toastTimer = setTimeout(() => (node.hidden = true), action ? 7000 : 3600);
 }
 
 /**
@@ -643,8 +660,58 @@ function productCard(card) {
   const tags = tagRow(skill, { readOnly: true });
   if (tags.childNodes.length) body.append(tags);
   node.append(body);
+  node.append(productFoot(skill));
   return node;
 }
+
+/**
+ * 卡底那一行：一条细线压着「文件 / 变体」两个数。骨架跟扩展面板（vbe4pt）一模一样 ——
+ * 那里也是 `.product-foot` + 几对「标签 值」，扫一眼就知道这条东西几斤几两。
+ *
+ * 为什么是这两个数：卡片上别的都答完了（名字、说明、类别、状不状态），剩下不知道的
+ * 就是「它有多大」和「它有几个可装载名字」—— 正文里能看到文件树，可那要两级点击。
+ */
+function productFoot(skill) {
+  const foot = el("div", "product-foot");
+  const meta = (label, value, title) => {
+    const span = el("span", "pmeta");
+    span.append(el("span", "pmeta-k", label));
+    span.append(el("span", "pmeta-v", value));
+    if (title) span.title = title;
+    return span;
+  };
+
+  // 那颗胶囊数的是**这张卡代表几个 `SKILL.md`** —— 跟上游卡上 `39 条` 同一个判据：
+  // 上游数的是「那个仓里几个带 SKILL.md 的目录」，这里数「这条技能这一族几个 SKILL.md」。
+  // 平时是 1；挂了变体就是 2（本体 + 变体树各一份）。跟「文件 N 个」是两件事：
+  // 一个是「它代表几条技能」，一个是「它有多大」。
+  const keys = familyKeysOf(skill);
+  const badge = el("span", "badge-count", `${keys.length} 条`);
+  badge.title = keys.join("、");
+  foot.append(badge);
+
+  const files = skill.files;
+  const has = Number.isFinite(files);
+  foot.append(
+    meta("文件", has ? `${files} 个` : "—", has ? `${skill.dir ?? skill.name} 里 ${files} 个文件` : "服务端没报文件数"),
+  );
+
+  return foot;
+}
+
+/** 这条技能（本体）的变体。`variants` 是服务端按本名分好组的。 */
+const variantsOf = (skill) => state.data?.variants?.[splitSkillKey(skill.name).family] ?? [];
+
+/**
+ * 这一族在名册里的**全部注册名**（本体 + 变体）。一个注册名 = 盘上一份 `SKILL.md`，
+ * 所以它的长度就是卡上那颗「N 条」—— 数的是名册，不是我在这边猜目录。
+ */
+const familyKeysOf = (skill) => {
+  const family = splitSkillKey(skill.name).family;
+  return (state.data?.skills ?? [])
+    .filter((item) => splitSkillKey(item.name).family === family)
+    .map((item) => item.name);
+};
 
 // ── 筛选栏 + 左栏 facet ────────────────────────────────────────────────────
 
@@ -1029,7 +1096,11 @@ function renderDetail() {
 
   // ── 抽屉头：色砖 + 名字 + 状态 + 类别 ────────────────────────────────
   $("dt-name").textContent = skill.name;
-  $("dt-meta").textContent = cats.length ? cats.join(" · ") : "未分类";
+  // 头那行：类别 · 文件 N 个 · 变体 N 个。卡片上有的数，进来也得有 —— 进来正是为了看细节。
+  const metaBits = [cats.length ? cats.join(" · ") : "未分类"];
+  metaBits.push(`${familyKeysOf(skill).length} 条`);
+  if (Number.isFinite(skill.files)) metaBits.push(`文件 ${skill.files} 个`);
+  $("dt-meta").textContent = metaBits.join(" · ");
   $("dt-tile").style.setProperty("--hue", String(hueOf(skill.name)));
   $("dt-mono").textContent = initialsOf(skill.name);
   const badges = $("dt-badges");
@@ -1366,9 +1437,11 @@ function applyRoute() {
   const route = routeOf();
   if (route.view === "upstream") {
     openUpstream(route.source ?? undefined, { silent: true });
-    // 订阅名不存在（比如改名之前的 `/upstream/matt`）→ 落到第一个，但**地址也跟着换过去**
+    // 订阅名不存在（比如改名之前的 `/upstream/matt`）→ 落到第一个，但**地址也跟着摆正**
     // （replace，不留历史）：不然地址说 matt、屏幕是别的，复制出去还是坏的。
-    writePath({ view: "upstream", source: state.upstreamSource }, { replace: true });
+    // 地址里没写订阅名（就是 `/upstream`）→ 什么都不用改，别自作主张补一个。
+    const named = route.source && (state.upstream?.sources ?? []).some((item) => item.name === route.source);
+    if (route.source && !named) writePath({ view: "upstream" }, { replace: true });
     return;
   }
   if (state.upstreamOpen) closeUpstream({ silent: true });
@@ -1394,7 +1467,10 @@ function openUpstream(name = undefined, { silent = false } = {}) {
   const known = name && names.includes(name) ? name : null;
   state.upstreamSource = known ?? state.upstreamSource ?? names[0] ?? null;
   if (!names.includes(state.upstreamSource)) state.upstreamSource = names[0] ?? null;
-  if (!silent) writePath({ view: "upstream", source: state.upstreamSource });
+  // **地址只到「订阅」，但订阅要是人选的那一条**：点「上游」进来是 `/upstream`，
+  // 不带订阅名（不然一进来地址就自己变成了 `/upstream/skills`，贴出去的那条就没了）。
+  // 只有明确点了某条订阅（`switchSource`）才把名字写进地址。
+  if (!silent) writePath({ view: "upstream", source: name && known ? state.upstreamSource : null });
   render();
   $("results")?.scrollTo({ top: 0 });
 }
@@ -1583,6 +1659,14 @@ function openUpstreamMenu(x, y, source) {
     );
   });
   mountMenu(menu, x, y, first);
+}
+
+/** 版本旁边那个日期：`2026-11-06`。解析不了就空串，别把 `Invalid Date` 摆上台面。 */
+function dayText(version) {
+  const at = String(version?.at ?? "").trim();
+  if (!at) return "";
+  const day = new Date(at);
+  return Number.isNaN(day.getTime()) ? "" : day.toISOString().slice(0, 10);
 }
 
 /** 浮层里的正文：一个订阅那一层的事（仓库 / 路径 / 多少条 / 动作）。 */
@@ -1959,6 +2043,14 @@ function upstreamRepoCard(source) {
   const sum = el("p", "product-sum mono");
   if (source.version?.commit) {
     sum.append(el("span", "", versionText(source.version)));
+    // 版本号旁边跟一个**日期**：`v1.3.2+ · 2026-11-06`。人问「我认的是哪一版」时，
+    // 后半句往往是「什么时候的事」。只到天 —— 秒级精度在卡片这一格只会挤掉别的字。
+    const day = dayText(source.version);
+    if (day) {
+      const when = el("span", "up-date", day);
+      when.title = `认下这一版的那天（${new Date(source.version.at).toLocaleString()}）`;
+      sum.append(when);
+    }
     // 右箭头指「上游现在是哪一版」：有检查结果就用它，没有就看镜像漂到哪了。
     const ahead = source.newer
       ? versionText(source.remote?.version) || source.remote?.head?.slice(0, 7)
@@ -2318,9 +2410,12 @@ async function openEditor(skill, { path = null } = {}) {
   $("editor").hidden = false;
   setBehindInert();
   $("ed-name").textContent = skill.name;
-  $("ed-meta").textContent = `${skill.path && skill.path !== skill.name ? `${skill.path} · ` : ""}SKILL.md · ${
-    skill.tracked === false ? "未发布" : "已进 HEAD"
-  }`;
+  // 进度行：哪条分支/目录、发没发布、几条文件。数跟卡底一致（同一份名册来的）。
+  $("ed-meta").textContent = [
+    `${skill.path && skill.path !== skill.name ? `${skill.path} · ` : ""}SKILL.md`,
+    skill.tracked === false ? "未发布" : "已进 HEAD",
+    ...(Number.isFinite(skill.files) ? [`文件 ${skill.files} 个`] : []),
+  ].join(" · ");
   closeNewEntry();
   setEditorMode("edit");
   renderEditorFiles();
@@ -2509,6 +2604,21 @@ function openEditorEntryMenu(x, y, node) {
     );
   });
 
+  // 「抄」跟「复制路径」挨着，但完全是两件事：复制路径是剪贴板，抄是**直接写进自己的仓** ——
+  // 没有粘贴这一步。所以描述里把话说死，别让人以为还要去别处 Ctrl+V。
+  if (ed.kind === "upstream" && ed.readOnly) {
+    if (isDir) {
+      if (isUpstreamSkillDir(node)) {
+        menuItem(menu, "抄进我的技能", "整条搬进我的仓 · 不是剪贴板", () => {
+          const home = ed.prefix ? `${ed.prefix}/${node.path}` : node.path;
+          void copyUpstreamSkill(home);
+        });
+      }
+    } else {
+      menuItem(menu, "抄到我的技能…", "选一条我的技能，落进去 · 不是剪贴板", () => openCopyPick(node));
+    }
+  }
+
   // 别人的仓（只读）：菜单只剩看和复制的部分，删除那一格干脆不出现。
   if (!ed.readOnly) {
     menu.append(el("div", "ctx-sep"));
@@ -2567,29 +2677,6 @@ function isUpstreamSkillDir(node) {
   return (ed.files ?? []).some((file) => file.path === `${node.path}/SKILL.md`);
 }
 
-/** 抽屉里那条「抄」标 —— 骨子里跟「取用」一样，也是一个 role=button 的 span（不许 button 套 button）。 */
-function copyMark(node, label, title, onFire) {
-  const mark = el("span", "ed-file-mark", label);
-  mark.setAttribute("role", "button");
-  mark.tabIndex = 0;
-  mark.dataset.tone = "copy";
-  mark.title = title;
-  const off = Boolean(state.upstreamBusy);
-  mark.setAttribute("aria-disabled", String(off));
-  const fire = (event) => {
-    event.stopPropagation();
-    event.preventDefault();
-    if (off) return;
-    onFire();
-  };
-  mark.onclick = fire;
-  mark.onkeydown = (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    fire(event);
-  };
-  return mark;
-}
-
 /** 把上游的一条技能整抄过来。重名由服务端接（`tdd-2`、`tdd-3`…），我们只管说结果。 */
 async function copyUpstreamSkill(home) {
   if (state.upstreamBusy) return;
@@ -2598,10 +2685,16 @@ async function copyUpstreamSkill(home) {
   renderEditorFiles();
   try {
     const out = await transport.post("v1/skills/upstream/copy", { source: ed.source, path: home });
-    if (out.name !== out.original) toast(`抄好了：${out.name}（原来那条叫 ${out.original}，名字被占了）`);
-    else toast(`抄好了：${out.name}`);
     await load({ quiet: true });
     await loadUpstream({ quiet: true });
+    const renamed = out.name !== out.original ? `（${out.original} 已存在，叫了这个）` : "";
+    toast(`抄进你的仓了：${out.name}${renamed}`, "", {
+      label: "打开它 ›",
+      run: () => {
+        closeEditor({ force: true });
+        void openEditor(out.name);
+      },
+    });
   } catch (error) {
     toast(`抄失败：${error.message}`, "bad");
   } finally {
@@ -2638,9 +2731,15 @@ async function confirmCopyPick(node) {
       file,
       to: pick.value,
     });
-    toast(`抄好了：${out.path}`);
     ed.copyPick = null;
     await load({ quiet: true });
+    toast(`抄进你的仓了：${out.path}`, "", {
+      label: "打开它 ›",
+      run: () => {
+        closeEditor({ force: true });
+        void openEditor(out.name);
+      },
+    });
   } catch (error) {
     toast(`抄失败：${error.message}`, "bad");
   } finally {
@@ -2721,11 +2820,6 @@ function editorFileRow(node) {
   main.append(el("span", "ed-file-name", node.name));
   const mark = editorFileMark(node);
   if (mark) main.append(mark);
-  if (ed.kind === "upstream") {
-    main.append(
-      copyMark(node, "抄", "把这个文件抄进我自己的某一条技能里", () => openCopyPick(node)),
-    );
-  }
   main.append(el("span", "ed-file-size", bytes(node.size)));
   main.title = `${node.path} · ${bytes(node.size)}`;
   main.onclick = () => void openEditorFile(node.path);
@@ -2746,15 +2840,6 @@ function editorDirRow(node) {
   main.setAttribute("aria-expanded", String(open));
   main.append(el("span", "ed-file-caret", open ? "▾" : "▸"));
   main.append(el("span", "ed-file-name", node.name));
-  // 整条抄只对「装着 SKILL.md 的目录」开放 —— 别的目录抄下来是一堆没人认领的散文件。
-  if (isUpstreamSkillDir(node)) {
-    main.append(
-      copyMark(node, "抄", "整条抄进我们仓里（重名自动叫 -2、-3）", () => {
-        const home = ed.prefix ? `${ed.prefix}/${node.path}` : node.path;
-        void copyUpstreamSkill(home);
-      }),
-    );
-  }
   main.append(el("span", "ed-file-size", String(node.children.length)));
   main.title = `${node.path}/ · 点一下${open ? "收起" : "展开"}`;
   main.onclick = () => {
