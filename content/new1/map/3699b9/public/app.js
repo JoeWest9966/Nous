@@ -14,6 +14,7 @@
 //   菜单 → 启动确认 → 新建 → 确认框 → 编辑抽屉 → 详情 → 列表。
 
 import { buildDiff } from "./diff.js";
+import { createBoard } from "./board.js";
 import {
   ConflictError,
   CONFLICT_MESSAGE,
@@ -53,6 +54,9 @@ function el(tag, className, text) {
   if (text !== undefined) node.textContent = text;
   return node;
 }
+
+/** 机器键 name → 人读名：session_template 读作 Session Template（下划线转空格）。 */
+const displayName = (name) => String(name ?? "").replace(/_/g, " ");
 
 /** 名字 → 色相。同一个名字永远同一个颜色（跟 68kazk / 6ysg01 / vbe4pt 同一个算法）。 */
 function hueOf(name) {
@@ -104,12 +108,6 @@ const state = {
   editing: null, // 编辑器里那条的 name
   kb: { row: 0, col: 0, on: false },
   railOpen: false,
-  /**
-   * 编辑抽屉里那几个勾选框要的**全量**名单。它们是兄弟块的东西（技能 / 模板 / 扩展），
-   * 所以只能问 qrd3wh 要（它握着 registry 和两个私库）。问不到就退回「仓里出现过的名字」——
-   * 少几个选项比拿一份假的「全部」好。
-   */
-  catalogs: { skills: null, prompts: null, extensions: null },
 };
 
 let api = null;
@@ -131,35 +129,6 @@ async function boot() {
     validate: (payload) => api.post("v1/presets/validate", payload),
   });
   await Promise.all([refresh(), refreshDevice()]);
-}
-
-/**
- * 拉三份名单（技能 / 模板 / 扩展）。一次编辑只拉一次，失败就退回去。
- * 三个 try 分开：一个挂了不该把另外两份名单一起拖下水（修的地方也不一样）。
- */
-async function loadCatalogs() {
-  if (state.catalogs.skills && state.catalogs.prompts && state.catalogs.extensions) return;
-  const [skills, prompts, extensions] = await Promise.all([
-    state.catalogs.skills
-      ? Promise.resolve(state.catalogs.skills)
-      : api
-          .get("v1/skills")
-          .then((data) => (data.skills ?? []).map((item) => item.name))
-          .catch(() => null),
-    state.catalogs.prompts
-      ? Promise.resolve(state.catalogs.prompts)
-      : api
-          .get("v1/prompts")
-          .then((data) => (data.prompts ?? []).map((item) => item.name))
-          .catch(() => null),
-    state.catalogs.extensions
-      ? Promise.resolve(state.catalogs.extensions)
-      : api
-          .get("v1/extensions")
-          .then((data) => (data.installed ?? []).map((item) => (typeof item === "string" ? item : item.name)))
-          .catch(() => null),
-  ]);
-  state.catalogs = { skills, prompts, extensions };
 }
 
 async function refreshDevice() {
@@ -424,7 +393,7 @@ function cardFor(preset, index) {
   const tile = el("div", "tile", monoOf(preset.name));
   tile.style.cssText = tileStyle(preset.name);
   const titles = el("div", "card-titles");
-  const name = el("h3", "card-name", preset.name);
+  const name = el("h3", "card-name", displayName(preset.name));
   const summary = el("p", "card-summary", preset.summary || "（没有摘要）");
   summary.title = preset.summary ?? "";
   titles.append(name, summary);
@@ -599,7 +568,7 @@ function renderDetail(name) {
 
   $("dt-mono").textContent = monoOf(preset.name);
   $("dt-tile").style.cssText = tileStyle(preset.name);
-  $("dt-name").textContent = preset.name;
+  $("dt-name").textContent = displayName(preset.name);
   const badges = $("dt-badges");
   badges.innerHTML = "";
   for (const badge of badgesFor(preset, status)) badges.append(badge);
@@ -854,7 +823,6 @@ async function openEditor(name) {
   $("ed-meta").textContent = "preset.json";
   setEdState("载入…");
   try {
-    await loadCatalogs();
     const file = await api.get(`v1/presets/file?name=${encodeURIComponent(name)}&path=preset.json`);
     editor.text = file.text;
     editor.base = file.etag;
@@ -913,318 +881,50 @@ function showEdMessage(text, tone = "") {
   box.dataset.tone = tone;
 }
 
-// ── 表单 ───────────────────────────────────────────────────────────────────
+// ── 盘面 ───────────────────────────────────────────────────────────────────
+//
+// 这一屏是**盘面**，不是表单：四个域各一颗节点，点开各自的弹窗，中间那颗椭圆落子。
+// 结构住在 board.js（版式照 hb7k3j），这里只负责三件事：喂数据、收改动、落盘。
+//   · 数据只有一份 —— `editor.draft`。board.js 里不存副本，两张皮必分叉。
+//   · 改一次 ⇒ markDirty()（顺带把 JSON 文本同步过去，两个 tab 编的是同一份东西）。
+//   · 「启动」先落盘再开对话：拿没存过的东西开会话，等于让盘上的和屏幕上的不一样。
+
+let board = null;
+
+function ensureBoard() {
+  if (board) return board;
+  board = createBoard({
+    root: $("board"),
+    api,
+    getDraft: () => editor.draft,
+    getModels: () => models,
+    getDeviceModel: () => deviceModel,
+    getName: () => editor.name,
+    isDirty: () => editor.dirty,
+    onChange: () => markDirty(),
+    onSave: () => saveEditor({ publish: false }),
+    onPublish: () => saveEditor({ publish: true }),
+    onState: (text) => showEdMessage(text, "bad"),
+  });
+  void board.load();
+  return board;
+}
 
 function renderForm() {
-  const box = $("ed-form");
-  box.innerHTML = "";
   const draft = editor.draft;
   if (!draft) return;
   if (draft.broken) {
-    box.append(el("p", "redline", "preset.json 不是合法 JSON —— 去 JSON 那一栏修好，表单这边才有东西可改。"));
+    showEdMessage("preset.json 不是合法 JSON —— 去 JSON 那一栏修好，盘面才有东西可改。", "bad");
     return;
   }
-
-  box.append(field("一句话摘要", () => {
-    const input = el("input");
-    input.type = "text";
-    input.maxLength = 200;
-    input.value = draft.summary;
-    input.oninput = () => {
-      draft.summary = input.value;
-      markDirty();
-      revalidate();
-    };
-    return input;
-  }));
-
-  box.append(field("说明（给人看的，不进提示词）", () => {
-    const area = el("textarea");
-    area.value = draft.description;
-    area.oninput = () => {
-      draft.description = area.value;
-      markDirty();
-    };
-    return area;
-  }));
-
-  box.append(field("类别（可写路径，逗号分隔）", () => {
-    const input = el("input");
-    input.type = "text";
-    input.value = (draft.category ?? []).join(", ");
-    input.oninput = () => {
-      draft.category = input.value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-      markDirty();
-    };
-    return input;
-  }));
-
-  box.append(field("模型", () => {
-    const select = el("select");
-    select.append(new Option(`跟随设备默认${deviceModel ? ` · ${deviceModel.provider}/${deviceModel.modelId}` : ""}`, ""));
-    for (const model of models) {
-      const value = `${model.provider}/${model.modelId}`;
-      const option = new Option(value, value);
-      option.selected = draft.model && draft.model.provider === model.provider && draft.model.modelId === model.modelId;
-      select.append(option);
-    }
-    // 钉的那台不在编目里（引用失效）：也得能看见，不然「改一下模型」这个动作做不了。
-    if (draft.model && !models.some((m) => m.provider === draft.model.provider && m.modelId === draft.model.modelId)) {
-      const value = `${draft.model.provider}/${draft.model.modelId}`;
-      const option = new Option(`${value}（不在编目里）`, value);
-      option.selected = true;
-      select.append(option);
-    }
-    select.onchange = () => {
-      const value = select.value;
-      draft.model = value ? { provider: value.split("/")[0], modelId: value.split("/").slice(1).join("/") } : null;
-      // 换模型要重新夹档位：留在这儿等于让面板显示 A、存进去是 B。
-      const levels = levelsOfDraft(draft);
-      if (draft.thinkingLevel && levels.length && !levels.includes(draft.thinkingLevel)) draft.thinkingLevel = "";
-      markDirty();
-      revalidate();
-      renderForm();
-    };
-    return select;
-  }));
-
-  box.append(field(`思考档${draft.model ? "" : "（没钉模型 → 到时候按设备默认模型夹）"}`, () => {
-    const levels = levelsOfDraft(draft);
-    const select = el("select");
-    select.append(new Option("不写（引擎缺省 off）", ""));
-    for (const level of levels.length ? levels : ["off", "minimal", "low", "medium", "high", "xhigh", "max"]) {
-      const option = new Option(level, level);
-      option.selected = draft.thinkingLevel === level;
-      select.append(option);
-    }
-    select.onchange = () => {
-      draft.thinkingLevel = select.value;
-      markDirty();
-      revalidate();
-    };
-    return select;
-  }));
-
-  box.append(modeGroup("技能", draft.skillsMode, (mode) => {
-    draft.skillsMode = mode;
-    if (mode === "none") draft.skills = [];
-    if (mode === "picked" && !draft.skills.length) draft.skills = [];
-    markDirty();
-    revalidate();
-    renderForm();
-  }, draft.skillsMode === "picked" ? () => skillPicker(draft) : null));
-
-  box.append(modeGroup("扩展", draft.extMode, (mode) => {
-    draft.extMode = mode;
-    if (mode === "none") draft.extensions = [];
-    markDirty();
-    revalidate();
-    renderForm();
-  }, draft.extMode === "picked" ? () => extensionPicker(draft) : null));
-
-  box.append(modeGroup("模板", draft.templateMode, (mode) => {
-    draft.templateMode = mode;
-    markDirty();
-    revalidate();
-    renderForm();
-  }, draft.templateMode === "picked" ? () => templatePicker(draft) : null));
-
-  box.append(field("只读（不给会写的工具）", () => {
-    const label = el("label", "check");
-    const input = el("input");
-    input.type = "checkbox";
-    input.checked = draft.readOnly;
-    input.onchange = () => {
-      draft.readOnly = input.checked;
-      markDirty();
-    };
-    label.append(input, el("span", null, "只读 —— 能读能跑，不能写盘"));
-    return label;
-  }));
-
-  const refreshed = el("p", "refreshed", "校验由服务端算（面板说能跑的 = 真能跑的）");
-  box.append(refreshed);
-}
-
-function field(label, build) {
-  const wrap = el("label", "field");
-  wrap.append(el("span", null, label));
-  wrap.append(build());
-  return wrap;
-}
-
-/** 三态单选：默认 / 都不要 / 选几个。**别用勾选框表达三态** —— 勾选框只有两态。 */
-function modeGroup(label, mode, onMode, extra) {
-  const group = el("div", "group");
-  const head = el("div", "group-head");
-  head.append(el("span", null, label));
-  const seg = el("div", "seg");
-  for (const [key, text] of [
-    ["default", "跟随默认"],
-    ["none", "都不要"],
-    ["picked", "选几个"],
-  ]) {
-    const button = el("button", null, text);
-    button.type = "button";
-    button.setAttribute("aria-pressed", String(mode === key));
-    button.onclick = () => onMode(key);
-    seg.append(button);
-  }
-  head.append(seg);
-  group.append(head);
-  if (extra) group.append(extra());
-  return group;
-}
-
-const levelsOfDraft = (draft) => {
-  if (!draft.model) {
-    const levels = new Set();
-    for (const model of models) for (const level of model.thinkingLevels ?? []) levels.add(level);
-    return [...levels].filter((level) => level !== "off");
-  }
-  const model = models.find((item) => item.provider === draft.model.provider && item.modelId === draft.model.modelId);
-  return (model?.thinkingLevels ?? []).filter((level) => level !== "off");
-};
-
-function skillPicker(draft) {
-  const grid = el("div", "checkgrid");
-  for (const name of pickerSkills(draft)) {
-    const label = el("label", "check");
-    const input = el("input");
-    input.type = "checkbox";
-    input.checked = (draft.skills ?? []).includes(name);
-    input.onchange = () => {
-      const next = new Set(draft.skills ?? []);
-      if (input.checked) next.add(name);
-      else next.delete(name);
-      draft.skills = [...next];
-      markDirty();
-      revalidate();
-    };
-    label.append(input, el("span", null, name));
-    grid.append(label);
-  }
-  grid.append(
-    el(
-      "p",
-      "refreshed",
-      state.catalogs.skills
-        ? `名单来自 Nous-skills（${state.catalogs.skills.length} 条）`
-        : "拿不到技能清单 —— 只列仓里出现过的名字；要加新的去 JSON 那一栏写",
-    ),
-  );
-  return grid;
-}
-
-/** 勾选框的候选：全量名单 ∪ 已经勾上的（勾上的那条就算从清单里消失了，也得能取消）。 */
-function pickerSkills(draft) {
-  const out = new Set(state.catalogs.skills ?? allKnownSkills());
-  for (const name of draft.skills ?? []) out.add(name);
-  return [...out].filter(Boolean).sort();
-}
-
-function extensionPicker(draft) {
-  const grid = el("div", "checkgrid");
-  // 只列**真扩展**：名牌（`skill:` / `prompt:`）有各自的字段，混进来一定会写错。
-  for (const name of pickerExtensions(draft)) {
-    const label = el("label", "check");
-    const input = el("input");
-    input.type = "checkbox";
-    input.checked = (draft.extensions ?? []).includes(name);
-    input.onchange = () => {
-      const next = new Set(draft.extensions ?? []);
-      if (input.checked) next.add(name);
-      else next.delete(name);
-      draft.extensions = [...next];
-      markDirty();
-      revalidate();
-    };
-    label.append(input, el("span", null, name));
-    grid.append(label);
-  }
-  grid.append(
-    el(
-      "p",
-      "refreshed",
-      state.catalogs.extensions
-        ? `名单来自这台进程里装着的扩展（${state.catalogs.extensions.length} 个）`
-        : "拿不到扩展清单 —— 只列仓里出现过的名字",
-    ),
-  );
-  return grid;
-}
-
-function pickerExtensions(draft) {
-  const base = (state.catalogs.extensions ?? allKnownExtensions()).filter((name) => name && !name.includes(":"));
-  const out = new Set(base);
-  for (const name of draft.extensions ?? []) out.add(name);
-  return [...out].filter(Boolean).sort();
-}
-
-function templatePicker(draft) {
-  const wrap = el("div");
-  const select = el("select");
-  select.append(new Option("— 选一条 —", ""));
-  for (const name of pickerTemplates(draft)) {
-    const option = new Option(name, name);
-    option.selected = draft.template === name;
-    select.append(option);
-  }
-  if (draft.template && !pickerTemplates(draft).includes(draft.template)) {
-    const option = new Option(`${draft.template}（不在私库里）`, draft.template);
-    option.selected = true;
-    select.append(option);
-  }
-  select.onchange = () => {
-    draft.template = select.value;
-    markDirty();
-    revalidate();
-  };
-  wrap.append(select);
-  wrap.append(
-    el(
-      "p",
-      "refreshed",
-      state.catalogs.prompts
-        ? `名单来自 Nous-prompts（${state.catalogs.prompts.length} 条）`
-        : "拿不到模板清单 —— 只列仓里出现过的名字",
-    ),
-  );
-  return wrap;
-}
-
-function pickerTemplates(draft) {
-  const out = new Set([...(state.catalogs.prompts ?? allKnownTemplates())]);
-  if (draft.template) out.add(draft.template);
-  return [...out].sort();
-}
-
-/** 仓里出现过的技能 / 扩展 / 模板名（从每条预设的 `resolved` 里凑，不去别处拉全量）。 */
-function allKnownSkills() {
-  const out = new Set();
-  for (const preset of state.presets) for (const row of preset.resolved?.skills ?? []) out.add(row.ref);
-  return [...out];
-}
-function allKnownExtensions() {
-  const out = new Set();
-  for (const preset of state.presets) for (const row of preset.resolved?.extensions ?? []) out.add(row.ref);
-  return [...out];
-}
-function allKnownTemplates() {
-  const out = new Set();
-  for (const preset of state.presets) {
-    const row = preset.resolved?.template;
-    if (row?.ref) out.add(row.ref);
-  }
-  return [...out].sort();
+  ensureBoard().render();
 }
 
 function markDirty() {
   editor.dirty = true;
   setEdState("未保存", "warn");
+  // 盘面自己也要跟着变：框上的字、中央那行状态、只读那颗的开关，都读的是同一份草稿。
+  board?.render();
   // 表单改了就把 JSON 文本同步过去 —— 两个 tab 编的是同一份东西。
   if (editor.mode === "form") syncTextFromForm();
 }
@@ -1325,8 +1025,10 @@ async function saveEditor({ publish = false } = {}) {
     editor.baseline = await baselineOf(name, "preset.json");
     setEdState("已保存 · 未提交");
     showEdMessage("已保存到磁盘（还没提交）", "ok");
+    board?.render();
     if (publish) await publishFromEditor(name);
     await refresh();
+    board?.render();
   } catch (error) {
     if (error instanceof ConflictError || error?.conflict) {
       setEdState("冲突", "bad");
@@ -1818,8 +1520,6 @@ function bind() {
   $("dt-scrim").onclick = () => closeDetail();
   $("ed-close").onclick = () => closeEditor();
   $("ed-scrim").onclick = () => closeEditor();
-  $("ed-save").onclick = () => void saveEditor({ publish: false });
-  $("ed-publish").onclick = () => void saveEditor({ publish: true });
   $("ed-tab-form").onclick = () => {
     // 表单 ← JSON：只在 JSON 能解析时回填（非法 JSON 上回填等于猜）。
     if (editor.mode === "json") {

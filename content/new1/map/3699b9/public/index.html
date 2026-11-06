@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <link rel="icon" href="data:," />
     <title>presets · Nous 预设</title>
-    <link rel="stylesheet" href="./style.css?v=1" />
+    <link rel="stylesheet" href="./style.css?v=2" />
+    <link rel="stylesheet" href="./board.css?v=1" />
     <script>
       // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -109,15 +110,88 @@
         </div>
       </header>
       <div class="ed-tabs" role="tablist">
-        <button class="ed-tab on" id="ed-tab-form" data-mode="form" role="tab" aria-selected="true" title="表单（Alt+D 切 JSON）">
-          表单
+        <button class="ed-tab on" id="ed-tab-form" data-mode="form" role="tab" aria-selected="true" title="盘面（Alt+D 切 JSON）">
+          盘面
         </button>
         <button class="ed-tab" id="ed-tab-json" data-mode="json" role="tab" aria-selected="false" title="preset.json 原文（Alt+D 切表单）">
           JSON
         </button>
       </div>
       <div class="ed-stage" id="ed-stage">
-        <div class="ed-form" id="ed-form"></div>
+        <!-- 盘面：四域 + 中央椭圆（版式照 hb7k3j）。中央是落子的地方 —— 保存 / 发布；
+             开对话从卡片列表的 ▶ 启动走，这里不重复。 -->
+        <div class="board-wrap" id="ed-form">
+          <div class="board" id="board">
+            <svg class="frame" viewBox="0 0 640 440" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M0,0L314.04,0C315.06,27.5,322.13,27.5,323.15,55C315.14,82.5,335.41,82.5,327.39,110C328.99,137.5,322.51,137.5,324.11,165C319.92,192.5,324.19,192.5,320,220C280,225.07,280,210.71,240,215.78C200,204.86,200,227.13,160,216.22C120,223.83,120,218.6,80,226.21C40,222.27,40,221.52,0,217.58Z" fill="var(--s1)" fill-opacity="0.14"/>
+              <path d="M314.04,0L640,0L640,222.23C600,231.87,600,212.95,560,222.59C520,213.69,520,227.54,480,218.63C440,224.66,440,213.77,400,219.8C360,218.1,360,221.69,320,220C324.19,192.5,319.92,192.5,324.11,165C322.51,137.5,328.99,137.5,327.39,110C335.41,82.5,315.14,82.5,323.15,55C322.13,27.5,315.06,27.5,314.04,0Z" fill="var(--s2)" fill-opacity="0.14"/>
+              <path d="M0,217.58C40,221.52,40,222.27,80,226.21C120,218.6,120,223.83,160,216.22C200,227.13,200,204.86,240,215.78C280,210.71,280,225.07,320,220C339.2,264,291.2,341,329.6,385C300.8,407,325.76,429,320,440L0,440Z" fill="var(--s4)" fill-opacity="0.14"/>
+              <path d="M320,220C360,221.69,360,218.1,400,219.8C440,213.77,440,224.66,480,218.63C520,227.54,520,213.69,560,222.59C600,212.95,600,231.87,640,222.23L640,440L320,440C325.76,429,300.8,407,329.6,385C291.2,341,339.2,264,320,220Z" fill="var(--s3)" fill-opacity="0.14"/>
+              <g class="b">
+                <path d="M314.04,0C315.06,27.5,322.13,27.5,323.15,55C315.14,82.5,335.41,82.5,327.39,110C328.99,137.5,322.51,137.5,324.11,165C319.92,192.5,324.19,192.5,320,220"/>
+                <path d="M0,217.58C40,221.52,40,222.27,80,226.21C120,218.6,120,223.83,160,216.22C200,227.13,200,204.86,240,215.78C280,210.71,280,225.07,320,220"/>
+                <path d="M320,220C360,221.69,360,218.1,400,219.8C440,213.77,440,224.66,480,218.63C520,227.54,520,213.69,560,222.59C600,212.95,600,231.87,640,222.23"/>
+              </g>
+              <path class="cliff" d="M320,220C339.2,264,291.2,341,329.6,385C300.8,407,325.76,429,320,440"/>
+            </svg>
+
+            <section class="region r1">
+              <h2>Model</h2>
+              <div class="sub" id="b-model-sub">—</div>
+              <div class="nodes">
+                <button class="node" id="b-model" type="button" title="这条 preset 钉哪款模型（不钉 = 用设备默认）">
+                  <span class="id" id="b-model-id">—</span>
+                  <span class="tag" id="b-model-tag">change ›</span>
+                </button>
+              </div>
+            </section>
+
+            <section class="region r2">
+              <h2>Context</h2>
+              <div class="sub" id="b-ctx-sub">—</div>
+              <div class="nodes">
+                <button class="node" id="b-skills" type="button" title="这条 preset 带哪些技能（集合，模型按需 read）">
+                  <span class="id">Skills</span>
+                  <span class="tag" id="b-skills-tag">—</span>
+                </button>
+                <button class="node" id="b-tmpl" type="button" title="这条 preset 每轮都带的那份规则（单选）">
+                  <span class="id">Prompt</span>
+                  <span class="tag" id="b-tmpl-tag">—</span>
+                </button>
+              </div>
+            </section>
+
+            <section class="region r4">
+              <h2>Extensions</h2>
+              <div class="sub" id="b-ext-sub">—</div>
+              <div class="nodes">
+                <button class="node" id="b-ext" type="button" title="这条 preset 要装哪些 Nous 扩展">
+                  <span class="id" id="b-ext-id">—</span>
+                  <span class="tag" id="b-ext-tag">change ›</span>
+                </button>
+              </div>
+            </section>
+
+            <section class="region r3">
+              <h2>Permissions</h2>
+              <div class="nodes">
+                <button class="node" id="b-readonly" type="button" aria-pressed="false" title="点一下切换：只读 = 不给会写的工具">
+                  <span class="id">Read-only</span>
+                  <span class="tag" id="b-ro-tag">off ›</span>
+                </button>
+              </div>
+            </section>
+
+            <div class="hub">
+              <h1 id="b-name">—</h1>
+              <div class="sub" id="b-hub-sub">—</div>
+              <div class="hub-btns">
+                <button class="node cta" id="b-save" type="button" title="保存到磁盘（Ctrl/⌘+S）—— 不提交">保存</button>
+                <button class="node cta primary" id="b-publish" type="button" title="校验 + commit + push">发布</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="ed-code" id="ed-code" hidden>
           <div class="ed-gutter" id="ed-gutter" aria-hidden="true"></div>
           <textarea class="ed-text" id="ed-text" spellcheck="false" wrap="off" disabled></textarea>
@@ -126,13 +200,120 @@
       </div>
       <div class="ed-msg" id="ed-msg" hidden></div>
       <footer class="ed-foot">
-        <p class="dim small" id="ed-hint">保存只落盘；发布才 commit + push。</p>
-        <div class="ed-foot-btns">
-          <button class="ed-btn" id="ed-publish" title="校验 + commit + push">发布</button>
-          <button class="ed-btn primary" id="ed-save" title="保存到磁盘（Ctrl/⌘+S）—— 不提交">保存</button>
-        </div>
+        <p class="dim small" id="ed-hint">中央「保存」只落盘；「发布」才 commit + push。</p>
       </footer>
     </aside>
+
+
+    <!-- ── 盘面四个弹窗：筛选框 / 档位 chip / 视图 chip / 右栏类别 / 底栏 ── -->
+    <div class="bscrim" id="b-model-scrim" hidden>
+      <div class="bsheet" role="dialog" aria-modal="true" aria-label="选择模型">
+        <div class="bshead">
+          <b>模型</b>
+          <input type="text" id="b-mq" placeholder="筛选模型…" autocomplete="off" />
+        </div>
+        <div class="bdiagram" id="b-diagram"></div>
+        <div class="bfoot">
+          <span class="hint">供应商 › 模型 › 思考 · ↑↓ 选 · ←→ 换列 · ↵ 确认 · Esc 关闭</span>
+          <button class="blink" id="b-model-auto" type="button" title="清掉 model 这个键，开会话时用设备默认">不钉模型 · 跟随设备默认 ›</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bscrim" id="b-skill-scrim" hidden>
+      <div class="bsheet" role="dialog" aria-modal="true" aria-label="选择技能">
+        <div class="bshead">
+          <b>上下文 · 技能</b>
+          <input type="text" id="b-sq" placeholder="筛选技能…" autocomplete="off" />
+        </div>
+        <div class="bmodes" id="b-skill-modes">
+          <button class="bmode" type="button" data-mode="default" aria-pressed="false" title="preset.json 里不写 skills —— 开会话时按默认走">跟随默认</button>
+          <button class="bmode" type="button" data-mode="none" aria-pressed="false" title="skills: [] —— 明确一个都不要">都不要</button>
+          <button class="bmode" type="button" data-mode="picked" aria-pressed="false" title="钉住下面勾中的这几条">挑几个</button>
+        </div>
+        <div class="bviews" id="b-skill-views">
+          <button class="bchip" type="button" data-view="all" aria-pressed="true"></button>
+          <button class="bchip" type="button" data-view="none" aria-pressed="false"></button>
+          <button class="bchip" type="button" data-only="1" aria-pressed="false"></button>
+        </div>
+        <div class="bbody" id="b-skill-body">
+          <div class="blist" id="b-skill-list"></div>
+          <div class="brail" id="b-skill-rail" hidden>
+            <div class="rhead">类别</div>
+            <div class="brail-list" id="b-skill-rail-list"></div>
+            <div class="rfoot"><a id="b-skill-rail-go" href="#" target="_blank" rel="noreferrer">+ 新建类别：去技能页</a></div>
+          </div>
+        </div>
+        <div class="bfoot">
+          <span class="hint" id="b-skill-hint">—</span>
+          <button class="bdone" id="b-skill-done" type="button">完成 ›</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bscrim" id="b-tmpl-scrim" hidden>
+      <div class="bsheet" role="dialog" aria-modal="true" aria-label="选择提示词模板">
+        <div class="bshead">
+          <b>上下文 · 模板</b>
+          <input type="text" id="b-tq" placeholder="筛选模板…" autocomplete="off" />
+        </div>
+        <div class="bmodes" id="b-tmpl-modes">
+          <button class="bmode" type="button" data-mode="default" aria-pressed="false" title="preset.json 里不写 template —— 开会话时用仓库 settings.json 的默认值">跟随默认</button>
+          <button class="bmode" type="button" data-mode="none" aria-pressed="false" title="template: null —— 明确一条都不要">都不要</button>
+          <button class="bmode" type="button" data-mode="picked" aria-pressed="false" title="钉住下面选中的那一条">钉一条</button>
+        </div>
+        <div class="bviews" id="b-tmpl-views">
+          <button class="bchip" type="button" data-view="all" aria-pressed="true"></button>
+          <button class="bchip" type="button" data-view="basics" aria-pressed="false"></button>
+          <button class="bchip" type="button" data-view="none" aria-pressed="false"></button>
+          <button class="bchip" type="button" data-only="1" aria-pressed="false"></button>
+        </div>
+        <div class="bbody" id="b-tmpl-body">
+          <div class="blist" id="b-tmpl-list"></div>
+          <div class="brail" id="b-tmpl-rail" hidden>
+            <div class="rhead">类别</div>
+            <div class="brail-list" id="b-tmpl-rail-list"></div>
+            <div class="rfoot"><a id="b-tmpl-rail-go" href="#" target="_blank" rel="noreferrer">+ 新建类别：去模板页</a></div>
+          </div>
+        </div>
+        <div class="bfoot">
+          <span class="hint" id="b-tmpl-hint">—</span>
+          <button class="bdone" id="b-tmpl-done" type="button">完成 ›</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bscrim" id="b-ext-scrim" hidden>
+      <div class="bsheet" role="dialog" aria-modal="true" aria-label="选择扩展">
+        <div class="bshead">
+          <b>扩展</b>
+          <input type="text" id="b-eq" placeholder="筛选扩展…" autocomplete="off" />
+        </div>
+        <div class="bmodes" id="b-ext-modes">
+          <button class="bmode" type="button" data-mode="default" aria-pressed="false" title="preset.json 里不写 extensions —— 开会话时按默认走">跟随默认</button>
+          <button class="bmode" type="button" data-mode="none" aria-pressed="false" title="extensions: [] —— 明确一个都不装">都不要</button>
+          <button class="bmode" type="button" data-mode="picked" aria-pressed="false" title="钉住下面选中的这几个">挑几个</button>
+        </div>
+        <div class="bviews" id="b-ext-views">
+          <button class="bchip" type="button" data-view="all" aria-pressed="true"></button>
+          <button class="bchip" type="button" data-view="basics" aria-pressed="false"></button>
+          <button class="bchip" type="button" data-view="none" aria-pressed="false"></button>
+          <button class="bchip" type="button" data-only="1" aria-pressed="false"></button>
+        </div>
+        <div class="bbody" id="b-ext-body">
+          <div class="blist" id="b-ext-list"></div>
+          <div class="brail" id="b-ext-rail" hidden>
+            <div class="rhead">类别</div>
+            <div class="brail-list" id="b-ext-rail-list"></div>
+            <div class="rfoot"><a id="b-ext-rail-go" href="#" target="_blank" rel="noreferrer">+ 新建类别：去模板页</a></div>
+          </div>
+        </div>
+        <div class="bfoot">
+          <span class="hint" id="b-ext-hint">—</span>
+          <button class="bdone" id="b-ext-done" type="button">完成 ›</button>
+        </div>
+      </div>
+    </div>
 
     <!-- 启动确认：名字 + 生效配置一览 + 会跳过什么 -->
     <div class="sheet-scrim" id="launch-scrim" hidden></div>
