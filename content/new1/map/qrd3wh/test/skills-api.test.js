@@ -124,6 +124,125 @@ test("POST /v1/skills/create 名字不合法：400，且不留下 .new-* 半截�
   }
 });
 
+// ── 3. duplicate ────────────────────────────────────────────────────────────
+
+test("POST /v1/skills/duplicate：整目录拷过来、名字改成新的、不提交", async () => {
+  const { root, skills } = await setup({
+    ...skillFiles("demo", { summary: "一句", category: ["Basics"] }),
+    "demo/references/notes.md": "附属文件也要跟着走\n",
+  });
+  const api1 = api(root, skills);
+  try {
+    const made = await api1.call("POST", "/v1/skills/duplicate", { from: "demo", name: "demo-copy" });
+    assert.equal(made.status, 200);
+    assert.equal(made.body.name, "demo-copy");
+    assert.equal(made.body.from, "demo");
+    assert.equal(made.body.files, 3);
+
+    // 目录名 / frontmatter / nous.json 三处名字必须同一个（I3）。
+    const front = await read(root, "demo-copy/SKILL.md");
+    assert.match(front, /^---\nname: demo-copy\n/);
+    const manifest = await readJson(root, "demo-copy/nous.json");
+    assert.equal(manifest.name, "demo-copy");
+    // summary / category 照搬。
+    assert.equal(manifest.summary, "一句");
+    assert.deepEqual(manifest.category, ["Basics"]);
+    // 附件跟著走。
+    assert.equal(await read(root, "demo-copy/references/notes.md"), "附属文件也要跟着走\n");
+
+    // 没提交 = 未发布；名册和 index.json 都跟上了。
+    assert.match(await status(root), /^\?\? demo-copy\/$/m);
+    const overview = await api1.call("GET", "/v1/skills");
+    const copy = overview.body.skills.find((skill) => skill.name === "demo-copy");
+    assert.equal(copy.tracked, false, "复制出来必须是「未发布」");
+    assert.ok(
+      (await readJson(root, "index.json")).skills.some((skill) => skill.name === "demo-copy"),
+      "复制之后要重扫 index.json",
+    );
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("POST /v1/skills/duplicate 撞已有目录 / 撞归档：409，不留半截", async () => {
+  const { root, skills } = await setup({ ...skillFiles("demo"), ...skillFiles("taken") });
+  const api1 = api(root, skills);
+  try {
+    const hit = await api1.call("POST", "/v1/skills/duplicate", { from: "demo", name: "taken" });
+    assert.equal(hit.status, 409);
+    assert.match(hit.body.error, /taken/);
+
+    // 同名复制回自己身上：400，不是“拷完再覆盖”。
+    const self = await api1.call("POST", "/v1/skills/duplicate", { from: "demo", name: "demo" });
+    assert.equal(self.status, 400);
+
+    // 源不存在：404。
+    const missing = await api1.call("POST", "/v1/skills/duplicate", { from: "nope", name: "x" });
+    assert.equal(missing.status, 404);
+
+    // 归档里那个名字也占着。
+    await api1.call("POST", "/v1/skills/archive", { name: "taken" });
+    const archived = await api1.call("POST", "/v1/skills/duplicate", { from: "demo", name: "taken" });
+    assert.equal(archived.status, 409);
+    assert.match(archived.body.error, /archive/);
+
+    const left = (await readdir(root)).filter((name) => name.startsWith(".new-"));
+    assert.deepEqual(left, [], "翻车不能留点开头的半截目录");
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("POST /v1/skills/duplicate 带 variant：nous.json 多一格 variant，family 永远是源那条", async () => {
+  const { root, skills } = await setup({
+    ...skillFiles("tdd"),
+    // 源自己是变体：复制品不能把别人家的 family 带过来。
+    "tdd/nous.json": JSON.stringify({ name: "tdd", summary: "", category: [], variant: { family: "other", id: "x" } }) + "\n",
+  });
+  const api1 = api(root, skills);
+  try {
+    const made = await api1.call("POST", "/v1/skills/duplicate", {
+      from: "tdd",
+      name: "tdd-strict",
+      variant: "strict",
+    });
+    assert.equal(made.status, 200);
+    assert.deepEqual(made.body.variant, { family: "tdd", id: "strict" });
+    const manifest = await readJson(root, "tdd-strict/nous.json");
+    assert.deepEqual(manifest.variant, { family: "tdd", id: "strict" });
+    // 不带 variant 的复制：不该凭空长出一格。
+    const plain = await api1.call("POST", "/v1/skills/duplicate", { from: "tdd", name: "tdd-plain" });
+    assert.equal(plain.status, 200);
+    const plainManifest = await readJson(root, "tdd-plain/nous.json");
+    assert.equal(plainManifest.variant, undefined);
+    // 变体 id 不合法：400。
+    const bad = await api1.call("POST", "/v1/skills/duplicate", { from: "tdd", name: "tdd-bad", variant: "Bad Id" });
+    assert.equal(bad.status, 400);
+    assert.match(bad.body.error, /Bad Id/);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("POST /v1/skills/duplicate：取用注脚不搬（复制品的来源是隔壁那条）", async () => {
+  const { root, skills } = await setup({
+    "adopted/SKILL.md": `---\nname: adopted\ndescription: "从上游取的"\n---\n\n# adopted\n`,
+    "adopted/nous.json":
+      JSON.stringify({ name: "adopted", summary: "", category: [], upstream: "matt/skills/tdd@abc123" }, null, 2) + "\n",
+  });
+  const api1 = api(root, skills);
+  try {
+    const made = await api1.call("POST", "/v1/skills/duplicate", { from: "adopted", name: "adopted-copy" });
+    assert.equal(made.status, 200);
+    const manifest = await readJson(root, "adopted-copy/nous.json");
+    assert.equal(manifest.upstream, undefined, "复制品不是那个上游的取用，别带注脚");
+    // 原件的一个字都不动。
+    assert.equal((await readJson(root, "adopted/nous.json")).upstream, "matt/skills/tdd@abc123");
+  } finally {
+    await cleanup(root);
+  }
+});
+
 // ── 4. 类别 ─────────────────────────────────────────────────────────────────
 
 test("POST /v1/skills/category：nous.json 改了、词表补齐祖先、index.json 重扫", async () => {

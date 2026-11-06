@@ -24,6 +24,7 @@ import {
   stateFilterOf,
   suggestedAdoptName,
   upstreamSummary,
+  versionText,
 } from "../public/model.js";
 
 // fixture 就在这个文件里（以前读 public/mock/skills.json，那个目录已经删了 ——
@@ -288,3 +289,12 @@ test("dirPaths：所有文件夹（打开抽屉时默认全展开）", () => {
   assert.deepEqual(dirPaths(tree), ["a", "a/b"]);
 });
 
+
+test("versionText：短 sha + 那天；没有时间就只给 sha", () => {
+  assert.equal(versionText({ commit: "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d", at: "2026-11-06T03:41:29.425Z" }), "4ae2317 · 2026-11-06");
+  assert.equal(versionText({ commit: "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d" }), "4ae2317");
+  assert.equal(versionText({ commit: "4ae2317", at: "不是时间" }), "4ae2317");
+  // 没记录版本 = 空串，调用方自己决定写「还没记录」（别在这儿编一个占位）
+  assert.equal(versionText(null), "");
+  assert.equal(versionText({}), "");
+});

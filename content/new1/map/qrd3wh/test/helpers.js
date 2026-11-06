@@ -144,7 +144,6 @@ export const skillFiles = (name, { description = `${name} 的说明`, category =
     [`${name}/nous.json`]: JSON.stringify({ name: leaf, summary, category }, null, 2) + "\n",
   };
 };
-
 // ── 假的 skills service ─────────────────────────────────────────────────────
 //
 // 真扩展（`Nous-extend/skills/index.js`）的 `list()` 只做四件事：扫目录、读 frontmatter、

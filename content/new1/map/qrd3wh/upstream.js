@@ -58,6 +58,25 @@ export const repoName = (url) => {
 };
 const GIT_ARG_RE = /^[A-Za-z0-9._/-]+$/;
 
+/**
+ * 我们**认**的那个版本：`{ commit, at }`。
+ *
+ * 它进 `sources.json`（内容，进版本库），跟镜像 HEAD 是两件事：
+ *   · `version` 是人钉住的 —— 创建时记一次，之后只有「记录这个版本」能改
+ *   · 镜像 HEAD 是采集到的 —— 每次 refresh 都可能往前跑
+ * 两者不相等 = 上游动了。记录被自动改写的话，「记录」这两个字就没意义了。
+ */
+const normalizeVersion = (raw) => {
+  if (!raw) return null;
+  const commit = String(typeof raw === "string" ? raw : raw.commit ?? "").trim().toLowerCase();
+  if (!commit) return null;
+  if (!/^[0-9a-f]{7,40}$/.test(commit)) {
+    throw withStatus(new Error(`版本要是一个 commit sha（7-40 位十六进制）：${commit}`), 400);
+  }
+  const at = String(typeof raw === "string" ? "" : raw.at ?? "").trim();
+  return { commit, at: at || new Date().toISOString() };
+};
+
 const normalizePrefix = (raw) => {
   const prefix = String(raw ?? "").trim().replace(/^\/+|\/+$/g, "");
   if (!prefix) return null;
@@ -89,7 +108,14 @@ export const normalizeSource = (raw) => {
   const branch = String(raw?.branch ?? "").trim() || null;
   if (branch && !GIT_ARG_RE.test(branch)) throw withStatus(new Error(`${name}: branch 不合法：${branch}`), 400);
   const prefix = normalizePrefix(raw?.prefix);
-  return { name, url, ...(branch ? { branch } : {}), ...(prefix ? { prefix } : {}) };
+  const version = normalizeVersion(raw?.version);
+  return {
+    name,
+    url,
+    ...(branch ? { branch } : {}),
+    ...(prefix ? { prefix } : {}),
+    ...(version ? { version } : {}),
+  };
 };
 
 export const emptySources = () => ({ v: 1, sources: [] });
@@ -132,6 +158,22 @@ export const writeSources = async (root, list) => {
   await writeFile(tmp, JSON.stringify(body, null, 2) + "\n", "utf8");
   await rename(tmp, file);
   return sources;
+};
+
+/**
+ * 把一个订阅的「认的版本」钉到某个 commit（不给就用镜像现在的 HEAD）。
+ *
+ * 这是**唯一的**改 `version` 的地方。refresh 只在 `version` 还是空的时候
+ * 顺手记一次基线（首拉 = 创建），之后它绝不偷偷改 —— 否则「记录」会自己跑。
+ */
+export const pinVersion = async ({ root, data, source, run, commit = null, at = null }) => {
+  const pinned = (commit ?? (await resolveHead({ data, source, run }))).trim().toLowerCase();
+  const { sources } = await readSources(root);
+  const idx = sources.findIndex((item) => item.name === source.name);
+  if (idx === -1) throw withStatus(new Error(`没有订阅「${source.name}」这个上游`), 400);
+  sources[idx] = { ...sources[idx], version: normalizeVersion({ commit: pinned, at: at ?? new Date().toISOString() }) };
+  await writeSources(root, sources);
+  return sources[idx].version;
 };
 
 // ── 镜像（缓存，不是事实）────────────────────────────────────────────────────

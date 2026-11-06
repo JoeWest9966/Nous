@@ -293,7 +293,8 @@ POST /v1/skills/sync              {message, paths?} → 只提交点名的路径
 POST /v1/skills/reload            重扫仓库（拿不准的时候用；写端点自己会扫）
 GET  /v1/skills/sources           订阅了哪些上游（sources.json 是内容，进版本库）
 POST /v1/skills/sources           {sources} 整份替换，不提交
-GET  /v1/skills/upstream          {sources:[…mirror], entries:[…], errors[]}。**不联网**：镜像不在就报 missing
+GET  /v1/skills/upstream          {sources:[…mirror,head,drift,dir,bytes], entries:[…], errors[]}。**不联网**：镜像不在就报 missing
+POST /v1/skills/upstream/pin      {source,commit?} → 把「认的版本」钉到镜像 HEAD。**唯一改 version 的入口**
 POST /v1/skills/upstream/refresh  {name?} 唯一联网动作（clone / fetch）
 GET  /v1/skills/upstream/file     ?source=&path=&file= → {text, size}：从镜像 cat-file 读，**只读**
 GET  /v1/skills/upstream/files    ?source=&path= → {files:[{path,size,state}], adopted}；state 是跟本地比

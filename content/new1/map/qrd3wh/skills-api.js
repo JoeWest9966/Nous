@@ -14,7 +14,7 @@
 //   · `publish` = 内容闸 + 重扫 index.json + commit + push，一步；闸不过不动 index.json。
 //   · 不实现 install / uninstall：技能不是「装进来的包」。
 
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import * as upstream from "./upstream.js";
@@ -82,6 +82,20 @@ const checkName = (raw) => {
   }
   if (RESERVED.has(name)) throw withStatus(new Error(`「${name}」是仓库自己的文件名，不能当技能名`), 400);
   return name;
+};
+
+/** 变体 id：跟技能名同一套字符规矩，但**不**是目录名 —— 它只参与 `本名@id` 这个键。 */
+const MAX_VARIANT_ID = 32;
+
+const checkVariantId = (raw) => {
+  const id = String(raw ?? "").trim();
+  if (!id) throw withStatus(new Error("变体 id 不能为空"), 400);
+  if (id.length > MAX_VARIANT_ID) throw withStatus(new Error(`变体 id 太长（最多 ${MAX_VARIANT_ID} 字）：${id}`), 400);
+  if (!SKILL_NAME_RE.test(id)) {
+    throw withStatus(new Error(`变体 id 只认小写字母、数字、点、下划线、连字符，且以字母或数字开头：${id}`), 400);
+  }
+  if (RESERVED.has(id)) throw withStatus(new Error(`「${id}」是仓库自己的文件名，不能当变体 id`), 400);
+  return id;
 };
 
 /**
@@ -503,6 +517,135 @@ const adoptSkill = async (repo, root, data, body) => {
 };
 
 /**
+ * 整目录拷一份。`.git` / `node_modules` 不拷 —— 那是仓的，不是技能的。
+ * 用 `copyFile` 一文件一文件拷，不 `cp -r` 那样的黑盒子：翻车时知道拷到第几个。
+ */
+const copyTree = async (from, to, rel = "") => {
+  let count = 0;
+  const entries = await readdir(from, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === ".git" || entry.name === "node_modules") continue;
+    const src = path.join(from, entry.name);
+    const dst = path.join(to, entry.name);
+    if (entry.isDirectory()) {
+      await mkdir(dst, { recursive: true });
+      count += await copyTree(src, dst, rel ? `${rel}/${entry.name}` : entry.name);
+    } else if (entry.isFile()) {
+      await copyFile(src, dst);
+      count++;
+    }
+  }
+  return count;
+};
+
+/**
+ * 复制：把仓里**已有的**一条技能整目录拷成另一条。
+ *
+ * 跟 `createSkill` / `adoptSkill` 同一副骨头 —— 点开头的暂存目录、过闸、才 rename，
+ * 翻车整棵删掉（I7 半截不留）。区别只在骨架从哪儿来：不是空的，也不是别人的镜像，
+ * 是自家隔壁那条。
+ *
+ * 三件事不因为是复制就松：新名字照样过 `checkName` + 撞目录 / 撞 `.archive/`；
+ * `SKILL.md` 的 frontmatter 和 `nous.json` 的 name 一起改成新名字（I3）；**不提交** ——
+ * 复制出来就是「未发布」，发布仍走 `/publish`。
+ *
+ * 三个注脚不搬过来：
+ *   · `upstream`（取用是一次性拷贝，复制品的来源是隔壁那条，不是那个上游）；
+ *   · `archiveOrigin`（归档态才写的字段，复制品从来没归档过）；
+ *   · `variant` 以外的任何东西都是照抄的 —— 正文、附件、summary、category 原样跟着走。
+ *
+ * `variant` 给了 = 顺手标成「某条的变体」：`nous.json` 多一格 `variant: { family, id }`。
+ * `family` 永远是**源那条**的名字 —— 变体不能改姓。
+ */
+const duplicateSkill = async (repo, root, skills, body) => {
+  const from = checkName(body.from);
+  const fromRel = relOf(skills, from);
+  if (!(await stat(path.join(root, fromRel, "SKILL.md")).catch(() => null))) {
+    throw withStatus(new Error(`仓里没有「${from}」这一条 —— 复制谁？`), 404);
+  }
+
+  const name = checkName(body.name);
+  const group = checkGroup(body.group);
+  const rel = group ? `${group}/${name}` : name;
+  const fromGroup = path.posix.dirname(fromRel).replace(/^\.$/, "");
+  if (name === from && group === fromGroup) {
+    throw withStatus(new Error(`${from} 复制到它自己身上了 —— 换个名字`), 400);
+  }
+  if (group && (await stat(path.join(root, group, "SKILL.md")).catch(() => null))) {
+    throw withStatus(new Error(`「${group}」已经是一条技能了 —— 技能里面不能再套技能`), 400);
+  }
+  if (await stat(path.join(root, rel)).catch(() => null)) {
+    throw withStatus(new Error(`${rel}/ 已经在了 —— 换个名字`), 409);
+  }
+  if (await stat(path.join(root, repo.ARCHIVE_DIR, name)).catch(() => null)) {
+    throw withStatus(new Error(`${name}/ 在 .archive/ 里 —— 先恢复或彻底删掉，别建第二个`), 409);
+  }
+
+  const variant =
+    body.variant === undefined || body.variant === null || String(body.variant).trim() === ""
+      ? null
+      : { family: from, id: checkVariantId(body.variant) };
+
+  const beforeVocab = await repo.readCategories(root, NO_PROTECT);
+  const staging = path.join(root, `.new-${name}-${Date.now()}`);
+  await mkdir(staging, { recursive: false });
+  let landed = false;
+  let fileCount = 0;
+  try {
+    fileCount = await copyTree(path.join(root, fromRel), staging);
+
+    // 名字对齐：目录名、frontmatter 的 name、nous.json 的 name 必须是同一个（I3）。
+    const skillFile = path.join(staging, "SKILL.md");
+    const text = await readFile(skillFile, "utf8");
+    const renamed = renameInFrontmatter(text, name);
+    if (renamed !== text) await writeFile(skillFile, renamed, "utf8");
+
+    const sourceManifest = (await readManifestOf(path.join(root, fromRel))) ?? {};
+    const kept = { ...sourceManifest };
+    delete kept.upstream;
+    delete kept.archiveOrigin;
+    // 源自己就是个变体的话，`variant` 也得先摘掉 —— 搬过来的那格写着别人的 family。
+    delete kept.variant;
+    const categories = repo.sortCategories(
+      repo.normalizeCategories([
+        ...(Array.isArray(kept.category) ? kept.category : []),
+        ...(Array.isArray(body.category) ? body.category : []),
+      ]),
+    );
+    await writeFile(
+      path.join(staging, "nous.json"),
+      JSON.stringify(
+        {
+          ...kept,
+          name,
+          summary: typeof kept.summary === "string" ? kept.summary : "",
+          category: categories,
+          ...(variant ? { variant } : {}),
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+
+    const problems = await checkSkillContent(root, rel, staging);
+    if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
+
+    if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories], NO_PROTECT);
+    if (group) await mkdir(path.join(root, group), { recursive: true });
+    await rename(staging, path.join(root, rel));
+    landed = true;
+    await repo.regenIndex(root, { required: false });
+  } catch (error) {
+    if (landed) await rm(path.join(root, rel), { recursive: true, force: true }).catch(() => {});
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+    if (beforeVocab.length) await repo.writeCategories(root, beforeVocab, NO_PROTECT).catch(() => {});
+    throw error;
+  }
+  return { ok: true, name, path: rel, from, variant, fileCount };
+};
+
+/**
  * 归档时把**原址**记进 nous.json 的 `archiveOrigin`。分组里的技能（`deprecated/demo`）
  * 归档后躺在扁的 `.archive/demo/` 里，恢复时得回到那个分组 —— 不记就永远回不去了。
  * 不另建一张表：这张表迟早会跟目录对不上（跟 index.json 一样的道理，但它没法重扫）。
@@ -752,6 +895,25 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       });
     }
 
+    if (at[0] === "duplicate") {
+      if (method !== "POST") return send(res, 405, { error: "复制只有 POST" });
+      const body = await parseJsonBody(req);
+      const result = await repo.serializeRepoWrite(root, () => duplicateSkill(repo, root, skills, body));
+      const loadError = await reloadRoster(skills);
+      const roster = skills.list();
+      return send(res, 200, {
+        ok: true,
+        name: result.name,
+        path: result.path,
+        from: result.from,
+        variant: result.variant,
+        files: result.fileCount,
+        skill: roster.find((skill) => skill.name === result.name) ?? null,
+        skills: roster,
+        ...(loadError ? { loadError } : {}),
+      });
+    }
+
     if (at[0] === "publish") {
       if (method !== "POST") return send(res, 405, { error: "发布只有 POST" });
       const body = await parseJsonBody(req);
@@ -847,10 +1009,15 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         for (const source of sources) {
           // **打开面板不联网**：镜像不在就报 missing，让人自己点刷新。
           const ready = await upstream.hasMirror({ data: mirrors(), source });
+          // 镜像现在停在哪个 commit（采集到的），跟 `version`（我们认的）分开摆。
+          const head = ready ? await upstream.resolveHead({ data: mirrors(), source, run: repo.run }) : null;
           reported.push({
             ...source,
             mirror: ready ? "ready" : "missing",
-            // 本机那个目录：只装了技能（sparse checkout），复制地址给的就是它。
+            head,
+            // 采集到的跟认的不一样 = 上游动了。前端只摆这个布尔，不自己比。
+            drift: Boolean(head && source.version?.commit && head !== source.version.commit),
+            // 本机那个目录：只装了技能（sparse checkout），复制路径给的就是它。
             dir: upstream.localPath(mirrors(), source),
             // 占了多少（面板上摆出来：删了下次 fetch 重建，不是第二份真相）。
             bytes: ready ? await upstream.mirrorBytes({ data: mirrors(), source }) : 0,
@@ -879,7 +1046,15 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         for (const source of picked) {
           try {
             await upstream.fetchMirror({ data: mirrors(), source, run: repo.run });
-            out.push({ name: source.name, ok: true, head: await upstream.resolveHead({ data: mirrors(), source, run: repo.run }) });
+            const head = await upstream.resolveHead({ data: mirrors(), source, run: repo.run });
+            // **首拉 = 创建时的基线**：这时候还没有 `version`，记一次。
+            // 之后 refresh 只管采集，绝不改动已记录的版本（改了「记录」就自己会跑）。
+            const pinned = source.version
+              ? source.version
+              : await repo.serializeRepoWrite(root, () =>
+                  upstream.pinVersion({ root, data: mirrors(), source, run: repo.run, commit: head }),
+                );
+            out.push({ name: source.name, ok: true, head, version: pinned });
           } catch (error) {
             out.push({ name: source.name, ok: false, error: errorLine(error) });
           }
@@ -888,6 +1063,24 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       }
 
       // 一整个仓的文件清单。「一个订阅 = 一条技能」，所以抽屉里那棵树的根是**仓根**。
+      // 把「我们认的版本」钉到某个 commit（不给就用镜像 HEAD）。**只有这一个写入口。**
+      if (at[1] === "pin") {
+        if (method !== "POST") return send(res, 405, { error: "记录版本只有 POST" });
+        const body = await parseJsonBody(req);
+        const sourceName = String(body.source ?? body.name ?? "").trim();
+        const { sources } = await upstream.readSources(root);
+        const source = sources.find((item) => item.name === sourceName);
+        if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+        if (!(await upstream.hasMirror({ data: mirrors(), source }))) {
+          throw withStatus(new Error(`${sourceName}: 还没拉过镜像 —— 先刷新，才有版本可记`), 400);
+        }
+        const commit = String(body.commit ?? "").trim() || null;
+        const version = await repo.serializeRepoWrite(root, () =>
+          upstream.pinVersion({ root, data: mirrors(), source, run: repo.run, commit }),
+        );
+        return send(res, 200, { ok: true, source: source.name, version });
+      }
+
       if (at[1] === "tree") {
         if (method !== "GET") return send(res, 405, { error: "上游文件树只有 GET" });
         const sourceName = String(url.searchParams.get("source") ?? "").trim();

@@ -435,3 +435,87 @@ test("工作区只 check out 技能目录 —— 别人的 README 不该躺在�
     await teardown(ctx.root, ctx.data);
   }
 });
+
+// ── 版本 ────────────────────────────────────────────────────────────────────
+//
+// 两件事必须分开：**我们认的版本**（`sources.json` 里的 `version`，人钉的，
+// 进版本库）和**采集到的**（镜像 HEAD，每次 fetch 会往前跑）。
+// 它们一旦被同一个东西改写，「记录版本」这四个字就没意义了。
+
+test("首拉就记下基线版本；之后的刷新绝不偷偷改它", async () => {
+  const upstreamRepo = await makeRepo({
+    files: { "skills/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n` },
+  });
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const first = await readJson(ctx.root, "sources.json");
+    assert.match(first.sources[0].version.commit, /^[0-9a-f]{40}$/);
+    assert.ok(first.sources[0].version.at);
+
+    // 上游往前走一个 commit
+    await writeFile(path.join(upstreamRepo, "skills/x/extra.md"), "新文件\n");
+    await commitAll(upstreamRepo, "上游又加了一个文件");
+    const newHead = await head(upstreamRepo);
+
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const second = await readJson(ctx.root, "sources.json");
+    // 采集到了新的（镜像 HEAD 变了），但**认的还是老的** —— 这是关键
+    assert.equal(second.sources[0].version.commit, first.sources[0].version.commit);
+
+    const list = await ctx.call("GET", "/v1/skills/upstream");
+    const source = list.body.sources[0];
+    assert.equal(source.head, newHead);
+    assert.equal(source.drift, true, "采集到的和认的不一样，得说出来");
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("记录版本：钉到镜像 HEAD，drift 立刻变 false", async () => {
+  const upstreamRepo = await makeRepo({
+    files: { "skills/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n` },
+  });
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    await writeFile(path.join(upstreamRepo, "skills/x/extra.md"), "新文件\n");
+    await commitAll(upstreamRepo, "上游又加了一个文件");
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const newHead = await head(upstreamRepo);
+
+    const out = await ctx.call("POST", "/v1/skills/upstream/pin", { source: "matt" });
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.version.commit, newHead);
+    assert.equal((await readJson(ctx.root, "sources.json")).sources[0].version.commit, newHead);
+
+    const list = await ctx.call("GET", "/v1/skills/upstream");
+    assert.equal(list.body.sources[0].drift, false);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("记录版本：没镜像就没得记（不是「记个空」）", async () => {
+  const ctx = await setup({ sources: [{ name: "matt", url: "https://example.invalid/none.git" }] });
+  try {
+    const out = await ctx.call("POST", "/v1/skills/upstream/pin", { source: "matt" });
+    assert.equal(out.status, 400);
+    assert.match(out.body.error, /先刷新/);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("sources.json 里的 version 只认 sha，别的一律 400", async () => {
+  const ctx = await setup({
+    sources: [{ name: "matt", url: "https://example.invalid/x.git", version: { commit: "不是sha" } }],
+  });
+  try {
+    const out = await ctx.call("GET", "/v1/skills/upstream");
+    assert.equal(out.status, 400);
+    assert.match(out.body.error, /commit sha/);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});

@@ -320,3 +320,20 @@ export function repoNameFromUrl(url) {
     .replace(/^[-._]+|[-._]+$/g, "")
     .slice(0, 32);
 }
+
+/**
+ * 版本 = 短的 commit sha + 记下它的那天：`4ae2317 · 2026-11-06`。
+ *
+ * 行里那串 40 位 sha 谁也读不出来，人只需要「左边这 7 位是不是同一个」。
+ * 时间只到天 —— 版本是按天说的，秒级精度在这儿只会挤掉别的字。
+ */
+export function versionText(version) {
+  const commit = String(version?.commit ?? "").trim();
+  if (!commit) return "";
+  const short = commit.slice(0, 7);
+  const at = String(version?.at ?? "").trim();
+  if (!at) return short;
+  const day = new Date(at);
+  if (Number.isNaN(day.getTime())) return short;
+  return `${short} · ${day.toISOString().slice(0, 10)}`;
+}

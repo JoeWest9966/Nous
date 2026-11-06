@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>skills · Nous 技能</title>
-    <link rel="stylesheet" href="./style.css?v=5" />
+    <link rel="stylesheet" href="./style.css?v=6" />
     <script>
       // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -189,7 +189,7 @@
     <div class="danger-scrim" id="create-scrim" hidden></div>
     <form class="create" id="create" hidden role="dialog" aria-modal="true" aria-labelledby="create-title">
       <h2 id="create-title">新建技能</h2>
-      <p class="create-hint dim">
+      <p class="create-hint dim" id="create-hint">
         一个目录 + 一份 <code>SKILL.md</code> + 一份 <code>nous.json</code>。建完是<b>未发布</b>：
         只在你这台、远端上看不到，满意了再点发布。
       </p>
@@ -200,7 +200,7 @@
       </label>
       <p class="create-note" id="create-name-note"></p>
 
-      <label class="create-label" for="create-description">
+      <label class="create-label" for="create-description" id="create-desc-wrap">
         <span>一句话说明 <b>模型靠它决定用不用这条技能</b></span>
         <input id="create-description" type="text" autocomplete="off" maxlength="200"
                placeholder="审查从某个点以来的改动：标准 + 规格两条轴" />
@@ -227,6 +227,6 @@
     </form>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=5"></script>
+    <script type="module" src="./app.js?v=6"></script>
   </body>
 </html>

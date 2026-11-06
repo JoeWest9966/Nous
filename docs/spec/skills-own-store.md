@@ -382,7 +382,8 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 
 ```json
 { "v": 1, "sources": [
-  { "name": "skills", "url": "https://github.com/mattpocock/skills", "prefix": "skills" }
+  { "name": "skills", "url": "https://github.com/mattpocock/skills", "prefix": "skills",
+    "version": { "commit": "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d", "at": "2026-11-06T03:41:29.425Z" } }
 ]}
 ```
 
@@ -390,14 +391,16 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 - `url`：git 认识的一切（`https://` / `ssh://` / `git@host:path` / `file://` / **绝对路径**）。最后一种让「另一台机器上的 Nous-skills」也能当上游。
 - `prefix`：可选，只看仓库里的这一段。
 - `branch`：可选，不给就用镜像 HEAD。
+- `version`：可选，**我们认的那一版**（见 12.3）。`commit` 是 7-40 位十六进制，`at` 是 ISO 时间。
 - 用 `POST /v1/skills/sources` 整份替换写入，**不提交** —— 「多订阅了一个上游」跟加一条技能一样，走发布。
 
 ### 12.2 端点
 
 | 方法 · 路径 | 说明 |
 |---|---|
-| `GET /v1/skills/upstream` | `{sources:[{…, mirror:"ready"｜"missing", dir, bytes}], entries:[…], errors:[{source,error}]}`。`dir` 是本机能 `cd` 进去的那个目录，`bytes` 是它占的地方。**不联网**：镜像不在就报 `missing` |
-| `POST /v1/skills/upstream/refresh` | `{name?}` → 唯一联网动作（clone/fetch）。逐个 source 各报 `ok/error` |
+| `GET /v1/skills/upstream` | `{sources:[{…, mirror:"ready"｜"missing", head, drift, dir, bytes}], entries:[…], errors:[{source,error}]}`。`head` 是镜像现在停的 commit，`drift` = `head !== version.commit`（**服务端算**，前端不自己比），`dir` 是本机能 `cd` 进去的目录，`bytes` 是它占的地方。**不联网**：镜像不在就报 `missing` |
+| `POST /v1/skills/upstream/refresh` | `{name?}` → 唯一联网动作（clone/fetch）。逐个 source 各报 `ok/error`。**首拉顺手记一次 `version` 基线**，之后不再动它 |
+| `POST /v1/skills/upstream/pin` | `{source, commit?}` → 把 `version` 钉到镜像 HEAD（或给的 commit）。**这是唯一改 `version` 的入口** |
 | `GET /v1/skills/upstream/files?source=&path=` | 文件清单：`{path, size, state}` + `adopted`。`state` 是逐文件跟本地比 git blob sha（`same` / `diff` / `missing`），**没取用过就没有意义** |
 | `GET /v1/skills/upstream/tree?source=` | `{head, files:[{path,size}]}`。**只有技能**：带 `SKILL.md` 的那些目录里的文件，路径已剥掉 `prefix`。仓里的 `README` / `.github` / `docs` 一条都不出现 |
 | `GET /v1/skills/upstream/file?source=&path=&file=` | `{text, size}`，从镜像 `cat-file` 读。**只读** —— 这条路上只有 GET，POST 是 405 |
@@ -441,6 +444,22 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 - 清单从 `git ls-tree -r` + `git cat-file` 读，**不 checkout**：一条技能的清单是一次 tree walk。
 - 刷新完顺手 `reflog expire` + `gc --prune=now`（best-effort）：不收拾的话，几十次刷新之后
   盘上全是松散对象，比技能本身还大。
+
+### 12.3.1 两个版本，绝不合流
+
+| | 谁写的 | 谁改 | 存哪 | 意义 |
+|---|---|---|---|---|
+| `version` | **人** | 只有 `pin`（「记录这个版本」） | `sources.json`，进版本库 | 我认的是这一版 |
+| 镜像 HEAD | **采集** | 每次 `refresh` 都可能往前跑 | `data/upstream/<name>` 的 git | 上游现在长什么样 |
+
+为什么要分开：`refresh` 是**读**，`pin` 是**决策**。让 `refresh` 顺手把 `version` 顶掉，
+「记录」就自己会跑 —— 人再也说不出「我认的是这一版」，也没法看着 `4ae2317 → 9f2c1ab`
+决定要不要跟。所以：
+
+- 首拉（`version` 还空着）= **创建时的基线**，自动记一次。这是唯一一次自动写。
+- 之后 `refresh` 只采集。`drift = true` 时卡片上是 `4ae2317 → 9f2c1ab`，浮层里一条
+  琥珀提示 + 一个「记录这个版本」按钮。不按，它就一直是两行。
+- `pin` 之后 `drift` 立刻变 `false`，按钮收掉。写盘不提交 —— `version` 是内容，走发布。
 
 ### 12.4 `adopt` 的规矩
 

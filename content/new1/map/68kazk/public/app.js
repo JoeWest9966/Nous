@@ -30,6 +30,7 @@ import {
   repoNameFromUrl,
   suggestedAdoptName,
   upstreamSummary,
+  versionText,
 } from "./model.js";
 import { CONFLICT_MESSAGE, createApi, createCategoryDebounce, publishWithRefresh } from "./api.js";
 
@@ -88,6 +89,7 @@ const state = {
   filter: "", // "" = 全部；UNCATEGORIZED；ARCHIVED；"__state__:<state>"；其它 = 类别路径
   query: "",
   creating: false, // 左栏「新建类别」的输入框开着
+  duplicating: null, // 复制弹层开着的话，这里是源技能的名字
   createPrefix: "", // 「新建子类别」预填的 `工具/`
   renaming: null, // 正在原地改名的类别
   editing: null, // 正在输入类别的技能名（只住在详情里）
@@ -387,6 +389,10 @@ function openCardMenu(x, y, skill) {
   menuItem(menu, "类别", "在详情里勾", () => openDetail(skill.name, { editTags: true }));
 
   menu.append(el("div", "ctx-sep"));
+  // 复制 = 整目录拷成新的一条（`POST v1/skills/duplicate`）：正文、附件、类别、summary
+  // 全跟着走，名字换成新的，出来是**未发布**。历史不带 —— 旧提交留在原来那条里。
+  menuItem(menu, "复制成新技能", "换名字，历史不带", () => openDuplicate(skill.name));
+
   // 「未发布」也走归档：盘上删掉的东西一律进 `.archive/`（I10），只有「彻底删除」才真删。
   // 所以这里没有第二条更狠的路，菜单里也就不写「删掉」那种话。
   menuItem(menu, "归档", "可从归档恢复", () => void archiveSkill(skill.name), { danger: true });
@@ -1303,6 +1309,27 @@ async function refreshSource(name) {
   }
 }
 
+/**
+ * 把「我们认的版本」钉到上游现在这一版。
+ *
+ * **只有这一个动作会改 `version`。** 刷新只采集，不动它 —— 不然「记录」自己就会跑，
+ * 人也就没法说「我认的是这一版」。
+ */
+async function pinSourceVersion(source) {
+  if (state.upstreamBusy) return;
+  state.upstreamBusy = `pin:${source.name}`;
+  render();
+  try {
+    const out = await transport.post("v1/skills/upstream/pin", { source: source.name });
+    toast(`已记下 ${source.name} @ ${String(out.version?.commit ?? "").slice(0, 7)}`);
+  } catch (error) {
+    toast(`记录版本失败：${error.message}`, "bad");
+  } finally {
+    state.upstreamBusy = null;
+    await loadUpstream({ quiet: true });
+  }
+}
+
 /** 加一个上游 = 往 sources.json 里写一行，**不提交** —— 它跟技能一样是内容，走发布。 */
 async function addSource({ url, prefix }) {
   const cleanUrl = String(url ?? "").trim();
@@ -1380,6 +1407,9 @@ function openUpstreamMenu(x, y, source) {
   menuHead(menu, source.name, `上游 · ${mine.total} 条技能 · 只读`);
   const first = menuItem(menu, "看正文", "技能的文件树 · 只读", () => void openUpstreamEditor(source));
   menuItem(menu, "刷新", "git fetch（唯一联网动作）", () => void refreshSource(source.name));
+  if (source.drift) {
+    menuItem(menu, "记录版本", `${source.head?.slice(0, 7) ?? ""} · 把现在这一版记下来`, () => void pinSourceVersion(source));
+  }
   // **本机那个目录**，不是 GitHub 地址：粘出来能直接 `cd` 进去 `ls` / `cat` / grep。
   menuItem(menu, "复制路径", source.dir ?? "", () => {
     const where = source.dir ?? "";
@@ -1408,6 +1438,21 @@ function upstreamDetailBody(source) {
   wrap.append(detailRow("仓库", source.name, source.url));
   if (source.prefix) wrap.append(detailRow("只看", `${source.prefix}/`, "仓里的这一段才算技能"));
   wrap.append(detailRow("技能", `${mine.total} 条${mine.todo ? ` · ${mine.todo} 条待看` : ""}`));
+  // 两个版本并排摆：左边是**我们认的**（sources.json 里那份，进版本库），
+  // 右边是**采集到的**（镜像现在停在哪）。不一样就是上游动了，这是唯一诚实的说法。
+  const pinned = detailRow("版本", versionText(source.version) || "还没记录",
+    "我们认的那一版：记在 sources.json 里，进版本库。只有「记录这个版本」能改它。");
+  pinned.querySelector(".detail-row-v")?.classList.add("mono");
+  wrap.append(pinned);
+  if (source.head) {
+    const now = detailRow("上游现在", source.head.slice(0, 7), "镜像现在停在哪个 commit（上次刷新拉到的）");
+    now.querySelector(".detail-row-v")?.classList.add("mono");
+    if (source.drift) {
+      now.querySelector(".detail-row-v")?.classList.add("up-drift");
+      wrap.append(alertLine("warn", "上游往前走了", "采集到的版本跟记录的不一样。想跟新版就把「记录这个版本」按下去；不想动就放着 —— 它不会自己改。"));
+    }
+    wrap.append(now);
+  }
   // 「本机到底存没存、存在哪、存了多大」是个人会问的问题，所以三句都直接答。
   // 路径那一行是可点的：点一下复制（就是「复制路径」给的那个东西）。
   if (source.mirror === "ready") {
@@ -1444,6 +1489,16 @@ function upstreamDetailBody(source) {
   sync.disabled = Boolean(state.upstreamBusy);
   sync.onclick = () => void refreshSource(source.name);
   acts.append(sync);
+
+  // 只在「采集到的」跟「认的」不一样时才摆出来 —— 平时按下去是空动作。
+  if (source.drift) {
+    const pin = el("button", "btn btn-small", "记录这个版本");
+    pin.type = "button";
+    pin.title = "把上游现在这一版记成我们认的版本（写进 sources.json，走发布）";
+    pin.disabled = Boolean(state.upstreamBusy);
+    pin.onclick = () => void pinSourceVersion(source);
+    acts.append(pin);
+  }
   wrap.append(acts);
   return wrap;
 }
@@ -1622,7 +1677,10 @@ function upstreamRepoCard(source) {
   const card = el("article", "product up-card up-repo");
   card.tabIndex = 0;
   card.setAttribute("role", "button");
-  card.setAttribute("aria-label", `${source.name} · 上游 · ${mine.total} 条技能`);
+  card.setAttribute(
+    "aria-label",
+    `${source.name} · 上游 · ${mine.total} 条技能${source.version?.commit ? ` · 版本 ${source.version.commit.slice(0, 7)}` : ""}`,
+  );
   card.dataset.source = source.name;
   card.title = source.url;
 
@@ -1676,7 +1734,20 @@ function upstreamRepoCard(source) {
   };
   title.append(menuBtn);
   body.append(title);
-  body.append(el("p", "product-sum", source.url));
+  // 底部那行放**版本**：URL 在浮层里、`title` 上都有，卡片这一格更该回答
+  // 「我订阅的是哪一版」。漂移时后面挂个箭头指上游现在停在哪。
+  const sum = el("p", "product-sum mono");
+  if (source.version?.commit) {
+    sum.append(el("span", "", source.version.commit.slice(0, 7)));
+    if (source.drift && source.head) {
+      const drift = el("span", "up-drift", ` → ${source.head.slice(0, 7)}`);
+      drift.title = "上游往前走了，我们认的还是左边这个 —— 浮层里可以记录新版本";
+      sum.append(drift);
+    }
+  } else {
+    sum.textContent = source.mirror === "ready" ? "还没记录版本" : "还没镜像";
+  }
+  body.append(sum);
   card.append(body);
   return card;
 }
@@ -2949,18 +3020,20 @@ function validateCreate() {
   const group = normalizeCategory($("create-group").value);
   const root = state.data?.root ?? "技能仓库";
   const where = group ? `${group}/<b>${name || "&lt;名字&gt;"}</b>/` : `<b>${name || "&lt;名字&gt;"}</b>/`;
+  const verb = state.duplicating ? "复制到" : "会建在";
 
-  // 空名字是唯一拦下来的东西：没名字连「建什么」都说不清。
-  if (!name) return { ok: false, tone: "bad", message: `先起个名字。会建在 ${root}/${where}` };
+  // 空名字是唯一拦下来的东西：没名字连「建什么 / 复制成什么」都说不清。
+  if (!name) return { ok: false, tone: "bad", message: `先起个名字。${verb} ${root}/${where}` };
   // 空说明只提醒，**不拦**：拦不拦是服务端的事（它会回 400 并把原因写在 #create-err 里）。
-  if (!description) {
+  // 复制时说明是照搬的，不问。
+  if (!description && !state.duplicating) {
     return {
       ok: true,
       tone: "warn",
       message: "还差一句说明 —— 模型靠它决定用不用这条技能。空着提交的话服务端会拦。",
     };
   }
-  return { ok: true, tone: "ok", message: `会建在 ${root}/${where}` };
+  return { ok: true, tone: "ok", message: `${verb} ${root}/${where}` };
 }
 
 function renderCreate() {
@@ -2969,18 +3042,41 @@ function renderCreate() {
   note.className = `create-note ${verdict.tone}`;
   note.innerHTML = verdict.message;
   $("create-ok").disabled = !verdict.ok || state.creating;
-  $("create-where").textContent = "SKILL.md + nous.json";
+  $("create-where").textContent = state.duplicating ? `复制自 ${state.duplicating}` : "SKILL.md + nous.json";
+  $("create-ok").textContent = state.duplicating ? "复制" : "建";
   $("create-name").classList.toggle("bad", verdict.tone === "bad" && $("create-name").value.trim() !== "");
 }
 
-function openCreate() {
+/** 同名的“下一个名字”：`foo-copy` → `foo-copy-2`。只为少一次 409，服务端仍然说了算。 */
+function freeCopyName(from) {
+  const taken = new Set((state.data?.skills ?? []).map((skill) => skill.name));
+  let candidate = `${from}-copy`;
+  for (let i = 2; taken.has(candidate); i++) candidate = `${from}-copy-${i}`;
+  return candidate;
+}
+
+/**
+ * 打开「复制成新技能」。
+ *
+ * 复用新建那个弹层：除了名字和分组，其余一律照搬源那条 —— 所以说明那一格直接收起来，
+ * 类别预填源那条的。跟新建共一套校验、一套报错位置（服务端的 400 原文照样进 #create-err）。
+ */
+function openDuplicate(from) {
+  closeMenu();
+  const skill = skillNow(from);
+  if (!skill) return toast(`找不到 ${from}`, "bad");
+  openCreate({ duplicating: from, name: freeCopyName(from), category: categoriesOf(skill)[0] ?? "" });
+}
+
+function openCreate({ duplicating = null, name = "", category = null } = {}) {
   closeMenu();
   state.creating = false;
+  state.duplicating = duplicating;
   $("create").reset();
   $("create-err").hidden = true;
   // 当前正筛着某个类别，新建时就默认挂上去 —— 少点一次。
   const filter = state.filter && !state.filter.startsWith("__") ? state.filter : "";
-  $("create-cat").value = filter;
+  $("create-cat").value = category ?? filter;
   $("create-cats").replaceChildren(
     ...state.view.categoryNames.map((name) => {
       const option = el("option");
@@ -2995,16 +3091,32 @@ function openCreate() {
       return option;
     }),
   );
+  // 复制不问说明（照搬）、也不给分组（留在原地最安全；要搬就改分组那一格）。
+  $("create-title").textContent = duplicating ? `复制 ${duplicating}` : "新建技能";
+  $("create-desc-wrap").hidden = Boolean(duplicating);
+  $("create-hint").innerHTML = duplicating
+    ? `整目录拷一份：正文、附件、类别、说明都跟着走，名字换成新的。复制出来是<b>未发布</b>，满意了再发布。`
+    : `一个目录 + 一份 <code>SKILL.md</code> + 一份 <code>nous.json</code>。建完是<b>未发布</b>：
+        只在你这台、远端上看不到，满意了再发布。`;
+  $("create-name").value = name;
+  // 分组预填源那条住的抽屉（`deprecated/demo` → `deprecated`），默认留在原地。
+  if (duplicating) {
+    const home = skillNow(duplicating)?.path ?? "";
+    const cut = home.lastIndexOf("/");
+    $("create-group").value = cut > 0 ? home.slice(0, cut) : "";
+  }
   $("create-scrim").hidden = false;
   $("create").hidden = false;
   renderCreate();
   $("create-name").focus();
+  $("create-name").select();
 }
 
 function closeCreate() {
   $("create-scrim").hidden = true;
   $("create").hidden = true;
   state.creating = false;
+  state.duplicating = null;
 }
 
 async function submitCreate(event) {
@@ -3015,11 +3127,20 @@ async function submitCreate(event) {
   const description = $("create-description").value.trim();
   const category = normalizeCategory($("create-cat").value);
   const group = normalizeCategory($("create-group").value);
+  const from = state.duplicating;
   state.creating = true;
   renderCreate();
   $("create-err").hidden = true;
-  $("create-ok").textContent = "建…";
+  $("create-ok").textContent = from ? "复制中…" : "建…";
   try {
+    if (from) {
+      await transport.post("v1/skills/duplicate", { from, name, category: category ? [category] : [], group });
+      closeCreate();
+      await load({ quiet: true });
+      openDetail(name);
+      toast(`已复制成 ${name} · 未发布（历史没跟着走）`);
+      return;
+    }
     await transport.post("v1/skills/create", {
       name,
       description,
@@ -3035,7 +3156,7 @@ async function submitCreate(event) {
     $("create-err").hidden = false;
   } finally {
     state.creating = false;
-    $("create-ok").textContent = "建";
+    $("create-ok").textContent = state.duplicating ? "复制" : "建";
     if (!$("create").hidden) renderCreate();
   }
 }
@@ -3091,7 +3212,10 @@ for (const [id, next] of [
   $(id).addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
-    $(next).focus();
+    const target = $(next);
+    // 复制时「说明」那一格是收起来的：跳进一个看不见的输入框等于把回车吃掉。
+    if (target.closest("[hidden]")) return $("create").requestSubmit();
+    target.focus();
   });
 }
 
