@@ -35,7 +35,22 @@ import {
 } from "./model.js";
 import { CONFLICT_MESSAGE, createApi, createCategoryDebounce, publishWithRefresh } from "./api.js";
 
-const SELF = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+/**
+ * 这一块在宿主里的根（`/p/new1/68kazk/`）。**不是** `location.pathname` ——
+ * 一屏一个真路径之后，站在 `/upstream` 上时页面路径已经不等于块的根了，
+ * 拿它拼 `__nous/ctx` 会去问 `/upstream/__nous/ctx`（宿主会说不认识）。
+ *
+ * 两个来源：宿主注入的 `window.__nous_self`、或者 `<base href>`（同一个数）。都没有
+ * （裸跑、测试）才退回「按当前路径算」，此时路径本来就是根。
+ */
+const SELF = (() => {
+  const injected = typeof window === "undefined" ? null : window.__nous_self;
+  const fromBase =
+    typeof document === "undefined" ? null : document.querySelector("base")?.getAttribute("href") ?? null;
+  const fallback = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+  const path = String(injected || fromBase || fallback);
+  return path.endsWith("/") ? path : `${path}/`;
+})();
 const $ = (id) => document.getElementById(id);
 const $sel = (selector) => document.querySelector(selector);
 
@@ -699,14 +714,22 @@ function renderFilters() {
   // 一条订阅都没有时也要在 —— 否则第一次加订阅没有入口。
   {
     const up = upstreamSummary(state.upstream?.entries ?? []);
-    const upChip = el("button", "filter-chip" + (state.upstreamOpen ? " on" : ""));
-    upChip.type = "button";
+    // 是 `<a href>`，不是 `<button>`：它指向的是这一块里的**另一屏**，得能右键复制、
+    // 能 cmd-click 开新标签。普通左键才在同一个标签里换屏（不重载）。
+    const upChip = el("a", "filter-chip" + (state.upstreamOpen ? " on" : ""));
+    upChip.href = `${SELF}upstream`;
     upChip.append(el("span", "filter-label", "上游"));
     const n = el("span", "filter-n", state.upstream ? (up.todo ? String(up.todo) : "—") : "…");
     if (up.todo) n.dataset.tone = "warn";
     upChip.append(n);
     upChip.title = "别的 git 仓库里的技能：看清单、取用过来（不会自动同步）";
-    upChip.onclick = () => (state.upstreamOpen ? closeUpstream() : openUpstream());
+    upChip.onclick = (event) => {
+      // 带修饰键 / 中键 = 人想开新标签，别拦。
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+      event.preventDefault();
+      if (state.upstreamOpen) closeUpstream();
+      else openUpstream();
+    };
     box.append(upChip);
   }
 
@@ -1286,30 +1309,81 @@ const upstreamSourceNow = () =>
 
 // ── 地址 ────────────────────────────────────────────────────────────────────
 //
-// `#upstream` / `#upstream/skills` —— **只到订阅**。一个订阅 = 一条「技能」（一捆），
-// 所以地址里没有「哪一条」。
+// 真路径，不是 hash。这一块的正身就是**技能清单**，所以正身住 `/`：
+//
+//   /            技能（这块用来做的事）
+//   /upstream    上游（独立功能分支，自己的一个链接）
+//   /upstream/<订阅>  顺带选中那条订阅
+//   /pending     未同步的改动
+//
+// **地址只到订阅**：一个订阅 = 一条「技能」（一捆），所以地址里没有「哪一条」。
+// 目录更不进地址 —— 进了就是「钻进去换一页」，那是文件管理器，不是这一页的规矩。
+//
+// 服务端认「没扩展名的路径 = 路由」（见 server.js），所以这些链接刷新、贴给人、
+// cmd-click 开新标签都对得上。
 
-const hashTarget = () => {
-  const raw = location.hash.replace(/^#/, "");
-  if (raw !== "upstream" && !raw.startsWith("upstream/")) return null;
-  // **地址只到订阅**：`#upstream/skills`。目录是筛子，不进地址 ——
-  // 进了就是「钻进去换一页」，那是文件管理器，不是这一页的规矩。
-  // 老地址（`#upstream/skills/skills/engineering/x`）也认：多出来的段只当没看见，
-  // 落到订阅那一层。地址是可分享的，别让昨天贴出去的链接变成白屏。
-  const source = raw.slice("upstream".length).replace(/^\/+/, "").split("/")[0];
-  return { source: source || null };
+/** 路径 → 这一屏。多出来的段只当没看见（昨天贴出去的深链接不该变成白屏）。 */
+const routeOf = (pathname = location.pathname) => {
+  const rel = pathname.startsWith(SELF) ? pathname.slice(SELF.length) : pathname.replace(/^\/+/, "");
+  const [head = "", ...rest] = rel.split("/").filter(Boolean);
+  if (head === "upstream") return { view: "upstream", source: rest[0] ?? null };
+  if (head === "pending") return { view: "pending" };
+  return { view: "skills" };
 };
 
-const writeHash = () => {
-  if (!state.upstreamOpen) {
-    if (hashTarget()) history.replaceState(null, "", location.pathname + location.search);
+/** 这一屏 → 路径（相对块根）。正身就是空串 —— `/` 不是 `/skills`。 */
+const pathOf = ({ view = "skills", source = null } = {}) => {
+  if (view === "upstream") return `upstream${source ? `/${encodeURIComponent(source)}` : ""}`;
+  if (view === "pending") return "pending";
+  return "";
+};
+
+/** 换地址。`replace` = 这一下不该多一条历史（首屏纠正老链接时用）。 */
+const writePath = (route, { replace = false } = {}) => {
+  const url = SELF + pathOf(route);
+  if (url === location.pathname) return;
+  history[replace ? "replaceState" : "pushState"](null, "", url);
+};
+
+/**
+ * 老链接照样认：`#upstream/skills`、`#pending` 换成真路径，页面不重载。
+ * 地址是可分享的，昨天贴出去的不能变成白屏。
+ */
+const migrateHash = () => {
+  const raw = location.hash.replace(/^#/, "");
+  if (!raw) return;
+  const [head, ...rest] = raw.split("/").filter(Boolean);
+  if (head !== "upstream" && head !== "pending") return;
+  history.replaceState(
+    null,
+    "",
+    SELF + pathOf({ view: head, source: head === "upstream" ? rest[0] ?? null : null }),
+  );
+};
+
+/** 地址变了（后退 / 前进 / 直接开的那一条）→ 把那屏画出来。只画，不写地址。 */
+function applyRoute() {
+  const route = routeOf();
+  if (route.view === "upstream") {
+    openUpstream(route.source ?? undefined, { silent: true });
+    // 订阅名不存在（比如改名之前的 `/upstream/matt`）→ 落到第一个，但**地址也跟着换过去**
+    // （replace，不留历史）：不然地址说 matt、屏幕是别的，复制出去还是坏的。
+    writePath({ view: "upstream", source: state.upstreamSource }, { replace: true });
     return;
   }
-  const next = `#${["upstream", state.upstreamSource ?? ""].filter(Boolean).join("/")}`;
-  if (location.hash !== next) history.replaceState(null, "", next);
-};
+  if (state.upstreamOpen) closeUpstream({ silent: true });
+  if (route.view === "pending") {
+    if (!state.pendingOpen) openPending({ silent: true });
+    return;
+  }
+  if (state.pendingOpen) closePending({ silent: true });
+  // 认不出来的路径就当技能清单，顺手把地址摆正 —— 别让人对着一个死路径刷新。
+  writePath({ view: "skills" }, { replace: true });
+}
 
-function openUpstream(name = undefined) {
+addEventListener("popstate", () => applyRoute());
+
+function openUpstream(name = undefined, { silent = false } = {}) {
   leaveDetail();
   state.upstreamDetail = null;
   state.upstreamOpen = true;
@@ -1320,16 +1394,16 @@ function openUpstream(name = undefined) {
   const known = name && names.includes(name) ? name : null;
   state.upstreamSource = known ?? state.upstreamSource ?? names[0] ?? null;
   if (!names.includes(state.upstreamSource)) state.upstreamSource = names[0] ?? null;
-  writeHash();
+  if (!silent) writePath({ view: "upstream", source: state.upstreamSource });
   render();
   $("results")?.scrollTo({ top: 0 });
 }
 
-function closeUpstream() {
+function closeUpstream({ silent = false } = {}) {
   if (!state.upstreamOpen) return;
   state.upstreamOpen = false;
   state.upstreamDetail = null;
-  writeHash();
+  if (!silent) writePath({ view: "skills" });
   render();
   $("results")?.scrollTo({ top: 0 });
 }
@@ -1337,7 +1411,7 @@ function closeUpstream() {
 function switchSource(name) {
   state.upstreamSource = name;
   state.upstreamDetail = null;
-  writeHash();
+  writePath({ view: "upstream", source: name });
   render();
   $("results")?.scrollTo({ top: 0 });
 }
@@ -1647,7 +1721,7 @@ function closeUpstreamDetail() {
   if (!state.upstreamDetail) return;
   const name = state.upstreamDetail;
   state.upstreamDetail = null;
-  writeHash();
+  // 哪一条的浮层**不进地址**（地址只到订阅），所以这里一个字都不用写。
   render();
   // 焦点还回那张卡（卡片是重画过的，所以按订阅名重新找一遍）。
   const card = [...document.querySelectorAll("#upstream .product")].find(
@@ -1985,11 +2059,11 @@ function renderSync() {
   chip.title = title;
 }
 
-function openPending() {
+function openPending({ silent = false } = {}) {
   if (!state.data) return;
   state.pendingOpen = true;
-  // `#pending` 也能直接落到这扇浮层上（贴给别人、或者测试里省一次点击）。
-  if (location.hash !== "#pending") history.replaceState(null, "", "#pending");
+  // `/pending` 也能直接落到这扇浮层上（贴给别人、或者测试里省一次点击）。
+  if (!silent) writePath({ view: "pending" });
   state.pendingMessage = "";
   render();
   $("dt-body").scrollTop = 0;
@@ -1997,10 +2071,10 @@ function openPending() {
   if (!state.pending) void loadPending();
 }
 
-function closePending() {
+function closePending({ silent = false } = {}) {
   if (!state.pendingOpen) return;
   state.pendingOpen = false;
-  if (location.hash === "#pending") history.replaceState(null, "", location.pathname + location.search);
+  if (!silent) writePath({ view: "skills" });
   render();
 }
 
@@ -2540,7 +2614,8 @@ async function copyUpstreamSkill(home) {
 function openCopyPick(node) {
   const ed = state.editor;
   if (!ed) return;
-  const mine = (state.data?.skills ?? []).map((skill) => skill.name);
+  // 变体（`tdd@strict`）也住在仓里，但名字里有 `@`，不是能往里抄的目录 —— 过滤掉。
+  const mine = (state.data?.skills ?? []).map((skill) => skill.name).filter((name) => !name.includes("@"));
   if (!mine.length) {
     toast("你还没有自己的技能 —— 先建一条，再往里抄文件", "bad");
     return;
@@ -2581,6 +2656,7 @@ function copyPickRow(node) {
   wrap.append(el("span", "ed-copy-pick-label", "抄到"));
   const select = el("select", "ed-copy-pick-select");
   for (const skill of state.data?.skills ?? []) {
+    if (skill.name.includes("@")) continue;
     const option = el("option", "", skill.name);
     option.value = skill.name;
     select.append(option);
@@ -2673,7 +2749,7 @@ function editorDirRow(node) {
   // 整条抄只对「装着 SKILL.md 的目录」开放 —— 别的目录抄下来是一堆没人认领的散文件。
   if (isUpstreamSkillDir(node)) {
     main.append(
-      copyMark(node, "抄一份", "整条抄进我们仓里（重名自动叫 -2、-3）", () => {
+      copyMark(node, "抄", "整条抄进我们仓里（重名自动叫 -2、-3）", () => {
         const home = ed.prefix ? `${ed.prefix}/${node.path}` : node.path;
         void copyUpstreamSkill(home);
       }),
@@ -3710,6 +3786,15 @@ $("search").oninput = (event) => {
   renderGrid();
 };
 $("refresh").onclick = () => void load();
+
+// 牌子 = 回这一块的正身（`/`）。站在 `/upstream` 上时它是「回去」最自然的那一下，
+// 所以它是个真链接（`href="./"`），只是普通左键不重载页面。
+$("home").onclick = (event) => {
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+  event.preventDefault();
+  if (state.upstreamOpen) return closeUpstream();
+  closeSheet();
+};
 $("new-skill").onclick = () => openCreate();
 
 // 命令行里 `git pull` / 手改 SKILL.md 之后，内存名册和盘会分叉 —— 因为 `render()` 只查内存。
@@ -3854,14 +3939,18 @@ addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden" && categoryWrites.hasPending()) void categoryWrites.flush();
 });
 
-load();
+const firstPaint = load();
 
 // 上游清单跟着一起读（服务端只读本地镜像，所以这一条不联网、也不拖慢首屏）。
-// 地址上带 `#upstream` 就直接把那一块顶上来。
-// 地址上带 `#upstream[/订阅[/路径]]` 就直接落到那一层（贴给别人、测试里也靠它）。
+// 地址直接落在哪一屏就开哪一屏（贴给别人、刷新、cmd-click 都靠这个）。
+// `/upstream` 要等上游清单读回来才有东西可画，所以挂在它的 then 后面。
 void loadUpstream({ quiet: true }).then(() => {
-  if (location.hash === "#pending") openPending();
-  const target = hashTarget();
-  // 地址只到订阅：目录是筛子，不进地址。所以这里只开那一屏，不带路径。
-  if (target && !state.upstreamOpen) openUpstream(target.source ?? undefined);
+  migrateHash(); // `#upstream/...` → `/upstream/...`，只有这一下会改地址（replace，不留历史）
+  applyRoute();
+});
+
+// `/pending` 要等技能清单回来才有东西可画（`openPending` 空手就返回），所以再来一趟：
+// 谁慢都不影响「地址说哪一屏就哪一屏」。
+void firstPaint.then(() => {
+  if (routeOf().view === "pending") applyRoute();
 });

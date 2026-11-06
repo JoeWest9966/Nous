@@ -54,6 +54,9 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   min-height: 56px;
 }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+/* 牌子上是 `<a href="./">`：站在 `/upstream` 上点它就是回技能清单。 */
+a.brand { text-decoration: none; color: inherit; }
+a.brand:hover .titles h1, a.brand:focus-visible .titles h1 { color: var(--dim); }
 .mark { width: 22px; height: 22px; fill: none; stroke: var(--ink); stroke-width: 1.4; }
 .titles h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
 .titles p { margin: 0; font-size: 11px; color: var(--dim); font-family: var(--mono); }
@@ -202,6 +205,8 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   border-radius: 999px; padding: 4px 11px; font: inherit; font-size: 12px; cursor: pointer;
 }
 .filter-chip:hover, .filter-chip:focus-visible { border-color: var(--dim); color: var(--ink); outline: none; }
+/* 「上游」这颗是 `<a href>`（能右键复制、能 cmd-click），别让它带上链接那套蓝下划线。 */
+a.filter-chip { text-decoration: none; }
 .filter-chip.on { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 .filter-chip.on .filter-n { color: var(--paper); opacity: 0.62; }
 .filter-n { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
@@ -617,7 +622,8 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 
 /* 左栏：两个新建按钮 + 一条表单 + 树。宽度固定，树自己滚。 */
 .ed-side {
-  flex: none; width: 190px; min-height: 0; display: flex; flex-direction: column;
+  /* 190px 时 `mocking.md` 只剩下 `mocking…` —— 上游那棵树有三层缩进，名字比按钮重要。 */
+  flex: none; width: 240px; min-height: 0; display: flex; flex-direction: column;
   border-right: 1px solid var(--line); background: var(--paper);
 }
 .ed-newbar { flex: none; display: flex; gap: 4px; padding: 8px 8px 4px; }
@@ -639,7 +645,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .ed-new-hint[data-tone="bad"] { color: var(--bad); }
 
 .ed-files { flex: 1; min-height: 0; overflow: auto; padding: 2px 6px 8px; }
-.ed-row { display: flex; align-items: center; gap: 2px; }
+.ed-row { display: flex; align-items: center; gap: 2px; position: relative; }
 .ed-row .ed-file { flex: 1; min-width: 0; }
 .ed-file {
   display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left;
@@ -669,7 +675,9 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 /* 取用过的上游那条：这份文件跟本地那份比下来是什么。`≠` 变了、`+` 本地没有。
    没取用过就一个都不标（服务端给的 `state` 那时候没有意义）。 */
 .ed-file-mark {
-  flex: none; margin-left: auto; padding: 0 3px; border-radius: 3px;
+  /* 不抢名字的地盘：`margin-left:auto` 会把 `.ed-file-name` 压成一个字（`mock…`）。
+     让它紧跟名字后面，让 `.ed-file-size` 去吸右边。 */
+  flex: none; padding: 0 3px; border-radius: 3px;
   font-size: 10px; line-height: 14px; color: var(--dim);
   background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
@@ -682,18 +690,39 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 9%, transparent);
   cursor: pointer;
+  /* 两件事一起说：
+     ① 一行一个「抄」× 108 行 = 一堵噪音墙 —— 名字先说话，鼠标移上来它才露头；
+     ② 它**不参与布局**（绝对定位在文件大小那个位置上），否则 `mocking.md` 会被压成
+        `mock…`：左栏就 250px，缩进吃掉一大半，名字和徽标抢同一条命。 */
+  position: absolute; right: 26px; top: 50%; transform: translateY(-50%);
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 90ms ease;
 }
+/* 它站的那个位置本来是文件大小 —— 腾开，别让两个数字叠成一坨。 */
+.ed-row:hover .ed-file-size,
+.ed-row:focus-within .ed-file-size { opacity: 0; }
+.ed-row:hover .ed-file-mark[data-tone="copy"],
+.ed-row:focus-within .ed-file-mark[data-tone="copy"] { opacity: 1; }
 .ed-file-mark[data-tone="copy"]:hover { background: color-mix(in srgb, var(--ink) 17%, transparent); }
 .ed-file-mark[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
 
 /* 抄单个文件时那行「抄到哪个技能里」—— 内联，不弹模态（弹模态会盖住你正在比的那棵树）。 */
 .ed-copy-pick {
   display: flex; align-items: center; gap: 6px;
-  padding: 5px 8px 7px 26px;
+  /* 不跟树的缩进走：左栏本来就窄，再缩 26px 选择器只剩半截。 */
+  padding: 5px 8px 6px 10px;
+  margin: 0 0 2px;
   font-size: 11.5px; color: var(--dim);
+  background: var(--wash);
+  border-radius: 6px;
 }
+/* 左栏窄：这一行里每个字都得 nowrap，不然「抄到」会竖着断成两行、按钮竖排。 */
+.ed-copy-pick > * { flex: none; white-space: nowrap; }
+.ed-copy-pick > .ed-copy-pick-select { flex: 1 1 auto; min-width: 84px; }
+.ed-copy-pick .btn { padding: 2px 8px; }
 .ed-copy-pick-select {
-  flex: 1; min-width: 0; max-width: 200px;
+  flex: 1; min-width: 0;
   font: inherit; font-size: 11.5px;
   padding: 2px 4px; border-radius: 5px;
   border: 1px solid var(--line-2); background: var(--surface); color: var(--ink);
