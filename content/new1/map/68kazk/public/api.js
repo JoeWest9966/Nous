@@ -142,7 +142,7 @@ export function createCategoryDebounce({
 } = {}) {
   if (typeof post !== "function") throw new TypeError("createCategoryDebounce 需要一个 post 函数");
 
-  const pending = new Map(); // key → { category, send }
+  const pending = new Map(); // name → 最新一次的 category[]
   let timer = null;
   let chain = Promise.resolve();
 
@@ -153,11 +153,10 @@ export function createCategoryDebounce({
     if (!batch.length) return chain;
     chain = chain.then(() =>
       Promise.all(
-        batch.map(async ([name, { category, send }]) => {
+        batch.map(async ([name, category]) => {
           const info = { name, category };
           try {
-            // 默认是本仓的技能；上游那条的注记要打到另一个端点上，所以允许按次覆盖。
-            const result = send ? await send(category) : await post("v1/skills/category", { name, category });
+            const result = await post("v1/skills/category", { name, category });
             onSent?.({ ...info, result });
             return result;
           } catch (error) {
@@ -171,15 +170,10 @@ export function createCategoryDebounce({
   };
 
   return {
-    /**
-     * 记下这一次选择；计时重来。返回还有几条没发。
-     *
-     * `send` 可选：不给就发 `POST v1/skills/category {name, category}`（本仓的技能）。
-     * 上游那条的类别是另一份文件、另一个端点，用得上它。
-     */
-    schedule(name, category, send) {
+    /** 记下这一次选择；计时重来。返回还有几条没发。 */
+    schedule(name, category) {
       const wanted = Array.isArray(category) ? [...category] : [];
-      pending.set(name, { category: wanted, send });
+      pending.set(name, wanted);
       if (timer !== null) timers.clearTimeout(timer);
       timer = timers.setTimeout(fire, delay);
       return pending.size;
@@ -194,7 +188,7 @@ export function createCategoryDebounce({
     },
     /** 有没有还没落盘的（UI 拿它显示「正在保存」）。 */
     hasPending: () => pending.size > 0,
-    pendingFor: (name) => pending.get(name)?.category,
+    pendingFor: (name) => pending.get(name),
   };
 }
 

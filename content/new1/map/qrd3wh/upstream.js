@@ -27,10 +27,6 @@ import path from "node:path";
 
 export const SOURCES_FILE = "sources.json";
 export const MIRROR_DIR = "upstream";
-/** 我们给上游技能打的类别。**我们的注记**，别人的仓里写不进去，所以住在这儿。 */
-export const CATEGORY_FILE = "upstream-categories.json";
-/** 一条正文的上限。跟本地文件同一个数（spec §6.6），免得「上游能看 5MB、本地只能看 512K」。 */
-export const MAX_TEXT_BYTES = 512 * 1024;
 
 const withStatus = (error, status) => Object.assign(error, { status });
 const errorLine = (error) => String(error?.message ?? error).split("\n")[0].slice(0, 400);
@@ -111,63 +107,6 @@ export const writeSources = async (root, list) => {
   await writeFile(tmp, JSON.stringify(body, null, 2) + "\n", "utf8");
   await rename(tmp, file);
   return sources;
-};
-
-// ── 我们给上游技能打的类别（内容，进版本库）──────────────────────────────────
-//
-// 别人的仓里写不进 `nous.json`，所以「这条属于工程」只能是**我们这边的一句话**。
-// 它跟 `categories.json` 是同一个东西的两半：词表在那边，挂在哪条上在这边。
-//
-// 键是 `<订阅名>/<路径>`：订阅改名就丢注记 —— 那跟「把文件搬到别处」是一回事，
-// 认了，比编一个会漂的 id 强。
-
-/** 文件不在 = 一条都没标（不是错误）。文件在但读不懂 = 400，别装作没标。 */
-export const readCategories = async (root) => {
-  let text;
-  try {
-    text = await readFile(path.join(root, CATEGORY_FILE), "utf8");
-  } catch {
-    return {};
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    throw withStatus(new Error(`${CATEGORY_FILE} 不是合法 JSON：${errorLine(error)}`), 400);
-  }
-  const items = parsed?.items;
-  if (!items || typeof items !== "object" || Array.isArray(items)) {
-    throw withStatus(new Error(`${CATEGORY_FILE} 少了 items（该是一个 { 上游路径: [类别] } 的表）`), 400);
-  }
-  const out = {};
-  for (const [key, value] of Object.entries(items)) {
-    if (!Array.isArray(value)) throw withStatus(new Error(`${CATEGORY_FILE}: ${key} 不是一个数组`), 400);
-    out[key] = value.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
-  }
-  return out;
-};
-
-export const writeCategories = async (root, items) => {
-  const clean = {};
-  for (const [key, value] of Object.entries(items ?? {})) {
-    const list = (Array.isArray(value) ? value : []).map((item) => String(item).trim()).filter(Boolean);
-    if (key.includes("..")) throw withStatus(new Error(`${CATEGORY_FILE}: 键里不许有 .. —— ${key}`), 400);
-    clean[key] = [...new Set(list)].sort((a, b) => a.localeCompare(b, "zh-CN"));
-  }
-  const sorted = Object.fromEntries(Object.entries(clean).sort(([a], [b]) => a.localeCompare(b, "zh-CN")));
-  const file = path.join(root, CATEGORY_FILE);
-  const tmp = `${file}.tmp-${Date.now()}`;
-  const body = {
-    v: 1,
-    _about: [
-      "我们给上游技能打的类别。别人的仓里写不进去，所以注记住在这儿（跟 sources.json 一样是内容，进版本库）。",
-      "键是 <订阅名>/<路径>，值是类别路径数组；键不在 = 这条还没被标过（沿用上游自己 nous.json 里的）。",
-    ],
-    items: sorted,
-  };
-  await writeFile(tmp, JSON.stringify(body, null, 2) + "\n", "utf8");
-  await rename(tmp, file);
-  return sorted;
 };
 
 // ── 镜像（缓存，不是事实）────────────────────────────────────────────────────
@@ -257,9 +196,6 @@ const treeOf = async (run, dir, sha) => {
 
 const blobText = async (run, dir, sha) => (await git(run, dir, ["cat-file", "blob", sha])).stdout;
 
-/** 一条上游技能的类别在 `upstream-categories.json` 里的键。改订阅名 = 这些注记跟着丢，认了。 */
-export const categoryKey = (source, home) => `${source}/${home}`;
-
 const blobBytes = async (run, dir, sha) =>
   (await git(run, dir, ["cat-file", "blob", sha], { encoding: "buffer", maxBuffer: 64 << 20 })).stdout;
 
@@ -331,33 +267,6 @@ export const listEntries = async ({ data, source, run }) => {
     });
   }
   return entries.sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
-};
-
-/**
- * 读一条上游技能里的一个文件。**只读** —— 上游那一侧没有任何写入口，
- * 这条路径上也不该长出写入口（改上游 = 去他们的仓提 PR，不是我们的面板）。
- */
-export const entryText = async ({ data, source, run, home, rel }) => {
-  const head = await resolveHead({ data, source, run });
-  const dir = mirrorPath(data, source.name);
-  // 先在 `rel` 上验，再 join：`..` 交给 `path.posix.join` 就**已经被折掉了**，
-  // 验折完之后的结果等于什么都没验（`tdd/../../README.md` → `skills/README.md`）。
-  if (rel.startsWith("/") || rel.split("/").includes("..")) {
-    throw withStatus(new Error(`${source.name}: 路径只能在上游那一条里面 —— ${rel}`), 400);
-  }
-  const want = path.posix.join(home, rel);
-  const rows = await treeOf(run, dir, head);
-  const row = rows.find((item) => item.path === want);
-  if (!row) throw withStatus(new Error(`${source.name}: ${want} 不在上游里`), 404);
-  if (row.type !== "blob") throw withStatus(new Error(`${source.name}: ${want} 不是文件`), 400);
-  const size = Number((await git(run, dir, ["cat-file", "-s", row.sha])).stdout.trim() || 0);
-  if (size > MAX_TEXT_BYTES) {
-    throw withStatus(
-      new Error(`${source.name}: ${want} 有 ${Math.round(size / 1024)} KB，超过 ${MAX_TEXT_BYTES / 1024} KB —— 面板里不打开`),
-      400,
-    );
-  }
-  return { path: rel, size, text: await blobText(run, dir, row.sha) };
 };
 
 /** 一条上游技能里的文件清单（给取用前的对照看）。 */

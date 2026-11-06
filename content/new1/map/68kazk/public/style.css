@@ -15,12 +15,6 @@
   --warn: #9a6b12;
   --bad: #b03a2e;
   --radius: 10px;
-  /* 上游独属的低饱和暖金：**只给上游用**，别处一个都不许拿它上色。
-     它不进色轮（`--hue` 是整圈 360 度），所以不会跟某个名字撞色。 */
-  --up-grad-a: hsl(40 42% 92%);
-  --up-grad-b: hsl(31 44% 83%);
-  --up-ink: hsl(34 42% 27%);
-  --up-line: hsl(38 42% 55%);
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -310,28 +304,9 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .badge-float.fail { background: var(--bad); color: #fff; border-color: var(--bad); }
 .badge-float.unpub { background: #fdf4e3; color: var(--warn); border-color: #f0dfb8; }
 
-/* 上游条目的卡：同一副骨头，换一身色。暖金是上游独属的 ——
-   `--hue` 那一圈 360 度里总有个名字落在任何色上，所以上游不跟名字取色。 */
-.product.up-card { border-color: color-mix(in srgb, var(--up-line) 30%, var(--line)); }
-.product.up-card:hover { border-color: color-mix(in srgb, var(--up-line) 55%, var(--line)); }
-.product.up-card .visual { background: linear-gradient(135deg, var(--up-grad-a), var(--up-grad-b)); }
-.product.up-card .visual-mono { color: var(--up-ink); }
-/* 名字旁边那一小截是订阅名：两条同名的时候，这是唯一分得清的地方。 */
-.up-src {
-  flex: 0 0 auto;
-  color: var(--up-ink); border-color: color-mix(in srgb, var(--up-line) 35%, var(--line));
-  background: color-mix(in srgb, var(--up-line) 10%, transparent);
-}
-
 .product-body { padding: 11px 13px 12px; }
 .product-title { display: flex; align-items: baseline; flex-wrap: wrap; row-gap: 4px; gap: 6px; min-width: 0; }
-/* `min-width: 0` + `flex: 0 1 auto`：长名字（`git-guardrails-claude-code`）得在卡里截断，
-   不许把旁边那颗订阅名顶出卡外。 */
-.product-name {
-  font-family: var(--mono); font-size: 14px; font-weight: 600;
-  min-width: 0; flex: 0 1 auto;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+.product-name { font-family: var(--mono); font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 「不进提示词」是个状态，不是装饰：隐藏的技能模型看不到，只有人手动读。 */
 .product-hidden { font-family: var(--mono); font-size: 10px; color: var(--dim); flex: none; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 /* 卡上唯一可见的菜单入口（右键 / 长按只是快捷方式）。 */
@@ -482,13 +457,6 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   font: inherit; font-size: 12px; color: var(--dim);
 }
 .detail-back:hover, .detail-back:focus-visible { color: var(--ink); outline: none; }
-
-/* 浮层里的色砖：上游那一支是同一个暖金（`.detail-body-text` 下面那个只是正文 pre）。 */
-.dt-tile[data-kind="upstream"] {
-  background: linear-gradient(135deg, var(--up-grad-a), var(--up-grad-b));
-  color: var(--up-ink);
-}
-.dt-tile[data-kind="upstream"] .dt-mono { color: var(--up-ink); text-shadow: none; }
 
 .detail-body-text {
   margin: 0; padding: 10px 12px; max-height: 260px; overflow: auto;
