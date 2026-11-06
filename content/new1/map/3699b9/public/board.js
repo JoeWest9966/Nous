@@ -51,7 +51,7 @@ const collectCats = (vocab, items, { dropBasics }) => {
 };
 
 export function createBoard(deps) {
-  const { api, root, onChange, onSave, onLaunch, getName, onState } = deps;
+  const { api, root, onChange, onSave, onPublish, getName, onState } = deps;
   const $ = (id) => document.getElementById(id);
   const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -204,9 +204,9 @@ export function createBoard(deps) {
 
     // 中央
     const dirty = deps.isDirty?.() ?? false;
-    $("b-hub-sub").textContent = dirty ? "有改动 · 还没落盘" : "已落盘 · 启动会先保存";
+    $("b-hub-sub").textContent = dirty ? "unsaved · save first" : "saved · publish to commit";
     $("b-save").disabled = !name;
-    $("b-launch").disabled = !name;
+    $("b-publish").disabled = !name;
   }
 
   // ── 弹窗开合 ─────────────────────────────────────────────────────────────
@@ -911,7 +911,7 @@ export function createBoard(deps) {
       onChange();
       render();
     } else if (btn.id === "b-save") { void onSave?.(); }
-    else if (btn.id === "b-launch") { void onLaunch?.(); }
+    else if (btn.id === "b-publish") { void onPublish?.(); }
   });
 
   // ── 事件：弹窗 ───────────────────────────────────────────────────────────

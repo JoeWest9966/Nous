@@ -106,7 +106,6 @@
         </div>
         <div class="ed-actions">
           <span class="ed-state" id="ed-state"></span>
-          <button class="ed-btn" id="ed-publish" title="校验 + commit + push">发布</button>
           <button class="ed-x" id="ed-close" title="关闭（Esc）" aria-label="关闭">×</button>
         </div>
       </header>
@@ -119,8 +118,8 @@
         </button>
       </div>
       <div class="ed-stage" id="ed-stage">
-        <!-- 盘面：四域 + 中央椭圆（版式照 hb7k3j）。中央是落子的地方 —— 启动 / 保存；
-             发布在头部，那是「提交」不是「落子」。 -->
+        <!-- 盘面：四域 + 中央椭圆（版式照 hb7k3j）。中央是落子的地方 —— 保存 / 发布；
+             开对话从卡片列表的 ▶ 启动走，这里不重复。 -->
         <div class="board-wrap" id="ed-form">
           <div class="board" id="board">
             <svg class="frame" viewBox="0 0 640 440" preserveAspectRatio="none" aria-hidden="true">
@@ -187,10 +186,9 @@
               <h1 id="b-name">—</h1>
               <div class="sub" id="b-hub-sub">—</div>
               <div class="hub-btns">
-                <button class="node cta primary" id="b-launch" type="button" title="先落盘，再拿这条预设开一条新对话">启动</button>
                 <button class="node cta" id="b-save" type="button" title="保存到磁盘（Ctrl/⌘+S）—— 不提交">保存</button>
+                <button class="node cta primary" id="b-publish" type="button" title="校验 + commit + push">发布</button>
               </div>
-              <span id="b-flash"></span>
             </div>
           </div>
         </div>
@@ -202,7 +200,7 @@
       </div>
       <div class="ed-msg" id="ed-msg" hidden></div>
       <footer class="ed-foot">
-        <p class="dim small" id="ed-hint">中央「保存」只落盘；头部「发布」才 commit + push。</p>
+        <p class="dim small" id="ed-hint">中央「保存」只落盘；「发布」才 commit + push。</p>
       </footer>
     </aside>
 

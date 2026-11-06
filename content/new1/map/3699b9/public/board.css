@@ -85,11 +85,9 @@ svg.frame .cliff { fill: none; stroke: var(--line); stroke-width: 2; stroke-line
   gap: .7vmin; text-align: center; padding: 3% 9%;
 }
 .hub::before { content: ""; position: absolute; inset: 0; border-radius: 50%; z-index: -1; background: var(--s5); opacity: .18; }
-.hub h1 { margin: 0; font-size: clamp(12px, 1.85vmin, 17px); font-weight: 700; letter-spacing: -0.01em; color: var(--fg); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub h1 { margin: 0; font-size: clamp(12px, 1.85vmin, 17px); font-weight: 700; letter-spacing: .02em; text-transform: uppercase; color: var(--fg); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hub .sub { margin: -.2vmin 0 .6vmin; color: var(--muted); font-size: clamp(9px, 1.4vmin, 12.5px); font-style: italic; }
 .hub-btns { display: flex; gap: .8vmin; margin-top: .4vmin; }
-#b-flash { color: var(--s4); font-size: clamp(9px, 1.35vmin, 12px); min-height: 1.3em; font-family: var(--mono); }
-#b-flash[data-tone="bad"] { color: #efb7b3; }
 
 /* ── 弹窗（苹果那套材料/压暗/从触发点长出）—— 配色跟 hb7k3j 同源 ── */
 .bscrim {

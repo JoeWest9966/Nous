@@ -900,7 +900,7 @@ function ensureBoard() {
     isDirty: () => editor.dirty,
     onChange: () => markDirty(),
     onSave: () => saveEditor({ publish: false }),
-    onLaunch: () => launchFromEditor(),
+    onPublish: () => saveEditor({ publish: true }),
     onState: (text) => showEdMessage(text, "bad"),
   });
   void board.load();
@@ -915,31 +915,6 @@ function renderForm() {
     return;
   }
   ensureBoard().render();
-}
-
-/** 启动：先落盘（有改动才写），再拿盘上那一版开会话。落盘失败就不启动。 */
-async function launchFromEditor() {
-  const name = editor.name;
-  if (!name) return;
-  const flash = $("b-flash");
-  flash.textContent = "";
-  flash.dataset.tone = "";
-  if (editor.dirty) {
-    await saveEditor({ publish: false });
-    if (editor.dirty) {
-      flash.textContent = "没落盘，先修上面那条";
-      flash.dataset.tone = "bad";
-      return;
-    }
-  }
-  const preset = findPreset(name);
-  if (!preset) {
-    flash.textContent = "盘上找不到这条";
-    flash.dataset.tone = "bad";
-    return;
-  }
-  flash.textContent = "落盘了 · 在开对话";
-  openLaunch(preset);
 }
 
 function markDirty() {
@@ -1542,7 +1517,6 @@ function bind() {
   $("dt-scrim").onclick = () => closeDetail();
   $("ed-close").onclick = () => closeEditor();
   $("ed-scrim").onclick = () => closeEditor();
-  $("ed-publish").onclick = () => void saveEditor({ publish: true });
   $("ed-tab-form").onclick = () => {
     // 表单 ← JSON：只在 JSON 能解析时回填（非法 JSON 上回填等于猜）。
     if (editor.mode === "json") {
