@@ -169,20 +169,12 @@
   .skill-desc { color:var(--muted); font-size:clamp(10px,1.35vmin,12.5px); line-height:1.45; margin-top:.15em;
                 display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .skill-meta { display:block; color:var(--faint); font-family:var(--mono); font-size:clamp(9px,1.2vmin,11px); margin-top:.25em; }
-  /* 类别横条：一百个扩展平铺就是一锅粥，类别是词表里现成的索引 —— 给它一个入口。
-     横条而不是左侧树：弹窗是「回答一个问题」的地方，再塞一列导航等于在里面再开一层；
-     手机 390px 上一列树也放不下。横着滚，一行到顶。 */
-  /* 「全部」和「只看已选」钉在两头，中间那串类别才滚 —— 十几个类别时，
-     把这两个也滚出去，等于把唯一的退路藏起来。 */
-  .cats { display:flex; gap:.4em; align-items:center; flex:none; min-width:0;
-          padding:1vmin 1.2vmin .2vmin; }
-  .cats-scroll { display:flex; gap:.4em; align-items:center; flex:1; min-width:0;
-                 overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; }
-  .cats-scroll::-webkit-scrollbar { display:none; }
-  /* 边缘渐隐只在**那边还有东西**的时候才盖上去：静止时也淡，看着像渲染坏了。 */
-  .cats-scroll[data-fade="r"] { mask-image:linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%); }
-  .cats-scroll[data-fade="l"] { mask-image:linear-gradient(to right, transparent 0, #000 16px); }
-  .cats-scroll[data-fade="lr"] { mask-image:linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%); }
+  /* ── 类别：顶部只放**系统视图**，人自己建的类别在右栏 ──
+     分工抄 vbe4pt：栏里混着「全部 / 未分类」，「我自己建了什么」就看不出来了；
+     反过来把自定义类别摊到顶栏，一百个扩展时那行胶囊会滚成一条没头的带子。
+     右栏的读法借自模型弹窗：列头 + 一根竖轨 + 缩进，窄了栏变条（不是另画一版）。 */
+  .views { display:flex; gap:.4em; align-items:center; flex:none; flex-wrap:wrap;
+           padding:1vmin 1.2vmin .2vmin; }
   .chip { flex:none; display:inline-flex; align-items:center; gap:.45em; padding:.35em .75em;
           border:1px solid var(--border); border-radius:999px; background:none; cursor:pointer;
           color:var(--muted); font-family:var(--mono); font-size:clamp(9.5px,1.25vmin,11.5px);
@@ -193,8 +185,61 @@
                                background:color-mix(in srgb, var(--accent) 14%, transparent); }
   .chip .n { color:var(--faint); }
   .chip[aria-pressed="true"] .n { color:var(--accent); }
-  /* 这一类里有东西被勾上 —— 一百个扩展里，「我在哪几档里选过东西」得看得见。 */
-  .chip .dot { width:.42em; height:.42em; border-radius:50%; background:var(--accent); }
+  .chip[aria-disabled="true"] { opacity:.45; cursor:not-allowed; }
+
+  /* 只有真有自定义类别时才让出那 176px；没有就还是 720 宽的今天。 */
+  .sheet.has-rail { width:min(880px, 94vw); }
+  .body { flex:1; min-height:0; display:grid; grid-template-columns:1fr; }
+  .body.has-rail { grid-template-columns:1fr 176px; }
+  .rail { min-width:0; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+          border-left:1px solid var(--border); padding:1vmin 1vmin 1vmin 1.2vmin;
+          display:flex; flex-direction:column; gap:.1em; }
+  /* `hidden` 是 UA 样式的 display:none，被上面那句 display:flex 盖住了 —— 得自己补一句。 */
+  .rail[hidden] { display:none; }
+  /* 类别那一串自己也是 flex：桌面竖着摞，窄屏横着排 —— 只有这一处换方向。 */
+  #extRailList { display:flex; flex-direction:column; gap:.1em; min-width:0; }
+  .rail > .rhead { display:flex; align-items:center; gap:.6em; margin:.4em .2em .5em;
+                   font-family:var(--mono); font-size:clamp(8.5px,1.15vmin,10.5px); letter-spacing:.12em;
+                   text-transform:uppercase; color:var(--muted); }
+  .rail > .rhead::after { content:""; flex:1; border-top:1px solid var(--border); }
+  .cat { display:flex; align-items:center; gap:.5em; width:100%; padding:.4em .5em;
+         border:1px solid transparent; border-radius:var(--radius); background:none; cursor:pointer;
+         color:var(--muted); font-family:var(--mono); font-size:clamp(10px,1.35vmin,12px);
+         text-align:left; position:relative; transition:background .12s ease, border-color .12s ease, color .12s ease; }
+  .cat:hover { background:color-mix(in srgb, var(--accent) 7%, transparent); color:var(--fg); }
+  .cat:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .cat[aria-pressed="true"] { color:var(--fg); border-color:var(--accent);
+                              background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .cat .cl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cat .n { margin-left:auto; color:var(--faint); flex:none; }
+  .cat[aria-pressed="true"] .n { color:var(--accent); }
+  .cat .dot { width:.42em; height:.42em; border-radius:50%; background:var(--accent); flex:none; }
+  .cat.child { padding-left:1.7em; }
+  .cat.child::before { content:""; position:absolute; left:.85em; top:-.5em; bottom:50%;
+                       border-left:1px solid var(--border); border-bottom:1px solid var(--border);
+                       border-radius:0 0 0 5px; width:.6em; }
+  /* 词表里有、没挂任何扩展：留着但灰着 —— 建了看不见比灰着更糟。 */
+  .cat.zero { opacity:.5; }
+  .rail .rfoot { margin-top:auto; padding-top:.8em; color:var(--faint);
+                 font-family:var(--mono); font-size:clamp(8.5px,1.15vmin,10.5px); }
+  .rail .rfoot a { color:var(--faint); font-size:inherit; }
+  .rail .rfoot a:hover { color:var(--muted); }
+  /* 窄屏：栏变条。跟模型弹窗「装不下就把列摞成行」是同一套办法，不是另画一版。 */
+  @media (max-width: 760px) {
+    .body.has-rail { grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr); }
+    .body.has-rail .rail { order:-1; display:block; border-left:0; border-bottom:1px solid var(--border);
+                           padding:.8vmin 1.2vmin; overflow-x:auto; overflow-y:hidden; }
+    /* 换方向的只有这一层：`.rail` 底下还套着 `#extRailList`，把 row 写在 `.rail` 上
+       等于只让一个「装着一列按钮的 div」变成横排 —— 按钮照样竖着摞。 */
+    .body.has-rail #extRailList { flex-direction:row; align-items:center; gap:.4em; }
+    .body.has-rail .rail > .rhead, .body.has-rail .rfoot { display:none; }
+    .body.has-rail .cat { width:auto; flex:none; padding:.34em .7em; }
+    .body.has-rail .cat.child { padding-left:.7em; }
+    /* 横排里缩进和引线都没地方站，父子关系改用一个「›」说：读作「上一档底下的」。 */
+    .body.has-rail .cat.child::before { content:"›"; display:inline; position:static; width:auto;
+                                        height:auto; border:0; border-radius:0; margin-right:.15em;
+                                        color:var(--faint); }
+  }
   /* 变体行：缩进 + 一根细引线，读作「这一族底下的另一个注册名」，不是另一条扩展。
      一族只能选一个，所以方框画成圆的 —— 形状本身就在说 radio。 */
   .skill-row.variant-row { padding-left:2.4em; position:relative; }
@@ -344,12 +389,20 @@
       <b>上下文 · 扩展</b>
       <input type="text" id="eq" placeholder="筛选已装的…" autocomplete="off">
     </div>
-    <div class="cats" id="extCats">
-      <button class="chip" id="extCatAll" type="button" data-cat=""></button>
-      <div class="cats-scroll" id="extCatScroll"></div>
-      <button class="chip" id="extCatPicked" type="button" data-only="1"></button>
+    <div class="views" id="extViews">
+      <button class="chip" type="button" data-view="all" aria-pressed="true"></button>
+      <button class="chip" type="button" data-view="basics" aria-pressed="false"></button>
+      <button class="chip" type="button" data-view="none" aria-pressed="false"></button>
+      <button class="chip" type="button" data-only="1" aria-pressed="false"></button>
     </div>
-    <div class="skills" id="extList"></div>
+    <div class="body" id="extBody">
+      <div class="skills" id="extList"></div>
+      <div class="rail" id="extRail" hidden>
+        <div class="rhead">类别</div>
+        <div id="extRailList"></div>
+        <div class="rfoot"><a id="extRailGo" href="#" target="_blank" rel="noreferrer">+ 新建类别：去扩展页</a></div>
+      </div>
+    </div>
     <div class="dfoot skillfoot">
       <span id="extHint">—</span>
       <button class="done" id="extDone" type="button">完成 ›</button>
@@ -398,6 +451,13 @@ try {
      ?? null;
   if (!tag) throw new Error("这一盘里没有 qrd3wh，创建不知道往哪发");
   skillsPage = ctx.blocks.find((b) => b.id === "68kazk") ?? null;
+  // 右栏底部「+ 新建类别」的出路：类别只在扩展页建（那边才是仓库的写入口）。
+  const extendPage = ctx.blocks.find((b) => b.id === "vbe4pt") ?? null;
+  if (extendPage) {
+    const go = $("extRailGo");
+    go.href = extendPage.url;
+    go.textContent = "+ 新建类别：去扩展页";
+  }
   promptsPage = ctx.blocks.find((b) => b.id === "6ysg01") ?? null;
   $("open").href = tag.url;
   $("open").hidden = false;
@@ -462,6 +522,7 @@ const openExt = (from) => {
   $("eq").oninput = renderExtList;
   // 每次打开都回「全部」：藏着的筛选就是「我的扩展怎么不见了」的来源。
   extCategory = null;
+  extView = "all";
   extOnlyPicked = false;
   renderExtList();
   ($("extList").querySelector(".skill-row") ?? $("extDone")).focus();
@@ -540,65 +601,44 @@ let extFamilies = [];
 /** 默认勾选的类别。空集不是意外 —— 见下面 `inCategory` 的注释。 */
 const DEFAULT_CATEGORY = "Basics";
 /**
- * 扩展是不是这个类别。`Basics/xxx` 也算 Basics：类别是**树**（词表里真的存在
- * `Basics/234` 这种子类别），拿 `===` 一刀切会漏掉整棵子树。
+ * 顶部视图：`all` / `basics` / `none`。`null` = 正在看一个**自定义类别**。
+ *
+ * 视图和自定义类别是**同一条轴**（「给我看哪些」），所以一击只有一个亮：点右栏的类别，
+ * 顶部全灭；点顶部，右栏灭。两套叠着亮，人就得在脑子里做交集。
  */
-const inCategory = (ext, wanted) => {
-  const want = String(wanted).toLowerCase();
-  return (ext?.category ?? []).some((label) => {
-    const got = String(label ?? "").trim().toLowerCase();
-    return got === want || got.startsWith(`${want}/`);
-  });
-};
-
-/**
- * 类别筛选：`null` = 全部。**类别是视图，不是选区** —— 切类别不动 `pickedExtensions`，
- * 换句话说你筛选的时候勾的东西一个都不会掉。
- */
+let extView = "all";
+/** 右栏选中的自定义类别；`null` = 没选。 */
 let extCategory = null;
+/** 只看已选：不是「哪些」，是「我挑过的」，所以它是独立开关，跟上面那条轴叠着用。 */
+let extOnlyPicked = false;
+/** 人自己建的类别（词表 − 内置类别）。右栏就摆这些，一条都没有时整栏不出现。 */
+let extCustomCats = [];
 /** 没类别的那些（`123` 这种）。不能也拿 `null` 当标签 —— `null` 已经是「全部」了。 */
 const UNCATEGORIZED = "\u0000未分类";
-/** 只看已选：一百个扩展里最常见的动作其实是「我刚才勾了啥 / 取消一个」。 */
-let extOnlyPicked = false;
 
 /** 一条扩展挂的类别（数组，可能挂好几个）。 */
 const catsOf = (fam) => (fam.ext.category ?? []).map((c) => String(c ?? "").trim()).filter(Boolean);
 /** 主归属 = 第一个类别。多类别的扩展在「全部」视图里只出现一次 —— 重复行会让同一个扩展有两个勾选框。 */
 const primaryCategory = (fam) => catsOf(fam)[0] ?? UNCATEGORIZED;
-/** 显示用标签：`Basics/234` 读作 `Basics › 234`。 */
-const categoryLabel = (label) => (label === UNCATEGORIZED ? "未分类" : label.replace(/\//g, " › "));
+/**
+ * 标签在不在某个类别底下：`工具/搜索` 算 `工具` 的，`Basics/234` 算 `Basics` 的。
+ * 类别是**树**（拿 `===` 一刀切会漏掉整棵子树），父子关系不存，靠 `/` 推。
+ */
+const underCategory = (label, wanted) => {
+  const got = String(label ?? "").trim().toLowerCase();
+  const want = String(wanted ?? "").trim().toLowerCase();
+  return !!got && !!want && (got === want || got.startsWith(`${want}/`));
+};
+const inCategory = (ext, wanted) => (ext?.category ?? []).some((label) => underCategory(label, wanted));
+/** 显示用标签：`工具/搜索` 读作 `工具 › 搜索`。 */
+const categoryLabel = (label) => (label === UNCATEGORIZED ? "未分类" : String(label).replace(/\//g, " › "));
+/** 右栏一行显示末段（缩进 + 引线已经在说父子了），完整路径进 title。 */
+const leafOf = (label) => String(label).split("/").filter(Boolean).pop() ?? String(label);
 /** 一族里有没有被选中的名字。 */
 const famPicked = (fam) => [...pickedExtensions].some((name) => familyOf(name) === fam.name);
 /** 这一族落在某个类别里吗。 */
 const famInCategory = (fam, label) =>
   label === UNCATEGORIZED ? !catsOf(fam).length : inCategory(fam.ext, label);
-
-/**
- * 类别横条要显示哪些标签、各多少个。顺序：`Basics` 在前，其余按名字（父类别天然排在
- * `Basics/234` 这种子类别前面），未分类垫底。
- */
-const categoryChips = () => {
-  const labels = new Set();
-  for (const fam of extFamilies) for (const c of catsOf(fam)) labels.add(c);
-  const sorted = [...labels].sort((a, b) => {
-    const rank = (x) => (x.toLowerCase() === DEFAULT_CATEGORY.toLowerCase() ? 0 : 1);
-    return rank(a) - rank(b) || a.localeCompare(b);
-  });
-  const chips = sorted.map((label) => ({
-    label,
-    // 计数按**看到的**算：点 `Basics` 连 `Basics/234` 底下的一起显示，那就得一起数。
-    count: extFamilies.filter((fam) => famInCategory(fam, label)).length,
-    picked: extFamilies.some((fam) => famInCategory(fam, label) && famPicked(fam)),
-  }));
-  if (extFamilies.some((fam) => !catsOf(fam).length)) {
-    chips.push({
-      label: UNCATEGORIZED,
-      count: extFamilies.filter((fam) => !catsOf(fam).length).length,
-      picked: extFamilies.some((fam) => !catsOf(fam).length && famPicked(fam)),
-    });
-  }
-  return chips;
-};
 
 /** 名字属于哪一族：`123@dev` → `123`。 */
 const familyOf = (name) => {
@@ -997,42 +1037,51 @@ const extRow = ({ name, desc, meta, on, off, variant }) => (
   + `</span></button>`
 );
 
-/** 一行：`label` + 计数 +（这一档里有东西被勾上时）一个点。 */
-// 未分类不能用 `data-cat` 送：`UNCATEGORIZED` 带的是 NUL 哨兵，HTML 解析会把 NUL 换成
-// U+FFFD，取回来就不等于原值了（踩过：点「未分类」得到一张空清单）。
-const chipHtml = (label, count, pressed, { picked = false, cls = "" } = {}) => (
-  `<button class="chip${cls}" type="button" aria-pressed="${pressed}" ${label === UNCATEGORIZED ? 'data-uncat="1"' : `data-cat="${esc(label)}"`}>`
-  + (picked ? `<span class="dot"></span>` : "")
-  + `${esc(categoryLabel(label))}<span class="n">${count}</span></button>`
-);
-
-/** 类别横条 + 「只看已选」。跟列表一起重画，两边永远同一个真相。 */
-/** 横条两头有没有被切掉 —— 决定哪一边渐隐。 */
-const syncCatsFade = () => {
-  const box = $("extCatScroll");
-  const l = box.scrollLeft > 2;
-  const r = box.scrollWidth - box.clientWidth - box.scrollLeft > 2;
-  box.dataset.fade = l && r ? "lr" : r ? "r" : l ? "l" : "";
-};
-
-const renderExtCats = () => {
-  const scroll = $("extCatScroll");
-  const keep = scroll.scrollLeft; // 打字时重画别把横条弹回开头
+/** 视图条：全部 / 内置类别 / 未分类 / 只看已选。跟右栏共用一个真相 —— 一击只有一个亮。 */
+const renderExtViews = () => {
+  const box = $("extViews");
   const pickedCount = extFamilies.filter(famPicked).length;
-  const all = $("extCatAll");
-  all.setAttribute("aria-pressed", String(extCategory === null));
-  all.innerHTML = `全部<span class="n">${extFamilies.length}</span>`;
-  const only = $("extCatPicked");
+  const bas = extFamilies.filter((fam) => inCategory(fam.ext, DEFAULT_CATEGORY)).length;
+  const none = extFamilies.filter((fam) => !catsOf(fam).length).length;
+  const paint = (view, pressed, html) => {
+    const btn = box.querySelector(`[data-view="${view}"]`);
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", String(pressed));
+    btn.innerHTML = html;
+  };
+  // 选了右栏的类别，顶部就该全灭：两个都亮 = 让人自己在脑子里做交集。
+  paint("all", extView === "all" && !extCategory, `全部<span class="n">${extFamilies.length}</span>`);
+  paint("basics", extView === "basics", `${esc(DEFAULT_CATEGORY)}<span class="n">${bas}</span>`);
+  paint("none", extView === "none", `未分类<span class="n">${none}</span>`);
+  const only = box.querySelector("[data-only]");
   only.setAttribute("aria-pressed", String(extOnlyPicked));
   only.innerHTML = `只看已选<span class="n">${pickedCount}</span>`;
-  if (pickedCount) only.removeAttribute("aria-disabled");
+  if (pickedCount) { only.removeAttribute("aria-disabled"); only.tabIndex = 0; }
   else { only.setAttribute("aria-disabled", "true"); only.tabIndex = -1; }
-  if (pickedCount) only.tabIndex = 0;
-  scroll.innerHTML = categoryChips()
-    .map((c) => chipHtml(c.label, c.count, extCategory === c.label, { picked: c.picked }))
-    .join("");
-  scroll.scrollLeft = keep;
-  syncCatsFade();
+};
+
+/**
+ * 右栏：**只有人自己建的类别**（词表 − 内置类别）。一条都没有 → 整栏不出现，
+ * 弹窗回 720 宽 —— 没内容的地方不该白占 176px。
+ * 计数按「点下去会看到几个」算（父类别含子类别），垫底那几个零计数的灰着摆着。
+ */
+const renderExtRail = () => {
+  const sheet = $("scrim3").querySelector(".sheet");
+  const body = $("extBody");
+  const rail = $("extRail");
+  const has = extCustomCats.length > 0;
+  sheet.classList.toggle("has-rail", has);
+  body.classList.toggle("has-rail", has);
+  rail.hidden = !has;
+  if (!has) { $("extRailList").innerHTML = ""; return; }
+  $("extRailList").innerHTML = extCustomCats.map((label) => {
+    const fams = extFamilies.filter((fam) => famInCategory(fam, label));
+    const depth = label.split("/").filter(Boolean).length - 1;
+    return `<button class="cat${depth ? " child" : ""}${fams.length ? "" : " zero"}" type="button"`
+      + ` aria-pressed="${extCategory === label}" data-cat="${esc(label)}" title="${esc(categoryLabel(label))}">`
+      + (fams.some(famPicked) ? `<span class="dot"></span>` : "")
+      + `<span class="cl">${esc(leafOf(label))}</span><span class="n">${fams.length}</span></button>`;
+  }).join("");
 };
 
 /**
@@ -1047,13 +1096,18 @@ const renderExtCats = () => {
 const renderExtList = () => {
   const needle = $("eq").value.trim().toLowerCase();
   const hit = (text) => !needle || String(text).toLowerCase().includes(needle);
-  const inCat = (fam) => !extCategory || famInCategory(fam, extCategory);
+  // 顶部视图与右栏类别是同一条轴：只看已选是另一条（镜头，不是范围）。
+  const inScope = (fam) =>
+    extCategory ? famInCategory(fam, extCategory)
+    : extView === "none" ? !catsOf(fam).length
+    : extView === "basics" ? inCategory(fam.ext, DEFAULT_CATEGORY)
+    : true;
   const rowHit = (fam) => hit(`${fam.name} ${fam.ext.summary ?? ""} ${catsOf(fam).join(" ")}`);
 
   // 一族在不在：类别 → 只看已选 → 搜索。命中本体就连变体一起摆出来（要能就地换版本），
   // 只命中变体就把家族行留作标题。
   const shown = extFamilies
-    .filter(inCat)
+    .filter(inScope)
     .filter((fam) => !extOnlyPicked || famPicked(fam))
     .map((fam) => {
       if (rowHit(fam)) return { fam, variants: fam.variants };
@@ -1062,7 +1116,8 @@ const renderExtList = () => {
     })
     .filter(Boolean);
 
-  renderExtCats();
+  renderExtViews();
+  renderExtRail();
 
   if (!extFamilies.length) {
     $("extList").innerHTML = `<div class="skill-none">进程里一个可选扩展都没有。</div>`;
@@ -1084,7 +1139,7 @@ const renderExtList = () => {
   } else {
     // 「全部」视图按主归属分组：滚动时看得见自己在哪一档。筛了类别就不必再挂标题。
     const groups = [];
-    if (extCategory) groups.push({ label: null, rows: shown });
+    if (extCategory || extView !== "all") groups.push({ label: null, rows: shown });
     else {
       const order = [DEFAULT_CATEGORY];
       const rest = [...new Set(shown.map(({ fam }) => primaryCategory(fam)))]
@@ -1224,25 +1279,47 @@ $("skillList").addEventListener("keydown", (e) => {
   rows[i]?.focus();
 });
 
-// 横向滚轮：桌面鼠标在类别条上滚，默认什么都不发生（竖着的滚轮推不动横着的条）。
-// 真溢出了才接管，没溢出就让它照常冒泡。
-$("extCatScroll").addEventListener("scroll", syncCatsFade, { passive: true });
-$("extCatScroll").addEventListener("wheel", (e) => {
-  const box = $("extCatScroll");
-  if (e.deltaX || box.scrollWidth <= box.clientWidth) return;
-  e.preventDefault();
-  box.scrollLeft += e.deltaY;
-}, { passive: false });
-
-/** 类别横条：点类别 = 筛它（再点回全部）；点「只看已选」= 切开关。都不动选区。 */
-$("extCats").addEventListener("click", (e) => {
+/**
+ * 顶部视图 + 右栏类别 + 「只看已选」。三者都只动「看见什么」，一个字节都不动选区。
+ *
+ * 视图与自定义类别是**同一条轴**：点右栏的类别 → 顶部全灭（`extView = null`）；点顶部 →
+ * 右栏灭。再点同一个 = 回全部。只看已选是独立开关，跟那条轴叠着用。
+ */
+const pickView = (view) => {
+  extCategory = null;
+  extView = extView === view && view !== "all" ? "all" : view;
+};
+$("extViews").addEventListener("click", (e) => {
   const chip = e.target.closest?.(".chip");
   if (!chip || chip.getAttribute("aria-disabled") === "true") return;
   if (chip.dataset.only) extOnlyPicked = !extOnlyPicked;
-  else if (chip.dataset.uncat) extCategory = UNCATEGORIZED;
-  else extCategory = chip.dataset.cat || null;
+  else pickView(chip.dataset.view);
   renderExtList();
 });
+$("extRail").addEventListener("click", (e) => {
+  const cat = e.target.closest?.(".cat");
+  if (!cat) return;
+  const label = cat.dataset.cat;
+  if (extCategory === label) { extCategory = null; extView = "all"; }
+  else { extCategory = label; extView = null; }
+  renderExtList();
+});
+// 两栏之间用 ←→ 走：跟模型弹窗「↑↓ 列内、←→ 换列」一个手感。
+$("extRail").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "ArrowLeft") return;
+  const cats = [...$("extRail").querySelectorAll(".cat")];
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    const row = $("extList").querySelector('.skill-row[aria-checked="true"]') ?? $("extList").querySelector(".skill-row");
+    row?.focus();
+    return;
+  }
+  const at = cats.indexOf(document.activeElement);
+  e.preventDefault();
+  const i = Math.max(0, Math.min(cats.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
+  cats[i]?.focus();
+});
+
 $("extList").addEventListener("click", (e) => {
   // 空状态里那几条「换个地方看」也是 chip，活在这个容器里。
   const chip = e.target.closest?.(".chip");
@@ -1250,7 +1327,7 @@ $("extList").addEventListener("click", (e) => {
     // 空状态里的出路：按哪一层挡住的就清哪一层，别一键把别人的筛选也清掉。
     if (chip.dataset.clear) { $("eq").value = ""; renderExtList(); $("eq").focus(); return; }
     if (chip.dataset.only) extOnlyPicked = false;
-    else extCategory = null;
+    else { extCategory = null; extView = "all"; }
     renderExtList();
     return;
   }
@@ -1263,6 +1340,11 @@ $("extList").addEventListener("click", (e) => {
   $("extList").querySelector(`.skill-row[data-e="${CSS.escape(name)}"]`)?.focus();
 });
 $("extList").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight" && !$("extRail").hidden) {
+    e.preventDefault();
+    $("extRail").querySelector(".cat")?.focus();
+    return;
+  }
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   const rows = [...$("extList").querySelectorAll('.skill-row:not([aria-disabled="true"])')];
   const at = rows.indexOf(document.activeElement);
@@ -1382,6 +1464,17 @@ if (tag) {
         variants: (extData.variants?.[e.name] ?? []).map((v) => ({ ...v })),
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
+    // 右栏的类别 = 词表 ∪ 扩展身上真挂着的，再剔掉内置类别（`Basics` 及其子类）——
+    // 栏里混着系统项，「我自己建了什么」就看不出来了。祖先缺了就补：词表坏了也得能读。
+    const names = new Set((Array.isArray(extData.categories) ? extData.categories : []).map((c) => String(c ?? "").trim()).filter(Boolean));
+    for (const fam of extFamilies) for (const c of catsOf(fam)) names.add(c);
+    for (const label of [...names]) {
+      const parts = label.split("/").filter(Boolean);
+      for (let i = 1; i < parts.length; i += 1) names.add(parts.slice(0, i).join("/"));
+    }
+    extCustomCats = [...names]
+      .filter((label) => !underCategory(label, DEFAULT_CATEGORY))
+      .sort((a, b) => a.localeCompare(b));
   } catch (error) {
     console.warn("扩展清单拿不到：", error);
   }
