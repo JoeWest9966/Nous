@@ -231,7 +231,7 @@
                            padding:.8vmin 1.2vmin; overflow-x:auto; overflow-y:hidden; }
     /* 换方向的只有这一层：`.rail` 底下还套着 `#extRailList`，把 row 写在 `.rail` 上
        等于只让一个「装着一列按钮的 div」变成横排 —— 按钮照样竖着摞。 */
-    .body.has-rail #extRailList { flex-direction:row; align-items:center; gap:.4em; }
+    .body.has-rail #extRailList, .body.has-rail #tmplRailList { flex-direction:row; align-items:center; gap:.4em; }
     .body.has-rail .rail > .rhead, .body.has-rail .rfoot { display:none; }
     .body.has-rail .cat { width:auto; flex:none; padding:.34em .7em; }
     .body.has-rail .cat.child { padding-left:.7em; }
@@ -332,12 +332,19 @@
     </section>
     <section class="region r2">
       <h2>上下文</h2>
-      <div class="sub" id="ctx-sub">技能：一条没选</div>
+      <div class="sub" id="ctx-sub">技能 0/0 · 模板 无</div>
       <div class="sub">技能 = 模型按需 read 的知识　·　模板 = 每轮都进的规则</div>
+      <!-- 两个小框，不是一个：技能是集合（多选、模型按需 read 正文），模板是单值（单选、
+           正文整段每轮都进）。塞进同一个弹窗就得在里头分两段，技能一多第二段就掉到折线以下 ——
+           那是两种决定，各开各的门。 -->
       <div class="nodes">
-        <button class="node" id="pickctx" disabled title="这条新对话该知道什么">
-          <span class="id" id="ctx-id">未选</span>
-          <span class="tag" id="ctx-tag">选择 ›</span>
+        <button class="node" id="pickctx" disabled title="这条新对话要知道哪些技能（多选）">
+          <span class="id">技能</span>
+          <span class="tag" id="ctx-tag">0/0 ›</span>
+        </button>
+        <button class="node" id="pickprompt" disabled title="这条新对话每轮都带的那份规则（单选）">
+          <span class="id">模板</span>
+          <span class="tag" id="tmpl-tag">无 ›</span>
         </button>
       </div>
     </section>
@@ -370,10 +377,10 @@
 </main>
 
 <div class="scrim" id="scrim2" hidden>
-  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择上下文：技能与提示词模板">
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择技能">
     <div class="shead">
-      <b>上下文</b>
-      <input type="text" id="sq" placeholder="筛选技能和模板…" autocomplete="off">
+      <b>上下文 · 技能</b>
+      <input type="text" id="sq" placeholder="筛选技能…" autocomplete="off">
     </div>
     <div class="skills" id="skillList"></div>
     <div class="dfoot skillfoot">
@@ -406,6 +413,33 @@
     <div class="dfoot skillfoot">
       <span id="extHint">—</span>
       <button class="done" id="extDone" type="button">完成 ›</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim4" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择提示词模板">
+    <div class="shead">
+      <b>上下文 · 提示词模板</b>
+      <input type="text" id="tq" placeholder="筛选模板…" autocomplete="off">
+    </div>
+    <div class="views" id="tmplViews">
+      <button class="chip" type="button" data-view="all" aria-pressed="true"></button>
+      <button class="chip" type="button" data-view="basics" aria-pressed="false"></button>
+      <button class="chip" type="button" data-view="none" aria-pressed="false"></button>
+      <button class="chip" type="button" data-only="1" aria-pressed="false"></button>
+    </div>
+    <div class="body" id="tmplBody">
+      <div class="skills" id="tmplList"></div>
+      <div class="rail" id="tmplRail" hidden>
+        <div class="rhead">类别</div>
+        <div id="tmplRailList"></div>
+        <div class="rfoot"><a id="tmplRailGo" href="#" target="_blank" rel="noreferrer">+ 新建类别：去模板页</a></div>
+      </div>
+    </div>
+    <div class="dfoot skillfoot">
+      <span id="tmplHint">—</span>
+      <button class="done" id="tmplDone" type="button">完成 ›</button>
     </div>
   </div>
 </div>
@@ -459,6 +493,8 @@ try {
     go.textContent = "+ 新建类别：去扩展页";
   }
   promptsPage = ctx.blocks.find((b) => b.id === "6ysg01") ?? null;
+  // 模板弹窗右栏底下那条「+ 新建类别」：类别只在模板库建（那边才是仓库的写入口）。
+  if (promptsPage) $("tmplRailGo").href = promptsPage.url;
   $("open").href = tag.url;
   $("open").hidden = false;
 } catch (error) {
@@ -539,14 +575,51 @@ const closeCtx = () => {
   setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
   renderCtx();
 };
+/** 模板弹窗：单选，但**不点了就关** —— 里面还有预览和筛选，勾完按「完成」，跟扩展一致。 */
+const openTmpl = (from) => {
+  const scrim = $("scrim4");
+  if (from && !reduceMotion) {
+    const r = from.getBoundingClientRect();
+    scrim.querySelector(".sheet").style.transformOrigin = `${r.left + r.width / 2}px ${r.top + r.height / 2}px`;
+  }
+  scrim.hidden = false;
+  requestAnimationFrame(() => scrim.classList.add("on"));
+  $("tq").value = "";
+  // 每次打开都回「全部」：藏着的筛选就是「我的模板怎么不见了」的来源。
+  tmplCategory = null;
+  tmplView = "all";
+  tmplOnlyPicked = false;
+  renderTmplList();
+  ($("tmplList").querySelector(".skill-row") ?? $("tmplDone")).focus();
+};
+const closeTmpl = () => {
+  const scrim = $("scrim4");
+  scrim.classList.remove("on");
+  setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
+  renderCtx();
+};
+
 $("pickctx").onclick = (e) => openCtx(e.currentTarget);
+$("pickprompt").onclick = (e) => openTmpl(e.currentTarget);
 $("pickext").onclick = (e) => openExt(e.currentTarget);
 $("scrim2").onclick = (e) => { if (e.target === $("scrim2")) closeCtx(); };
+$("scrim3").onclick = (e) => { if (e.target === $("scrim3")) closeExt(); };
+$("scrim4").onclick = (e) => { if (e.target === $("scrim4")) closeTmpl(); };
 $("skillDone").onclick = closeCtx;
-$("extDone").onclick = closeCtx;
+$("tmplDone").onclick = closeTmpl;
+$("extDone").onclick = closeExt;
+
+// Esc 收**最上面那一层**，不是「写死 scrim2」。层数已经四层了（模型 / 技能 / 模板 / 扩展），
+// 写死一个的话另外三个按 Esc 只会响一声。
 addEventListener("keydown", (e) => {
-  if (e.key !== "Escape" || $("scrim2").hidden) return;
-  e.preventDefault(); closeCtx();
+  if (e.key !== "Escape") return;
+  const top = ["scrim4", "scrim3", "scrim2", "scrim"].find((id) => !$(id).hidden);
+  if (!top) return;
+  e.preventDefault();
+  if (top === "scrim4") closeTmpl();
+  else if (top === "scrim3") closeExt();
+  else if (top === "scrim2") closeCtx();
+  else closeSheet();
 });
 
 // ── 弹窗内容：铁路图（pele.run/examples/railroad 的语法重绘）──
@@ -953,12 +1026,6 @@ const renderCtxList = () => {
         + `</span></button>`;
     });
 
-  // ── 模板：单选。正文整段进系统提示词，所以圆框、一次一个。 ──
-  const templateRows = installedTemplates
-    .filter((p) => hit(`${p.name} ${p.summary ?? ""}`))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((p) => templateRow(p));
-
   const skillsHtml = !installedSkills.length
     // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 ctx 拿，不拼死的）。
     ? `<div class="skill-none">这台机器一个技能都没装。<br>`
@@ -966,35 +1033,24 @@ const renderCtxList = () => {
       + `</div>`
     : skillRows.length ? skillRows.join("") : `<div class="skill-none">没有匹配的技能。</div>`;
 
-  const templatesHtml = !installedTemplates.length
-    ? `<div class="skill-none">私库里还没有模板。`
-      + (promptsPage ? `<br><a href="${esc(promptsPage.url)}/">去模板库建一条 ›</a>` : "")
-      + `</div>`
-    : `<div class="skill-row" role="radio" tabindex="0" aria-checked="${pickedTemplate === null}" data-t="">`
-      + `<span class="skill-box">${pickedTemplate === null ? "✓" : ""}</span>`
-      + `<span><span class="skill-name">无模板</span>`
-      + `<span class="skill-desc">不往系统提示词里加任何模板</span></span></div>`
-      + (templateRows.length ? templateRows.join("") : `<div class="skill-none">没有匹配的模板。</div>`);
+  $("skillList").innerHTML = `<h3 class="ctx-head">技能 · 多选 · 按需 read</h3>` + skillsHtml;
 
-  $("skillList").innerHTML =
-    `<h3 class="ctx-head">技能 · 多选 · 按需 read</h3>` + skillsHtml
-    + `<h3 class="ctx-head">提示词模板 · 单选 · 每轮都进</h3>` + templatesHtml;
-
-  $("skillHint").textContent = `技能 ${pickedSkills.size}/${installedSkills.length}`
-    + ` · 模板 ${pickedTemplate ?? "无"} · 勾完按完成`;
+  $("skillHint").textContent = `技能 ${pickedSkills.size}/${installedSkills.length} · 勾完按完成`;
 };
 
 /** 一行模板：**div 不是 button** —— 里面还要放「预览」按钮，button 不能套 button。 */
 const templateRow = (p) => {
-  const on = pickedTemplate === p.name;
-  const meta = [`${p.bytes ?? 0} 字节`, ...(p.category?.length ? [p.category.join(" / ")] : [])].join(" · ");
-  return `<div class="skill-row" role="radio" tabindex="0" aria-checked="${on}" data-t="${esc(p.name)}">`
+  const key = p.none ? "" : p.name;
+  const on = p.none ? pickedTemplate === null : pickedTemplate === p.name;
+  const meta = p.none ? "" : [`${p.bytes ?? 0} 字节`, ...(catsOfPrompt(p).length ? [catsOfPrompt(p).join(" / ")] : [])].join(" · ");
+  return `<div class="skill-row" role="radio" tabindex="0" aria-checked="${on}" data-t="${esc(key)}">`
     + `<span class="skill-box">${on ? "✓" : ""}</span>`
-    + `<span><span class="skill-name">${esc(p.name)}</span>`
+    + `<span><span class="skill-name">${esc(p.none ? "无模板" : p.name)}</span>`
     + `<span class="skill-desc">${esc(String(p.summary ?? ""))}</span>`
-    + `<span class="skill-meta">${esc(meta)}</span>`
-    + `<button class="peek" type="button" data-peek="${esc(p.name)}">预览</button>`
-    + `<pre class="peek-body" data-body="${esc(p.name)}" hidden></pre>`
+    + (meta ? `<span class="skill-meta">${esc(meta)}</span>` : "")
+    // 「无模板」没有正文，所以没有预览：一个点了什么都不会发生的按钮比没有更糟。
+    + (p.none ? "" : `<button class="peek" type="button" data-peek="${esc(p.name)}">预览</button>`
+      + `<pre class="peek-body" data-body="${esc(p.name)}" hidden></pre>`)
     + `</span></div>`;
 };
 
@@ -1025,6 +1081,214 @@ const togglePeek = async (button) => {
     pre.textContent = `读不到：${String(error.message ?? error)}`;
   }
 };
+
+// ── 模板弹窗：照扩展那副骨头（筛选 + 视图 chip + 右栏类别 + 底栏）──
+//   跟扩展只差一条：这里是**单选**，而且第一行固定是「无模板」—— 那是"一条都不要"的
+//   出口，不是额外开关。圆框 = 一次一个，形状自己在说话。
+let tmplView = "all";         // all / basics / none
+let tmplCategory = null;      // 右栏选中的自定义类别；null = 没选
+let tmplOnlyPicked = false;   // 只看已选：镜头，跟上面那条轴叠着用
+let tmplCustomCats = [];      // 人自己建的类别（词表 − Basics）。一条都没有 → 整栏不出现
+
+const catsOfPrompt = (p) => (p.category ?? []).map((c) => String(c ?? "").trim()).filter(Boolean);
+const promptInCategory = (p, label) =>
+  label === UNCATEGORIZED ? !catsOfPrompt(p).length
+    : catsOfPrompt(p).some((l) => underCategory(l, label));
+const primaryCatOfPrompt = (p) => catsOfPrompt(p)[0] ?? UNCATEGORIZED;
+/** 「无模板」那一行：没有类别、没有正文，但它是一个真值（`null`），所以也占一行。 */
+const NONE_ROW = { name: "", summary: "不往系统提示词里加任何模板", category: [], none: true };
+
+/** 视图条：全部 / Basics / 未分类 / 只看已选。跟右栏共用一个真相 —— 一击只有一个亮。 */
+const renderTmplViews = () => {
+  const box = $("tmplViews");
+  const bas = installedTemplates.filter((p) => promptInCategory(p, DEFAULT_CATEGORY)).length;
+  const none = installedTemplates.filter((p) => !catsOfPrompt(p).length).length;
+  const paint = (view, pressed, html) => {
+    const btn = box.querySelector(`[data-view="${view}"]`);
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", String(pressed));
+    btn.innerHTML = html;
+  };
+  // 选了右栏的类别，顶部就该全灭：两个都亮 = 让人自己在脑子里做交集。
+  paint("all", tmplView === "all" && !tmplCategory, `全部<span class="n">${installedTemplates.length}</span>`);
+  paint("basics", tmplView === "basics", `${esc(DEFAULT_CATEGORY)}<span class="n">${bas}</span>`);
+  paint("none", tmplView === "none", `未分类<span class="n">${none}</span>`);
+  const only = box.querySelector("[data-only]");
+  only.setAttribute("aria-pressed", String(tmplOnlyPicked));
+  only.innerHTML = `只看已选<span class="n">${pickedTemplate ? 1 : 0}</span>`;
+};
+
+/**
+ * 右栏：**只有人自己建的类别**（词表 − 内置类别），跟扩展一个判据 ——
+ * 栏里混着系统项，「我自己分过什么类」就看不出来了。一条都没有 → 整栏不出现，
+ * 弹窗回 720 宽：没内容的地方不该白占 176px。
+ */
+const renderTmplRail = () => {
+  const sheet = $("scrim4").querySelector(".sheet");
+  const body = $("tmplBody");
+  const rail = $("tmplRail");
+  const has = tmplCustomCats.length > 0;
+  sheet.classList.toggle("has-rail", has);
+  body.classList.toggle("has-rail", has);
+  rail.hidden = !has;
+  if (!has) { $("tmplRailList").innerHTML = ""; return; }
+  $("tmplRailList").innerHTML = tmplCustomCats.map((label) => {
+    const rows = installedTemplates.filter((p) => promptInCategory(p, label));
+    const depth = label.split("/").filter(Boolean).length - 1;
+    const dot = pickedTemplate && rows.some((p) => p.name === pickedTemplate);
+    return `<button class="cat${depth ? " child" : ""}${rows.length ? "" : " zero"}" type="button"`
+      + ` aria-pressed="${tmplCategory === label}" data-cat="${esc(label)}" title="${esc(categoryLabel(label))}">`
+      + (dot ? `<span class="dot"></span>` : "")
+      + `<span class="cl">${esc(leafOf(label))}</span><span class="n">${rows.length}</span></button>`;
+  }).join("");
+};
+
+/**
+ * 三层筛选，从粗到细：**类别 → 只看已选 → 搜索**。它们只影响「看见什么」，一个字节都不动选区。
+ * 搜索与类别是 AND；搜不到时给出口，别让人在错的类别里以为模板不存在。
+ */
+const renderTmplList = () => {
+  const needle = $("tq").value.trim().toLowerCase();
+  const hit = (p) => !needle
+    || `${p.name} ${p.summary ?? ""} ${catsOfPrompt(p).join(" ")}`.toLowerCase().includes(needle);
+
+  // 顶部视图与右栏类别是同一条轴；只看已选是另一条（镜头，不是范围）。
+  const inScope = (p) =>
+    tmplCategory ? promptInCategory(p, tmplCategory)
+    : tmplView === "none" ? !catsOfPrompt(p).length
+    : tmplView === "basics" ? promptInCategory(p, DEFAULT_CATEGORY)
+    : true;
+
+  renderTmplViews();
+  renderTmplRail();
+
+  if (!installedTemplates.length) {
+    $("tmplList").innerHTML = `<div class="skill-none">私库里还没有模板。`
+      + (promptsPage ? `<br><a href="${esc(promptsPage.url)}/">去模板库建一条 ›</a>` : "")
+      + `</div>`;
+    $("tmplHint").textContent = "0 条模板";
+    return;
+  }
+
+  const shown = installedTemplates.filter(inScope).filter((p) => !tmplOnlyPicked || pickedTemplate === p.name).filter(hit);
+  // 「无模板」只在「全部」里摆（它不属于任何类别），只在「只看已选」里出现于真的什么都没选时。
+  const noneRow = !tmplCategory && (tmplView === "all" || !tmplView)
+    && (!tmplOnlyPicked || pickedTemplate === null) && hit(NONE_ROW);
+
+  if (!shown.length && !noneRow) {
+    const elsewhere = needle ? installedTemplates.filter(hit).length : 0;
+    const ways = [
+      needle ? `<button class="chip" type="button" data-clear="1">清空搜索 ›</button>` : "",
+      tmplOnlyPicked ? `<button class="chip" type="button" data-only="1">取消「只看已选」›</button>` : "",
+      tmplCategory && elsewhere ? `<button class="chip" type="button" data-cat="">全部类别里有 ${elsewhere} 条 ›</button>` : "",
+    ].filter(Boolean);
+    $("tmplList").innerHTML = `<div class="skill-none">没有匹配的模板。${ways.length ? `<br>${ways.join(" ")}` : ""}</div>`;
+  } else {
+    // 「全部」视图按主归属分组：滚动时看得见自己在哪一档。筛了类别就不必再挂标题。
+    const groups = [];
+    if (tmplCategory || tmplView !== "all") groups.push({ label: null, rows: shown });
+    else {
+      const order = [DEFAULT_CATEGORY];
+      const rest = [...new Set(shown.map(primaryCatOfPrompt))]
+        .filter((l) => l !== DEFAULT_CATEGORY && l !== UNCATEGORIZED)
+        .sort((a, b) => a.localeCompare(b));
+      order.push(...rest, UNCATEGORIZED);
+      for (const label of order) {
+        const rows = shown.filter((p) => primaryCatOfPrompt(p) === label);
+        if (rows.length) groups.push({ label, rows });
+      }
+    }
+    const head = (label) => (label ? `<div class="ctx-head">${esc(categoryLabel(label))}</div>` : "");
+    const body = groups.map(({ label, rows }) => head(label) + rows.map(templateRow).join("")).join("");
+    // 第一行永远是那个"一条都不要"的出口 —— 它不属于任何类别，也不该跟着类别分组跑。
+    $("tmplList").innerHTML = (noneRow ? templateRow(NONE_ROW) : "") + body;
+  }
+
+  $("tmplHint").textContent = `${installedTemplates.length} 条模板 · ` + (pickedTemplate ? `已选 ${pickedTemplate}` : "一条都没选");
+};
+
+/** 模板只有一条能生效：点中就落值，「无模板」= 清掉。没有"再点一次取消"那种手势。 */
+const pickTemplate = (name) => {
+  pickedTemplate = name || null;
+  renderTmplList();
+  renderCtx();
+  // 重画之后 DOM 全换了，焦点钉回同一行 —— 否则键盘换第二条时焦点已经没了。
+  $("tmplList").querySelector(name ? `.skill-row[data-t="${CSS.escape(name)}"]` : `.skill-row[data-t=""]`)?.focus();
+};
+
+$("tmplViews").addEventListener("click", (e) => {
+  const chip = e.target.closest?.(".chip");
+  if (!chip || chip.getAttribute("aria-disabled") === "true") return;
+  if (chip.dataset.only) tmplOnlyPicked = !tmplOnlyPicked;
+  else { tmplCategory = null; tmplView = tmplView === chip.dataset.view && chip.dataset.view !== "all" ? "all" : chip.dataset.view; }
+  renderTmplList();
+});
+$("tmplRail").addEventListener("click", (e) => {
+  const cat = e.target.closest?.(".cat");
+  if (!cat) return;
+  const label = cat.dataset.cat;
+  if (tmplCategory === label) { tmplCategory = null; tmplView = "all"; }
+  else { tmplCategory = label; tmplView = null; }
+  renderTmplList();
+});
+// 两栏之间用 ←→ 走：跟模型弹窗「↑↓ 列内、←→ 换列」一个手感。
+$("tmplRail").addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "ArrowLeft") return;
+  const cats = [...$("tmplRail").querySelectorAll(".cat")];
+  if (e.key === "ArrowLeft") {
+    e.preventDefault();
+    const row = $("tmplList").querySelector('.skill-row[aria-checked="true"]') ?? $("tmplList").querySelector(".skill-row");
+    row?.focus();
+    return;
+  }
+  const at = cats.indexOf(document.activeElement);
+  e.preventDefault();
+  const i = Math.max(0, Math.min(cats.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
+  cats[i]?.focus();
+});
+$("tmplList").addEventListener("click", (e) => {
+  // 空状态里那几条「换个地方看」也是 chip，活在这个容器里。
+  const chip = e.target.closest?.(".chip");
+  if (chip && chip.getAttribute("aria-disabled") !== "true") {
+    if (chip.dataset.clear) { $("tq").value = ""; renderTmplList(); $("tq").focus(); return; }
+    if (chip.dataset.only) tmplOnlyPicked = false;
+    else { tmplCategory = null; tmplView = "all"; }
+    renderTmplList();
+    return;
+  }
+  // 预览按钮在模板行里面：先接住，别让它冒泡成「选中这一行」。
+  const peek = e.target.closest?.(".peek");
+  if (peek) { void togglePeek(peek); return; }
+
+  const row = e.target.closest?.(".skill-row");
+  if (!row || !("t" in row.dataset)) return;
+  pickTemplate(row.dataset.t);
+});
+$("tmplList").addEventListener("keydown", (e) => {
+  // 模板行是 div（里面还要放「预览」按钮，button 不能套 button），不会像 <button> 那样
+  // 自己把 Enter/Space 变成 click —— 所以这一条得手写。
+  if (e.key === "Enter" || e.key === " ") {
+    const row = document.activeElement;
+    if (row?.dataset && "t" in row.dataset) {
+      e.preventDefault();
+      pickTemplate(row.dataset.t);
+    }
+    return;
+  }
+  if (e.key === "ArrowRight" && !$("tmplRail").hidden) {
+    e.preventDefault();
+    $("tmplRail").querySelector(".cat")?.focus();
+    return;
+  }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  const rows = [...$("tmplList").querySelectorAll(".skill-row")];
+  const at = rows.indexOf(document.activeElement);
+  e.preventDefault();
+  const i = Math.max(0, Math.min(rows.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
+  rows[i]?.focus();
+});
+$("tmplDone").onclick = closeTmpl;
+$("tq").oninput = renderTmplList;
 
 /** 一行：名字 + 一句话 + 灰色元信息。`off` = 灰掉不能选（装载失败 / 进程里没装上）。 */
 const extRow = ({ name, desc, meta, on, off, variant }) => (
@@ -1196,14 +1460,14 @@ const renderExtList = () => {
   $("extHint").textContent = `${famCount} 个扩展${varCount ? ` · ${varCount} 个变体` : ""} · ${n ? `已选 ${n}` : "一个都没选"}`;
 };
 
-/** 区域里那个节点显示什么 —— 跟模型域一样，只显示生效的东西，不显示“待定”。 */
+/** 那两个小框显示什么 —— 跟模型域一样，只显示生效的东西，不显示「待定」。 */
 const renderCtx = () => {
-  const sn = [...pickedSkills];
-  // 模板进 id：它是单值、7KB、影响每一轮；技能是集合，进副标题。
-  $("ctx-id").textContent = pickedTemplate ?? "无模板";
-  $("ctx-tag").textContent = pickedTemplate || sn.length ? "改 ›" : "选择 ›";
-  $("ctx-sub").textContent = `模板 ${pickedTemplate ?? "无"} · 技能 ${sn.length}/${installedSkills.length}`;
+  const n = pickedSkills.size;
+  $("ctx-tag").textContent = `${n}/${installedSkills.length} ›`;
+  $("tmpl-tag").textContent = `${pickedTemplate ?? "无"} ›`;
+  $("ctx-sub").textContent = `技能 ${n}/${installedSkills.length} · 模板 ${pickedTemplate ?? "无"}`;
   $("pickctx").disabled = !tag;
+  $("pickprompt").disabled = !tag;
 };
 
 /**
@@ -1234,24 +1498,9 @@ const renderExt = () => {
   $("pickext").disabled = !tag || !total;
 };
 
-/** 模板只有一条能生效：点中就落值，「无模板」= 清掉。没有"再点一次取消"那种手势。 */
-const pickTemplate = (name) => {
-  pickedTemplate = name;
-  renderCtxList();
-  renderCtx();
-  // 重画之后 DOM 全换了，焦点钉回同一行 —— 否则键盘换第二条时焦点已经没了。
-  $("skillList").querySelector(`.skill-row[data-t="${CSS.escape(name ?? "")}"]`)?.focus();
-};
-
 $("skillList").addEventListener("click", (e) => {
-  // 预览按钮在模板行里面：先接住，别让它冒泡成"选中这一行"。
-  const peek = e.target.closest?.(".peek");
-  if (peek) { void togglePeek(peek); return; }
-
   const row = e.target.closest?.(".skill-row");
   if (!row) return;
-  if ("t" in row.dataset) return pickTemplate(row.dataset.t || null);
-
   const name = row.dataset.s;
   if (pickedSkills.has(name)) pickedSkills.delete(name); else pickedSkills.add(name);
   renderCtxList();
@@ -1260,17 +1509,6 @@ $("skillList").addEventListener("click", (e) => {
   $("skillList").querySelector(`.skill-row[data-s="${CSS.escape(name)}"]`)?.focus();
 });
 $("skillList").addEventListener("keydown", (e) => {
-  // 模板行是 div（里面还要放「预览」按钮，button 不能套 button），不会像 <button> 那样
-  // 自己把 Enter/Space 变成 click —— 所以这一条得手写。
-  if (e.key === "Enter" || e.key === " ") {
-    const row = document.activeElement;
-    if (row?.dataset && "t" in row.dataset) {
-      e.preventDefault();
-      pickTemplate(row.dataset.t || null);
-    }
-    return;
-  }
-  // 箭头只移焦点、不落值：跨分区扫一遍就把模板换掉，是最烦人的那种"手滑"。
   if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
   const rows = [...$("skillList").querySelectorAll(".skill-row")];
   const at = rows.indexOf(document.activeElement);
@@ -1448,6 +1686,17 @@ if (tag) {
     const data = await api("v1/prompts");
     installedTemplates = (data.prompts ?? []).filter((p) => p.load?.state === "ok");
     pickedTemplate = data.default && installedTemplates.some((p) => p.name === data.default) ? data.default : null;
+    // 右栏的类别 = 词表 ∪ 模板身上真挂着的，再剔掉内置类别（`Basics` 及其子类）——
+    // 跟扩展一个判据：栏里混着系统项，「我自己分过什么类」就看不出来了。祖先缺了就补。
+    const names = new Set((Array.isArray(data.categories) ? data.categories : []).map((c) => String(c ?? "").trim()).filter(Boolean));
+    for (const p of installedTemplates) for (const c of catsOfPrompt(p)) names.add(c);
+    for (const label of [...names]) {
+      const parts = label.split("/").filter(Boolean);
+      for (let i = 1; i < parts.length; i += 1) names.add(parts.slice(0, i).join("/"));
+    }
+    tmplCustomCats = [...names]
+      .filter((label) => !underCategory(label, DEFAULT_CATEGORY))
+      .sort((a, b) => a.localeCompare(b));
   } catch (error) {
     console.warn("模板清单拿不到：", error);
   }
