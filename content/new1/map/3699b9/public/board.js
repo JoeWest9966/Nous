@@ -141,26 +141,29 @@ export function createBoard(deps) {
     return list[0] ?? "off";
   };
 
+  /** 盘面节点/副标题的文案，全部照 hb7k3j 的格式（英文、同一套说法）。 */
   const skillsName = () => {
     const d = cur();
-    if (d.skillsMode === "default") return "跟随默认";
-    if (d.skillsMode === "none") return "都不要";
-    return `${(d.skills ?? []).length} 条`;
+    if (d.skillsMode === "default") return "default";
+    if (d.skillsMode === "none") return "none";
+    return `${(d.skills ?? []).length}/${skills.length}`;
   };
   const tmplName = () => {
     const d = cur();
-    if (d.templateMode === "default") return "跟随默认";
-    if (d.templateMode === "none") return "无";
+    if (d.templateMode === "default") return "default";
+    if (d.templateMode === "none") return "none";
     return d.template || "—";
   };
   const extName = () => {
     const d = cur();
-    if (d.extMode === "default") return "跟随默认";
+    if (d.extMode === "default") return "default";
+    if (d.extMode === "none") return "none";
     const picked = d.extensions ?? [];
-    if (!picked.length || d.extMode === "none") return "都不要";
-    if (picked.length === 1) return picked[0];
+    if (!picked.length) return "none";
+    const variantPicked = picked.filter((n) => n.includes("@"));
     const bare = picked.filter((n) => !n.includes("@"));
-    if (bare.length === picked.length && bare.length === families.length) return `全部 ${families.length}`;
+    if (!variantPicked.length && bare.length === families.length) return `all ${families.length}`;
+    if (picked.length === 1) return picked[0];
     return `${picked[0]} +${picked.length - 1}`;
   };
 
@@ -170,34 +173,34 @@ export function createBoard(deps) {
     $("b-name").textContent = name || "—";
     $("b-name").title = name;
 
-    // 模型
+    // 模型（照 hb7k3j：节点 = modelId + provider，副标题 = N available · thinking X）
     const m = d.model;
-    $("b-model-id").textContent = m ? m.modelId : "跟随设备默认";
-    $("b-model-tag").textContent = models().length ? "改 ›" : "没有可选模型";
+    const prov = m ? (models().find((x) => x.provider === m.provider && x.modelId === m.modelId)?.provider ?? m.provider) : "";
+    $("b-model-id").textContent = m ? m.modelId : (models().length ? "device default" : "—");
+    $("b-model-tag").textContent = m ? prov : (models().length ? "change ›" : "no model");
     $("b-model").disabled = !models().length;
     const lv = levelsOf();
     $("b-model-sub").textContent = m
-      ? lv.length > 1 ? `thinking ${d.thinkingLevel || "缺省"}` : "这一款没有思考档"
-      : `${models().length} 款可用 · 不钉 = 用设备默认`;
+      ? `${models().length} available${lv.length > 1 ? ` · thinking ${d.thinkingLevel || "off"}` : ""}`
+      : `${models().length} available · device default`;
 
-    // 上下文
+    // 上下文（照 hb7k3j：skills N/M · prompt X）
     $("b-skills-tag").textContent = `${skillsName()} ›`;
     $("b-tmpl-tag").textContent = `${tmplName()} ›`;
-    const pickedSkills = d.skillsMode === "picked" ? (d.skills ?? []).length : 0;
-    $("b-ctx-sub").textContent = `技能 ${d.skillsMode === "default" ? "跟随默认" : d.skillsMode === "none" ? "无" : `${pickedSkills}/${skills.length}`} · 模板 ${tmplName()}`;
+    $("b-ctx-sub").textContent = `skills ${skillsName()} · prompt ${tmplName()}`;
 
-    // 扩展
-    $("b-ext-id").textContent = extName();
-    $("b-ext-tag").textContent = families.length ? "改 ›" : "没有可选扩展";
+    // 扩展（照 hb7k3j：节点 = 逻辑名 + change ›，副标题 = installed N · …）
+    $("b-ext-id").textContent = families.length ? extName() : "none available";
+    $("b-ext-tag").textContent = "change ›";
     $("b-ext").disabled = !families.length;
+    const extN = d.extMode === "picked" ? (d.extensions ?? []).length : d.extMode;
     $("b-ext-sub").textContent = families.length
-      ? `${families.length} 个已装`
-      : "进程里没有可选扩展";
+      ? `installed ${families.length} · ${extN === "default" || extN === "none" ? extN : `picked ${extN}`}`
+      : "no extensions";
 
-    // 权限：这一页只有一个真东西
-    $("b-ro-tag").textContent = d.readOnly ? "开 ›" : "关 ›";
+    // 权限：preset 唯一比 hb7k3j 多的真字段。外观照它，副标题留空（那里本来就是空域）。
+    $("b-ro-tag").textContent = d.readOnly ? "on ›" : "off ›";
     $("b-readonly").setAttribute("aria-pressed", String(!!d.readOnly));
-    $("b-perm-sub").textContent = d.readOnly ? "不给会写的工具" : "工具照常";
 
     // 中央
     const dirty = deps.isDirty?.() ?? false;

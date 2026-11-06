@@ -102,7 +102,7 @@ package.json       type: module + scripts.start（宿主凭这一条起进程）
 server.js          纯静态（剥前缀、403 目录穿越、no-store），默认 PORT=4786
 public/index.html  骨架：顶栏 / 左栏 / 筛选 / 网格 / 详情 / 抽屉（盘面 + 四个弹窗）/ 启动 / 新建 / 确认框 / 归档区
 public/board.js    抽屉里那块盘面：四域 / 铁路图 / 三张清单（技能·模板·扩展）/ 档位 chip / 预览
-public/board.css   盘面的样式（纸面底，不搬 hb7k3j 那套深色；版式一模一样）
+public/board.css   盘面的样式（照抄 hb7k3j 的 Flexoki 深色，只改半扇尺寸，不改皮肤）
 public/model.js    纯计算：cardState / facet 树 / 筛选 / chip 文案 / 表单三态 ↔ preset.json
 public/api.js      数据层：ctx 解析、错误信封、409、校验 debounce、启动那条路
 public/app.js      DOM 那一半：渲染、菜单、手势、抽屉、diff 视图、Esc 层级
