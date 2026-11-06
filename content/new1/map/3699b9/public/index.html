@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" href="data:," />
+    <title>presets · Nous 预设</title>
+    <link rel="stylesheet" href="./style.css?v=1" />
+    <script>
+      // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
+      if (!location.pathname.endsWith("/")) {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M5 4.5h9l5 5V19a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19z" />
+          <path d="M14 4.5V10h5" />
+          <path d="M8.5 14h7M8.5 17h4.5" />
+        </svg>
+        <div class="titles">
+          <h1>预设</h1>
+          <p id="crumb">—</p>
+        </div>
+      </div>
+      <div class="top-right">
+        <span class="hint" id="repo">—</span>
+        <button class="chip-status" id="sync" type="button" title="仓库状态（点一下重新问 qrd3wh）">
+          <span class="dot" id="sync-dot"></span><span id="sync-text">—</span>
+        </button>
+        <button class="btn btn-small" id="refresh" type="button" title="重新问一遍 qrd3wh（不写盘、不提交）">
+          重扫
+        </button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="rail" id="rail">
+        <div class="rail-head">
+          <h3>类别</h3>
+          <span class="facet-n" id="cat-count">—</span>
+        </div>
+        <div class="facets" id="facets"></div>
+        <div class="rail-new" id="rail-new">
+          <button class="rail-add" id="new-cat" type="button" title="建一个空类别（可写路径，如 写作/周报）">
+            <span aria-hidden="true">＋</span> 新建类别
+          </button>
+        </div>
+        <p class="rail-foot dim small" id="rail-foot">—</p>
+      </aside>
+
+      <section class="main">
+        <div class="filters" id="filters" aria-label="筛选"></div>
+        <div class="toolbar">
+          <span class="result-count" id="result-count">—</span>
+          <div class="toolbar-right">
+            <button class="btn-new" id="new-preset" type="button" title="建一条空预设（未发布，只有这台有）">
+              <span aria-hidden="true">＋</span>新建预设
+            </button>
+            <label class="search">
+              <input id="search" type="search" placeholder="搜预设名 / 摘要 / 类别" autocomplete="off" />
+            </label>
+          </div>
+        </div>
+        <div class="scroll" id="scroll">
+          <div class="subhead" id="subhead" hidden></div>
+          <div class="grid" id="grid"></div>
+          <div class="empty" id="empty" hidden></div>
+          <div class="archived" id="archived" hidden></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 右键 / 长按 / ⋯ 的统一菜单 -->
+    <div class="ctxmenu" id="ctxmenu" role="menu" hidden></div>
+
+    <!-- 详情：点半扇浮层，不换页（关掉回来还是原来那张网格） -->
+    <div class="dt-scrim" id="dt-scrim" hidden></div>
+    <aside class="dt" id="detail" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="dt-name">
+      <header class="dt-head">
+        <div class="dt-tile" id="dt-tile"><span class="mono" id="dt-mono">—</span></div>
+        <div class="dt-titles">
+          <div class="dt-title-row">
+            <h2 id="dt-name">—</h2>
+            <span class="dt-badges" id="dt-badges"></span>
+          </div>
+          <p class="dim small" id="dt-meta">—</p>
+        </div>
+        <button class="dt-x" id="dt-close" type="button" title="关闭（Esc）" aria-label="关闭">×</button>
+      </header>
+      <div class="dt-body" id="dt-body"></div>
+      <footer class="dt-foot" id="dt-foot"></footer>
+    </aside>
+
+    <!-- 编辑：一个表单 tab + 一个 JSON tab，编的是同一份 preset.json -->
+    <div class="ed-scrim" id="ed-scrim" hidden></div>
+    <aside class="ed" id="editor" hidden aria-label="预设编辑器">
+      <header class="ed-head">
+        <div>
+          <h2 id="ed-name">—</h2>
+          <p class="dim small" id="ed-meta">—</p>
+        </div>
+        <div class="ed-actions">
+          <span class="ed-state" id="ed-state"></span>
+          <button class="ed-x" id="ed-close" title="关闭（Esc）" aria-label="关闭">×</button>
+        </div>
+      </header>
+      <div class="ed-tabs" role="tablist">
+        <button class="ed-tab on" id="ed-tab-form" data-mode="form" role="tab" aria-selected="true" title="表单（Alt+D 切 JSON）">
+          表单
+        </button>
+        <button class="ed-tab" id="ed-tab-json" data-mode="json" role="tab" aria-selected="false" title="preset.json 原文（Alt+D 切表单）">
+          JSON
+        </button>
+      </div>
+      <div class="ed-stage" id="ed-stage">
+        <div class="ed-form" id="ed-form"></div>
+        <div class="ed-code" id="ed-code" hidden>
+          <div class="ed-gutter" id="ed-gutter" aria-hidden="true"></div>
+          <textarea class="ed-text" id="ed-text" spellcheck="false" wrap="off" disabled></textarea>
+          <div class="ed-diff" id="ed-diff" hidden tabindex="0" aria-label="与 HEAD 的差异"></div>
+        </div>
+      </div>
+      <div class="ed-msg" id="ed-msg" hidden></div>
+      <footer class="ed-foot">
+        <p class="dim small" id="ed-hint">保存只落盘；发布才 commit + push。</p>
+        <div class="ed-foot-btns">
+          <button class="ed-btn" id="ed-publish" title="校验 + commit + push">发布</button>
+          <button class="ed-btn primary" id="ed-save" title="保存到磁盘（Ctrl/⌘+S）—— 不提交">保存</button>
+        </div>
+      </footer>
+    </aside>
+
+    <!-- 启动确认：名字 + 生效配置一览 + 会跳过什么 -->
+    <div class="sheet-scrim" id="launch-scrim" hidden></div>
+    <div class="sheet" id="launch" hidden role="dialog" aria-modal="true" aria-labelledby="launch-title">
+      <h2 id="launch-title">开一条新对话</h2>
+      <p class="sheet-hint dim" id="launch-hint">—</p>
+      <div class="sheet-body" id="launch-body"></div>
+      <label class="field">
+        <span>会话名</span>
+        <input id="launch-name" type="text" maxlength="120" autocomplete="off" />
+      </label>
+      <p class="sheet-err" id="launch-err" hidden></p>
+      <div class="sheet-foot">
+        <button class="btn" id="launch-cancel" type="button">取消</button>
+        <button class="btn btn-go" id="launch-ok" type="button">开对话</button>
+      </div>
+    </div>
+
+    <!-- 新建预设：只问四样 -->
+    <div class="sheet-scrim" id="create-scrim" hidden></div>
+    <form class="sheet" id="create" hidden role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <h2 id="create-title">新建预设</h2>
+      <p class="sheet-hint dim">
+        一条预设 = 一组「开这条会话时用什么」的引用。建完是<b>未发布</b>：只在你这台、远端看不到，满意了再点发布。
+      </p>
+      <label class="field">
+        <span>名字 <i class="dim">小写字母 / 数字开头，只留 . _ -</i></span>
+        <input id="create-name" type="text" maxlength="64" autocomplete="off" spellcheck="false" />
+        <i class="field-warn">名字就是会话里的键，<b>建完改不了</b>。想换就归档旧的、建新的。</i>
+      </label>
+      <label class="field">
+        <span>一句话摘要 <i class="dim">卡片上那一行，人靠它决定开不开</i></span>
+        <input id="create-summary" type="text" maxlength="200" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span>类别 <i class="dim">可空 = 未分类；写个不存在的名字就顺手建了</i></span>
+        <input id="create-cat" type="text" autocomplete="off" placeholder="写作/周报" />
+      </label>
+      <label class="field">
+        <span>起手</span>
+        <select id="create-from">
+          <option value="blank">空白（模型 / 模板都跟随默认）</option>
+          <option value="device">钉住当前设备默认模型</option>
+        </select>
+      </label>
+      <p class="sheet-err" id="create-err" hidden></p>
+      <div class="sheet-foot">
+        <button class="btn" id="create-cancel" type="button">取消</button>
+        <button class="btn btn-primary" id="create-ok" type="submit">建</button>
+      </div>
+    </form>
+
+    <!-- 破坏性操作：手输名字才亮 -->
+    <div class="sheet-scrim" id="danger-scrim" hidden></div>
+    <div class="sheet danger" id="danger" hidden role="dialog" aria-modal="true" aria-labelledby="danger-title">
+      <h2 id="danger-title">—</h2>
+      <p class="sheet-hint dim" id="danger-hint"></p>
+      <label class="field">
+        <span>手输<b id="danger-word">名字</b>确认：<code id="danger-name">—</code></span>
+        <input id="danger-input" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="sheet-err" id="danger-err" hidden></p>
+      <div class="sheet-foot">
+        <button class="btn" id="danger-cancel" type="button">取消</button>
+        <button class="btn btn-bad" id="danger-ok" type="button" disabled>确定</button>
+      </div>
+    </div>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
