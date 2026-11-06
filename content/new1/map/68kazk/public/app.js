@@ -1360,8 +1360,13 @@ async function loadUpstream({ quiet = true } = {}) {
     state.upstream = { sources: [], entries: [], errors: [], error: String(error?.message ?? error) };
     if (!quiet) toast(`读不到上游清单：${error.message}`, "bad");
   }
-  // 顶部那颗 chip、左栏那棵树、主区那些卡片都是这份数据算的，所以整页重画一次（很便宜）。
-  if (state.data) render();
+  // 顶部那颗 chip、左栏那棵树、主区那些卡片都是这份数据算的。
+  // **必须先 `refreshView()`**：上游的条目是并进同一个网格的（`buildView` 第二个参数），
+  // 只 `render()` 的话画的还是上一次算出来的那份 —— 页面上看起来「什么都没变」。
+  if (state.data) {
+    refreshView();
+    render();
+  }
 }
 
 const upstreamEntriesOf = (sourceName) =>

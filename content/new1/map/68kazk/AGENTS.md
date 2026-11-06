@@ -144,6 +144,11 @@ test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
     只有 `.up-card` 和 `#dt-tile[data-kind="upstream"]` 用它。别处拿它就是错。
 16. **上游的正文是只读的。** 服务端 `upstream/file` 只有 GET（POST 是 405）——
     给一个灰着的保存按钮比不给更坏。缓存按 `订阅/路径` 存（`upstreamTexts`），刷新时清空。
+17. **改了数据就 `refreshView()`，别只 `render()`。** `render()` 画的是**算好的那份**
+    `state.view`；两份数据（`GET /v1/skills` 和 `GET /v1/skills/upstream`）是会分开到的，
+    只重画不重算 = 上游那 39 条永远进不了网格，页面上看起来「改了跟没改一样」
+    （这一条是真踩过的：只改了 `loadUpstream` 的 `render()`，硬刷新也没用）。
+
 
 
 ## 搬出去跑

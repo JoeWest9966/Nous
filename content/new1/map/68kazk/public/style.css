@@ -17,8 +17,8 @@
   --radius: 10px;
   /* 上游独属的低饱和暖金：**只给上游用**，别处一个都不许拿它上色。
      它不进色轮（`--hue` 是整圈 360 度），所以不会跟某个名字撞色。 */
-  --up-grad-a: hsl(40 38% 94%);
-  --up-grad-b: hsl(32 40% 86%);
+  --up-grad-a: hsl(40 42% 92%);
+  --up-grad-b: hsl(31 44% 83%);
   --up-ink: hsl(34 42% 27%);
   --up-line: hsl(38 42% 55%);
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
@@ -317,11 +317,21 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .product.up-card .visual { background: linear-gradient(135deg, var(--up-grad-a), var(--up-grad-b)); }
 .product.up-card .visual-mono { color: var(--up-ink); }
 /* 名字旁边那一小截是订阅名：两条同名的时候，这是唯一分得清的地方。 */
-.up-src { color: var(--up-ink); border-color: color-mix(in srgb, var(--up-line) 35%, var(--line)); background: color-mix(in srgb, var(--up-line) 10%, transparent); }
+.up-src {
+  flex: 0 0 auto;
+  color: var(--up-ink); border-color: color-mix(in srgb, var(--up-line) 35%, var(--line));
+  background: color-mix(in srgb, var(--up-line) 10%, transparent);
+}
 
 .product-body { padding: 11px 13px 12px; }
 .product-title { display: flex; align-items: baseline; flex-wrap: wrap; row-gap: 4px; gap: 6px; min-width: 0; }
-.product-name { font-family: var(--mono); font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* `min-width: 0` + `flex: 0 1 auto`：长名字（`git-guardrails-claude-code`）得在卡里截断，
+   不许把旁边那颗订阅名顶出卡外。 */
+.product-name {
+  font-family: var(--mono); font-size: 14px; font-weight: 600;
+  min-width: 0; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* 「不进提示词」是个状态，不是装饰：隐藏的技能模型看不到，只有人手动读。 */
 .product-hidden { font-family: var(--mono); font-size: 10px; color: var(--dim); flex: none; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 /* 卡上唯一可见的菜单入口（右键 / 长按只是快捷方式）。 */
