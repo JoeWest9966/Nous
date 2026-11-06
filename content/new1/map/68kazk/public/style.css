@@ -416,18 +416,10 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 /* 主区换页的另一个：上游清单（它列的不是「某一条」，是一整张表）。 */
 .upstream { display: flex; flex-direction: column; gap: 10px; padding-bottom: 40px; }
 
-/* 上游那块视图：面屑 + 网格。卡片复用 .product，只有目录卡是虚线（能钻进去）。 */
+/* 上游那块视图：一整张清单 + 网格。**没有面包屑、没有「上一层」** ——
+   目录在左栏当筛子，主区永远是这个仓的一份清单（点开的那条盖在上面）。 */
 .up-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.up-crumb { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; }
-.up-crumb-at {
-  border: 0; background: none; color: var(--dim); cursor: pointer;
-  padding: 3px 5px; border-radius: 5px; font: inherit;
-}
-.up-crumb-at:hover, .up-crumb-at:focus-visible { color: var(--ink); background: var(--wash); outline: none; }
-.up-crumb-at:not(:last-child)::after { content: "/"; color: var(--dimmer); margin-left: 5px; }
 .up-src { margin: 0; }
-.product.up-dir { border-style: dashed; }
-.badge-float.dir { background: var(--wash); color: var(--dim); border-color: var(--line); }
 .up-detail { display: flex; flex-direction: column; gap: 10px; }
 
 /* 浮层里那个「发布」= 这一屏唯一的主按钮，得看起来像。 */

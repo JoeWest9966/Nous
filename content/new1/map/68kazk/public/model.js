@@ -417,20 +417,3 @@ export function upstreamTree(entries) {
   return root;
 }
 
-/** 树里按路径找节点；找不到给根（`path` 是脏的、上游变了，都不该炸成白屏）。 */
-export function upstreamAt(tree, path) {
-  const want = String(path ?? "").replace(/^\/+|\/+$/g, "");
-  if (!tree || !want) return tree ?? null;
-  // 路径是绝对的（`skills/a/b`），所以往下钻时把同一个 `want` 传下去。
-  for (const child of tree.children ?? []) {
-    if (child.path === want) return child;
-    if (want.startsWith(`${child.path}/`)) return upstreamAt(child, want) ?? tree;
-  }
-  return tree;
-}
-
-/** 面包屑：`skills/a/b` → 可从根点回去的一串。 */
-export function upstreamCrumb(path) {
-  const parts = String(path ?? "").split("/").filter(Boolean);
-  return parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join("/") }));
-}

@@ -15,13 +15,14 @@ import {
   categoriesOf,
   categoryImpact,
   childCount,
+  dirPaths,
   facetCounts,
+  fileTree,
   filterCards,
+  flattenTree,
   sortUpstream,
   stateFilterOf,
   suggestedAdoptName,
-  upstreamAt,
-  upstreamCrumb,
   upstreamSummary,
   upstreamTree,
 } from "../public/model.js";
@@ -258,29 +259,12 @@ test("upstreamTree：一个目录自己就是技能、里面还有子目录，�
   assert.equal(x.children[0].path, "x/y");
 });
 
-test("upstreamAt：钻到任意一层；路径脏了就退回根，不炸", () => {
-  const tree = upstreamTree([up("a/b/c"), up("a/d")]);
-  assert.equal(upstreamAt(tree, "a").path, "a");
-  assert.equal(upstreamAt(tree, "a/b/c").name, "c");
-  assert.equal(upstreamAt(tree, "").path, "");
-  assert.equal(upstreamAt(tree, "不存在/xxx").path, "");
-  assert.equal(upstreamAt(tree, "a/nope").path, "a");
-});
-
-test("upstreamCrumb：面包屑每一层都能点回去", () => {
-  assert.deepEqual(upstreamCrumb("a/b/c"), [
-    { name: "a", path: "a" },
-    { name: "b", path: "a/b" },
-    { name: "c", path: "a/b/c" },
-  ]);
-  assert.deepEqual(upstreamCrumb(""), []);
-});
+// 目录是**筛子**不是页面：上游那一屏的地址只到订阅（`#upstream/matt`），
+// 所以「钻到某一层」「面包屑」这两个纯函数跟着一起去掉了 —— 那套是文件管理器的形状。
 
 // ── 正文抽屉的文件树 ────────────────────────────────────────────────────────
 //
 // 列表是扁的（`docs/a.md`），抽屉里要长成树。文件夹不是存出来的：有文件住在这儿它才在。
-
-import { dirPaths, fileTree, flattenTree } from "../public/model.js";
 
 test("fileTree：/ 拆成层级，同层目录在前、文件在后", () => {
   const tree = fileTree([

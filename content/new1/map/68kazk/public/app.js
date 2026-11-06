@@ -31,8 +31,6 @@ import {
   sourceNameFromUrl,
   suggestedAdoptName,
   sortUpstream,
-  upstreamAt,
-  upstreamCrumb,
   upstreamSummary,
   upstreamTree,
 } from "./model.js";
@@ -106,7 +104,7 @@ const state = {
   upstream: null, // GET v1/skills/upstream 的原样（订阅 + 清单 + 每个 source 的报错）
   upstreamOpen: false, // 主区顶上来的是上游这块视图（不是筛出来的列表）
   upstreamSource: null, // 在看哪个订阅
-  upstreamPath: "", // 在这个订阅里的哪一层（"" = 根）
+  upFilter: "", // 左栏目录树筛到哪一枝（"" = 全部）—— 筛子，不是页面
   upstreamDetail: null, // 哪一条上游技能开着浮层
   upstreamBusy: null, // 正在取用 / 刷新 / 添加（按钮上的转圈）
   addingSource: false, // 添加上游那个表单开着
@@ -1245,12 +1243,12 @@ const upstreamEntryAt = (path) =>
 const hashTarget = () => {
   const raw = location.hash.replace(/^#/, "");
   if (raw !== "upstream" && !raw.startsWith("upstream/")) return null;
-  const rest = raw.slice("upstream".length).replace(/^\/+/, "");
-  if (!rest) return { source: null, path: "" };
-  const cut = rest.indexOf("/");
-  return cut === -1
-    ? { source: rest, path: "" }
-    : { source: rest.slice(0, cut), path: rest.slice(cut + 1) };
+  // **地址只到订阅**：`#upstream/matt`。目录是筛子，不进地址 ——
+  // 进了就是「钻进去换一页」，那是文件管理器，不是这一页的规矩。
+  // 老地址（`#upstream/matt/skills/engineering/x`）也认：多出来的段只当没看见，
+  // 落到订阅那一层。地址是可分享的，别让昨天贴出去的链接变成白屏。
+  const source = raw.slice("upstream".length).replace(/^\/+/, "").split("/")[0];
+  return { source: source || null };
 };
 
 const writeHash = () => {
@@ -1258,18 +1256,17 @@ const writeHash = () => {
     if (hashTarget()) history.replaceState(null, "", location.pathname + location.search);
     return;
   }
-  const leaf = state.upstreamDetail ?? state.upstreamPath ?? "";
-  const parts = ["upstream", state.upstreamSource ?? "", leaf].filter((item, index) => index < 2 || item);
-  const next = `#${parts.join("/")}`;
+  const next = `#${["upstream", state.upstreamSource ?? ""].filter(Boolean).join("/")}`;
   if (location.hash !== next) history.replaceState(null, "", next);
 };
 
-function openUpstream(name = undefined, path = undefined) {
+function openUpstream(name = undefined) {
   leaveDetail();
+  state.upstreamDetail = null;
   state.upstreamOpen = true;
   // 没说看哪个就落到第一个订阅；一个都没有就停在「添加上游」那张空状态上。
   state.upstreamSource = name ?? state.upstreamSource ?? state.upstream?.sources?.[0]?.name ?? null;
-  state.upstreamPath = path ?? "";
+  state.upFilter = "";
   writeHash();
   render();
   $("results")?.scrollTo({ top: 0 });
@@ -1284,18 +1281,17 @@ function closeUpstream() {
   $("results")?.scrollTo({ top: 0 });
 }
 
-/** 钻到上游里的某一层。空串 = 这一层订阅的根。 */
-function gotoUpstreamPath(path) {
-  state.upstreamPath = String(path ?? "");
-  state.upstreamDetail = null;
-  writeHash();
+/** 左栏点一个目录 = 把主区缩到那一枝（再点一下取消）。空串 = 整个仓。 */
+function filterUpstream(path) {
+  const next = String(path ?? "");
+  state.upFilter = state.upFilter === next ? "" : next;
   render();
   $("results")?.scrollTo({ top: 0 });
 }
 
 function switchSource(name) {
   state.upstreamSource = name;
-  state.upstreamPath = "";
+  state.upFilter = "";
   state.upstreamDetail = null;
   writeHash();
   render();
@@ -1354,7 +1350,7 @@ async function addSource({ url, prefix }) {
     await transport.post("v1/skills/sources", { sources: next });
     await loadUpstream({ quiet: true });
     state.upstreamSource = name;
-    state.upstreamPath = "";
+    state.upFilter = "";
     state.addingSource = false;
     toast(`订阅了 ${name}（未发布）—— 顺手拉一下镜像`);
     await refreshSource(name);
@@ -1457,41 +1453,6 @@ function openUpstreamMenu(x, y, entry) {
     });
   }
   mountMenu(menu, x, y, first);
-}
-
-/** 目录卡：跟技能卡同一副骨头，虚线边框把「这是能钻进去的」说出来。 */
-function upstreamDirCard(node) {
-  const card = el("article", "product up-dir");
-  card.tabIndex = 0;
-  card.setAttribute("role", "button");
-  card.setAttribute("aria-label", `目录 ${node.name} · ${node.n} 条技能`);
-  card.onclick = () => gotoUpstreamPath(node.path);
-  card.onkeydown = (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      gotoUpstreamPath(node.path);
-    }
-  };
-
-  const visual = el("div", "visual");
-  visual.style.setProperty("--hue", String(hueOf(node.name)));
-  visual.append(el("span", "visual-mono", initialsOf(node.name)));
-  visual.append(el("span", "badge-float dir", `${node.n} 条`));
-  card.append(visual);
-
-  const body = el("div", "product-body");
-  const title = el("div", "product-title");
-  title.append(el("span", "product-name", node.name));
-  // 全都待看的时候「20 条」那块已经说完了，再来一句「20 条待看」是废话。
-  if (node.todo && node.todo < node.n) {
-    const flag = el("span", "product-hidden", `${node.todo} 条待看`);
-    flag.title = "这一层往下，有未取用 / 上游有更新 / 名字被占的";
-    title.append(flag);
-  }
-  body.append(title);
-  body.append(el("p", "product-sum", `目录 · 往下一共 ${node.n} 条技能`));
-  card.append(body);
-  return card;
 }
 
 function upstreamSkillCard(entry) {
@@ -1691,10 +1652,13 @@ function renderUpstreamFacets() {
   const source = upstreamSourceNow();
   const tree = upstreamTreeNow();
 
+  // 目录是**筛子**，跟本地那栏的类别一个语义：点一下把主区缩到这一枝，再点取消。
+  // 它不换页、不进地址栏 —— 这一页的规矩是「列表不动，点开的东西盖在上面」。
   const row = (node, depth) => {
+    const on = state.upFilter === node.path;
     const item = el(
       "div",
-      "facet" + (state.upstreamPath === node.path ? " on" : "") + (state.upstreamPath.startsWith(`${node.path}/`) ? " parent" : ""),
+      "facet" + (on ? " on" : "") + (state.upFilter.startsWith(`${node.path}/`) ? " parent" : ""),
     );
     const main = el("button", "facet-main");
     main.type = "button";
@@ -1702,16 +1666,18 @@ function renderUpstreamFacets() {
     const n = el("span", "facet-n", String(node.n));
     if (node.todo) n.dataset.tone = "warn";
     main.append(n);
-    main.title = node.path || "根目录";
+    main.title = node.path ? `${node.path} · 只看这一枝` : "整个仓";
     main.style.paddingLeft = `${8 + Math.min(depth, 3) * 11}px`;
-    main.onclick = () => gotoUpstreamPath(node.path);
+    main.onclick = () => filterUpstream(node.path);
     item.append(main);
     host.append(item);
     for (const child of node.children) if (child.kind === "dir") row(child, depth + 1);
   };
 
   if (source) {
-    row({ name: source.name, path: "", n: tree.n, todo: tree.todo, children: tree.children }, 0);
+    // 根那一行 = 「整个仓」，点它清掉筛选。
+    row({ name: "全部", path: "", n: tree.n, todo: tree.todo, children: tree.children }, 0);
+    // 根那一行自己不摆子目录（它们是下一层），`row` 里已经递归过了。
   } else {
     host.append(el("p", "facet-empty dim small", "还没订阅任何一个上游。"));
   }
@@ -1728,33 +1694,25 @@ function renderUpstreamPanel() {
   const sources = state.upstream?.sources ?? [];
   const source = upstreamSourceNow();
   const tree = upstreamTreeNow();
-  const node = upstreamAt(tree, state.upstreamPath) ?? tree;
-  // 路径是脏的（上游变了 / 手改地址）：退回根，别白屏。
-  if (node.path !== state.upstreamPath) state.upstreamPath = node.path;
 
   host.textContent = "";
-  $("result-count").textContent = source ? `${source.name} · ${tree.n} 条技能` : "还没订阅";
+  const all = upstreamEntriesOf(state.upstreamSource);
+  const scope = state.upFilter;
+  const shown = sortUpstream(
+    all.filter((entry) => !scope || entry.path === scope || entry.path.startsWith(`${scope}/`)),
+  );
+  $("result-count").textContent = source
+    ? `${scope ? `${scope} · ` : ""}${shown.length}${shown.length === all.length ? "" : ` / ${all.length}`} 条技能`
+    : "还没订阅";
 
-  // 面屑：从订阅名一路点回来。返回键只退一层，退到根再点才关掉这块视图。
+  // 没有面包屑、也没有「上一层」：这一屏不钻。目录在左栏当筛子，
+  // 主区永远是这个仓的一份清单，点开的那条盖在上面（半扇浮层）。
   const bar = el("div", "up-bar");
-  const back = el("button", "detail-back", node.path ? "‹ 上一层" : "‹ 返回");
+  const back = el("button", "detail-back", "‹ 返回列表");
   back.type = "button";
-  back.title = node.path ? "上一层目录" : "回到技能列表（Esc）";
-  back.onclick = () => {
-    if (!node.path) return closeUpstream();
-    gotoUpstreamPath(node.path.split("/").slice(0, -1).join("/"));
-  };
+  back.title = "回到技能列表（Esc）";
+  back.onclick = () => closeUpstream();
   bar.append(back);
-  const crumb = el("nav", "up-crumb");
-  const crumbAt = (label, path) => {
-    const button = el("button", "up-crumb-at", label);
-    button.type = "button";
-    button.onclick = () => gotoUpstreamPath(path);
-    crumb.append(button);
-  };
-  crumbAt(source?.name ?? "上游", "");
-  for (const part of upstreamCrumb(node.path)) crumbAt(part.name, part.path);
-  bar.append(crumb);
   host.append(bar);
 
   // 动作摆在工具栏那一格（跟「新建技能 / 重扫」同一个位置）—— 换的是这一屏能做什么。
@@ -1818,11 +1776,7 @@ function renderUpstreamPanel() {
   if (failure) host.append(alertLine("bad", "读不出来", failure.error));
 
   const grid = el("div", "grid");
-  // 这个目录自己也是一条技能（`x/SKILL.md` 旁边还有 `x/y/`）：先摆它，再摆子目录。
-  if (node.entry) grid.append(upstreamSkillCard(node.entry));
-  for (const child of node.children) {
-    grid.append(child.kind === "dir" ? upstreamDirCard(child) : upstreamSkillCard(child.entry));
-  }
+  for (const entry of shown) grid.append(upstreamSkillCard(entry));
   if (!grid.childNodes.length) {
     grid.append(
       el(
@@ -1831,7 +1785,9 @@ function renderUpstreamPanel() {
         source
           ? source.mirror === "missing"
             ? "镜像还没有 —— 先点「刷新（fetch）」。"
-            : "这个上游里没有技能（或者 prefix 把范围筛空了）。"
+            : scope
+              ? "这一枝里没有技能。"
+              : "这个上游里没有技能（或者 prefix 把范围筛空了）。"
           : "还没订阅任何上游 —— 点「+ 添加上游」填个地址。",
       ),
     );
@@ -3246,11 +3202,6 @@ load();
 void loadUpstream({ quiet: true }).then(() => {
   if (location.hash === "#pending") openPending();
   const target = hashTarget();
-  if (target && !state.upstreamOpen) openUpstream(target.source ?? undefined, target.path);
-  // `#upstream/matt/skills/engineering/codebase-design` —— 路径正好落在某条技能上，
-  // 就连那扇浮层一起开（地址是可分享的，测试也靠它省一次点击）。
-  if (target?.path && upstreamEntryAt(target.path)) {
-    state.upstreamDetail = target.path;
-    render();
-  }
+  // 地址只到订阅：目录是筛子，不进地址。所以这里只开那一屏，不带路径。
+  if (target && !state.upstreamOpen) openUpstream(target.source ?? undefined);
 });
