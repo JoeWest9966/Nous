@@ -8,7 +8,7 @@
    还有一条这一页独有：**档位（跟随默认 / 都不要 / 挑几个）在弹窗顶上那排 chip**里 ——
    preset 是反复复用的配置，钉死和不钉是两件事，不能折叠成一个勾。 */
 
-:root {
+.board, .bscrim {
   color-scheme: dark;
   --bg:#100f0f;
   --panel:#1c1b1a;
