@@ -638,8 +638,10 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 }
 .ed-file:hover, .ed-file:focus-visible { background: var(--wash); color: var(--ink); outline: none; }
 .ed-file[aria-current="true"] { background: var(--wash); color: var(--ink); font-weight: 600; }
-.ed-file .ed-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ed-file .ed-file-size { margin-left: auto; color: var(--dim); font-size: 10px; }
+/* `min-width: 0` 少了它 flex 不让名字缩 —— 上游那些 `DESIGN-IT-TWICE.md` 会把
+   大小那一截挤成两行（"2.6" / "KB"）。 */
+.ed-file .ed-file-name { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-file .ed-file-size { flex: none; margin-left: auto; color: var(--dim); font-size: 10px; white-space: nowrap; }
 .ed-file .ed-file-caret { flex: none; width: 8px; color: var(--dim); font-size: 9px; }
 .ed-file[data-kind="markdown"] { color: var(--ink-2); }
 .ed-file[data-kind="dir"] { color: var(--ink); font-weight: 600; }
@@ -650,6 +652,17 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .ed-row:hover .ed-file-del, .ed-row:focus-within .ed-file-del { opacity: 1; }
 .ed-file-del:hover, .ed-file-del:focus-visible { background: #fbeeec; color: var(--bad); outline: none; }
 .ed-files-empty { padding: 8px; color: var(--dim); font-size: 11.5px; }
+
+/* 取用过的上游那条：这份文件跟本地那份比下来是什么。`≠` 变了、`+` 本地没有。
+   没取用过就一个都不标（服务端给的 `state` 那时候没有意义）。 */
+.ed-file-mark {
+  flex: none; margin-left: auto; padding: 0 3px; border-radius: 3px;
+  font-size: 10px; line-height: 14px; color: var(--dim);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.ed-file-mark[data-tone="diff"] { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.ed-file-mark[data-tone="missing"] { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.ed-file-mark + .ed-file-size { margin-left: 0; }
 
 .ed-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ed-bar {
@@ -674,6 +687,18 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   tab-size: 2; white-space: pre; overflow: auto;
 }
 .ed-text:disabled { background: var(--paper); color: var(--dim); }
+/* 只读那一档（上游）：写的入口**收掉**，不是灰着 —— 灰着等于「你还没资格点」，
+   收掉才是「这里本来就没有这件事」。删除按钮那边同理（`editorFileRow` 根本不生成）。 */
+#editor[data-readonly] .ed-newbar,
+#editor[data-readonly] .ed-new,
+#editor[data-readonly] .ed-new-hint,
+#editor[data-readonly] #ed-save,
+#editor[data-readonly] #ed-publish,
+#editor[data-readonly] .ed-switch,
+#editor[data-readonly] #ed-delta,
+#editor[data-readonly] .ed-foot { display: none; }
+#editor[data-readonly] .ed-text { background: var(--paper); }
+#editor[data-readonly] .ed-head { background: color-mix(in srgb, var(--wash) 60%, var(--card)); }
 
 .ed-msg {
   flex: none; margin: 0 12px 8px; border-radius: 6px; padding: 8px 10px;

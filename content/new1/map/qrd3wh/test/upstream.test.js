@@ -235,7 +235,10 @@ test("取用时改名字：frontmatter 和 nous.json 一起改，目录名 == �
     const files = await ctx.call("GET", "/v1/skills/upstream/files?source=matt&path=skills/engineering/tdd");
     assert.equal(files.status, 200);
     assert.equal(files.body.localName, "tdd-matt");
-    assert.deepEqual(files.body.files, [{ path: "SKILL.md", state: "diff" }]);
+    assert.deepEqual(files.body.files.map((file) => [file.path, file.state]), [["SKILL.md", "diff"]]);
+    // 抽屉里那棵树要显示大小：`ls-tree -l` 白送的那一列
+    assert.ok(files.body.files[0].size > 0);
+    assert.equal(files.body.adopted, true);
   } finally {
     await teardown(ctx.root, ctx.data, source);
   }
@@ -250,11 +253,11 @@ test("本地改了正文 → 文件对照说 diff；上游有本地没取的 ski
 
     // 刚取用、一个字没改 → same
     let files = await ctx.call("GET", "/v1/skills/upstream/files?source=matt&path=skills/engineering/tdd");
-    assert.deepEqual(files.body.files, [{ path: "SKILL.md", state: "same" }]);
+    assert.deepEqual(files.body.files.map((file) => [file.path, file.state]), [["SKILL.md", "same"]]);
 
     await writeTree(ctx.root, "tdd/SKILL.md", `---\nname: tdd\ndescription: "我们自己改过"\n---\n\n不同的正文\n`);
     files = await ctx.call("GET", "/v1/skills/upstream/files?source=matt&path=skills/engineering/tdd");
-    assert.deepEqual(files.body.files, [{ path: "SKILL.md", state: "diff" }]);
+    assert.deepEqual(files.body.files.map((file) => [file.path, file.state]), [["SKILL.md", "diff"]]);
 
     const list = await ctx.call("GET", "/v1/skills/upstream");
     assert.equal(list.body.entries.find((entry) => entry.name === "ask-matt").local, "none");
@@ -310,5 +313,64 @@ test("materialize 只摊 blob，路径不许跑出目标目录", async () => {
   } finally {
     await rm(target, { recursive: true, force: true });
     await cleanup(source);
+  }
+});
+
+// ── 正文（只读）────────────────────────────────────────────────────────────
+
+test("上游正文从镜像里读：GET 拿得到，POST 是 405 —— 别人的仓我们没有写入口", async () => {
+  const source = await makeUpstreamRepo();
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/tdd");
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.file, "SKILL.md");
+    assert.match(out.body.text, /name: tdd/);
+    assert.ok(out.body.size > 0);
+
+    const nope = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/tdd&file=none.md");
+    assert.equal(nope.status, 404);
+
+    const write = await ctx.call("POST", "/v1/skills/upstream/file", {});
+    assert.equal(write.status, 405);
+    assert.match(write.body.error, /只读/);
+
+    // 路径不许跑出那一条
+    const escape = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/tdd&file=../../README.md");
+    assert.equal(escape.status, 400);
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
+  }
+});
+
+test("上游的文件清单带大小和子目录 —— 抽屉里那棵树要的就是这个", async () => {
+  const source = await makeRepo({
+    files: {
+      "skills/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n`,
+      "skills/x/references/a.md": "# a\n",
+      "skills/x/references/deep/b.md": "# b\n",
+      "skills/x/scripts/run.mjs": "console.log(1)\n",
+    },
+  });
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("GET", "/v1/skills/upstream/files?source=matt&path=skills/x");
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.adopted, false); // 没取用过：对照的三种状态没意义
+    // 顺序是 `localeCompare` 的（`SKILL.md` 排在小写后面）；树怎么摆是面板的事
+    assert.deepEqual(
+      out.body.files.map((file) => file.path).sort(),
+      ["SKILL.md", "references/a.md", "references/deep/b.md", "scripts/run.mjs"].sort(),
+    );
+    for (const file of out.body.files) assert.ok(file.size > 0, file.path);
+
+    // 隔层那份也读得到（`fileTree` 靠它建出 references/deep/）
+    const deep = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/x&file=references/deep/b.md");
+    assert.equal(deep.status, 200, deep.body?.error);
+    assert.equal(deep.body.text, "# b\n");
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
   }
 });

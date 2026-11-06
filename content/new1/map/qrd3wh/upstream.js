@@ -27,6 +27,8 @@ import path from "node:path";
 
 export const SOURCES_FILE = "sources.json";
 export const MIRROR_DIR = "upstream";
+/** 一条正文的上限。跟本地文件同一个数（spec §6.6），免得「上游能看 5MB、本地只能看 512K」。 */
+const MAX_TEXT_BYTES = 512 * 1024;
 
 const withStatus = (error, status) => Object.assign(error, { status });
 const errorLine = (error) => String(error?.message ?? error).split("\n")[0].slice(0, 400);
@@ -181,16 +183,25 @@ export const resolveHead = async ({ data, source, run }) => {
   );
 };
 
-/** `ls-tree -r` 一次，之后所有「哪个目录里有 SKILL.md」都从这份清单里挑。 */
-const treeOf = async (run, dir, sha) => {
-  const out = (await git(run, dir, ["ls-tree", "-r", "-z", sha], { maxBuffer: 64 << 20 })).stdout;
+/**
+ * `ls-tree -r` 一次，之后所有「哪个目录里有 SKILL.md」都从这份清单里挑。
+ *
+ * `long: true` 加一列大小（`ls-tree -l`）—— 面板的文件树要显示 `1.2 KB`，
+ * 而为每个文件单独 `cat-file -s` 是 N 个进程。这一列是白送的，不拿白不拿。
+ */
+const treeOf = async (run, dir, sha, { long = false } = {}) => {
+  const out = (await git(run, dir, ["ls-tree", "-r", "-z", ...(long ? ["-l"] : []), sha], { maxBuffer: 64 << 20 })).stdout;
   return out
     .split("\0")
     .filter(Boolean)
     .map((row) => {
       const tab = row.indexOf("\t");
-      const [mode, type, obj] = row.slice(0, tab).split(" ");
-      return { mode, type, sha: obj, path: row.slice(tab + 1) };
+      // `-l` 那一列是**右对齐带空格的**（`…45     171`），按单个空格切会切出一堆空串。
+      const head = row.slice(0, tab).trim().split(/\s+/);
+      const [mode, type, obj] = head;
+      // `-l` 多一列 size，目录（tree）那一列是 `-`。
+      const size = long ? Number(head[3]) : undefined;
+      return { mode, type, sha: obj, path: row.slice(tab + 1), ...(Number.isFinite(size) ? { size } : {}) };
     });
 };
 
@@ -269,15 +280,41 @@ export const listEntries = async ({ data, source, run }) => {
   return entries.sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
 };
 
-/** 一条上游技能里的文件清单（给取用前的对照看）。 */
+/** 一条上游技能里的文件清单（对照 + 抽屉里那棵树都吃它）。 */
 export const entryFiles = async ({ data, source, run, dir: home }) => {
   const head = await resolveHead({ data, source, run });
   const dir = mirrorPath(data, source.name);
-  const rows = await treeOf(run, dir, head);
+  const rows = await treeOf(run, dir, head, { long: true });
   return rows
-    .filter((row) => row.path.startsWith(`${home}/`))
-    .map((row) => ({ path: row.path.slice(home.length + 1), sha: row.sha, mode: row.mode }))
+    .filter((row) => row.type === "blob" && row.path.startsWith(`${home}/`))
+    .map((row) => ({ path: row.path.slice(home.length + 1), sha: row.sha, mode: row.mode, size: row.size ?? 0 }))
     .sort((a, b) => a.path.localeCompare(b.path));
+};
+
+/**
+ * 读上游一条技能里的一个文件。**只读** —— 上游那一侧没有任何写入口，
+ * 这条路径上也不该长出写入口（改上游 = 去他们的仓提 PR，不是在我们的面板里）。
+ */
+export const entryText = async ({ data, source, run, home, rel }) => {
+  const head = await resolveHead({ data, source, run });
+  const dir = mirrorPath(data, source.name);
+  // 先在 `rel` 上验，再 join：`..` 交给 `path.posix.join` 就**已经被折掉了**，
+  // 验折完之后的结果等于什么都没验（`tdd/../../README.md` → `skills/README.md`）。
+  if (rel.startsWith("/") || rel.split("/").includes("..")) {
+    throw withStatus(new Error(`${source.name}: 路径只能在上游那一条里面 —— ${rel}`), 400);
+  }
+  const want = path.posix.join(home, rel);
+  const rows = await treeOf(run, dir, head, { long: true });
+  const row = rows.find((item) => item.path === want);
+  if (!row) throw withStatus(new Error(`${source.name}: ${want} 不在上游里`), 404);
+  if (row.type !== "blob") throw withStatus(new Error(`${source.name}: ${want} 不是文件`), 400);
+  if ((row.size ?? 0) > MAX_TEXT_BYTES) {
+    throw withStatus(
+      new Error(`${source.name}: ${want} 有 ${Math.round(row.size / 1024)} KB，超过 ${MAX_TEXT_BYTES / 1024} KB —— 面板里不打开`),
+      400,
+    );
+  }
+  return { path: rel, size: row.size ?? 0, text: await blobText(run, dir, row.sha) };
 };
 
 /**

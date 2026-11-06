@@ -232,6 +232,9 @@ export function fileTree(files) {
       name: parts.at(-1),
       depth: parts.length - 1,
       size: Number(file?.size) || 0,
+      // 上游那条取用过的才有：`same` / `diff` / `missing`（跟本地那份比）。
+      // 本地目录里没有这一列，所以是 `null` —— 别在本地树上凭空标出个记号来。
+      mark: typeof file?.state === "string" ? file.state : null,
     });
   }
   sortTree(root);

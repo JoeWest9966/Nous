@@ -398,7 +398,8 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 |---|---|
 | `GET /v1/skills/upstream` | `{sources:[{…, mirror:"ready"｜"missing"}], entries:[…], errors:[{source,error}]}`。**不联网**：镜像不在就报 `missing` |
 | `POST /v1/skills/upstream/refresh` | `{name?}` → 唯一联网动作（clone/fetch）。逐个 source 各报 `ok/error` |
-| `GET /v1/skills/upstream/files?source=&path=` | 逐文件跟本地比 git blob sha → `same` / `diff` / `missing` |
+| `GET /v1/skills/upstream/files?source=&path=` | 文件清单：`{path, size, state}` + `adopted`。`state` 是逐文件跟本地比 git blob sha（`same` / `diff` / `missing`），**没取用过就没有意义** |
+| `GET /v1/skills/upstream/file?source=&path=&file=` | `{text, size}`，从镜像 `cat-file` 读。**只读** —— 这条路上只有 GET，POST 是 405 |
 | `POST /v1/skills/upstream/adopt` | `{source, path, name?}` → 取用（见 12.4） |
 
 `entries[]` 的 `local` 字段（**服务端算，前端只摆**）：
@@ -441,6 +442,16 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 - 面屑可点、`‹ 上一层` 只退一层（退到根再点才关掉这块视图）。地址能吃
   `#upstream/<订阅>/<路径>`，落在某条技能上连浮层一起开 —— 贴给别人能落到同一页。
 - 订阅多于一个时，面板里有一排来源药丸（跟顶部那排同一个手感）。
+
+**上游那条的「看正文」走我们自己的**那条抽屉**（不是另做一块），只读：**
+
+- 左栏是同一棵文件树（`model.js` 的 `fileTree`）—— 别人的技能目录也会带 `references/`、
+  `agents/`、`scripts/`，一条条平铺着看是看不懂的。
+- 内容从**镜像**里读（`git cat-file`），**不摊进我们的仓**：看正文不等于取用，取用仍然是单独一步。
+- 抽屉里**没有**保存 / 新建 / 删除 / 发布，也没有差异视图（没有 HEAD 可比 —— 那是别人的仓）。
+  是**收掉**，不是灰着：灰着等于「你还没资格点」，收掉才是「这里本来就没有这件事」。
+- 取用过的那条，文件树里还标「这份跟本地不一样」（`≠` 变了、`+` 本地没有）——
+  没取用过就一个都不标，那时候 `state` 没有意义。
 
 ### 12.5 不做
 

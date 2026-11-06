@@ -1423,6 +1423,42 @@ const upstreamBadge = (entry) => {
 
 const upstreamBusyOn = (entry) => state.upstreamBusy === `adopt:${entry.source}/${entry.path}`;
 
+/**
+ * 上游那条的菜单：跟本地卡片同一个位置、同一副骨头，少两样（归档 / 删除 ——
+ * 别人的东西我们删不掉），多一样（取用）。**第一项是看正文**，跟本地一致。
+ */
+function openUpstreamMenu(x, y, entry) {
+  closeMenu();
+  const menu = $("ctxmenu");
+  menu.textContent = "";
+  menu.hidden = false;
+  menuOpen = true;
+
+  const badge = upstreamBadge(entry);
+  menuHead(menu, entry.name, `上游 · ${badge.label}`);
+  const first = menuItem(menu, "看正文", `${entry.source} · 只读`, () => void openUpstreamEditor(entry));
+  menuItem(menu, "查看详情", "版本 / 跟本地 / 取用", () => {
+    state.upstreamDetail = entry.path;
+    writeHash();
+    render();
+    $("dt-body").scrollTop = 0;
+    $("detail").focus({ preventScroll: true });
+  });
+  menu.append(el("div", "ctx-sep"));
+  if (entry.local === "none") {
+    menuItem(menu, "取用", "拷进我们仓里（不提交）", () => void adoptEntry(entry));
+  } else if (entry.local === "changed") {
+    menuItem(menu, "看差在哪", "跟本地那条比", () => {
+      state.upstreamDetail = entry.path;
+      writeHash();
+      render();
+      void showUpstreamDiff(entry, $("dt-body"));
+      $("detail").focus({ preventScroll: true });
+    });
+  }
+  mountMenu(menu, x, y, first);
+}
+
 /** 目录卡：跟技能卡同一副骨头，虚线边框把「这是能钻进去的」说出来。 */
 function upstreamDirCard(node) {
   const card = el("article", "product up-dir");
@@ -1472,12 +1508,22 @@ function upstreamSkillCard(entry) {
     $("dt-body").scrollTop = 0;
     $("detail").focus({ preventScroll: true });
   };
+  const openMenuAt = (mx, my) => openUpstreamMenu(mx, my, entry);
+  card.oncontextmenu = (event) => {
+    event.preventDefault();
+    openMenuAt(event.clientX, event.clientY);
+  };
   card.onkeydown = (event) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       card.click();
+    } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      const rect = card.getBoundingClientRect();
+      openMenuAt(rect.left + 8, rect.bottom - 6);
     }
   };
+  attachMenuGesture(card, openMenuAt);
 
   const visual = el("div", "visual");
   visual.style.setProperty("--hue", String(hueOf(entry.name)));
@@ -1488,6 +1534,21 @@ function upstreamSkillCard(entry) {
   const body = el("div", "product-body");
   const title = el("div", "product-title");
   title.append(el("span", "product-name", entry.name));
+
+  // 卡上唯一可见的菜单入口：桌面 hover 出现、触屏常驻（跟本地那张一个规矩）。
+  const menuBtn = el("button", "product-menu", "⋯");
+  menuBtn.type = "button";
+  menuBtn.title = `${entry.name} 的菜单：正文 / 详情 / 取用`;
+  menuBtn.setAttribute("aria-label", `${entry.name} 的菜单`);
+  menuBtn.onclick = (event) => {
+    event.stopPropagation();
+    const rect = menuBtn.getBoundingClientRect();
+    openMenuAt(rect.left, rect.bottom + 4);
+  };
+  menuBtn.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+  };
+  title.append(menuBtn);
   body.append(title);
   const sum = entry.description || entry.summary;
   if (sum) body.append(el("p", "product-sum", sum));
@@ -1519,6 +1580,12 @@ function upstreamDetailBody(entry) {
 
   const acts = el("div", "detail-sec-acts");
   const busy = upstreamBusyOn(entry);
+  // 看正文：跟我们自己那条同一个抽屉（只读）。入口放第一个，它是最常点的。
+  const read = el("button", "btn btn-small", "看正文 ›");
+  read.type = "button";
+  read.title = "这一条的整个目录：SKILL.md + 里面的文件 / 文件夹（只读）";
+  read.onclick = () => void openUpstreamEditor(entry);
+  acts.append(read);
   if (entry.local === "none" || entry.local === "taken") {
     const take = el("button", "btn btn-small", busy ? "取用中…" : "取用");
     take.type = "button";
@@ -2135,11 +2202,79 @@ async function openEditor(skill, { path = null } = {}) {
   }
 }
 
+/**
+ * 别人的仓里那一条，用**同一扇抽屉**打开 —— 左栏同样是那棵文件树，能钻 `references/`。
+ *
+ * 不一样的只有一件事：**只读**。没有保存 / 新建 / 删除 / 发布，也没有差异视图
+ * （没有 HEAD 可比：那是别人的仓）。内容从镜像里读（`git cat-file`），
+ * **不摊进我们的仓** —— 看正文不等于取用。
+ */
+async function openUpstreamEditor(entry, { path = null } = {}) {
+  closeMenu();
+  state.editor = {
+    kind: "upstream",
+    readOnly: true,
+    source: entry.source,
+    entryPath: entry.path,
+    name: entry.name,
+    files: [],
+    filesLoading: true,
+    path: null,
+    text: "",
+    error: "",
+    notice: "",
+    mode: "edit",
+    expanded: new Set(),
+    lineCount: 1,
+    dirs: new Set(),
+    // 取用过的才有「这份跟本地不一样」可言；没取用过就一律不标。
+    adopted: false,
+  };
+  state.publishing = false;
+  $("ed-text").value = "";
+  $("ed-text").disabled = true;
+  $("ed-text").readOnly = true;
+  $("ed-path").textContent = "—";
+  $("ed-scrim").hidden = false;
+  $("editor").hidden = false;
+  $("editor").dataset.readonly = "1";
+  setBehindInert();
+  $("ed-name").textContent = entry.name;
+  $("ed-meta").textContent = `${entry.source}/${entry.path} · 上游 · 只读`;
+  closeNewEntry();
+  setEditorMode("edit");
+  renderEditorFiles();
+  renderEditorState();
+
+  const query = `v1/skills/upstream/files?source=${encodeURIComponent(entry.source)}&path=${encodeURIComponent(entry.path)}`;
+  try {
+    const list = await transport.get(query);
+    state.editor.files = list.files ?? [];
+    state.editor.adopted = Boolean(list.adopted);
+    state.editor.filesLoading = false;
+    state.editor.dirs = new Set(dirPaths(fileTree(state.editor.files)));
+    renderEditorFiles();
+    const first =
+      (path && state.editor.files.find((file) => file.path === path)) ??
+      state.editor.files.find((file) => file.path === "SKILL.md") ??
+      state.editor.files[0];
+    if (first) await openEditorFile(first.path, { force: true });
+    else $("ed-path").textContent = "这条上游里没有文件";
+  } catch (error) {
+    state.editor.filesLoading = false;
+    state.editor.error = `读文件列表失败：${error.message}`;
+    renderEditorFiles();
+    renderEditorState();
+  }
+}
+
 function closeEditor({ force = false } = {}) {
   if (!state.editor) return;
   if (!force && editorDirty() && !confirm("这个文件有没保存的改动，关掉就丢了。继续？")) return;
   state.editor = null;
   closeNewEntry();
+  delete $("editor").dataset.readonly;
+  $("ed-text").readOnly = false;
   $("editor").hidden = true;
   $("ed-scrim").hidden = true;
   setBehindInert();
@@ -2190,6 +2325,21 @@ function editorRowDelete(node) {
   return btn;
 }
 
+/** 取用过的上游那条：这份文件跟本地那份比下来是什么（`same` / `diff` / `missing`）。 */
+function editorFileMark(node) {
+  const ed = state.editor;
+  if (!ed?.readOnly || !ed.adopted || !node.mark) return null;
+  const label = { diff: "≠", missing: "+", same: "" }[node.mark];
+  if (!label) return null;
+  const mark = el("span", "ed-file-mark", label);
+  mark.title =
+    node.mark === "diff"
+      ? "跟本地那份不一样（上游这版更新）"
+      : "本地那份里没有这个文件";
+  mark.dataset.tone = node.mark;
+  return mark;
+}
+
 function editorFileRow(node) {
   const ed = state.editor;
   const row = editorRowShell(node);
@@ -2199,10 +2349,14 @@ function editorFileRow(node) {
   main.setAttribute("aria-current", String(node.path === ed.path));
   main.append(el("span", "ed-file-caret"));
   main.append(el("span", "ed-file-name", node.name));
+  const mark = editorFileMark(node);
+  if (mark) main.append(mark);
   main.append(el("span", "ed-file-size", bytes(node.size)));
   main.title = `${node.path} · ${bytes(node.size)}`;
   main.onclick = () => void openEditorFile(node.path);
-  row.append(main, editorRowDelete(node));
+  // 只读：连那个 × 都不长出来 —— 灰着的删除比没有更坏。
+  if (ed.readOnly) row.append(main);
+  else row.append(main, editorRowDelete(node));
   return row;
 }
 
@@ -2223,7 +2377,8 @@ function editorDirRow(node) {
     else ed.dirs.add(node.path);
     renderEditorFiles();
   };
-  row.append(main, editorRowDelete(node));
+  if (ed.readOnly) row.append(main);
+  else row.append(main, editorRowDelete(node));
   return row;
 }
 
@@ -2360,7 +2515,7 @@ function renderEditorState() {
   if (!ed) return;
   const chip = $("ed-state");
   let tone = "ok";
-  let text = "已落盘";
+  let text = ed.readOnly ? "只读 · 别人的仓" : "已落盘";
   if (ed.error) {
     tone = "bad";
     text = "出错";
@@ -2380,7 +2535,7 @@ function renderEditorState() {
   chip.dataset.tone = tone;
   chip.textContent = text;
 
-  const busy = ed.saving || state.publishing || !ed.path;
+  const busy = ed.readOnly || ed.saving || state.publishing || !ed.path;
   $("ed-save").disabled = busy;
   $("ed-publish").disabled = busy;
 
@@ -2412,6 +2567,7 @@ async function openEditorFile(path, { force = false } = {}) {
   const ed = state.editor;
   if (!ed) return;
   closeNewEntry();
+  if (ed.readOnly) return openUpstreamFile(path);
   if (!force && editorDirty() && !confirm(`「${ed.path}」有没保存的改动，切过去会丢掉。继续？`)) return;
   try {
     const file = await transport.get(
@@ -2436,6 +2592,37 @@ async function openEditorFile(path, { force = false } = {}) {
     renderEditorFiles();
     renderEditorState();
     await loadBaseline(ed, file.path);
+  } catch (error) {
+    ed.error = `读文件失败：${error.message}`;
+    renderEditorState();
+  }
+}
+
+/** 只读那一支：从镜像里读一份，没有任何「保存」可言。 */
+async function openUpstreamFile(path) {
+  const ed = state.editor;
+  if (!ed) return;
+  try {
+    const file = await transport.get(
+      `v1/skills/upstream/file?source=${encodeURIComponent(ed.source)}` +
+        `&path=${encodeURIComponent(ed.entryPath)}&file=${encodeURIComponent(path)}`,
+    );
+    if (state.editor !== ed) return;
+    ed.path = file.file;
+    ed.text = file.text;
+    ed.error = "";
+    ed.notice = "";
+    ed.diff = null;
+    ed.lineCount = String(file.text).split("\n").length;
+    const area = $("ed-text");
+    area.readOnly = true;
+    area.disabled = false;
+    area.value = file.text;
+    $("ed-path").textContent = `${ed.source}/${ed.entryPath}/${file.file}`;
+    renderGutter();
+    renderDelta();
+    renderEditorFiles();
+    renderEditorState();
   } catch (error) {
     ed.error = `读文件失败：${error.message}`;
     renderEditorState();
@@ -2741,7 +2928,9 @@ function renderOverview() {
 function setEditorMode(mode) {
   const ed = state.editor;
   if (!ed) return;
-  ed.mode = mode;
+  // 上游那条没有差异视图：没有 HEAD 可比（它不在我们的仓里）。
+  ed.mode = ed.readOnly ? "edit" : mode;
+  mode = ed.mode;
   const diff = mode === "diff";
   $("ed-code").hidden = diff;
   $("ed-diff").hidden = !diff;

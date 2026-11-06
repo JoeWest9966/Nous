@@ -880,6 +880,24 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         return send(res, 200, { ok: out.every((item) => item.ok), sources: out });
       }
 
+      // 上游的正文：**只读**。抽屉里那棵文件树吃这一条，一条一条点也是这一条。
+      // 别人的仓我们没有写入口 —— 这条路上只有 GET。POST 是 405，不是 400。
+      if (at[1] === "file") {
+        if (method !== "GET") return send(res, 405, { error: "上游正文只有 GET —— 别人的仓我们只读" });
+        const sourceName = String(url.searchParams.get("source") ?? "").trim();
+        const home = String(url.searchParams.get("path") ?? "").trim().replace(/^\/+|\/+$/g, "");
+        const rel = String(url.searchParams.get("file") ?? "").trim() || "SKILL.md";
+        const { sources } = await upstream.readSources(root);
+        const source = sources.find((item) => item.name === sourceName);
+        if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+        if (!home) throw withStatus(new Error("没说看哪一条（path 是空的）"), 400);
+        if (!(await upstream.hasMirror({ data: mirrors(), source }))) {
+          throw withStatus(new Error(`${sourceName}: 还没拉过镜像 —— 先点刷新`), 400);
+        }
+        const file = await upstream.entryText({ data: mirrors(), source, run: repo.run, home, rel });
+        return send(res, 200, { source: source.name, path: home, file: rel, text: file.text, size: file.size });
+      }
+
       if (at[1] === "files") {
         if (method !== "GET") return send(res, 405, { error: "上游文件清单只有 GET" });
         const sourceName = String(url.searchParams.get("source") ?? "").trim();
@@ -909,9 +927,9 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
             const localSha = (await repo.run("git", ["-C", root, "hash-object", "--no-filters", "--", localFile])).stdout.trim();
             state = localSha === file.sha ? "same" : "diff";
           }
-          out.push({ path: file.path, state });
+          out.push({ path: file.path, state, size: file.size });
         }
-        return send(res, 200, { source: source.name, path: home, localName, files: out });
+        return send(res, 200, { source: source.name, path: home, localName, adopted: Boolean(adopted), files: out });
       }
 
       if (at[1] === "adopt") {

@@ -82,7 +82,7 @@ public/index.html  骨架：顶栏 / 左栏 / 网格 / 上游 / 详情浮层 / �
 public/model.js    纯计算：卡片状态、facet 计数、排序、删除类别影响范围、未分类桶、**文件树**
 public/api.js      数据层：`createApi`（可注入 fetch）、ctx 解析、错误信封 / 409、类别 debounce、
                    发布后重读。不碰 DOM —— 测试拿假 fetch 打的就是这一层
-public/app.js      DOM 那一半：渲染、菜单、手势、抽屉、diff 视图、Esc 层级
+public/app.js      DOM 那一半：渲染、菜单、手势、抽屉（编辑 / 上游只读两档）、diff 视图、Esc 层级
 public/diff.js     行级对齐 + 词级高亮 + 折叠（不碰 DOM）
 public/vendor/diff  jsdiff 8（MIT），逐文件拷的 ESM —— 这页没有打包器
 test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
@@ -128,6 +128,15 @@ test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
 13. **删除要 `recursive=1` 才动非空目录。** 不带时服务端 409 并说「还有 N 个东西」；
     界面上的 × 一律带 `recursive=1`，靠手输路径那一步挡人（跟归档、彻底删除同一套骨头）。
     删的是盘上的文件，**不是**归档：git 历史就是回收站，没发布之前都捡得回来。
+14. **上游那条的「看正文」用同一扇抽屉，只读那一档靠 `#editor[data-readonly]`。**
+    不是另做一块：文件树、行号、Esc 层级全复用。差异的是**收掉**写的入口
+    （保存 / 发布 / 新建 / 删除 / 差异页签），不是灰着 —— 灰着是「你还没资格点」，
+    收掉才是「这里本来就没有这件事」。`closeEditor` 记得把 `data-readonly` 和
+    `readOnly` 一起摘掉，不然下一回打开本地那条就写不了了。
+15. **文件树里那个名字要给 `min-width: 0`。** 少了它 flex 不让缩，上游那些
+    `DESIGN-IT-TWICE.md` 会把右边的大小挤成两行（`2.6` / `KB`）。
+16. **上游的正文是从镜像 `cat-file` 出来的，不摊进我们的仓。** 看正文不等于取用 ——
+    两者之间没有隐藏的状态迁移，取用永远是自己那一步（`POST upstream/adopt`）。
 
 ## 搬出去跑
 

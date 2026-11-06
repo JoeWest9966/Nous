@@ -344,3 +344,19 @@ test("dirPaths：所有文件夹（打开抽屉时默认全展开）", () => {
   const tree = fileTree([{ path: "a/b/c.md" }, { path: "d.md" }]);
   assert.deepEqual(dirPaths(tree), ["a", "a/b"]);
 });
+
+test("fileTree：上游那份「跟本地不一样」的记号挂在文件节点上，本地树一律 null", () => {
+  const upstream = fileTree([
+    { path: "SKILL.md", size: 10, state: "diff" },
+    { path: "references/a.md", size: 5, state: "missing" },
+  ]);
+  const files = upstream.children.filter((node) => node.type === "file");
+  assert.deepEqual(
+    files.map((node) => [node.path, node.mark]),
+    [["SKILL.md", "diff"]],
+  );
+  assert.equal(upstream.children.find((node) => node.name === "references").children[0].mark, "missing");
+  // 本地目录没有 state 这一列 —— 不许凭空标出记号
+  const local = fileTree([{ path: "SKILL.md", size: 3 }]);
+  assert.equal(local.children[0].mark, null);
+});
