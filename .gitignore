@@ -31,6 +31,8 @@ content/new1/map/qrd3wh/data/
 # vbe4pt 同理:扩展管理器的代码是人写的,data/(注册表 + 库 + 快照)是运行时数据。
 !content/new1/map/vbe4pt/
 content/new1/map/vbe4pt/data/
+# n8qkkj(触发器清单)同理:页面 + 它自己的后端都是人写的,没有运行时数据要留。
+!content/new1/map/n8qkkj/
 # 68kazk 这一轮也要进版本控制（面板从 ~1400 行的编目店面重写成 vbe4pt 的孪生）：
 # 逐层反白，data/ 仍然不进（运行时数据）。
 !content/new1/map/68kazk/

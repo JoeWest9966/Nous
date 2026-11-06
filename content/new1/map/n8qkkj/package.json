@@ -1,0 +1,12 @@
+{
+  "name": "n8qkkj",
+  "private": true,
+  "type": "module",
+  "description": "trigger · Nous 触发器清单：每个触发器是一个独立的 Rust 项目；列出来、改源码、cargo check 过了才 commit + push。",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

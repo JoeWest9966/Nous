@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>trigger · Nous 触发器</title>
+    <link rel="stylesheet" href="./style.css?v=14" />
+    <script>
+      // 宿主把这块挂在 /p/new1/n8qkkj（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
+      if (!location.pathname.endsWith("/")) {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <path d="M17.5 14v7M14 17.5h7" />
+        </svg>
+        <div class="titles">
+          <h1>trigger</h1>
+          <p>new1<span class="sep">/</span>n8qkkj<span class="sep">·</span><span id="count">—</span></p>
+        </div>
+      </div>
+      <div class="top-right">
+        <span class="hint dim" id="repo">—</span>
+        <button class="chip-status" id="sync" hidden title="点开看没提交的改动（类别词表 8 秒自动推）">
+          <span class="dot" data-state="ok"></span><span class="sync-label">已同步</span>
+        </button>
+        <button class="chip-status" id="refresh" title="重新问一遍">
+          <span class="dot" data-state="wait"></span>刷新
+        </button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="rail">
+        <div class="rail-head">
+          <h3>类别</h3>
+          <span class="facet-n" id="cat-count">—</span>
+        </div>
+        <div class="facets" id="facets"></div>
+        <div class="rail-new" id="rail-new"></div>
+        <div class="rail-foot dim small">
+          源码在 <code id="repo-path">—</code>
+        </div>
+      </aside>
+
+      <main class="results">
+        <div class="filters" id="filters" aria-label="筛选"></div>
+        <div class="toolbar">
+          <span class="result-count" id="result-count">—</span>
+          <button class="btn-new" id="new-trigger" type="button" title="建一个空触发器（未发布，只有这台有）">
+            <span aria-hidden="true">＋</span>新建触发器
+          </button>
+          <label class="search">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <circle cx="8.5" cy="8.5" r="5.2" />
+              <path d="M12.4 12.4 17 17" />
+            </svg>
+            <input id="search" type="search" placeholder="搜名字 / 说明 / 类别" autocomplete="off" />
+          </label>
+        </div>
+        <div class="grid" id="grid"></div>
+        <datalist id="tag-suggestions"></datalist>
+      </main>
+    </div>
+
+    <div class="ctxmenu" id="ctxmenu" role="menu" hidden></div>
+
+    <!-- 详情：半扇浮层，和代码抽屉一副骨头（右边出、遮罩、Esc / 点遮罩关）。
+         关掉回来还是那张网格，滚动位置、筛选、搜索词全不动。
+         层级在抽屉下面（30/31 vs 40/41）：详情里点「代码 ›」，抽屉盖住详情。 -->
+    <div class="dt-scrim" id="dt-scrim" hidden></div>
+    <aside class="dt" id="detail" hidden tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="dt-name">
+      <header class="dt-head">
+        <div class="dt-tile" id="dt-tile"><span class="dt-mono" id="dt-mono">—</span></div>
+        <div class="dt-title">
+          <div class="dt-name-row">
+            <h2 id="dt-name">—</h2>
+            <span class="dt-badges" id="dt-badges"></span>
+          </div>
+          <p class="dim small" id="dt-meta">—</p>
+        </div>
+        <button class="dt-x" id="dt-close" type="button" title="关闭（Esc）" aria-label="关闭">×</button>
+      </header>
+      <div class="dt-body" id="dt-body"></div>
+    </aside>
+
+    <!-- 代码编辑器：保存 / 发布是两个动作，别合并。 -->
+    <div class="ed-scrim" id="ed-scrim" hidden></div>
+    <aside class="ed" id="editor" hidden aria-label="触发器代码编辑器">
+      <header class="ed-head">
+        <div class="ed-title">
+          <h2 id="ed-name">—</h2>
+          <p class="dim small" id="ed-meta"></p>
+        </div>
+        <div class="ed-head-actions">
+          <span class="ed-state" id="ed-state"></span>
+          <button class="ed-x" id="ed-close" title="关闭（Esc）" aria-label="关闭">×</button>
+        </div>
+      </header>
+      <div class="ed-body">
+        <nav class="ed-files" id="ed-files" aria-label="文件"></nav>
+        <section class="ed-pane">
+          <div class="ed-bar">
+            <span class="ed-path mono" id="ed-path">—</span>
+            <span class="ed-spacer"></span>
+            <span class="ed-delta" id="ed-delta" hidden title="与 HEAD 的差异（git 口径：修改行算 +1 −1）">
+              <span class="d-plus" id="ed-plus">+0</span><span class="d-minus" id="ed-minus">&minus;0</span>
+            </span>
+            <div class="ed-switch" role="tablist" aria-label="视图">
+              <button class="ed-tab on" id="ed-tab-edit" data-mode="edit" role="tab" aria-selected="true" title="编辑（Alt+D 切差异）">编辑</button>
+              <button class="ed-tab" id="ed-tab-diff" data-mode="diff" role="tab" aria-selected="false" title="与 HEAD 的差异（Alt+D 切回编辑）">差异</button>
+            </div>
+            <button class="ed-btn" id="ed-save" title="保存到磁盘（Ctrl/⌘+S）——不提交">保存</button>
+            <button class="ed-btn primary" id="ed-publish" title="cargo check + commit + push">发布</button>
+          </div>
+          <div class="ed-stage" id="ed-stage">
+            <div class="ed-code" id="ed-code">
+              <div class="ed-gutter" id="ed-gutter" aria-hidden="true"></div>
+              <textarea class="ed-text" id="ed-text" spellcheck="false" wrap="off" disabled
+                        aria-label="文件内容"></textarea>
+            </div>
+            <div class="ed-diff" id="ed-diff" hidden tabindex="0" aria-label="与 HEAD 的差异"></div>
+            <div class="ed-map" id="ed-map" hidden aria-hidden="true"></div>
+          </div>
+          <div class="ed-msg" id="ed-msg" hidden></div>
+          <footer class="ed-foot">
+            <span class="dim small">
+              保存只落盘；发布才 commit + push（先过 <code>cargo check</code> 和 <code>index.mjs</code>）。
+            </span>
+            <button class="ed-btn" id="ed-dev" title="开一个会话，cwd 指着触发器仓库">开个会话开发它</button>
+          </footer>
+        </section>
+      </div>
+    </aside>
+
+    <!-- 破坏性动作：归档 / 彻底删除都会真提交 + 推送，要求手输名字。 -->
+    <div class="danger-scrim" id="danger-scrim" hidden></div>
+    <div class="danger" id="danger" hidden role="dialog" aria-modal="true" aria-labelledby="danger-title">
+      <h2 id="danger-title">—</h2>
+      <p class="danger-hint dim" id="danger-hint"></p>
+      <label class="danger-label" for="danger-input">
+        <span>手输名字 <code id="danger-name">—</code> 确认</span>
+        <input id="danger-input" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="danger-err" id="danger-err" hidden></p>
+      <div class="danger-actions">
+        <button class="btn" id="danger-cancel" type="button">取消</button>
+        <button class="btn btn-bad" id="danger-ok" type="button" disabled>确定</button>
+      </div>
+    </div>
+
+    <!-- 新建触发器：只问三样。名字是身份（目录名 + 产物名），建完改不了。 -->
+    <div class="danger-scrim" id="create-scrim" hidden></div>
+    <form class="create" id="create" hidden role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <h2 id="create-title">新建触发器</h2>
+      <p class="create-hint dim">
+        一个目录 + 一个 <code>Cargo.toml</code> + 一个能编过的 <code>src/main.rs</code>。
+        建完是<b>未发布</b>：只在你这台、GitHub 上看不到，满意了再点发布。
+      </p>
+
+      <label class="create-label" for="create-name">
+        <span>名字 <b>目录名和二进制名都取它，建完就改不了</b></span>
+        <input id="create-name" type="text" autocomplete="off" spellcheck="false" placeholder="morning-review" />
+      </label>
+      <p class="create-note" id="create-name-note"></p>
+
+      <label class="create-label" for="create-summary">
+        <span>一句话说明 <b>卡片上就靠它认人</b></span>
+        <input id="create-summary" type="text" autocomplete="off" maxlength="200"
+               placeholder="每天第一条会话时，按昨天的日志起一条复盘" />
+      </label>
+
+      <label class="create-label" for="create-cat">
+        <span>类别 <i class="dim">可空 = 未分类；写个不存在的名字就顺手建了</i></span>
+        <input id="create-cat" type="text" autocomplete="off" list="create-cats" placeholder="日常/复盘" />
+        <datalist id="create-cats"></datalist>
+      </label>
+
+      <p class="create-err" id="create-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small mono" id="create-where"></span>
+        <button class="btn" id="create-cancel" type="button">取消</button>
+        <button class="btn btn-good" id="create-ok" type="submit" disabled>建</button>
+      </div>
+    </form>
+
+    <div class="toast" id="toast" hidden></div>
+    <script type="module" src="./app.js?v=25"></script>
+  </body>
+</html>
