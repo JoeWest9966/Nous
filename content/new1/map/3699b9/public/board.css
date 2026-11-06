@@ -1,0 +1,297 @@
+/* board.css —— 编辑抽屉里的那块盘面。
+   版式照 hb7k3j（四域 + 中央椭圆 + 四个弹窗：筛选框 / 视图 chip / 右栏类别 / 底栏），
+   配色留这家的纸面底：盘面是另一个应用的一屏，但依然是这一页的一部分，不搬那套深色。
+
+   两条规矩跟 hb7k3j 一字不差：
+     · 形状说语义 —— 圆框 = 一次一个，方框 = 一票一树，椭圆的中央 = 落子的地方。
+     · 弹窗不「点一下就关」：里面有筛选、预览、类别，勾完按「完成」。
+   还有一条这一页独有：**档位（跟随默认 / 都不要 / 挑几个）在弹窗顶上那排 chip**里 ——
+   preset 是反复复用的配置，钉死和不钉是两件事，不能折叠成一个勾。 */
+
+.board-wrap { flex: 1; min-height: 0; display: flex; }
+
+.board {
+  /* 四域的淡色：纸面底上只留一层意思，不抢那条虚线和节点 */
+  --s1: #b03a2e; --s2: #9a6b12; --s3: #3c6ea5; --s4: #2e7a55;
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  background: var(--card);
+  container-type: size;
+}
+
+/* 图本身：cynefin 原路径，拉伸填满；虚线盒和 cliff 保持像素级不随拉伸变形 */
+svg.frame { position: absolute; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; }
+svg.frame .b { fill: none; stroke: var(--line); stroke-dasharray: 6 3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+svg.frame .cliff { fill: none; stroke: var(--ink-2); stroke-opacity: .35; stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+
+/* 四域：内容居中排在域里 */
+.region {
+  position: absolute; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  padding: 9% 5% 4%;
+}
+.r1 { left: 0;   top: 0;   width: 50%; height: 50%; }
+.r2 { left: 50%; top: 0;   width: 50%; height: 50%; }
+.r4 { left: 0;   top: 50%; width: 50%; height: 50%; }
+.r3 { left: 50%; top: 50%; width: 50%; height: 50%; }
+
+.region h2 { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .01em; color: var(--ink); }
+.region .sub { margin: 2px 0 0; color: var(--dim); font-size: 11px; line-height: 1.4; max-width: 100%; }
+.region .nodes { margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 100%; }
+
+/* 节点：纸面底、1px 边框、8px 圆角，跟这一页的卡片同一个长相 */
+.node {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  background: var(--paper); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 5px 11px; cursor: pointer;
+  font: 400 12px/1.4 var(--mono);
+  transition: border-color .12s ease, background .12s ease, transform .1s ease-out;
+}
+.node:hover { border-color: var(--dim); }
+.node:active { transform: scale(.985); }
+.node .id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .tag { flex: none; font-family: var(--sans); font-size: 11px; color: var(--dim); }
+.node.cta { font-family: var(--sans); font-size: 12.5px; padding: 6px 18px; }
+.node.cta:hover { border-color: var(--ink-2); background: var(--wash); }
+.node.cta.primary { border-color: var(--go); color: var(--go); }
+.node.cta.primary:hover { background: var(--go); color: #fff; }
+.node[disabled] { opacity: .45; cursor: default; transform: none; }
+.node[aria-pressed="true"] { border-color: var(--go); color: var(--go); }
+
+/* 中央椭圆：这条 preset 从这里落子（启动 / 保存） */
+.hub {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+  width: min(48%, 340px); height: clamp(150px, 30%, 260px);
+  border-radius: 50%; background: var(--card); border: 1px dashed var(--line);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center; padding: 3% 7%;
+}
+.hub::before { content: ""; position: absolute; inset: 0; border-radius: 50%; z-index: -1; background: var(--go); opacity: .07; }
+.hub h1 { margin: 0; font: 600 13.5px/1.3 var(--mono); color: var(--ink); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hub .sub { margin: 0; color: var(--dim); font-size: 11px; font-style: italic; line-height: 1.4; }
+.hub-btns { display: flex; gap: 6px; margin-top: 2px; }
+#b-flash { min-height: 1.2em; font: 400 10.5px/1.3 var(--mono); color: var(--ok); }
+#b-flash[data-tone="bad"] { color: var(--bad); }
+
+/* ── 弹窗 ── */
+.bscrim {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(31, 30, 27, .34); backdrop-filter: blur(2px);
+  opacity: 0; transition: opacity .24s cubic-bezier(.32, .72, 0, 1);
+}
+.bscrim[hidden] { display: none; }
+.bscrim.on { opacity: 1; }
+
+.bsheet {
+  width: min(720px, 94vw); max-height: min(80dvh, 700px);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 24px 60px -18px rgba(31, 30, 27, .35);
+  transform: scale(.96) translateY(6px); opacity: 0;
+  transition: transform .28s cubic-bezier(.32, .72, 0, 1), opacity .24s ease;
+}
+.bscrim.on .bsheet { transform: none; opacity: 1; }
+
+.bshead { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--line-soft); }
+.bshead b { font-size: 13px; font-weight: 700; white-space: nowrap; }
+.bshead input {
+  flex: 1; min-width: 0; font: 400 12.5px var(--sans);
+  background: var(--wash); color: var(--ink);
+  border: 1px solid transparent; border-radius: 8px; padding: 5px 10px; outline: none;
+}
+.bshead input:focus { border-color: var(--line); background: var(--card); }
+.bshead input::placeholder { color: var(--dim); }
+
+/* 档位那一排：跟随默认 / 都不要 / 挑几个。它跟下面那排 chip 不是一根轴 ——
+   这排说的是「这条 preset 钉不钉」，下面那排说的是「现在给我看哪些」。 */
+.bmodes { display: flex; gap: 4px; align-items: center; flex: none; padding: 10px 16px 0; }
+.bmode {
+  flex: none; border: 1px solid var(--line); background: transparent; color: var(--dim);
+  border-radius: 999px; padding: 3px 11px; cursor: pointer;
+  font: 400 11px var(--sans);
+  transition: color .12s ease, border-color .12s ease, background .12s ease;
+}
+.bmode:hover { color: var(--ink); border-color: var(--dim); }
+.bmode[aria-pressed="true"] { color: #fff; background: var(--ink); border-color: var(--ink); }
+
+/* 视图 chip：全部 / 未分类 / 只看已选（模板和扩展多一档 Basics） */
+.bviews { display: flex; gap: 5px; align-items: center; flex: none; flex-wrap: wrap; padding: 10px 16px 4px; }
+.bchip {
+  flex: none; display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); border-radius: 999px; background: transparent; cursor: pointer;
+  color: var(--dim); font: 400 11px var(--mono); padding: 3px 9px;
+  transition: color .12s ease, border-color .12s ease, background .12s ease;
+}
+.bchip:hover { color: var(--ink); border-color: var(--dim); }
+.bchip[aria-pressed="true"] { color: var(--go); border-color: var(--go); background: color-mix(in srgb, var(--go) 10%, transparent); }
+.bchip .n { color: var(--dim); }
+.bchip[aria-pressed="true"] .n { color: var(--go); }
+.bchip[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+
+.bbody { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; }
+/* 只有真有自定义类别时才让出那 176px；没有就还是 720 宽 */
+.bbody.has-rail { grid-template-columns: 1fr 176px; }
+.bsheet.has-rail { width: min(880px, 94vw); }
+
+.blist { min-height: 0; overflow-y: auto; padding: 6px 12px 10px; display: flex; flex-direction: column; gap: 2px; }
+
+.brail {
+  min-width: 0; min-height: 0; overflow-y: auto;
+  border-left: 1px solid var(--line-soft); padding: 8px 8px 8px 10px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.brail[hidden] { display: none; }
+.brail > .rhead {
+  display: flex; align-items: center; gap: 6px; margin: 2px 4px 6px;
+  font: 400 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+}
+.brail > .rhead::after { content: ""; flex: 1; border-top: 1px solid var(--line-soft); }
+.brail-list { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.brail .rfoot { margin-top: auto; padding-top: 8px; font: 400 9.5px var(--mono); color: var(--dim); }
+.brail .rfoot a { color: var(--dim); text-decoration: none; }
+.brail .rfoot a:hover { color: var(--ink-2); }
+
+.bcat {
+  display: flex; align-items: center; gap: 5px; width: 100%; position: relative;
+  padding: 4px 6px; border: 1px solid transparent; border-radius: 7px; background: none;
+  color: var(--ink-2); font: 400 11.5px var(--mono); text-align: left; cursor: pointer;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
+}
+.bcat:hover { background: var(--wash); }
+.bcat[aria-pressed="true"] { color: var(--go); border-color: var(--go); background: color-mix(in srgb, var(--go) 10%, transparent); }
+.bcat .cl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bcat .n { margin-left: auto; color: var(--dim); flex: none; }
+.bcat[aria-pressed="true"] .n { color: var(--go); }
+.bcat .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--go); flex: none; }
+.bcat.child { padding-left: 18px; }
+.bcat.child::before {
+  content: ""; position: absolute; left: 9px; top: -6px; bottom: 50%; width: 7px;
+  border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0 0 0 5px;
+}
+.bcat.zero { opacity: .5; }
+
+/* 一行：框 + 名字 + 一句话 + 元信息。方框 = 多选，圆框 = 单选，形状自己说话。 */
+.brow {
+  display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; width: 100%;
+  padding: 7px 9px; text-align: left; cursor: pointer;
+  background: none; border: 1px solid transparent; border-radius: 9px; color: var(--ink);
+  font: 400 13px var(--sans);
+  transition: background .12s ease, border-color .12s ease;
+}
+.brow:hover { background: color-mix(in srgb, var(--go) 6%, transparent); }
+.brow:focus-visible { outline: 2px solid var(--go); outline-offset: -2px; }
+.brow[aria-checked="true"] { border-color: var(--go); background: color-mix(in srgb, var(--go) 10%, transparent); }
+.brow[aria-disabled="true"] { opacity: .42; cursor: not-allowed; }
+.brow[aria-disabled="true"]:hover { background: none; }
+.bbox {
+  width: 14px; height: 14px; margin-top: 2px; border: 1px solid var(--line); border-radius: 3px;
+  display: grid; place-items: center; font-size: 10px; line-height: 1; color: var(--go);
+}
+.brow[aria-checked="true"] .bbox { border-color: var(--go); }
+/* 单选：圆框 */
+.brow[role="radio"] .bbox { border-radius: 50%; }
+.brow[role="radio"] .bbox::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: transparent; }
+.brow[role="radio"][aria-checked="true"] .bbox::after { background: var(--go); }
+.brow[role="radio"][aria-checked="true"] .bbox { color: transparent; }
+/* 变体：缩进 + 一根引线，读作「这一族底下的另一个注册名」 */
+.brow.variant { padding-left: 26px; position: relative; }
+.brow.variant::before {
+  content: ""; position: absolute; left: 12px; top: -6px; bottom: 50%; width: 8px;
+  border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-radius: 0 0 0 5px;
+}
+.brow.variant .bname { font-size: 11.5px; color: var(--ink-2); }
+.brow[aria-checked="true"].variant .bname { color: var(--ink); }
+.brow.variant .bbox { border-radius: 50%; }
+
+.bname { display: block; font: 400 12px var(--mono); }
+.bdesc {
+  display: block; margin-top: 1px; color: var(--ink-2); font-size: 11.5px; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.bmeta { display: block; margin-top: 2px; color: var(--dim); font: 400 10.5px var(--mono); }
+
+.bhead {
+  display: flex; align-items: center; gap: 8px; margin: 8px 8px 2px;
+  font: 400 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+}
+.bhead::after { content: ""; flex: 1; border-top: 1px solid var(--line-soft); }
+
+.bpeek { margin-top: 3px; background: none; border: 0; padding: 0; cursor: pointer; color: var(--go); font: 400 10.5px var(--mono); }
+.bpeek:hover { text-decoration: underline; }
+.bpeek-body {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 30vh; overflow: auto; white-space: pre-wrap;
+  background: var(--wash); border: 1px solid var(--line-soft); border-radius: 8px;
+  font: 400 11px/1.55 var(--mono); color: var(--ink-2);
+}
+
+.bnone { padding: 26px 12px; text-align: center; color: var(--dim); font-size: 12px; line-height: 1.7; }
+.bnone a { color: var(--go); }
+.bnone .bchip { margin-top: 6px; }
+
+.bfoot { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px 16px 12px; border-top: 1px solid var(--line-soft); }
+.bfoot .hint { flex: 1; min-width: 0; font: 400 10.5px var(--mono); color: var(--dim); }
+.bfoot .bdone {
+  margin-left: auto; flex: none; cursor: pointer;
+  font: 400 12px var(--sans); color: var(--go);
+  background: color-mix(in srgb, var(--go) 10%, transparent);
+  border: 1px solid var(--go); border-radius: 8px; padding: 4px 13px;
+}
+.bfoot .bdone:hover { background: color-mix(in srgb, var(--go) 18%, transparent); }
+.bfoot .blink { background: none; border: 0; padding: 0; cursor: pointer; color: var(--dim); font: 400 10.5px var(--mono); }
+.bfoot .blink:hover { color: var(--ink); text-decoration: underline; }
+
+/* ── 模型语法图：三列铁路（供应商 › 模型 › 思考），同一套 drawRule ── */
+.bdiagram { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 6px 2px; }
+.bdiagram svg { display: block; width: 100%; margin: 0 auto; height: auto; }
+.bdiagram .rule > text { fill: var(--ink); }
+.bdiagram path { fill: none; stroke: var(--dim); stroke-width: 1.2; }
+.bdiagram circle { fill: var(--dim); }
+.pill { cursor: pointer; outline: none; }
+.pill rect { fill: var(--wash); stroke: var(--line); stroke-width: 1; transition: stroke .12s ease, fill .12s ease; }
+.pill:hover rect { stroke: var(--dim); }
+.pill text { fill: var(--ink); }
+.pill.sel rect { stroke: var(--go); fill: color-mix(in srgb, var(--go) 14%, var(--card)); }
+.pill.sel text { font-weight: 700; }
+.pill.cur rect { stroke: var(--go); }
+.pill.pv:hover rect { stroke: var(--go); fill: color-mix(in srgb, var(--go) 8%, var(--card)); }
+.pill.kb rect { stroke: var(--go); stroke-width: 2; filter: drop-shadow(0 0 5px color-mix(in srgb, var(--go) 45%, transparent)); }
+.pill.dim rect { opacity: .45; }
+.pill:focus { outline: none; }
+.mnone { padding: 26px 12px; text-align: center; color: var(--dim); font-size: 12px; }
+
+/* 窄屏：右栏横过来变成一排 chip（跟 hb7k3j 同一套办法，不另画一版） */
+@media (max-width: 780px) {
+  .bbody.has-rail { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .bbody.has-rail .brail {
+    order: -1; display: block; border-left: 0; border-bottom: 1px solid var(--line-soft);
+    padding: 6px 12px; overflow-x: auto; overflow-y: hidden;
+  }
+  /* 换方向的只有这一层：`.brail` 底下还套着 `.brail-list`，把 row 写在 `.brail` 上
+     等于只让一个「装着一列按钮的 div」变成横排 —— 按钮照样竖着摞。 */
+  .bbody.has-rail .brail-list { flex-direction: row; align-items: center; gap: 4px; }
+  .bbody.has-rail .brail > .rhead, .bbody.has-rail .rfoot { display: none; }
+  .bbody.has-rail .bcat { width: auto; flex: none; padding: 3px 8px; }
+  .bbody.has-rail .bcat.child { padding-left: 8px; }
+  /* 横排里缩进和引线没地方站，父子关系改用一个「›」说 */
+  .bbody.has-rail .bcat.child::before {
+    content: "›"; display: inline; position: static; width: auto; height: auto;
+    border: 0; border-radius: 0; margin-right: 2px; color: var(--dim);
+  }
+}
+
+/* 盘面在 720px 的抽屉里：域标题和椭圆都得收，不然中央那两个键会顶到边框上 */
+@media (max-height: 700px) {
+  .region { padding: 7% 5% 3%; }
+  .hub { height: clamp(132px, 28%, 210px); gap: 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bscrim, .bsheet, .node, .pill rect { transition: opacity .2s ease !important; }
+  .bsheet { transform: none !important; }
+  .node:active { transform: none; }
+}

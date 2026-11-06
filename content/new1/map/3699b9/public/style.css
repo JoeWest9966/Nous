@@ -358,7 +358,7 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .ed-tab { border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--dim); font: inherit; font-size: 12.5px; padding: 7px 10px; cursor: pointer; }
 .ed-tab.on { color: var(--ink); border-bottom-color: var(--ink); }
 .ed-stage { flex: 1; min-height: 0; display: flex; overflow: hidden; }
-.ed-form { flex: 1; overflow-y: auto; padding: 14px 16px 20px; display: flex; flex-direction: column; gap: 13px; }
+.board-wrap { flex: 1; min-height: 0; display: flex; }   /* 盘面那个 tab 的壳（里面是 board.css 的 .board） */
 .ed-code { flex: 1; min-height: 0; display: flex; position: relative; }
 .ed-gutter {
   flex: none; width: 46px; overflow: hidden; padding: 12px 6px 12px 0; text-align: right;
@@ -382,38 +382,6 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .ed-btn:hover { border-color: var(--dim); }
 .ed-btn.primary { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 .ed-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-
-/* 表单控件 */
-.field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; }
-.field > span { color: var(--ink-2); font-size: 12px; }
-.field > span i { font-style: normal; font-size: 11px; }
-.field input[type="text"], .field input[type="search"], .field select, .field textarea {
-  border: 1px solid var(--line); background: var(--card); color: var(--ink);
-  border-radius: 8px; padding: 6px 9px; font: inherit; font-size: 12.5px; width: 100%;
-}
-.field textarea { resize: vertical; min-height: 68px; font-family: var(--inherit, inherit); }
-.field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible {
-  outline: 2px solid var(--ink); outline-offset: -1px;
-}
-.field-warn { font-style: normal; font-size: 11px; color: var(--dim); }
-.group { display: flex; flex-direction: column; gap: 5px; }
-.group > .group-head { display: flex; align-items: center; gap: 8px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dim); }
-.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-.seg button {
-  border: 0; background: var(--card); color: var(--ink-2); font: inherit; font-size: 11.5px;
-  padding: 4px 10px; cursor: pointer;
-}
-.seg button + button { border-left: 1px solid var(--line); }
-.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-.check {
-  display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2);
-  padding: 3px 0; cursor: pointer;
-}
-.check input { margin: 0; }
-.check[data-state="invalid"] { color: var(--bad); }
-.check .why { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
-.checkgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 2px 12px; }
-.refreshed { font-size: 11px; color: var(--dim); font-family: var(--mono); }
 
 /* 中间那张小浮层（启动 / 新建 / 确认） */
 .sheet {
