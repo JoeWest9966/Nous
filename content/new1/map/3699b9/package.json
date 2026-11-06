@@ -1,0 +1,13 @@
+{
+  "name": "3699b9",
+  "private": true,
+  "type": "module",
+  "description": "New-Template · Nous 会话预设私库的管理页：卡片网格 + 类别 + 引用校验 + 编辑抽屉 + 一键启动。只发静态文件，读写全在 qrd3wh。",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

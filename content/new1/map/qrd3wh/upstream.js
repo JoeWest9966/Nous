@@ -546,6 +546,9 @@ export const listEntries = async ({ data, source, run }) => {
       path: home,
       name: path.posix.basename(home),
       description: String(front.description ?? "").trim(),
+      // `disable-model-invocation: true` 的那批进不了 `<available_skills>`（只能显式调用）。
+      // 摆出来就得说清楚 —— 否则人勾了一整库，一半是勾了也不动的。
+      hidden: front["disable-model-invocation"] === "true",
       summary: String(manifest?.summary ?? "").trim(),
       category: Array.isArray(manifest?.category) ? manifest.category.filter((item) => typeof item === "string") : [],
       sha: treeSha,

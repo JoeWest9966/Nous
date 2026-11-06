@@ -66,6 +66,9 @@ const SKILLS_ROOT = process.env.NOUS_SKILLS ?? "/opt/Nous-skills";
 // 提示词私库的本地副本。跟技能仓并排：一条模板 = `<名>/PROMPT.md` + `nous.json`。
 // 同样**不**往 data/ 抄一份：仓库里有什么就是什么。
 const PROMPTS_ROOT = process.env.NOUS_PROMPTS ?? "/opt/Nous-prompts";
+// 会话预设私库。一条预设 = `<名>/preset.json`（纯配置，引用别的命名空间）。
+// **不是扩展**：不进 registry、不建名牌、不进提示词 —— 所以它住在这块里（见 presets.js 头）。
+const PRESETS_ROOT = process.env.NOUS_PRESETS ?? "/opt/Nous-presets";
 // 扩展是造扩展的函数，宿主把 api 递进去 —— 它们不自己 import pi-durable（见仓库 README）。
 const api = { defineExtension, section };
 const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
@@ -116,7 +119,10 @@ const {
   writeRepoFile,
 } = repo;
 import { handleSkills } from "./skills-api.js";
+import * as upstream from "./upstream.js";
 import { handlePrompts } from "./prompts-api.js";
+import { handlePresets } from "./presets-api.js";
+import { createPresets, expandPresetSpec, presetContext } from "./presets.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -1376,6 +1382,25 @@ const serviceProxy = () => {
 const skillsService = serviceProxy();
 const skills = skillsService.proxy;
 
+/**
+ * 上游镜像里已经 check out 的那些技能根 —— 别人的仓，**只读**。
+ *
+ * 只认盘上已经有的：这里不联网、不 clone、不 fetch。没刷新过就是没有，
+ * 勾「上游」时会如实说「先去技能面板刷新」，而不是打开页面就偷偷下载 39 条。
+ * 它们并进会话的可加载名册（`usable`），但**不进 `list()`** —— 面板那张网格是
+ * 「你自己的仓」，别人的 39 条混进去，第二天就没人认得出哪个是自己的。
+ */
+const upstreamSkillRoots = async () => {
+  // 订阅表是**内容**，住技能仓（`sources.json` 进版本库）；镜像才是块的 `data/`。
+  const { sources } = await upstream.readSources(SKILLS_ROOT).catch(() => ({ sources: [] }));
+  const out = [];
+  for (const source of sources) {
+    if (!(await upstream.hasMirror({ data: DATA, source }).catch(() => false))) continue;
+    out.push({ name: source.name, root: upstream.localPath(DATA, source) });
+  }
+  return out;
+};
+
 // 技能变体：绑定表在 data/ 里，树在仓的隔壁。装载器要的是 `[{family, id, root}]`，
 // 每次重建 service 都从绑定表现场读一遍 —— 绑一条就多一个 `本名@id`。
 const skillVariants = createVariantStore({ dataDir: DATA, skillsRoot: SKILLS_ROOT });
@@ -1387,6 +1412,7 @@ const rebuildSkills = async () => {
     registry,
     api,
     variants: await skillVariants.loadable(),
+    upstream: await upstreamSkillRoots(),
   });
   registry.install(skillsService.holder.current.extension);
   await skillsService.holder.current.load();
@@ -1398,6 +1424,7 @@ skillsService.holder.current = await createSkills({
   registry,
   api,
   variants: await skillVariants.loadable(),
+  upstream: await upstreamSkillRoots(),
 });
 const { skillExtension } = skills;
 // 提示词模板同一套：私库在 /opt/Nous-prompts，每条模板一个 `prompt:<名>` 空白名牌。
@@ -1430,6 +1457,14 @@ registry.install(skills.extension);
 registry.install(prompts.extension);
 await skills.load();
 await prompts.load();
+// 预设只是个名册（无 registry 副作用、无渲染）。扫一次就够；每次写盘由端点自己 load()。
+const presets = await createPresets({ dir: PRESETS_ROOT });
+/**
+ * 引用校验 / 显示的 ctx。**每次现造** —— 它问的是此刻的进程状态（技能装了没、模型在不在
+ * 编目里），不是启动那一刻的快照。面板、校验端点、建会话三处共用它，所以「面板说能跑」
+ * 和「真的能跑」是同一个判定。
+ */
+const presetCtx = () => presetContext({ skills, prompts, registry, models, levelsOf, defaultModel });
 // 老收据时代的补版本已经没了（技能没有版本号）。留着 `?.` 是因为：
 // 扩展仓可以比这块新或旧，缺一个方法不该让启动路径炸掉。
 void skills.backfill?.();
@@ -1462,6 +1497,7 @@ const installCore = async (version) => {
     registry,
     api,
     variants: await skillVariants.loadable(),
+    upstream: await upstreamSkillRoots(),
   });
   registry.install(skillsService.holder.current.extension);
   await skillsService.holder.current.load();
@@ -1808,6 +1844,24 @@ const route = async (req, res, url) => {
       return await handlePrompts({ req, res, url, parts, root: PROMPTS_ROOT, prompts, repo });
     } catch (error) {
       // handlePrompts 自己写响应；走到这儿说明是它没接住的意外。
+      return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
+  }
+
+  if (parts[0] === "v1" && parts[1] === "presets") {
+    try {
+      return await handlePresets({
+        req,
+        res,
+        url,
+        parts,
+        root: PRESETS_ROOT,
+        presets,
+        repo,
+        ctx: presetCtx,
+      });
+    } catch (error) {
+      // handlePresets 自己写响应；走到这儿说明是它没接住的意外。
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
   }
@@ -2241,27 +2295,49 @@ const route = async (req, res, url) => {
 
   if (req.method === "POST" && parts[0] === "v1" && parts[1] === "sessions" && !parts[2]) {
     const body = JSON.parse((await readBody(req)) || "{}");
-    const model = body.model ?? defaultModel;
+    // ── 预设打底 ────────────────────────────────────────────────────────────
+    // 三态，跟 template 一条纪律：字符串 = 用这条预设；null / 不传 = 手动创建（老路径，行为不变）。
+    // 预设里的字段是**初值不是裁决**：body 里显式给了的字段一个个覆盖它（hb7k3j 的 picker
+    // 就是靠这条「带着初值的手动创建」）。覆盖是个键一个键的 —— 整份替换会让
+    // 「只想改模型」把技能也顺手改掉。
+    const presetAsked = typeof body.preset === "string" ? body.preset.trim() : null;
+    let presetBase = null;
+    if (presetAsked) {
+      const item = presets.get(presetAsked);
+      if (!item) return json(res, 400, { error: `没有这条预设：${presetAsked}` });
+      if (item.specError) return json(res, 400, { error: `预设「${presetAsked}」自己写坏了：${item.specError}` });
+      presetBase = expandPresetSpec(item.spec);
+    }
+    const pick = (key) => (body[key] !== undefined ? body[key] : presetBase?.[key]);
+
+    const model = pick("model") ?? defaultModel;
     // 档位在建会话的**同一个 commit** 里落定（AgentChange 的 thinkingLevel），
     // 不是先建再 configure —— 后者中间那一下，第一条消息可能已经跑出去了。
-    const thinkingLevel = fitLevel(models.getModel(model.provider, model.modelId), body.thinkingLevel);
+    const thinkingLevel = fitLevel(models.getModel(model.provider, model.modelId), pick("thinkingLevel"));
     // 技能也在这个 commit 里落 —— 跟 thinkingLevel 一条纪律：先建再 configure，中间那一下
     // 第一条消息可能已经跑出去了。没装的技能名直接丢（选了也不生效，不存一个幽灵）。
-    const wanted = [...new Set((Array.isArray(body.skills) ? body.skills : []).map(String))].filter((name) => skills.has(name));
+    const askedSkills = pick("skills");
+    const wanted = [
+      ...new Set((Array.isArray(askedSkills) ? askedSkills : []).map(String)),
+    ].filter((name) => skills.has(name));
     // 模板是**单值**，不是数组：一条会话最多一个 `prompt:<名>`。三态必须分清 ——
     //   字符串 = 选它；null = 显式不要；不传 = 用仓库 settings.json 的默认值。
     // 都归成「不传」的话，「不要」和「没说」会变成同一件事，页面上那句「无模板」就是假的。
-    const asked = body.template === undefined ? await readDefaultTemplate() : body.template;
-    const wantedTemplate = asked === null ? null : String(asked).trim();
+    // 预设里的 template 原样搬过来（`presets.js` 的 `expandPresetSpec` 只写「键在不在」），
+    // 所以 `template: null` 的预设照样是「明确不要」。
+    const asked = pick("template");
+    const wantedTemplate = asked === undefined ? await readDefaultTemplate() : asked === null ? null : String(asked).trim();
     const template = wantedTemplate && prompts.has(wantedTemplate) ? wantedTemplate : null;
-    const wantedExt = [...new Set((Array.isArray(body.extensions) ? body.extensions : []).map(String))].filter((name) =>
+    const askedExt = pick("extensions");
+    const wantedExt = [...new Set((Array.isArray(askedExt) ? askedExt : []).map(String))].filter((name) =>
       registry.snapshot().installed().some((e) => e.name === name),
     );
     // 清单里的 `default: true` = 新会话默认选它。README 一直这么写着，但从来没人读它 ——
     // 页面那个「默认」绿角标看的是下面这三个硬编码的名字，于是 nous.json 里那个字段
     // 只是个装饰品（改了没反应，比没有更糟）。这里把它接上：只补「不是那三个」的，
     // 重复 add 同一个扩展没意义。
-    if (!body.extensions) {
+    // **只在「没人说」时补**：预设写了 extensions 就是说了（`[]` 也是说了），别替它加东西。
+    if (askedExt === undefined) {
       const baseDefaults = [CodingTools.name, nousExtension.name, skills.extension.name, prompts.extension.name];
       const installedNow = registry.snapshot().installed().map((e) => e.name);
       for (const manifest of await readExtendCatalog().catch(() => [])) {
@@ -2290,6 +2366,13 @@ const route = async (req, res, url) => {
       ctx,
     );
     if (body.name) await setName(created.id, String(body.name).slice(0, 120));
+    // 只读：`createConversation` 没有这个字段（它只认 model / thinkingLevel / extensions），
+    // 所以建完立刻 configure 一次。这不是「先建再配」那种坏味道 —— 那条纪律要防的是
+    // 「第一条消息已经跑出去了配置还没落」，而这里第一条消息还没发生（调用方拿到 201 才发）。
+    const askedReadOnly = pick("readOnly");
+    if (askedReadOnly === true) {
+      await created.configure({ modelTools: { remove: WRITE_TOOLS } }, ctx);
+    }
     const agent = await created.agent(ctx);
     return json(res, 201, {
       id: created.id,
@@ -2299,7 +2382,17 @@ const route = async (req, res, url) => {
       skills: skillNamesOf(agent),
       template: templateOf(agent),
       extensions: extensionNamesOf(agent),
+      // 只读也是**生效值**：上面那次 configure 到底成没成，回给前端别让人猜。
+      readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
+      // 预设回的出处：这次是哪条预设开的（`null` = 手动创建的）。前端拿它显一条小标签。
+      preset: presetAsked || null,
       missing: skills.missing(wanted),
+      // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有扩展」。
+      ...(() => {
+        const asked = [...new Set((Array.isArray(askedExt) ? askedExt : []).map(String))];
+        const gone = asked.filter((name) => !registry.snapshot().installed().some((e) => e.name === name));
+        return gone.length ? { missingExtensions: gone } : {};
+      })(),
       // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有模板」。
       ...(wantedTemplate && !template ? { missingTemplates: [wantedTemplate] } : {}),
     });
