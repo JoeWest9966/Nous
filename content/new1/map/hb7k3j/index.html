@@ -231,7 +231,7 @@
                            padding:.8vmin 1.2vmin; overflow-x:auto; overflow-y:hidden; }
     /* 换方向的只有这一层：`.rail` 底下还套着 `#extRailList`，把 row 写在 `.rail` 上
        等于只让一个「装着一列按钮的 div」变成横排 —— 按钮照样竖着摞。 */
-    .body.has-rail #extRailList, .body.has-rail #tmplRailList { flex-direction:row; align-items:center; gap:.4em; }
+    .body.has-rail #extRailList, .body.has-rail #skillRailList, .body.has-rail #tmplRailList { flex-direction:row; align-items:center; gap:.4em; }
     .body.has-rail .rail > .rhead, .body.has-rail .rfoot { display:none; }
     .body.has-rail .cat { width:auto; flex:none; padding:.34em .7em; }
     .body.has-rail .cat.child { padding-left:.7em; }
@@ -320,57 +320,52 @@
 
     <!-- 四个域：今天只有左上那个（模型）是活的 -->
     <section class="region r1">
-      <h2>模型</h2>
-      <div class="sub">选择 → 创建 → 落地</div>
-      <div class="sub" id="model-sub">已开放</div>
+      <h2>Model</h2>
+      <div class="sub" id="model-sub">available</div>
       <div class="nodes">
         <button class="node" id="choose" disabled>
           <span class="id" id="cur-id">—</span>
-          <span class="tag" id="cur-tag">更换 ›</span>
+          <span class="tag" id="cur-tag">change ›</span>
         </button>
       </div>
     </section>
     <section class="region r2">
-      <h2>上下文</h2>
-      <div class="sub" id="ctx-sub">技能 0/0 · 模板 无</div>
-      <div class="sub">技能 = 模型按需 read 的知识　·　模板 = 每轮都进的规则</div>
+      <h2>Context</h2>
+      <div class="sub" id="ctx-sub">skills 0/0 · prompt none</div>
       <!-- 两个小框，不是一个：技能是集合（多选、模型按需 read 正文），模板是单值（单选、
            正文整段每轮都进）。塞进同一个弹窗就得在里头分两段，技能一多第二段就掉到折线以下 ——
            那是两种决定，各开各的门。 -->
       <div class="nodes">
         <button class="node" id="pickctx" disabled title="这条新对话要知道哪些技能（多选）">
-          <span class="id">技能</span>
+          <span class="id">Skills</span>
           <span class="tag" id="ctx-tag">0/0 ›</span>
         </button>
         <button class="node" id="pickprompt" disabled title="这条新对话每轮都带的那份规则（单选）">
-          <span class="id">模板</span>
-          <span class="tag" id="tmpl-tag">无 ›</span>
+          <span class="id">Prompt</span>
+          <span class="tag" id="tmpl-tag">none ›</span>
         </button>
       </div>
     </section>
     <section class="region r4">
-      <h2>扩展</h2>
-      <div class="sub" id="ext-sub">Nous 扩展</div>
-      <div class="sub">每条会话可选装哪些</div>
+      <h2>Extensions</h2>
+      <div class="sub" id="ext-sub">Nous extensions</div>
       <div class="nodes">
         <button class="node" id="pickext" disabled title="这条新对话要装哪些 Nous 扩展">
-          <span class="id" id="ext-id">未选</span>
-          <span class="tag" id="ext-tag">选择 ›</span>
+          <span class="id" id="ext-id">none</span>
+          <span class="tag" id="ext-tag">choose ›</span>
         </button>
       </div>
     </section>
     <section class="region r3">
-      <h2>权限</h2>
-      <div class="sub">还没排上</div>
-      <div class="sub">暂未开放</div>
+      <h2>Permissions</h2>
     </section>
 
     <!-- 中央：confusion 椭圆，新对话从这里落子 -->
     <div class="hub">
-      <h1>新对话</h1>
-      <div class="sub">Disorder · 落子之处</div>
-      <input type="text" id="name" placeholder="名字（留空自动「对话 N」）" maxlength="120" autocomplete="off">
-      <button class="node cta" id="create" disabled>创建</button>
+      <h1>New chat</h1>
+      <div class="sub" id="hub-sub">Disorder · pick a model</div>
+      <input type="text" id="name" placeholder="Name · blank → Chat 1" maxlength="120" autocomplete="off">
+      <button class="node cta" id="create" disabled>Create</button>
       <span id="flash"></span>
     </div>
   </div>
@@ -382,7 +377,20 @@
       <b>上下文 · 技能</b>
       <input type="text" id="sq" placeholder="筛选技能…" autocomplete="off">
     </div>
-    <div class="skills" id="skillList"></div>
+    <div class="views" id="skillViews">
+      <button class="chip" type="button" data-view="all" aria-pressed="true"></button>
+      <button class="chip" type="button" data-view="none" aria-pressed="false"></button>
+      <button class="chip" type="button" data-only="1" aria-pressed="false"></button>
+      <button class="chip" type="button" data-view="upstream" aria-pressed="false"></button>
+    </div>
+    <div class="body" id="skillBody">
+      <div class="skills" id="skillList"></div>
+      <div class="rail" id="skillRail" hidden>
+        <div class="rhead">类别</div>
+        <div id="skillRailList"></div>
+        <div class="rfoot"><a id="skillRailGo" href="#" target="_blank" rel="noreferrer">+ 新建类别：去技能页</a></div>
+      </div>
+    </div>
     <div class="dfoot skillfoot">
       <span id="skillHint">—</span>
       <button class="done" id="skillDone" type="button">完成 ›</button>
@@ -495,6 +503,8 @@ try {
   promptsPage = ctx.blocks.find((b) => b.id === "6ysg01") ?? null;
   // 模板弹窗右栏底下那条「+ 新建类别」：类别只在模板库建（那边才是仓库的写入口）。
   if (promptsPage) $("tmplRailGo").href = promptsPage.url;
+  // 技能右栏底下那条「+ 新建类别」：类别只在技能面板建（那边才是仓库的写入口）。
+  if (skillsPage) $("skillRailGo").href = skillsPage.url;
   $("open").href = tag.url;
   $("open").hidden = false;
 } catch (error) {
@@ -652,6 +662,24 @@ let thinking = "off";
 
 /** 上下文域：这台机器装了哪些技能（`qrd3wh GET /v1/skills` 的 installed）。 */
 let installedSkills = [];
+/**
+ * 上游镜像里那些**还没装进来**的技能（`GET /v1/skills/upstream` 的 entries）。
+ *
+ * 顶端那个「上游」档是个**整库开关**：勾一下，这一个库的技能全进；取消，全出。
+ * 一条一条勾别人的东西没意义 —— 你真的会在 39 条里只挑 `tdd` 和 `triage` 吗？
+ * 更常见的是「这一整个人的东西我都要」，所以按钮做成一次，列表只负责让你看清里面有什么。
+ */
+let upstreamSkills = [];
+/** 上游那几个库的名字 + 版本号，给「整个上游库」那行当副标题。 */
+let upstreamSources = [];
+/** 上游镜像里一共有多少条（含 `disable-model-invocation` 的）。不在列表里，但得说得出这个数。 */
+let upstreamTotal = 0;
+/** 右栏类别（技能身上真挂着的那些，含 `Basics` —— 技能没有「默认勾 Basics」这条规则）。 */
+let skillCustomCats = [];
+/** 顶部视图：`all` / `none` / `upstream`；`null` = 正在看右栏某个类别。跟扩展同一条轴。 */
+let skillView = "all";
+let skillCategory = null;
+let skillOnlyPicked = false;
 /** 上下文域的另一半：模板私库里有哪几条能用的（`GET /v1/prompts`）。 */
 let installedTemplates = [];
 /**
@@ -1005,36 +1033,170 @@ $("q").onkeydown = (e) => {
   actOn(first);
 };
 
-/** 上下文弹窗里的一行一行。弹窗打开、筛选、勾选之后重画 —— 不在渲染里做 IO。 */
+/** 一条技能挂的类别（数组）。没有 = 未分类。 */
+const skillCats = (skill) => (Array.isArray(skill.category) ? skill.category : [])
+  .map((c) => String(c ?? "").trim()).filter(Boolean);
+const skillPrimary = (skill) => skillCats(skill)[0] ?? UNCATEGORIZED;
+
+/** 版本号只给人看的那一层：tag > `tag+` > sha 前七位。跟技能面板同一套说法。 */
+const versionText = (version) => {
+  if (!version) return "";
+  if (version.tag) return version.tag;
+  if (version.behind && version.commit) return `${version.behind}+`;
+  return version.commit ? String(version.commit).slice(0, 7) : "";
+};
+/** 「整个上游库」那行的副标题：`skills v1.3.2+ · 39 条`。 */
+const upstreamLabel = () => {
+  const names = upstreamSources.map((s) => [s.name, versionText(s.version)].filter(Boolean).join(" "));
+  return [names.join(" + ") || "上游", `${upstreamSkills.length} 条`].filter(Boolean).join(" · ");
+};
+
+/** 整个上游库是不是已经全选了（少一条都不算）。 */
+const upstreamAllPicked = () =>
+  upstreamSkills.length > 0 && upstreamSkills.every((skill) => pickedSkills.has(skill.name));
+
+/** 视图条：全部 / 未分类 / 只看已选 / 上游。一击只有一个亮（跟右栏类别同一条轴）。 */
+const renderSkillViews = () => {
+  const box = $("skillViews");
+  const onUp = skillView === "upstream";
+  const uncategorized = installedSkills.filter((skill) => !skillCats(skill).length).length;
+  const paint = (view, pressed, html) => {
+    const btn = box.querySelector(`[data-view="${view}"]`);
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", String(pressed));
+    btn.innerHTML = html;
+  };
+  // 选了右栏的类别，顶部就该全灭：两个都亮 = 让人自己在脑子里做交集。
+  paint("all", !onUp && !skillCategory && skillView === "all", `全部<span class="n">${installedSkills.length}</span>`);
+  paint("none", !onUp && !skillCategory && skillView === "none", `未分类<span class="n">${uncategorized}</span>`);
+  paint("upstream", onUp, `上游<span class="n">${upstreamSkills.length}</span>`);
+  const only = box.querySelector("[data-only]");
+  only.setAttribute("aria-pressed", String(skillOnlyPicked));
+  only.innerHTML = `只看已选<span class="n">${pickedSkills.size}</span>`;
+  if (pickedSkills.size) { only.removeAttribute("aria-disabled"); only.tabIndex = 0; }
+  else { only.setAttribute("aria-disabled", "true"); only.tabIndex = -1; }
+};
+
+/**
+ * 右栏：技能身上真挂着的类别。一条都没有 → 整栏不出现，弹窗回 720 宽。
+ * 「上游」档下也收起来：那是别人的库，没有你的类别。
+ */
+const renderSkillRail = () => {
+  const sheet = $("scrim2").querySelector(".sheet");
+  const body = $("skillBody");
+  const rail = $("skillRail");
+  const has = skillCustomCats.length > 0 && skillView !== "upstream";
+  sheet.classList.toggle("has-rail", has);
+  body.classList.toggle("has-rail", has);
+  rail.hidden = !has;
+  if (!has) { $("skillRailList").innerHTML = ""; return; }
+  $("skillRailList").innerHTML = skillCustomCats.map((label) => {
+    const rows = installedSkills.filter((skill) => skillCats(skill).some((c) => underCategory(c, label)));
+    const depth = label.split("/").filter(Boolean).length - 1;
+    return `<button class="cat${depth ? " child" : ""}${rows.length ? "" : " zero"}" type="button"`
+      + ` aria-pressed="${skillCategory === label}" data-cat="${esc(label)}" title="${esc(categoryLabel(label))}">`
+      + (rows.some((skill) => pickedSkills.has(skill.name)) ? `<span class="dot"></span>` : "")
+      + `<span class="cl">${esc(leafOf(label))}</span><span class="n">${rows.length}</span></button>`;
+  }).join("");
+};
+
+/**
+ * 上下文弹窗里的那一行一行。弹窗打开、筛选、勾选之后重画 —— 不在渲染里做 IO。
+ *
+ * 两层筛选从粗到细：**类别 → 只看已选 → 搜索**，只影响「看见什么」，一个字节都不动选区
+ * （跟扩展那边一条纪律）。「上游」不是一个类别，是一整个档：它独占顶部，列表整块换掉。
+ */
 const renderCtxList = () => {
   const needle = $("sq").value.trim().toLowerCase();
   const hit = (text) => !needle || String(text).toLowerCase().includes(needle);
+  renderSkillViews();
+  renderSkillRail();
 
-  // ── 技能：多选。模型按需 read 正文，所以这里只放名字 / 描述 / 路径。 ──
-  const skillRows = installedSkills
-    .filter((s) => hit(`${s.name} ${s.description ?? ""}`))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((s) => {
-      const on = pickedSkills.has(s.name);
-      const desc = String(s.description ?? "").replace(/\s+/g, " ").trim();
-      const meta = [s.source, s.sha ? s.sha.slice(0, 7) : null].filter(Boolean).join(" · ");
-      return `<button class="skill-row" type="button" role="checkbox" aria-checked="${on}" data-s="${esc(s.name)}">`
+  // ── 上游档：整库一个开关，底下只负责让你看清里面有什么 ──
+  if (skillView === "upstream") {
+    const all = upstreamAllPicked();
+    const shown = upstreamSkills
+      .filter((skill) => (skillOnlyPicked ? pickedSkills.has(skill.name) : true))
+      .filter((skill) => hit(`${skill.name} ${skill.path} ${skill.description ?? ""}`));
+    const head = `<button class="skill-row up-all" type="button" role="checkbox" aria-checked="${all}" data-up-all="1">`
+      + `<span class="skill-box">${all ? "✓" : ""}</span>`
+      + `<span><span class="skill-name">整个上游库</span>`
+      + `<span class="skill-desc">${esc(upstreamLabel())} · 勾一次全部进来</span></span></button>`;
+    const rows = shown.map((skill) => `<div class="skill-row" role="checkbox" aria-checked="${pickedSkills.has(skill.name)}" aria-disabled="true">`
+      + `<span class="skill-box">${pickedSkills.has(skill.name) ? "✓" : ""}</span>`
+      // 撞了本机名字的（`local` 不是 `none`）：说清楚**加载的是你那份**。
+      // 不说的话，人勾了上游以为拿到了上游最新，其实拿到的是自己改过的。
+      + `<span><span class="skill-name">${esc(skill.name)}</span>`
+      + `<span class="skill-desc">${esc(String(skill.description ?? "").replace(/\s+/g, " ").trim())}</span>`
+      + `<span class="skill-meta">${esc([skill.path, skill.local && skill.local !== "none" ? "本机已有 · 加载你那份" : ""].filter(Boolean).join(" · "))}</span></span></div>`).join("");
+    $("skillList").innerHTML = head
+      + (shown.length ? rows : `<div class="skill-none">没有匹配的。<br><button class="chip" type="button" data-clear="1">清空搜索 ›</button></div>`);
+    // 上游一共 39 条，这里只有 15 —— 差额是 `disable-model-invocation` 的（只给显式调用，
+    // 进了这个名单也进不了 `<available_skills>`）。不说清，人只会记得「明明有 39 条」。
+    const skipped = upstreamTotal - upstreamSkills.length;
+    const tail = skipped > 0 ? ` · 另有 ${skipped} 条只给显式调用` : "";
+    $("skillHint").textContent = all
+      ? `整个上游库 ${upstreamSkills.length} 条已选${tail}`
+      : `上游 ${upstreamSkills.length} 条可选${tail} · 勾上面那一下就是全部`;
+    return;
+  }
+
+  // ── 本机档 ──
+  const inScope = (skill) =>
+    skillCategory ? skillCats(skill).some((c) => underCategory(c, skillCategory))
+    : skillView === "none" ? !skillCats(skill).length
+    : true;
+  const shown = installedSkills
+    .filter(inScope)
+    .filter((skill) => !skillOnlyPicked || pickedSkills.has(skill.name))
+    .filter((skill) => hit(`${skill.name} ${skill.description ?? ""} ${skillCats(skill).join(" ")}`));
+
+  if (!installedSkills.length) {
+    // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 ctx 拿，不拼死的）。
+    $("skillList").innerHTML = `<div class="skill-none">这台机器一个技能都没装。<br>`
+      + (skillsPage ? `<a href="${esc(skillsPage.url)}/">去技能面板装一个 ›</a>` : "")
+      + `</div>`;
+    $("skillHint").textContent = "0 个技能";
+    return;
+  }
+  if (!shown.length) {
+    const ways = [
+      needle ? `<button class="chip" type="button" data-clear="1">清空搜索 ›</button>` : "",
+      skillOnlyPicked ? `<button class="chip" type="button" data-only="1">取消「只看已选」›</button>` : "",
+      skillCategory ? `<button class="chip" type="button" data-cat="">全部类别 ›</button>` : "",
+    ].filter(Boolean);
+    $("skillList").innerHTML = `<div class="skill-none">没有匹配的技能。${ways.length ? `<br>${ways.join(" ")}` : ""}</div>`;
+    $("skillHint").textContent = `技能 ${pickedSkills.size}/${installedSkills.length} · 勾完按完成`;
+    return;
+  }
+
+  // 「全部」视图按主归属分组：滚动时看得见自己在哪一档。筛了类别就不必再挂标题。
+  const groups = [];
+  if (skillCategory || skillView !== "all") groups.push({ label: null, rows: shown });
+  else {
+    const order = [...new Set(shown.map(skillPrimary))]
+      .sort((a, b) => (a === UNCATEGORIZED) - (b === UNCATEGORIZED) || a.localeCompare(b, "zh-CN"));
+    for (const label of order) {
+      const rows = shown.filter((skill) => skillPrimary(skill) === label);
+      if (rows.length) groups.push({ label, rows });
+    }
+  }
+  $("skillList").innerHTML = groups.map(({ label, rows }) => {
+    const head = label ? `<div class="ctx-head">${esc(categoryLabel(label))}</div>` : "";
+    return head + rows.map((skill) => {
+      const on = pickedSkills.has(skill.name);
+      const desc = String(skill.description ?? "").replace(/\s+/g, " ").trim();
+      // 分组（`deprecated/tdd`）不是类别，但行里得看得出它在哪个抽屉 —— 它是物理位置。
+      const group = String(skill.path ?? "").includes("/") ? String(skill.path).split("/").slice(0, -1).join("/") : "";
+      const meta = [group ? `${group}/` : "", skillCats(skill).join(" · ")].filter(Boolean).join(" · ");
+      return `<button class="skill-row" type="button" role="checkbox" aria-checked="${on}" data-s="${esc(skill.name)}">`
         + `<span class="skill-box">${on ? "✓" : ""}</span>`
-        + `<span><span class="skill-name">${esc(s.name)}</span>`
+        + `<span><span class="skill-name">${esc(skill.name)}</span>`
         + `<span class="skill-desc">${esc(desc)}</span>`
         + (meta ? `<span class="skill-meta">${esc(meta)}</span>` : "")
         + `</span></button>`;
-    });
-
-  const skillsHtml = !installedSkills.length
-    // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 ctx 拿，不拼死的）。
-    ? `<div class="skill-none">这台机器一个技能都没装。<br>`
-      + (skillsPage ? `<a href="${esc(skillsPage.url)}/">去技能面板装一个 ›</a>` : "")
-      + `</div>`
-    : skillRows.length ? skillRows.join("") : `<div class="skill-none">没有匹配的技能。</div>`;
-
-  $("skillList").innerHTML = `<h3 class="ctx-head">技能 · 多选 · 按需 read</h3>` + skillsHtml;
-
+    }).join("");
+  }).join("");
   $("skillHint").textContent = `技能 ${pickedSkills.size}/${installedSkills.length} · 勾完按完成`;
 };
 
@@ -1463,9 +1625,11 @@ const renderExtList = () => {
 /** 那两个小框显示什么 —— 跟模型域一样，只显示生效的东西，不显示「待定」。 */
 const renderCtx = () => {
   const n = pickedSkills.size;
-  $("ctx-tag").textContent = `${n}/${installedSkills.length} ›`;
-  $("tmpl-tag").textContent = `${pickedTemplate ?? "无"} ›`;
-  $("ctx-sub").textContent = `技能 ${n}/${installedSkills.length} · 模板 ${pickedTemplate ?? "无"}`;
+  // 分母是**能勾的全体**：本机 + 上游。只算本机的话，勾了整个上游库会写成 `45/6`。
+  const total = installedSkills.length + upstreamSkills.length;
+  $("ctx-tag").textContent = `${n}/${total} ›`;
+  $("tmpl-tag").textContent = `${pickedTemplate ?? "none"} ›`;
+  $("ctx-sub").textContent = `skills ${n}/${total} · prompt ${pickedTemplate ?? "none"}`;
   $("pickctx").disabled = !tag;
   $("pickprompt").disabled = !tag;
 };
@@ -1481,26 +1645,47 @@ const renderExt = () => {
   // 按家族顺序取名字：Set 里变体是「删了再插」，直接拿 [0] 会飘到某个不相干的名字上。
   const ordered = extFamilies.map((fam) => picked.find((name) => familyOf(name) === fam.name)).filter(Boolean);
   $("ext-id").textContent = !total
-    ? "没有可选"
+    ? "none available"
     : !ordered.length
-      ? "一个都不装"
+      ? "none"
       : !variantPicked.length && ordered.length === total
-        ? `全部 ${total} 个`
+        ? `all ${total}`
         : ordered.length === 1
           ? ordered[0]
           : `${ordered[0]} +${ordered.length - 1}`;
-  $("ext-tag").textContent = "改 ›";
+  $("ext-tag").textContent = "change ›";
   // 「默认勾 Basics」写在盘面的副标题里，不放弹窗底部：那句话是解释默认值的，
   // 摆在开弹窗之前就该看得见；弹窗底部留给计数和「完成」。
   $("ext-sub").textContent = total
-    ? `已装 ${total} 个 · 选中的 ${picked.length}${variantPicked.length ? `（含 ${variantPicked.length} 个变体）` : ""} · 默认 ${DEFAULT_CATEGORY}`
-    : "进程里没有可选扩展";
+    ? `installed ${total} · picked ${picked.length}${variantPicked.length ? ` (+${variantPicked.length} variants)` : ""} · default ${DEFAULT_CATEGORY}`
+    : "no extensions";
   $("pickext").disabled = !tag || !total;
 };
 
 $("skillList").addEventListener("click", (e) => {
+  // 空状态里的出口：清空搜索 / 取消「只看已选」/ 回全部类别。
+  const way = e.target.closest?.("button[data-clear], button[data-only], button[data-cat]");
+  if (way) {
+    if (way.hasAttribute("data-clear")) $("sq").value = "";
+    else if (way.hasAttribute("data-only")) skillOnlyPicked = false;
+    else { skillCategory = null; skillView = "all"; }
+    renderCtxList();
+    return;
+  }
+  // 上游那条**整库开关**：勾一次 39 条一起进，取消一起出。
+  const whole = e.target.closest?.("[data-up-all]");
+  if (whole) {
+    const on = upstreamAllPicked();
+    for (const skill of upstreamSkills) {
+      if (on) pickedSkills.delete(skill.name); else pickedSkills.add(skill.name);
+    }
+    renderCtxList();
+    renderCtx();
+    return;
+  }
   const row = e.target.closest?.(".skill-row");
-  if (!row) return;
+  // 上游那些条目只让你看清里面有什么，单条不接勾 —— 开关在上面那一个。
+  if (!row || row.getAttribute("aria-disabled") === "true") return;
   const name = row.dataset.s;
   if (pickedSkills.has(name)) pickedSkills.delete(name); else pickedSkills.add(name);
   renderCtxList();
@@ -1515,6 +1700,27 @@ $("skillList").addEventListener("keydown", (e) => {
   e.preventDefault();
   const i = Math.max(0, Math.min(rows.length - 1, at < 0 ? 0 : at + (e.key === "ArrowDown" ? 1 : -1)));
   rows[i]?.focus();
+});
+
+/** 技能的视图条：`all` / `none` / `upstream`；`upstream` 独占一档（它不是一个类别，是另一座仓）。 */
+const pickSkillView = (view) => {
+  skillCategory = null;
+  skillView = skillView === view && view !== "all" ? "all" : view;
+};
+$("skillViews").addEventListener("click", (e) => {
+  const chip = e.target.closest?.(".chip");
+  if (!chip || chip.getAttribute("aria-disabled") === "true") return;
+  if (chip.dataset.only) skillOnlyPicked = !skillOnlyPicked;
+  else pickSkillView(chip.dataset.view);
+  renderCtxList();
+});
+$("skillRail").addEventListener("click", (e) => {
+  const cat = e.target.closest?.(".cat");
+  if (!cat) return;
+  const label = cat.dataset.cat;
+  if (skillCategory === label) { skillCategory = null; skillView = "all"; }
+  else { skillCategory = label; skillView = null; }
+  renderCtxList();
 });
 
 /**
@@ -1596,8 +1802,8 @@ $("sq").oninput = renderCtxList;
 const renderCurrent = () => {
   if (!picked) {
     $("cur-id").textContent = "—";
-    $("cur-tag").textContent = models.length ? "选择 ›" : "无模型";
-    $("model-sub").textContent = models.length ? `已开放 · ${models.length} 款` : "没有可用模型";
+    $("cur-tag").textContent = models.length ? "choose ›" : "no model";
+    $("model-sub").textContent = models.length ? `${models.length} available` : "no models available";
     return;
   }
   const m = models.find((x) => x.provider === picked.provider && x.modelId === picked.modelId);
@@ -1605,13 +1811,19 @@ const renderCurrent = () => {
   $("cur-tag").textContent = m?.provider ?? "";
   const isDef = defaultModel && defaultModel.provider === picked.provider && defaultModel.modelId === picked.modelId;
   const lv = levelsOfPick();
-  $("model-sub").textContent = `已开放 · ${models.length} 款${isDef ? " · 默认" : ""}`
-    + (lv.length > 1 ? ` · 思考 ${thinking}` : "");
+  $("model-sub").textContent = `${models.length} available${isDef ? " · default" : ""}`
+    + (lv.length > 1 ? ` · thinking ${thinking}` : "");
 };
 
 const updateHub = () => {
   $("create").disabled = !picked || !tag;
   $("choose").disabled = !models.length;
+  // 中央那行是**状态**不是文案：跟四栏一样，只说现在差什么。
+  $("hub-sub").textContent = !tag
+    ? "Disorder · no backend"
+    : picked
+      ? "Disorder · ready"
+      : "Disorder · pick a model";
 };
 
 $("create").onclick = commit;
@@ -1647,8 +1859,8 @@ async function commit() {
     // 勾了但没装成的，服务端会点名（missing / missingTemplates）。别静默：人以为选上了，其实没有。
     if (skipped.length) $("errbox").innerHTML = `<div class="err">这些没装，已跳过 —— ${esc(skipped.join("；"))}</div>`;
     const got = (created.skills ?? []).length;
-    $("flash").textContent = `✓ 对话 ${created.id} 已创建 · 思考 ${thinking}`
-      + (got ? ` · 技能 ${got}` : "") + ` · 模板 ${created.template ?? "无"}`;
+    $("flash").textContent = `✓ chat ${created.id} created${levelsOfPick().length > 1 ? ` · thinking ${thinking}` : ""}`
+      + (got ? ` · skills ${got}` : "") + ` · prompt ${created.template ?? "none"}`;
     $("name").value = "";
     defaultModel = picked;
     renderCurrent();
@@ -1677,8 +1889,33 @@ if (tag) {
     // 早期读的是编目时代的字段名，自从技能搬进自己的 git 仓之后它一直是空的。
     const data = await api("v1/skills");
     installedSkills = (data.skills ?? []).filter((s) => s.load?.state === "ok" && !s.hidden);
+    // 右栏的类别 = 词表 ∪ 技能身上真挂着的。**不剔 `Basics`** —— 扩展那边剔是因为它有
+    // 「默认勾 Basics」这条规则，技能没有：这里 `Basics` 只是一个普通类别，藏起来反而少一档。
+    const names = new Set((Array.isArray(data.categories) ? data.categories : []).map((c) => String(c ?? "").trim()).filter(Boolean));
+    for (const skill of installedSkills) for (const c of skillCats(skill)) names.add(c);
+    for (const label of [...names]) {
+      const parts = label.split("/").filter(Boolean);
+      for (let i = 1; i < parts.length; i += 1) names.add(parts.slice(0, i).join("/"));
+    }
+    skillCustomCats = [...names].sort((a, b) => a.localeCompare(b, "zh-CN"));
   } catch (error) {
     console.warn("技能清单拿不到：", error);
+  }
+  // 上游：另一个仓，单开一个 try —— 它挂了不该把本机清单一起拖下水。
+  // 只读本机镜像，不联网（`GET /v1/skills/upstream` 从不 fetch）。
+  try {
+    const up = await api("v1/skills/upstream");
+    upstreamSources = (up.sources ?? []).filter((s) => s.mirror === "ready");
+    const ready = new Set(upstreamSources.map((s) => s.name));
+    upstreamTotal = (up.entries ?? []).filter((entry) => ready.has(entry.source)).length;
+    upstreamSkills = (up.entries ?? [])
+      // `hidden`（`disable-model-invocation`）的不列：它们进不了 `<available_skills>`，
+      // 勾上等于勾了个不会动的东西。跟本机那份清单同一条判据。
+      .filter((entry) => ready.has(entry.source) && !entry.hidden)
+      .map((entry) => ({ ...entry, category: Array.isArray(entry.category) ? entry.category : [] }))
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  } catch (error) {
+    console.warn("上游清单拿不到：", error);
   }
   // 模板私库：单独一个 try —— 模板库挂了不该把技能清单一一起拖下水（两件事，修的地方也不一样）。
   // 默认值来自仓库的 settings.json，这里只负责预勾；选不选仍然是人的事。

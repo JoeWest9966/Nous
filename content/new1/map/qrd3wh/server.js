@@ -116,6 +116,7 @@ const {
   writeRepoFile,
 } = repo;
 import { handleSkills } from "./skills-api.js";
+import * as upstream from "./upstream.js";
 import { handlePrompts } from "./prompts-api.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -1376,6 +1377,25 @@ const serviceProxy = () => {
 const skillsService = serviceProxy();
 const skills = skillsService.proxy;
 
+/**
+ * 上游镜像里已经 check out 的那些技能根 —— 别人的仓，**只读**。
+ *
+ * 只认盘上已经有的：这里不联网、不 clone、不 fetch。没刷新过就是没有，
+ * 勾「上游」时会如实说「先去技能面板刷新」，而不是打开页面就偷偷下载 39 条。
+ * 它们并进会话的可加载名册（`usable`），但**不进 `list()`** —— 面板那张网格是
+ * 「你自己的仓」，别人的 39 条混进去，第二天就没人认得出哪个是自己的。
+ */
+const upstreamSkillRoots = async () => {
+  // 订阅表是**内容**，住技能仓（`sources.json` 进版本库）；镜像才是块的 `data/`。
+  const { sources } = await upstream.readSources(SKILLS_ROOT).catch(() => ({ sources: [] }));
+  const out = [];
+  for (const source of sources) {
+    if (!(await upstream.hasMirror({ data: DATA, source }).catch(() => false))) continue;
+    out.push({ name: source.name, root: upstream.localPath(DATA, source) });
+  }
+  return out;
+};
+
 // 技能变体：绑定表在 data/ 里，树在仓的隔壁。装载器要的是 `[{family, id, root}]`，
 // 每次重建 service 都从绑定表现场读一遍 —— 绑一条就多一个 `本名@id`。
 const skillVariants = createVariantStore({ dataDir: DATA, skillsRoot: SKILLS_ROOT });
@@ -1387,6 +1407,7 @@ const rebuildSkills = async () => {
     registry,
     api,
     variants: await skillVariants.loadable(),
+    upstream: await upstreamSkillRoots(),
   });
   registry.install(skillsService.holder.current.extension);
   await skillsService.holder.current.load();
@@ -1398,6 +1419,7 @@ skillsService.holder.current = await createSkills({
   registry,
   api,
   variants: await skillVariants.loadable(),
+  upstream: await upstreamSkillRoots(),
 });
 const { skillExtension } = skills;
 // 提示词模板同一套：私库在 /opt/Nous-prompts，每条模板一个 `prompt:<名>` 空白名牌。
@@ -1462,6 +1484,7 @@ const installCore = async (version) => {
     registry,
     api,
     variants: await skillVariants.loadable(),
+    upstream: await upstreamSkillRoots(),
   });
   registry.install(skillsService.holder.current.extension);
   await skillsService.holder.current.load();
