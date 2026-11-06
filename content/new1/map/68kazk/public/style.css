@@ -332,6 +332,22 @@ a.filter-chip { text-decoration: none; }
 }
 
 /* 卡片上的类别 chip / 输入 */
+/* 卡底那行：一条细线压着「文件 / 变体」两个数 —— 骨架照抄扩展面板（vbe4pt）
+   的 `.product-foot`，那边也是细线 + 几对「标签 值」。`margin-top: auto` 让同一排里
+   高矮不一的卡片把这条线对齐在最下面，不然线会跟着说明文字的长短上下跳。 */
+.product-foot {
+  margin-top: auto;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  padding: 8px 13px 11px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
+}
+/* 有卡底的时候正文那块的下边距要让出来，不然细线上方空一大条。 */
+.product-body:has(+ .product-foot) { padding-bottom: 4px; }
+.pmeta { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
+.pmeta-k { color: var(--dim); }
+.pmeta-v { color: var(--ink-2); }
+
 .tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .product-tags { padding: 8px 0 0; }
 .tag {
@@ -576,6 +592,18 @@ a.filter-chip { text-decoration: none; }
   z-index: 50;
 }
 .toast[data-kind="bad"] { background: var(--bad); }
+/* 提示里那个「打开它 ›」：一件事做完得给一条去路，不然人只知道成功了、不知道去哪儿看。 */
+.toast { display: flex; align-items: center; gap: 10px; }
+/* `display:flex` 会盖掉浏览器给 `[hidden]` 的 `display:none` —— 于是空提示变成一个
+   黑胶囊赖在屏幕底下。写死它。 */
+.toast[hidden] { display: none; }
+.toast-action {
+  flex: none; border: 0; background: none; cursor: pointer;
+  color: inherit; font: inherit; font-weight: 600;
+  padding: 0; text-decoration: underline; text-underline-offset: 2px;
+  opacity: 0.92;
+}
+.toast-action:hover { opacity: 1; }
 
 /* ── 代码抽屉 ────────────────────────────────────────────────────────────
    右边滑出来一整格：左边文件，右边编辑框。保存 / 发布分开，所以状态那一栏
@@ -623,7 +651,7 @@ a.filter-chip { text-decoration: none; }
 /* 左栏：两个新建按钮 + 一条表单 + 树。宽度固定，树自己滚。 */
 .ed-side {
   /* 190px 时 `mocking.md` 只剩下 `mocking…` —— 上游那棵树有三层缩进，名字比按钮重要。 */
-  flex: none; width: 260px; min-height: 0; display: flex; flex-direction: column;
+  flex: none; width: 240px; min-height: 0; display: flex; flex-direction: column;
   border-right: 1px solid var(--line); background: var(--paper);
 }
 .ed-newbar { flex: none; display: flex; gap: 4px; padding: 8px 8px 4px; }
@@ -684,24 +712,6 @@ a.filter-chip { text-decoration: none; }
 .ed-file-mark[data-tone="diff"] { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .ed-file-mark[data-tone="missing"] { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .ed-file-mark + .ed-file-size { margin-left: 0; }
-/* 「抄」：把上游的东西变成自己的。跟「取用」同一副壳，但语气不一样 ——
-   取用带溯源，抄是完全拿走，所以颜色用中性墨色，不暗示「差异」。 */
-.ed-file-mark[data-tone="copy"] {
-  color: var(--ink);
-  background: color-mix(in srgb, var(--ink) 9%, transparent);
-  cursor: pointer;
-  /* **常驻可见**，不藏起来。藏过一版（`opacity: 0` + hover 才露头），结果是主人自己
-     都找不到这个功能 —— 一个要 hover 才存在的东西，等于不存在。
-     代价是 108 行各一个「抄」字，所以压得很淡：`.55`，鼠标移上来才实。
-     不绝对定位：左栏现在 240px，`mocking.md` + 抄 + 大小一排放得下。 */
-  opacity: 0.75;
-  transition: opacity 90ms ease;
-}
-.ed-row:hover .ed-file-mark[data-tone="copy"],
-.ed-row:focus-within .ed-file-mark[data-tone="copy"] { opacity: 1; }
-.ed-file-mark[data-tone="copy"]:hover { background: color-mix(in srgb, var(--ink) 17%, transparent); }
-.ed-file-mark[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
-
 /* 抄单个文件时那行「抄到哪个技能里」—— 内联，不弹模态（弹模态会盖住你正在比的那棵树）。 */
 .ed-copy-pick {
   display: flex; align-items: center; gap: 6px;
