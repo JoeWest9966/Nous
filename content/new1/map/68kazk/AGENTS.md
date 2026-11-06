@@ -45,7 +45,8 @@ description: "本块（68kazk）是 Nous 自持技能的清单面板：一张技
   上游按「一个仓 = 一条技能」算（`skills`）。点卡还是那扇浮层，浮层里 `看正文 ›`
   是那只只读抽屉，左栏是**技能的文件树**（带 `SKILL.md` 的目录，不是整仓 ——
   `.github` / `docs` / 根 README 不进来）。浮层里那行「本机路径」是真的能 `cd` 进去的目录。
-  卡片底部是**版本**（`4ae2317 · 2026-11-06`）；`drift` 时变成 `4ae2317 → 9f2c1ab`，
+  卡片底部是**版本号**：上游的 tag，`v1.3.2` 或者 `v1.3.2+`（在 v1.3.2 之后）—— **不是 commit
+  的前七位**，那是给机器看的，只有上游一个 tag 都没有时才退回 sha；`drift` 时变成 `v1.3.2 → v1.3.2+`，
   浮层里多一个「记录这个版本」。**刷新只采集，记录是人的动作** —— 别让 refresh 顺手改 `version`。取用是全节唯一的例外：一个仓里 39 条技能
   能分别取，所以它挂在树里那条 `SKILL.md` 的行尾。左栏 = 订阅列表。
 - **`＋ 新建技能`**：只问三样 —— 名字、一句 `description`、类别，外加可空的**分组**
@@ -65,6 +66,8 @@ GET  /v1/skills/pending/diff?path=           对 HEAD 的基线（未跟踪 → 
 POST /v1/skills/category {name,category[]}   改一条技能的类别
 POST /v1/skills/categories {op,name,to?}     建 / 改名（整枝）/ 删（整枝）
 POST /v1/skills/create {name,description,category?}
+POST /v1/skills/duplicate {from,name,group?,category?,variant?}  整目录拷成新的一条，
+                                             历史不带，出来是未发布；variant 给了就标成变体
 POST /v1/skills/publish {message?}           内容闸 + 重扫 + commit + push
 POST /v1/skills/archive | restore | purge {name}
 ```
@@ -132,8 +135,13 @@ test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
     空文件夹靠 `.gitkeep` 撑着，但它在文件列表里看不见（点开头的文件本来就跳过）——
     所以「建完什么都没出现」是正常的，别去修它。
 13. **删除要 `recursive=1` 才动非空目录。** 不带时服务端 409 并说「还有 N 个东西」；
-    界面上的 × 一律带 `recursive=1`，靠手输路径那一步挡人（跟归档、彻底删除同一套骨头）。
+    界面上的 ⋯ 菜单一律带 `recursive=1`，靠手输路径那一步挡人（跟归档、彻底删除同一套骨头）。
     删的是盘上的文件，**不是**归档：git 历史就是回收站，没发布之前都捡得回来。
+13b. **复制 = 整目录拷，不是 `cp -r` 那种半截货。** `POST v1/skills/duplicate` 走的是跟
+    `create` / `adopt` 同一副骨头：点开头暂存目录 → 过闸 → rename，翻车整棵删（I7）。
+    名字三处一起改（目录 / frontmatter / `nous.json`，I3）；`upstream` / `archiveOrigin` /
+    源自己的 `variant` 三个注脚**不搬** —— 复制品的来源是隔壁那条，不是那个上游。
+    不要在前端循环 `PUT file` 去拼一份复制：拷到第 7 个文件断了就留一条半死的技能。
 14. **上游那条的「看正文」用同一扇抽屉，只读那一档靠 `#editor[data-readonly]`。**
     不是另做一块：文件树、行号、Esc 层级全复用。差异的是**收掉**写的入口
     （保存 / 发布 / 新建 / 删除 / 差异页签），不是灰着 —— 灰着是「你还没资格点」，

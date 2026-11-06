@@ -134,8 +134,58 @@ const relOf = (skills, name) => {
   return typeof hit?.path === "string" && hit.path ? hit.path : String(name);
 };
 
-/** 同上，给 `repo-tools` 那套要 `dir` 的函数用。 */
-const homeOf = (root, skills, name) => path.join(root, relOf(skills, name));
+/** 同上，给 `repo-tools` 那套要 `dir` 的函数用。
+ *
+ * **变体就靠这一行撑起来**：名册里 `tdd@strict` 那一条的 `dir` 是它自己那棵树里的目录（不在 root 底下），
+ * 所以读写一律以名册的 `dir` 为准 —— 拼 `root + path` 的话，变体的每一份文件都会摸到本体的盘上。
+ */
+const homeOf = (root, skills, name) => {
+  let roster = [];
+  try {
+    roster = skills?.list?.() ?? [];
+  } catch {
+    roster = [];
+  }
+  const hit = roster.find((skill) => skill.name === name);
+  if (typeof hit?.dir === "string" && hit.dir) return hit.dir;
+  return path.join(root, relOf(skills, name));
+};
+
+/**
+ * 变体是按 **`name` + `variant` 两个参数**走的，不是拼成 `tdd@strict` 再拆开 ——
+ * 跟扩展那边一笔不差：`repoDir()` 认的是目录名（`tdd`），`@strict` 那一半只是
+ * 「哪一棵树」。拼成一个键去解析，等于让路径那一层去理解会话键，两头都脏。
+ */
+const VARIANT_SEP = "@";
+
+/** `?variant=strict` → `"strict"`；空 / 不给 = 本体。 */
+const variantParam = (raw) => {
+  const id = String(raw ?? "").trim();
+  return id ? checkVariantId(id) : null;
+};
+
+/** `tdd@strict` → `{family:"tdd", id:"strict"}`；没有 `@` 就是本体。只给 diff 那条老路径用。 */
+const splitKey = (raw) => {
+  const text = String(raw ?? "").trim();
+  const at = text.indexOf(VARIANT_SEP);
+  return at <= 0 ? { family: text, id: null } : { family: text.slice(0, at), id: text.slice(at + 1) };
+};
+
+/**
+ * 一条技能住在哪儿：本体是 `<root>/<path>`，变体是它自己那棵树里的 `<family>/`。
+ * 名册里有就信名册（`dir` 是装载器扫出来的真相），没有就按绑定的树根拼。
+ */
+const placeOf = async (root, skills, variants, name, variant) => {
+  if (!variant) return homeOf(root, skills, name);
+  const base = await variants?.rootOf(name, variant);
+  if (!base) throw withStatus(new Error(`${name}${VARIANT_SEP}${variant} 没绑 —— 先绑一个变体`), 404);
+  const hit = (skills?.list?.() ?? []).find((skill) => skill.name === `${name}${VARIANT_SEP}${variant}`);
+  return typeof hit?.dir === "string" && hit.dir ? hit.dir : path.join(base, name);
+};
+
+/** 写完之后让内存名册跟上：变体那一条也要重新扫（键是 `name@variant`）。 */
+const reloadKey = async (skills, name, variant) =>
+  reloadRoster(skills).then(() => (variant ? (skills?.list?.() ?? []).some((skill) => skill.name === `${name}${VARIANT_SEP}${variant}`) : true));
 
 // ── frontmatter：借扩展仓那一份（spec §2.1「解析器用现成的 parseFrontmatter()」）──
 //
@@ -747,7 +797,7 @@ const purgeSkill = async (repo, root, name) => {
  * `repo` = `repo-tools.js` 的整包（`syncRepo` / `pendingState` / `listRepoFiles` …），
  * 每个函数都收 `root`。测试递同一包、换一个 `root` 就是另一个仓。
  */
-export async function handleSkills({ req, res, url, parts, root, skills, repo, data }) {
+export async function handleSkills({ req, res, url, parts, root, skills, repo, data, variants = null, reload = null }) {
   const method = req.method ?? "GET";
   const at = parts.slice(2);
   // 镜像落在块的 data/ 里（缓存，不是事实）。没有 data 的上游路由无处落盘 —— 直说，
@@ -809,8 +859,9 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
     if (at[0] === "files") {
       if (method !== "GET") return send(res, 405, { error: "文件列表只有 GET" });
       const name = checkName(url.searchParams.get("name"));
+      const variant = variantParam(url.searchParams.get("variant"));
       const files = await repo.listRepoFiles(root, name, {
-        dir: homeOf(root, skills, name),
+        dir: await placeOf(root, skills, variants, name, variant),
         kinds: null,
         maxFiles: 200,
         label: "技能",
@@ -824,7 +875,8 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       if (method !== "POST") return send(res, 405, { error: "新建文件夹只有 POST" });
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
-      const dir = homeOf(root, skills, name);
+      const variant = variantParam(body.variant);
+      const dir = await placeOf(root, skills, variants, name, variant);
       const made = await repo.serializeRepoWrite(root, () =>
         repo.mkdirRepoDir(root, { name, rel: body.path, dir, label: "技能" }),
       );
@@ -834,9 +886,10 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
     if (at[0] === "file") {
       if (method === "GET") {
         const name = checkName(url.searchParams.get("name"));
+        const variant = variantParam(url.searchParams.get("variant"));
         const rel = String(url.searchParams.get("path") ?? "");
         const file = await repo.readRepoFile(root, name, rel, {
-          dir: homeOf(root, skills, name),
+          dir: await placeOf(root, skills, variants, name, variant),
           allowAny: true,
           label: "技能",
         });
@@ -846,23 +899,27 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         // 删文件 / 删目录（`.trash` 那套在技能仓里没必要 —— git 历史就是回收站）。
         // 目录里还有东西时不带 `recursive=1` 就是 409：一下点掉一堆稿子不是任何人想要的。
         const name = checkName(url.searchParams.get("name"));
+        const variant = variantParam(url.searchParams.get("variant"));
         const rel = String(url.searchParams.get("path") ?? "");
         const recursive = url.searchParams.get("recursive") === "1";
+        const dir = await placeOf(root, skills, variants, name, variant);
         const gone = await repo.serializeRepoWrite(root, () =>
           repo.deleteRepoPath(root, {
             name,
             rel,
-            dir: homeOf(root, skills, name),
+            dir,
             label: "技能",
             recursive,
           }),
         );
-        await reloadRoster(skills);
+        await reloadKey(skills, name, variant);
         return send(res, 200, gone);
       }
       if (method !== "PUT") return send(res, 405, { error: "文件只有 GET / PUT / DELETE" });
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
+      const variant = variantParam(body.variant);
+      const dir = await placeOf(root, skills, variants, name, variant);
       const saved = await repo.serializeRepoWrite(root, () =>
         repo.writeRepoFile(root, {
           name,
@@ -870,7 +927,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           text: body.text,
           base: body.base,
           // 路径可以指向一个还不存在的文件 = 新建（中间的目录一起造出来）。
-          dir: homeOf(root, skills, name),
+          dir,
           allowAny: true,
           // 技能里的闸是 frontmatter（publish 时才拦），不是 `node --check`。
           checkCode: false,
@@ -878,8 +935,8 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           label: "技能",
         }),
       );
-      await reloadRoster(skills);
-      return send(res, 200, { etag: saved.etag, path: saved.path, created: !body.base });
+      await reloadKey(skills, name, variant);
+      return send(res, 200, { etag: saved.etag, path: saved.path, created: !body.base, variant });
     }
 
     if (at[0] === "create") {
@@ -914,9 +971,92 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       });
     }
 
+    // ── 变体（照搬扩展那套：`本名@id` + 本机绑定 + 自己的分支） ────────────────
+    //
+    // 变体**不是复制**：内容在那条分支上，这里只管三件事 —— 这台绑了谁、绑一个、解一个。
+    // 真正的装载靠 server.js 重建 skills service（`reload`），不然页面说有、会话里没有。
+    if (at[0] === "variant") {
+      if (!variants) throw withStatus(new Error("这个进程没有变体层（data/ 不可写？）"), 400);
+
+      if (method === "GET") {
+        const family = checkName(url.searchParams.get("name"));
+        const bound = (await variants.list()).filter((entry) => entry.family === family);
+        const roster = skills.list() ?? [];
+        return send(res, 200, {
+          name: family,
+          // 绑了哪些 + 每条现在装得怎么样（failed 的会把原因带上来，面板上就是红卡）。
+          variants: bound.map((entry) => ({
+            id: entry.id,
+            key: `${family}${VARIANT_SEP}${entry.id}`,
+            root: entry.root,
+            branch: entry.branch,
+            exists: entry.exists,
+            skill: roster.find((skill) => skill.name === `${family}${VARIANT_SEP}${entry.id}`) ?? null,
+          })),
+        });
+      }
+
+      if (method !== "POST") return send(res, 405, { error: "变体只有 GET / POST" });
+      const body = await parseJsonBody(req);
+      const family = checkName(body.name);
+      const op = String(body.op ?? "bind").trim();
+
+      if (op === "bind") {
+        const id = checkVariantId(body.id);
+        const made = await variants.bind({ family, id, branch: body.branch });
+        // 绑完必须重造 service：`variants` 是 createSkills 的构造参数，不重造就装不进来。
+        if (reload) await reload();
+        return send(res, 200, {
+          ok: true,
+          op,
+          key: `${family}${VARIANT_SEP}${id}`,
+          root: made.root,
+          branch: made.branch,
+          skills: skills.list(),
+        });
+      }
+
+      if (op === "unbind") {
+        const id = checkVariantId(body.id);
+        const gone = await variants.unbind({ family, id });
+        if (reload) await reload();
+        return send(res, 200, {
+          ok: true,
+          op,
+          key: `${family}${VARIANT_SEP}${id}`,
+          // 解绑只摘记录：树和分支都还在（页面上得说清楚，不然人会以为字被删了）。
+          root: gone.root,
+          branch: gone.branch,
+          skills: skills.list(),
+        });
+      }
+
+      throw withStatus(new Error(`变体没有「${op}」这个动作（bind / unbind）`), 400);
+    }
+
     if (at[0] === "publish") {
       if (method !== "POST") return send(res, 405, { error: "发布只有 POST" });
       const body = await parseJsonBody(req);
+      // `variant` 给了 = 发**变体那条分支**：在它自己的树上 commit + push，主干一个字节不碰。
+      // 不给就是原来的「发整个技能仓」。
+      const variant = variantParam(body.variant);
+      if (variant) {
+        if (!variants) throw withStatus(new Error("这个进程没有变体层"), 400);
+        const family = checkName(body.name);
+        const out = await variants.publish({
+          family,
+          id: variant,
+          message: body.message,
+        });
+        return send(res, 200, {
+          ok: out.pushed !== false,
+          committed: Boolean(out.committed),
+          pushed: out.pushed === true,
+          branch: out.branch,
+          changed: out.changed ?? [],
+          ...(out.pushError ? { error: String(out.pushError).slice(0, 400) } : {}),
+        });
+      }
       const result = await repo.serializeRepoWrite(root, async () => {
         const snapshot = await snapshotIndex(root);
         try {
@@ -957,9 +1097,13 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
     if (at[0] === "pending") {
       if (method !== "GET") return send(res, 405, { error: "待同步清单只有 GET" });
       if (at[1] === "diff") {
-        const diff = await repo.pendingFileDiff(root, url.searchParams.get("path"));
+        // 变体的基线在**它那棵树**的 HEAD 上：拿主干的 root 去 diff，会永远报「没有这个文件」。
+        const rawPath = String(url.searchParams.get("path") ?? "");
+        const variant = variantParam(url.searchParams.get("variant"));
+        const gitRoot = variant ? (await variants?.rootOf(splitKey(rawPath.split("/")[0]).family, variant)) ?? root : root;
+        const diff = await repo.pendingFileDiff(gitRoot, rawPath);
         // `before: null` = HEAD 里从来没有过这个文件（未发布）；空串是「有，但内容是空的」。
-        const tracked = await repo.trackedFile(root, diff.path);
+        const tracked = await repo.trackedFile(gitRoot, diff.path);
         return send(res, 200, { path: diff.path, before: tracked ? diff.base : null, after: diff.missing ? null : diff.text });
       }
       if (at[1] === "commit") {
@@ -1011,10 +1155,13 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           const ready = await upstream.hasMirror({ data: mirrors(), source });
           // 镜像现在停在哪个 commit（采集到的），跟 `version`（我们认的）分开摆。
           const head = ready ? await upstream.resolveHead({ data: mirrors(), source, run: repo.run }) : null;
+          // 采集到的那一版在人眼里叫什么（`v1.3.2` / `v1.3.2+`）。读镜像里缓存的 tag 表，不联网。
+          const headVersion = head ? await upstream.describeVersion({ data: mirrors(), source, commit: head }) : {};
           reported.push({
             ...source,
             mirror: ready ? "ready" : "missing",
             head,
+            headVersion,
             // 采集到的跟认的不一样 = 上游动了。前端只摆这个布尔，不自己比。
             drift: Boolean(head && source.version?.commit && head !== source.version.commit),
             // 本机那个目录：只装了技能（sparse checkout），复制路径给的就是它。

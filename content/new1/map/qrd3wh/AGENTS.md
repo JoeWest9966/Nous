@@ -295,6 +295,7 @@ GET  /v1/skills/sources           订阅了哪些上游（sources.json 是内容
 POST /v1/skills/sources           {sources} 整份替换，不提交
 GET  /v1/skills/upstream          {sources:[…mirror,head,drift,dir,bytes], entries:[…], errors[]}。**不联网**：镜像不在就报 missing
 POST /v1/skills/upstream/pin      {source,commit?} → 把「认的版本」钉到镜像 HEAD。**唯一改 version 的入口**
+                                  版本号优先用上游 tag（v1.3.2 或 v1.3.2+），tag 表缓存在镜像的 .git/nous-tags.json
 POST /v1/skills/upstream/refresh  {name?} 唯一联网动作（clone / fetch）
 GET  /v1/skills/upstream/file     ?source=&path=&file= → {text, size}：从镜像 cat-file 读，**只读**
 GET  /v1/skills/upstream/files    ?source=&path= → {files:[{path,size,state}], adopted}；state 是跟本地比

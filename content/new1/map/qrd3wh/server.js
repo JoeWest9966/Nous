@@ -75,6 +75,8 @@ const { createPrompts, templateOf, PROMPT_PREFIX } = await import(`${EXTEND}/pro
 const NAMEPLATE_PREFIXES = [SKILL_PREFIX, PROMPT_PREFIX];
 // 回放提示词增量 —— 自己在 `prompt-log.js`，纯读，能单验。
 import { replayPrompt } from "./prompt-log.js";
+// 技能变体：本机绑定 + worktree + 变体分支发布（跟扩展那套同一个形状）。
+import { createVariantStore } from "./skills-variants.js";
 // 仓库工具（参数化过 root 的那套）：本文件用它管扩展仓，`skills-api.js` 用它管技能仓。
 // 抽成独立模块是因为这个文件有顶层 await、会起服务 —— 测试永远不能 import 它。
 // 这里既要把常用的一串名字拆出来（本文件到处在用），又要留着整包递进 handleSkills。
@@ -1373,7 +1375,30 @@ const serviceProxy = () => {
 };
 const skillsService = serviceProxy();
 const skills = skillsService.proxy;
-skillsService.holder.current = await createSkills({ dir: SKILLS_ROOT, registry, api });
+
+// 技能变体：绑定表在 data/ 里，树在仓的隔壁。装载器要的是 `[{family, id, root}]`，
+// 每次重建 service 都从绑定表现场读一遍 —— 绑一条就多一个 `本名@id`。
+const skillVariants = createVariantStore({ dataDir: DATA, skillsRoot: SKILLS_ROOT });
+
+/** 重新造一遍 skills service（绑 / 解绑之后要让新变体进名册，不然页面说有、会话里没有）。 */
+const rebuildSkills = async () => {
+  skillsService.holder.current = await createSkills({
+    dir: SKILLS_ROOT,
+    registry,
+    api,
+    variants: await skillVariants.loadable(),
+  });
+  registry.install(skillsService.holder.current.extension);
+  await skillsService.holder.current.load();
+  return skillsService.holder.current;
+};
+
+skillsService.holder.current = await createSkills({
+  dir: SKILLS_ROOT,
+  registry,
+  api,
+  variants: await skillVariants.loadable(),
+});
 const { skillExtension } = skills;
 // 提示词模板同一套：私库在 /opt/Nous-prompts，每条模板一个 `prompt:<名>` 空白名牌。
 // **不同之处**：正文整段进系统提示词，所以选择是单值（`templateOf` = 第一条），不是集合。
@@ -1432,7 +1457,12 @@ const installCore = async (version) => {
   registry.install(createNous(api));
   // skills 与 prompts 都换整个 service 对象（路由里的闭包指着代理，不指着变量）。
   const skillsModule = await import(`${EXTEND}/skills/index.js?v=${version}`);
-  skillsService.holder.current = await skillsModule.createSkills({ dir: SKILLS_ROOT, registry, api });
+  skillsService.holder.current = await skillsModule.createSkills({
+    dir: SKILLS_ROOT,
+    registry,
+    api,
+    variants: await skillVariants.loadable(),
+  });
   registry.install(skillsService.holder.current.extension);
   await skillsService.holder.current.load();
   void skillsService.holder.current.backfill?.();
@@ -1754,7 +1784,19 @@ const route = async (req, res, url) => {
   // 仓库里有什么就是装着什么，没有「装」这个动作，也没有上游编目要刷新。
   if (parts[0] === "v1" && parts[1] === "skills") {
     try {
-      return await handleSkills({ req, res, url, parts, root: SKILLS_ROOT, skills, repo, data: DATA });
+      return await handleSkills({
+        req,
+        res,
+        url,
+        parts,
+        root: SKILLS_ROOT,
+        skills,
+        repo,
+        data: DATA,
+        // 变体那一层：绑定表 + worktree + 变体分支发布；改完让上层重建名册。
+        variants: skillVariants,
+        reload: rebuildSkills,
+      });
     } catch (error) {
       // handleSkills 自己写响应；走到这儿说明是它没接住的意外（读 body 炸了之类）。
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });

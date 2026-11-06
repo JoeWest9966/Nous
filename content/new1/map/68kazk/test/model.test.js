@@ -24,6 +24,7 @@ import {
   stateFilterOf,
   suggestedAdoptName,
   upstreamSummary,
+  versionLine,
   versionText,
 } from "../public/model.js";
 
@@ -290,6 +291,15 @@ test("dirPaths：所有文件夹（打开抽屉时默认全展开）", () => {
 });
 
 
+test("versionText：上游的 tag 才是版本号，sha 只当最后兜底", () => {
+  // 人看的是 `v1.3.2`，不是 `4ae2317`。
+  assert.equal(versionText({ commit: "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d", tag: "v1.3.2" }), "v1.3.2");
+  // 提交在 tag 之后：`v1.3.2+`（念作「v1.3.2 之后的版本」）
+  assert.equal(versionText({ commit: "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d", behind: "v1.3.2" }), "v1.3.2+");
+  // 一个 tag 都没有的仓才退回机器码
+  assert.equal(versionText({ commit: "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d", at: "2026-11-06T03:41:29.425Z" }), "4ae2317 · 2026-11-06");
+});
+
 test("versionText：短 sha + 那天；没有时间就只给 sha", () => {
   assert.equal(versionText({ commit: "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d", at: "2026-11-06T03:41:29.425Z" }), "4ae2317 · 2026-11-06");
   assert.equal(versionText({ commit: "4ae2317ddb22b046e26455e4f9c9b3aaaf62212d" }), "4ae2317");
@@ -297,4 +307,10 @@ test("versionText：短 sha + 那天；没有时间就只给 sha", () => {
   // 没记录版本 = 空串，调用方自己决定写「还没记录」（别在这儿编一个占位）
   assert.equal(versionText(null), "");
   assert.equal(versionText({}), "");
+});
+
+test("versionLine：版本号后面挂上认下它的那天", () => {
+  assert.equal(versionLine({ commit: "4ae2317", behind: "v1.3.2", at: "2026-11-06T03:56:18.334Z" }), "v1.3.2+ · 2026-11-06");
+  assert.equal(versionLine({ commit: "4ae2317", tag: "v1.3.2" }), "v1.3.2");
+  assert.equal(versionLine(null), "");
 });

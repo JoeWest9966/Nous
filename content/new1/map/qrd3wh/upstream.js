@@ -74,7 +74,11 @@ const normalizeVersion = (raw) => {
     throw withStatus(new Error(`版本要是一个 commit sha（7-40 位十六进制）：${commit}`), 400);
   }
   const at = String(typeof raw === "string" ? "" : raw.at ?? "").trim();
-  return { commit, at: at || new Date().toISOString() };
+  // 人看的那层：`v1.3.2`（正好打在 tag 上）或者 `behind`（在 v1.3.2 之后还走了几个提交）。
+  // 都没有才退回 sha —— 前端会优先显示这两个。
+  const tag = String(typeof raw === "string" ? "" : raw.tag ?? "").trim() || null;
+  const behind = String(typeof raw === "string" ? "" : raw.behind ?? "").trim() || null;
+  return { commit, at: at || new Date().toISOString(), ...(tag ? { tag } : {}), ...(behind ? { behind } : {}) };
 };
 
 const normalizePrefix = (raw) => {
@@ -168,12 +172,85 @@ export const writeSources = async (root, list) => {
  */
 export const pinVersion = async ({ root, data, source, run, commit = null, at = null }) => {
   const pinned = (commit ?? (await resolveHead({ data, source, run }))).trim().toLowerCase();
+  const named = await describeVersion({ data, source, commit: pinned });
   const { sources } = await readSources(root);
   const idx = sources.findIndex((item) => item.name === source.name);
   if (idx === -1) throw withStatus(new Error(`没有订阅「${source.name}」这个上游`), 400);
-  sources[idx] = { ...sources[idx], version: normalizeVersion({ commit: pinned, at: at ?? new Date().toISOString() }) };
+  sources[idx] = {
+    ...sources[idx],
+    version: normalizeVersion({ commit: pinned, at: at ?? new Date().toISOString(), ...named }),
+  };
   await writeSources(root, sources);
   return sources[idx].version;
+};
+
+// ── 版本号 ──────────────────────────────────────────────────────────────────
+//
+// `4ae2317` 是给机器看的。人看的是**上游自己打的 tag** —— 上游有 `v1.3.2`，
+// 我们就说 `v1.3.2`，而不是把 commit sha 截七位糊在卡片上。
+//
+// 拿法：`git ls-remote --tags <url>`（联网，只在 clone/fetch 那一刻做），
+// 结果缓存在镜像的 `.git/nous-tags.json` —— 打开面板的时候不联网，读缓存。
+
+const TAGS_FILE = "nous-tags.json";
+const tagsPath = (dir) => path.join(dir, ".git", TAGS_FILE);
+
+/** 拉一遍远端 tag 表（`name → commit`），写进镜像的缓存。只在联网动作里调。 */
+export const refreshTags = async ({ dir, source, run }) => {
+  const out = (
+    await run("git", ["ls-remote", "--tags", source.url], { timeout: 60_000, maxBuffer: 8 << 20 })
+  ).stdout;
+  const map = {};
+  for (const line of out.split("\n")) {
+    const [sha, ref] = line.trim().split(/\s+/);
+    if (!sha || !ref || !ref.startsWith("refs/tags/")) continue;
+    // `^{}` 是附注 tag 指向的那个对象，名字已经收过了（先不带，别覆盖成 peeled）。
+    if (ref.endsWith("^{}")) continue;
+    map[ref.slice("refs/tags/".length)] = sha;
+  }
+  await writeFile(tagsPath(dir), JSON.stringify(map, null, 2) + "\n", "utf8").catch(() => {});
+  return map;
+};
+
+const tagsOf = async ({ data, source }) => {
+  try {
+    return JSON.parse(await readFile(tagsPath(mirrorPath(data, source.name)), "utf8"));
+  } catch {
+    return {};
+  }
+};
+
+/** 挑「最近发布的那个 tag」：优先 `v1.2.3` 这种语义化的，版本号比大小，别比字符串。 */
+const newestTag = (tags) => {
+  const names = Object.keys(tags);
+  const semver = names.filter((name) => /^v?\d+\.\d+\.\d+/.test(name));
+  const pool = semver.length ? semver : names;
+  const parts = (name) => name.replace(/^v/, "").split(/[.\-+]/).map((n) => Number.parseInt(n, 10) || 0);
+  return (
+    pool.sort((a, b) => {
+      const pa = parts(a);
+      const pb = parts(b);
+      for (let i = 0; i < 3; i += 1) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+      return a.localeCompare(b);
+    }).at(-1) ?? null
+  );
+};
+
+/**
+ * 一个 commit 在人眼里的名字。
+ *
+ * - 正好打在 tag 上 → `{ tag: "v1.3.2" }`
+ * - 在 tag 之后（上游天天提交，tag 一周一次）→ `{ behind: "v1.3.2" }`，前端写成
+ *   `v1.3.2+`（「v1.3.2 之后的版本」）
+ * - 一个 tag 都没有 → `{}`，前端才退回 commit sha（那种仓确实没有版本号可显示）
+ */
+export const describeVersion = async ({ data, source, commit }) => {
+  const tags = await tagsOf({ data, source });
+  const want = String(commit ?? "").trim().toLowerCase();
+  const exact = Object.keys(tags).find((name) => tags[name] === want);
+  if (exact) return { tag: exact };
+  const behind = newestTag(tags);
+  return behind ? { behind } : {};
 };
 
 // ── 镜像（缓存，不是事实）────────────────────────────────────────────────────
@@ -252,6 +329,8 @@ export const ensureMirror = async ({ data, source, run }) => {
       { timeout: 180_000, maxBuffer: 16 << 20 },
     );
     await syncWorktree({ dir, source, run });
+    // tag 表是「版本号」的来源，clone 时顺手拉一次（反正已经联网了）。
+    await refreshTags({ dir, source, run }).catch(() => {});
   } catch (error) {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
     throw withStatus(new Error(`${source.name}: clone 失败 —— ${errorLine(error)}`), 400);
@@ -274,6 +353,7 @@ export const fetchMirror = async ({ data, source, run }) => {
   } catch (error) {
     throw withStatus(new Error(`${source.name}: fetch 失败 —— ${errorLine(error)}`), 400);
   }
+  await refreshTags({ dir, source, run }).catch(() => {});
   await syncWorktree({ dir, source, run });
   // 上游删掉的技能，工作区里也得跟着消失（`reset --hard` 只按旧 sparse 规则收拾过一遍）。
   await git(run, dir, ["clean", "-fdq"]).catch(() => {});

@@ -30,6 +30,7 @@ import {
   repoNameFromUrl,
   suggestedAdoptName,
   upstreamSummary,
+  versionLine,
   versionText,
 } from "./model.js";
 import { CONFLICT_MESSAGE, createApi, createCategoryDebounce, publishWithRefresh } from "./api.js";
@@ -578,7 +579,7 @@ function productCard(card) {
   // 卡上唯一可见的菜单入口：桌面 hover 出现、触屏常驻。
   const menuBtn = el("button", "product-menu", "⋯");
   menuBtn.type = "button";
-  menuBtn.title = `${skill.name} 的菜单：正文 / 类别 / 归档`;
+  menuBtn.title = `${skill.name} 的菜单：正文 / 类别 / 复制 / 归档`;
   menuBtn.setAttribute("aria-label", `${skill.name} 的菜单`);
   menuBtn.onclick = (event) => {
     event.stopPropagation();
@@ -1002,6 +1003,12 @@ function renderDetail() {
   body.title = `看 / 改 ${skill.name}/SKILL.md`;
   body.onclick = () => void openEditor(skill);
   acts.append(body);
+  // 复制也开在这里：卡上那个 `⋯` 是快捷入口，详情里得有一个看得见的。
+  const dup = el("button", "btn btn-small", "复制成新技能");
+  dup.type = "button";
+  dup.title = `整目录拷成另一条技能（POST v1/skills/duplicate）—— 历史不带，出来是未发布`;
+  dup.onclick = () => openDuplicate(skill.name);
+  acts.append(dup);
   host.append(acts);
 
   // ── 真话说在最前面：装载失败 ──────────────────────────────────────────
@@ -1440,12 +1447,16 @@ function upstreamDetailBody(source) {
   wrap.append(detailRow("技能", `${mine.total} 条${mine.todo ? ` · ${mine.todo} 条待看` : ""}`));
   // 两个版本并排摆：左边是**我们认的**（sources.json 里那份，进版本库），
   // 右边是**采集到的**（镜像现在停在哪）。不一样就是上游动了，这是唯一诚实的说法。
-  const pinned = detailRow("版本", versionText(source.version) || "还没记录",
-    "我们认的那一版：记在 sources.json 里，进版本库。只有「记录这个版本」能改它。");
+  const pinned = detailRow("版本", versionLine(source.version) || "还没记录",
+    "我们认的那一版：记在 sources.json 里，进版本库。只有「记录这个版本」能改它。`+` 表示在最近一个 tag 之后（上游天天提交，tag 一周一次）。");
   pinned.querySelector(".detail-row-v")?.classList.add("mono");
   wrap.append(pinned);
   if (source.head) {
-    const now = detailRow("上游现在", source.head.slice(0, 7), "镜像现在停在哪个 commit（上次刷新拉到的）");
+    const now = detailRow(
+      "上游现在",
+      versionText(source.headVersion) || source.head.slice(0, 7),
+      "镜像现在停在哪一版（上次刷新拉到的）",
+    );
     now.querySelector(".detail-row-v")?.classList.add("mono");
     if (source.drift) {
       now.querySelector(".detail-row-v")?.classList.add("up-drift");
@@ -1679,7 +1690,7 @@ function upstreamRepoCard(source) {
   card.setAttribute("role", "button");
   card.setAttribute(
     "aria-label",
-    `${source.name} · 上游 · ${mine.total} 条技能${source.version?.commit ? ` · 版本 ${source.version.commit.slice(0, 7)}` : ""}`,
+    `${source.name} · 上游 · ${mine.total} 条技能${source.version?.commit ? ` · 版本 ${versionText(source.version)}` : ""}`,
   );
   card.dataset.source = source.name;
   card.title = source.url;
@@ -1738,9 +1749,9 @@ function upstreamRepoCard(source) {
   // 「我订阅的是哪一版」。漂移时后面挂个箭头指上游现在停在哪。
   const sum = el("p", "product-sum mono");
   if (source.version?.commit) {
-    sum.append(el("span", "", source.version.commit.slice(0, 7)));
+    sum.append(el("span", "", versionText(source.version)));
     if (source.drift && source.head) {
-      const drift = el("span", "up-drift", ` → ${source.head.slice(0, 7)}`);
+      const drift = el("span", "up-drift", ` → ${versionText(source.headVersion) || source.head.slice(0, 7)}`);
       drift.title = "上游往前走了，我们认的还是左边这个 —— 浮层里可以记录新版本";
       sum.append(drift);
     }

@@ -328,6 +328,13 @@ export function repoNameFromUrl(url) {
  * 时间只到天 —— 版本是按天说的，秒级精度在这儿只会挤掉别的字。
  */
 export function versionText(version) {
+  // 上游自己打的 tag 才是「版本号」：`v1.3.2`。
+  const tag = String(version?.tag ?? "").trim();
+  if (tag) return tag;
+  // 提交在 tag 之后（上游天天提交、tag 一周一次）→ `v1.3.2+`，念作「v1.3.2 之后的版本」。
+  const behind = String(version?.behind ?? "").trim();
+  if (behind) return `${behind}+`;
+  // 一个 tag 都没有的仓，才退回机器码 —— 那时候确实没有别的东西可显示。
   const commit = String(version?.commit ?? "").trim();
   if (!commit) return "";
   const short = commit.slice(0, 7);
@@ -336,4 +343,14 @@ export function versionText(version) {
   const day = new Date(at);
   if (Number.isNaN(day.getTime())) return short;
   return `${short} · ${day.toISOString().slice(0, 10)}`;
+}
+
+/** 浮层里那行：`v1.3.2+ · 2026-11-06` —— 版本号 + 认下它的那天。 */
+export function versionLine(version) {
+  const text = versionText(version);
+  if (!text) return "";
+  const at = String(version?.at ?? "").trim();
+  const day = at ? new Date(at) : null;
+  if (!day || Number.isNaN(day.getTime())) return text;
+  return `${text} · ${day.toISOString().slice(0, 10)}`;
 }

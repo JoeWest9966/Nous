@@ -264,13 +264,14 @@ export const makeRes = () => {
 };
 
 /** 一次完整的 `handleSkills` 调用；返回 { status, body }。 */
-export const call = async (handleSkills, { method = "GET", path: target, body, root, skills, repo, data }) => {
+export const call = async (handleSkills, { method = "GET", path: target, body, root, skills, repo, data, ...rest }) => {
   const url = new URL(`http://block.local${target}`);
   const parts = url.pathname.split("/").filter(Boolean);
   const req = makeReq(method, body);
   const { res, out } = makeRes();
   // `data` 只有上游镜像用得上（缓存落在块的 data/ 里）；不传就等于这台没有 data 目录。
-  await handleSkills({ req, res, url, parts, root, skills, repo, data });
+  // `...rest` 是变体那层（`variants` / `reload`）—— 新参数不该每加一个就改一次夹具。
+  await handleSkills({ req, res, url, parts, root, skills, repo, data, ...rest });
   return { status: out.status, body: out.body, raw: out.text };
 };
 

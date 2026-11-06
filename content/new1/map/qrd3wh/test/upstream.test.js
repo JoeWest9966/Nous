@@ -519,3 +519,51 @@ test("sources.json 里的 version 只认 sha，别的一律 400", async () => {
     await teardown(ctx.root, ctx.data);
   }
 });
+
+// ── 版本号（人看的）────────────────────────────────────────────────────────
+//
+// `4ae2317` 是给机器看的。上游自己打了 `v1.3.2`，就该说 `v1.3.2`。
+
+test("版本号用上游的 tag：正好打在 tag 上是 v1.3.2，在它之后是 v1.3.2+", async () => {
+  const upstreamRepo = await makeRepo({
+    files: { "skills/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n` },
+  });
+  await run("git", ["-C", upstreamRepo, "tag", "v1.0.0"]);
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const atTag = await ctx.call("POST", "/v1/skills/upstream/pin", { source: "matt" });
+    assert.equal(atTag.body.version.tag, "v1.0.0");
+    assert.equal(atTag.body.version.behind, undefined);
+
+    // 上游往前走了几步，还没打新 tag
+    await writeFile(path.join(upstreamRepo, "skills/x/extra.md"), "新文件\n");
+    await commitAll(upstreamRepo, "上游又加了一个文件");
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const ahead = await ctx.call("POST", "/v1/skills/upstream/pin", { source: "matt" });
+    assert.equal(ahead.body.version.behind, "v1.0.0", "在 v1.0.0 之后 —— 前端写成 v1.0.0+");
+    assert.equal(ahead.body.version.tag, undefined);
+
+    // 采集到的那一版也给人类版本号
+    const list = await ctx.call("GET", "/v1/skills/upstream");
+    assert.equal(list.body.sources[0].headVersion.behind, "v1.0.0");
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("一个 tag 都没有的仓：不编版本号，留给前端退回 sha", async () => {
+  const upstreamRepo = await makeRepo({
+    files: { "skills/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n` },
+  });
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("POST", "/v1/skills/upstream/pin", { source: "matt" });
+    assert.equal(out.body.version.tag, undefined);
+    assert.equal(out.body.version.behind, undefined);
+    assert.match(out.body.version.commit, /^[0-9a-f]{40}$/);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
