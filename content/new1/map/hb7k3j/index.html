@@ -169,6 +169,32 @@
   .skill-desc { color:var(--muted); font-size:clamp(10px,1.35vmin,12.5px); line-height:1.45; margin-top:.15em;
                 display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .skill-meta { display:block; color:var(--faint); font-family:var(--mono); font-size:clamp(9px,1.2vmin,11px); margin-top:.25em; }
+  /* 类别横条：一百个扩展平铺就是一锅粥，类别是词表里现成的索引 —— 给它一个入口。
+     横条而不是左侧树：弹窗是「回答一个问题」的地方，再塞一列导航等于在里面再开一层；
+     手机 390px 上一列树也放不下。横着滚，一行到顶。 */
+  /* 「全部」和「只看已选」钉在两头，中间那串类别才滚 —— 十几个类别时，
+     把这两个也滚出去，等于把唯一的退路藏起来。 */
+  .cats { display:flex; gap:.4em; align-items:center; flex:none; min-width:0;
+          padding:1vmin 1.2vmin .2vmin; }
+  .cats-scroll { display:flex; gap:.4em; align-items:center; flex:1; min-width:0;
+                 overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:none; }
+  .cats-scroll::-webkit-scrollbar { display:none; }
+  /* 边缘渐隐只在**那边还有东西**的时候才盖上去：静止时也淡，看着像渲染坏了。 */
+  .cats-scroll[data-fade="r"] { mask-image:linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%); }
+  .cats-scroll[data-fade="l"] { mask-image:linear-gradient(to right, transparent 0, #000 16px); }
+  .cats-scroll[data-fade="lr"] { mask-image:linear-gradient(to right, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%); }
+  .chip { flex:none; display:inline-flex; align-items:center; gap:.45em; padding:.35em .75em;
+          border:1px solid var(--border); border-radius:999px; background:none; cursor:pointer;
+          color:var(--muted); font-family:var(--mono); font-size:clamp(9.5px,1.25vmin,11.5px);
+          transition:color .12s ease, border-color .12s ease, background .12s ease; }
+  .chip:hover { color:var(--fg); border-color:var(--faint); }
+  .chip:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  .chip[aria-pressed="true"] { color:var(--fg); border-color:var(--accent);
+                               background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .chip .n { color:var(--faint); }
+  .chip[aria-pressed="true"] .n { color:var(--accent); }
+  /* 这一类里有东西被勾上 —— 一百个扩展里，「我在哪几档里选过东西」得看得见。 */
+  .chip .dot { width:.42em; height:.42em; border-radius:50%; background:var(--accent); }
   /* 变体行：缩进 + 一根细引线，读作「这一族底下的另一个注册名」，不是另一条扩展。
      一族只能选一个，所以方框画成圆的 —— 形状本身就在说 radio。 */
   .skill-row.variant-row { padding-left:2.4em; position:relative; }
@@ -318,6 +344,11 @@
       <b>上下文 · 扩展</b>
       <input type="text" id="eq" placeholder="筛选已装的…" autocomplete="off">
     </div>
+    <div class="cats" id="extCats">
+      <button class="chip" id="extCatAll" type="button" data-cat=""></button>
+      <div class="cats-scroll" id="extCatScroll"></div>
+      <button class="chip" id="extCatPicked" type="button" data-only="1"></button>
+    </div>
     <div class="skills" id="extList"></div>
     <div class="dfoot skillfoot">
       <span id="extHint">—</span>
@@ -429,6 +460,9 @@ const openExt = (from) => {
   requestAnimationFrame(() => scrim.classList.add("on"));
   $("eq").value = "";
   $("eq").oninput = renderExtList;
+  // 每次打开都回「全部」：藏着的筛选就是「我的扩展怎么不见了」的来源。
+  extCategory = null;
+  extOnlyPicked = false;
   renderExtList();
   ($("extList").querySelector(".skill-row") ?? $("extDone")).focus();
 };
@@ -515,6 +549,55 @@ const inCategory = (ext, wanted) => {
     const got = String(label ?? "").trim().toLowerCase();
     return got === want || got.startsWith(`${want}/`);
   });
+};
+
+/**
+ * 类别筛选：`null` = 全部。**类别是视图，不是选区** —— 切类别不动 `pickedExtensions`，
+ * 换句话说你筛选的时候勾的东西一个都不会掉。
+ */
+let extCategory = null;
+/** 没类别的那些（`123` 这种）。不能也拿 `null` 当标签 —— `null` 已经是「全部」了。 */
+const UNCATEGORIZED = "\u0000未分类";
+/** 只看已选：一百个扩展里最常见的动作其实是「我刚才勾了啥 / 取消一个」。 */
+let extOnlyPicked = false;
+
+/** 一条扩展挂的类别（数组，可能挂好几个）。 */
+const catsOf = (fam) => (fam.ext.category ?? []).map((c) => String(c ?? "").trim()).filter(Boolean);
+/** 主归属 = 第一个类别。多类别的扩展在「全部」视图里只出现一次 —— 重复行会让同一个扩展有两个勾选框。 */
+const primaryCategory = (fam) => catsOf(fam)[0] ?? UNCATEGORIZED;
+/** 显示用标签：`Basics/234` 读作 `Basics › 234`。 */
+const categoryLabel = (label) => (label === UNCATEGORIZED ? "未分类" : label.replace(/\//g, " › "));
+/** 一族里有没有被选中的名字。 */
+const famPicked = (fam) => [...pickedExtensions].some((name) => familyOf(name) === fam.name);
+/** 这一族落在某个类别里吗。 */
+const famInCategory = (fam, label) =>
+  label === UNCATEGORIZED ? !catsOf(fam).length : inCategory(fam.ext, label);
+
+/**
+ * 类别横条要显示哪些标签、各多少个。顺序：`Basics` 在前，其余按名字（父类别天然排在
+ * `Basics/234` 这种子类别前面），未分类垫底。
+ */
+const categoryChips = () => {
+  const labels = new Set();
+  for (const fam of extFamilies) for (const c of catsOf(fam)) labels.add(c);
+  const sorted = [...labels].sort((a, b) => {
+    const rank = (x) => (x.toLowerCase() === DEFAULT_CATEGORY.toLowerCase() ? 0 : 1);
+    return rank(a) - rank(b) || a.localeCompare(b);
+  });
+  const chips = sorted.map((label) => ({
+    label,
+    // 计数按**看到的**算：点 `Basics` 连 `Basics/234` 底下的一起显示，那就得一起数。
+    count: extFamilies.filter((fam) => famInCategory(fam, label)).length,
+    picked: extFamilies.some((fam) => famInCategory(fam, label) && famPicked(fam)),
+  }));
+  if (extFamilies.some((fam) => !catsOf(fam).length)) {
+    chips.push({
+      label: UNCATEGORIZED,
+      count: extFamilies.filter((fam) => !catsOf(fam).length).length,
+      picked: extFamilies.some((fam) => !catsOf(fam).length && famPicked(fam)),
+    });
+  }
+  return chips;
 };
 
 /** 名字属于哪一族：`123@dev` → `123`。 */
@@ -914,35 +997,113 @@ const extRow = ({ name, desc, meta, on, off, variant }) => (
   + `</span></button>`
 );
 
+/** 一行：`label` + 计数 +（这一档里有东西被勾上时）一个点。 */
+// 未分类不能用 `data-cat` 送：`UNCATEGORIZED` 带的是 NUL 哨兵，HTML 解析会把 NUL 换成
+// U+FFFD，取回来就不等于原值了（踩过：点「未分类」得到一张空清单）。
+const chipHtml = (label, count, pressed, { picked = false, cls = "" } = {}) => (
+  `<button class="chip${cls}" type="button" aria-pressed="${pressed}" ${label === UNCATEGORIZED ? 'data-uncat="1"' : `data-cat="${esc(label)}"`}>`
+  + (picked ? `<span class="dot"></span>` : "")
+  + `${esc(categoryLabel(label))}<span class="n">${count}</span></button>`
+);
+
+/** 类别横条 + 「只看已选」。跟列表一起重画，两边永远同一个真相。 */
+/** 横条两头有没有被切掉 —— 决定哪一边渐隐。 */
+const syncCatsFade = () => {
+  const box = $("extCatScroll");
+  const l = box.scrollLeft > 2;
+  const r = box.scrollWidth - box.clientWidth - box.scrollLeft > 2;
+  box.dataset.fade = l && r ? "lr" : r ? "r" : l ? "l" : "";
+};
+
+const renderExtCats = () => {
+  const scroll = $("extCatScroll");
+  const keep = scroll.scrollLeft; // 打字时重画别把横条弹回开头
+  const pickedCount = extFamilies.filter(famPicked).length;
+  const all = $("extCatAll");
+  all.setAttribute("aria-pressed", String(extCategory === null));
+  all.innerHTML = `全部<span class="n">${extFamilies.length}</span>`;
+  const only = $("extCatPicked");
+  only.setAttribute("aria-pressed", String(extOnlyPicked));
+  only.innerHTML = `只看已选<span class="n">${pickedCount}</span>`;
+  if (pickedCount) only.removeAttribute("aria-disabled");
+  else { only.setAttribute("aria-disabled", "true"); only.tabIndex = -1; }
+  if (pickedCount) only.tabIndex = 0;
+  scroll.innerHTML = categoryChips()
+    .map((c) => chipHtml(c.label, c.count, extCategory === c.label, { picked: c.picked }))
+    .join("");
+  scroll.scrollLeft = keep;
+  syncCatsFade();
+};
+
 /**
  * 一族 = 本体一行 + 缩进的变体行。**族内互斥**（radio），族间独立。
  * 变体的元信息写它的来处：本机给分支名，参数变体给参数，仓库里没绑的给「仓库里」——
  * 「都是 123」这件事得看得出来，不然人会以为自己在勾两个不相干的扩展。
+ *
+ * 视图有三层筛选，从粗到细：**类别 → 只看已选 → 搜索**。它们只影响「看见什么」，
+ * 一个字节都不动选区。搜索与类别是 AND；搜不到时给一条通往「全部类别」的出口，
+ * 不然在错的类别里搜一个存在的扩展，读起来就像它不存在。
  */
 const renderExtList = () => {
   const needle = $("eq").value.trim().toLowerCase();
   const hit = (text) => !needle || String(text).toLowerCase().includes(needle);
+  const inCat = (fam) => !extCategory || famInCategory(fam, extCategory);
+  const rowHit = (fam) => hit(`${fam.name} ${fam.ext.summary ?? ""} ${catsOf(fam).join(" ")}`);
+
+  // 一族在不在：类别 → 只看已选 → 搜索。命中本体就连变体一起摆出来（要能就地换版本），
+  // 只命中变体就把家族行留作标题。
   const shown = extFamilies
+    .filter(inCat)
+    .filter((fam) => !extOnlyPicked || famPicked(fam))
     .map((fam) => {
-      // 本体命中 → 连变体一起显示；本体不命中但变体命中 → 只显示命中的变体（家族行留着当标题）。
-      if (hit(`${fam.name} ${fam.ext.summary ?? ""}`)) return { fam, variants: fam.variants };
+      if (rowHit(fam)) return { fam, variants: fam.variants };
       const variants = fam.variants.filter((v) => hit(v.key ?? `${fam.name}@${v.id}`));
       return variants.length ? { fam, variants } : null;
     })
     .filter(Boolean);
 
+  renderExtCats();
+
   if (!extFamilies.length) {
     $("extList").innerHTML = `<div class="skill-none">进程里一个可选扩展都没有。</div>`;
-  } else if (!shown.length) {
-    $("extList").innerHTML = `<div class="skill-none">没有匹配的扩展。</div>`;
+    $("extHint").textContent = "0 个扩展";
+    return;
+  }
+  if (!shown.length) {
+    // 空状态要说清楚「是筛掉了还是真没有」，并且给一条能走的路 ——
+    // 在错的类别里搜一个存在的扩展，读起来就跟它不存在一样。
+    const elsewhere = needle
+      ? extFamilies.filter((fam) => rowHit(fam) || fam.variants.some((v) => hit(v.key ?? `${fam.name}@${v.id}`))).length
+      : 0;
+    const ways = [
+      needle ? `<button class="chip" type="button" data-clear="1">清空搜索 ›</button>` : "",
+      extOnlyPicked ? `<button class="chip" type="button" data-only="1">取消「只看已选」›</button>` : "",
+      extCategory && elsewhere ? `<button class="chip" type="button" data-cat="">全部类别里有 ${elsewhere} 个 ›</button>` : "",
+    ].filter(Boolean);
+    $("extList").innerHTML = `<div class="skill-none">没有匹配的扩展。${ways.length ? `<br>${ways.join(" ")}` : ""}</div>`;
   } else {
-    $("extList").innerHTML = shown
-      .map(({ fam, variants }) => {
+    // 「全部」视图按主归属分组：滚动时看得见自己在哪一档。筛了类别就不必再挂标题。
+    const groups = [];
+    if (extCategory) groups.push({ label: null, rows: shown });
+    else {
+      const order = [DEFAULT_CATEGORY];
+      const rest = [...new Set(shown.map(({ fam }) => primaryCategory(fam)))]
+        .filter((l) => l !== DEFAULT_CATEGORY && l !== UNCATEGORIZED)
+        .sort((a, b) => a.localeCompare(b));
+      order.push(...rest, UNCATEGORIZED);
+      for (const label of order) {
+        const rows = shown.filter(({ fam }) => primaryCategory(fam) === label);
+        if (rows.length) groups.push({ label, rows });
+      }
+    }
+    $("extList").innerHTML = groups.map(({ label, rows }) => {
+      const head = label ? `<div class="ctx-head">${esc(categoryLabel(label))}</div>` : "";
+      return head + rows.map(({ fam, variants }) => {
         const desc = String(fam.ext.summary ?? "").replace(/\s+/g, " ").trim();
         // 行里带上类别：默认为什么勾上它、这条扩展归哪一档，一行字就能自己解释，
         // 不用回头翻卡片页。没类别就只有版本。
         const meta = [
-          (fam.ext.category ?? []).filter(Boolean).join(" · "),
+          catsOf(fam).join(" · "),
           fam.ext.version ? `v${fam.ext.version}` : "",
         ].filter(Boolean).join(" · ");
         const body = extRow({
@@ -953,28 +1114,27 @@ const renderExtList = () => {
           off: false,
           variant: false,
         });
-        const kids = variants
-          .map((v) => {
-            const key = v.key ?? `${fam.name}@${v.id}`;
-            const failed = v.load?.state === "failed";
-            const meta = [
-              v.source === "repo" ? (Object.keys(v.params ?? {}).length ? `参数 ${JSON.stringify(v.params)}` : "仓库里 · 同代码") : v.branch ? `分支 ${v.branch}` : "本机目录",
-              failed ? `装载失败：${String(v.load?.error ?? "").slice(0, 80)}` : !v.installed ? "进程里没装上" : "",
-            ].filter(Boolean).join(" · ");
-            return extRow({
-              name: key,
-              desc: "",
-              meta,
-              on: pickedExtensions.has(key),
-              off: failed || !v.installed,
-              variant: true,
-            });
-          })
-          .join("");
+        const kids = variants.map((v) => {
+          const key = v.key ?? `${fam.name}@${v.id}`;
+          const failed = v.load?.state === "failed";
+          const meta = [
+            v.source === "repo" ? (Object.keys(v.params ?? {}).length ? `参数 ${JSON.stringify(v.params)}` : "仓库里 · 同代码") : v.branch ? `分支 ${v.branch}` : "本机目录",
+            failed ? `装载失败：${String(v.load?.error ?? "").slice(0, 80)}` : !v.installed ? "进程里没装上" : "",
+          ].filter(Boolean).join(" · ");
+          return extRow({
+            name: key,
+            desc: "",
+            meta,
+            on: pickedExtensions.has(key),
+            off: failed || !v.installed,
+            variant: true,
+          });
+        }).join("");
         return body + kids;
-      })
-      .join("");
+      }).join("");
+    }).join("");
   }
+
   const famCount = extFamilies.length;
   const varCount = extFamilies.reduce((n, fam) => n + fam.variants.length, 0);
   const n = pickedExtensions.size;
@@ -1064,7 +1224,36 @@ $("skillList").addEventListener("keydown", (e) => {
   rows[i]?.focus();
 });
 
+// 横向滚轮：桌面鼠标在类别条上滚，默认什么都不发生（竖着的滚轮推不动横着的条）。
+// 真溢出了才接管，没溢出就让它照常冒泡。
+$("extCatScroll").addEventListener("scroll", syncCatsFade, { passive: true });
+$("extCatScroll").addEventListener("wheel", (e) => {
+  const box = $("extCatScroll");
+  if (e.deltaX || box.scrollWidth <= box.clientWidth) return;
+  e.preventDefault();
+  box.scrollLeft += e.deltaY;
+}, { passive: false });
+
+/** 类别横条：点类别 = 筛它（再点回全部）；点「只看已选」= 切开关。都不动选区。 */
+$("extCats").addEventListener("click", (e) => {
+  const chip = e.target.closest?.(".chip");
+  if (!chip || chip.getAttribute("aria-disabled") === "true") return;
+  if (chip.dataset.only) extOnlyPicked = !extOnlyPicked;
+  else if (chip.dataset.uncat) extCategory = UNCATEGORIZED;
+  else extCategory = chip.dataset.cat || null;
+  renderExtList();
+});
 $("extList").addEventListener("click", (e) => {
+  // 空状态里那几条「换个地方看」也是 chip，活在这个容器里。
+  const chip = e.target.closest?.(".chip");
+  if (chip && chip.getAttribute("aria-disabled") !== "true") {
+    // 空状态里的出路：按哪一层挡住的就清哪一层，别一键把别人的筛选也清掉。
+    if (chip.dataset.clear) { $("eq").value = ""; renderExtList(); $("eq").focus(); return; }
+    if (chip.dataset.only) extOnlyPicked = false;
+    else extCategory = null;
+    renderExtList();
+    return;
+  }
   const row = e.target.closest?.(".skill-row");
   if (!row || row.getAttribute("aria-disabled") === "true") return;
   const name = row.dataset.e;
