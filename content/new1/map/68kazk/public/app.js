@@ -27,7 +27,7 @@ import {
   normalizeCategory,
   stateFilter,
   stateFilterOf,
-  sourceNameFromUrl,
+  repoNameFromUrl,
   suggestedAdoptName,
   upstreamSummary,
 } from "./model.js";
@@ -1227,15 +1227,15 @@ const upstreamSourceNow = () =>
 
 // ── 地址 ────────────────────────────────────────────────────────────────────
 //
-// `#upstream` / `#upstream/matt` —— **只到订阅**。一个订阅 = 一条「技能」（整个仓），
+// `#upstream` / `#upstream/skills` —— **只到订阅**。一个订阅 = 一条「技能」（整个仓），
 // 所以地址里没有「哪一条」。
 
 const hashTarget = () => {
   const raw = location.hash.replace(/^#/, "");
   if (raw !== "upstream" && !raw.startsWith("upstream/")) return null;
-  // **地址只到订阅**：`#upstream/matt`。目录是筛子，不进地址 ——
+  // **地址只到订阅**：`#upstream/skills`。目录是筛子，不进地址 ——
   // 进了就是「钻进去换一页」，那是文件管理器，不是这一页的规矩。
-  // 老地址（`#upstream/matt/skills/engineering/x`）也认：多出来的段只当没看见，
+  // 老地址（`#upstream/skills/skills/engineering/x`）也认：多出来的段只当没看见，
   // 落到订阅那一层。地址是可分享的，别让昨天贴出去的链接变成白屏。
   const source = raw.slice("upstream".length).replace(/^\/+/, "").split("/")[0];
   return { source: source || null };
@@ -1255,7 +1255,12 @@ function openUpstream(name = undefined) {
   state.upstreamDetail = null;
   state.upstreamOpen = true;
   // 没说看哪个就落到第一个订阅；一个都没有就停在「添加上游」那张空状态上。
-  state.upstreamSource = name ?? state.upstreamSource ?? state.upstream?.sources?.[0]?.name ?? null;
+  // 说了一个不存在的（比如改名之前的 `#upstream/matt`）也落到第一个 ——
+  // 地址换了是订阅名换了，不是让人对着空屏发呆。
+  const names = (state.upstream?.sources ?? []).map((item) => item.name);
+  const known = name && names.includes(name) ? name : null;
+  state.upstreamSource = known ?? state.upstreamSource ?? names[0] ?? null;
+  if (!names.includes(state.upstreamSource)) state.upstreamSource = names[0] ?? null;
   writeHash();
   render();
   $("results")?.scrollTo({ top: 0 });
@@ -1304,14 +1309,14 @@ async function addSource({ url, prefix }) {
     toast("先填个地址", "bad");
     return;
   }
-  const name = sourceNameFromUrl(cleanUrl);
+  const name = repoNameFromUrl(cleanUrl);
   if (!name) {
     toast("认不出这个地址 —— 要 https://… / git@host:… / 绝对路径", "bad");
     return;
   }
   const existing = state.upstream?.sources ?? [];
   if (existing.some((source) => source.name === name)) {
-    toast(`已经订阅过一个叫 ${name} 的上游了 —— 换个地址`, "bad");
+    toast(`已经订阅过一个叫 ${name} 的仓了 —— 两个仓同名才需要人插手，先订阅那个，再回来给它加前缀`, "bad");
     return;
   }
   state.upstreamBusy = "add";
@@ -1384,14 +1389,28 @@ function openUpstreamMenu(x, y, source) {
 }
 
 /** 浮层里的正文：**整个仓**那一层的事（订阅 / 地址 / 多少条 / 版本 / 动作）。 */
+/** `1.4 MB` / `812 KB` / `96 B` —— 盘上的数，别摆一串原始字节。 */
+function bytesText(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function upstreamDetailBody(source) {
   const wrap = el("div", "up-detail");
   const entries = upstreamEntriesOf(source.name);
   const mine = upstreamSummary(entries);
-  wrap.append(detailRow("上游", source.name, source.url));
-  wrap.append(detailRow("地址", source.url));
+  // 名字就是仓库名（`skills`），地址另外一行 —— 这两样以前挤在一起，看着像个用户名。
+  wrap.append(detailRow("仓库", source.name, source.url));
   if (source.prefix) wrap.append(detailRow("只看", `${source.prefix}/`, "仓里的这一段才算技能"));
   wrap.append(detailRow("技能", `${mine.total} 条${mine.todo ? ` · ${mine.todo} 条待看` : ""}`));
+  // 「本机到底存没存」是个人会问的问题，所以直接答：存了，多大，删了会怎样。
+  if (source.mirror === "ready") {
+    wrap.append(
+      detailRow("本机镜像", bytesText(source.bytes), "缓存，不是第二份真相：删了下次 fetch 从源头重建"),
+    );
+  }
   if (source.mirror === "missing") {
     wrap.append(alertLine("warn", "还没镜像", "点「刷新（fetch）」把它拉下来。第一次要联网。"));
   }
@@ -2445,7 +2464,9 @@ async function openUpstreamFile(path) {
     area.readOnly = true;
     area.disabled = false;
     area.value = file.text;
-    $("ed-path").textContent = `${ed.source}/${file.file}`;
+    // 仓内路径本身就是全的（`skills/engineering/tdd/SKILL.md`）—— 前面再挂订阅名
+    // 会长成 `skills/skills/...`，看着像打错了。订阅是谁，标题那一行已经写着。
+    $("ed-path").textContent = file.file;
     renderGutter();
     renderDelta();
     renderEditorFiles();

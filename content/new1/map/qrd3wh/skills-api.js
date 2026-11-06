@@ -847,7 +847,12 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         for (const source of sources) {
           // **打开面板不联网**：镜像不在就报 missing，让人自己点刷新。
           const ready = await upstream.hasMirror({ data: mirrors(), source });
-          reported.push({ ...source, mirror: ready ? "ready" : "missing" });
+          reported.push({
+            ...source,
+            mirror: ready ? "ready" : "missing",
+            // 本机缓存占了多少（面板上摆出来：删了下次 fetch 重建，不是第二份真相）。
+            bytes: ready ? await upstream.mirrorBytes({ data: mirrors(), source }) : 0,
+          });
           if (!ready) continue;
           try {
             for (const entry of await upstream.listEntries({ data, source, run: repo.run })) {

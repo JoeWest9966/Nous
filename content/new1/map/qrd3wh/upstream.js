@@ -22,7 +22,7 @@
 //   · **不写进别人的仓。** 这里只读上游；写只发生在我们自己的仓库里，而且仍然是
 //     未发布状态（adopt 不提交）。
 
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const SOURCES_FILE = "sources.json";
@@ -35,6 +35,27 @@ const errorLine = (error) => String(error?.message ?? error).split("\n")[0].slic
 
 /** 名字进 URL、进目录名、进 `nous.json.upstream`，所以认得窄一点。 */
 const SOURCE_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
+
+/**
+ * 订阅名 = **仓库名**。`https://github.com/mattpocock/skills.git` → `skills`。
+ *
+ * 早先取的是倒数第二段（宿主/人），订阅就叫成了 `matt` —— 一个人的名字，不是那个仓，
+ * `#upstream/matt` 看着像谁的私聊。现在跟仓走。
+ *
+ * 这里跟 `68kazk/public/model.js` 的 `repoNameFromUrl` 是**同一条规则的两份**，
+ * 所以规则刻意压到一行能说清：取最后一段、去掉 `.git`、小写。改一处必须两处一起改
+ * （前端只用来填输入框，服务端是兜底：没给名字就按这条推）。
+ */
+export const repoName = (url) => {
+  const raw = String(url ?? "").trim().replace(/[/:]+$/, "").replace(/\.git$/i, "");
+  if (!raw) return "";
+  const last = raw.split(/[/:]/).map((part) => part.trim()).filter(Boolean).at(-1) ?? "";
+  return last
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-._]+|[-._]+$/g, "")
+    .slice(0, 32);
+};
 const GIT_ARG_RE = /^[A-Za-z0-9._/-]+$/;
 
 const normalizePrefix = (raw) => {
@@ -52,12 +73,14 @@ const normalizePrefix = (raw) => {
  * 也能当上游，不用先架个服务。
  */
 export const normalizeSource = (raw) => {
-  const name = String(raw?.name ?? "").trim();
-  if (!SOURCE_NAME_RE.test(name)) {
+  const url = String(raw?.url ?? "").trim();
+  // 没给名字就用仓库名 —— 「订阅的就是那个仓」，名字该是它自己的。
+  const given = String(raw?.name ?? "").trim();
+  const name = given || repoName(url);
+  if (name && !SOURCE_NAME_RE.test(name)) {
     throw withStatus(new Error(`上游名只认小写字母、数字、点、下划线、连字符，≤32 字：${name || "(空)"}`), 400);
   }
-  const url = String(raw?.url ?? "").trim();
-  if (!url) throw withStatus(new Error(`${name}: url 不能空`), 400);
+  if (!url) throw withStatus(new Error(`${name || "(空)"}: url 不能空`), 400);
   if (/\s/.test(url)) throw withStatus(new Error(`${name}: url 里不能有空白`), 400);
   const local = url.startsWith("/");
   if (!local && !/^(https?|ssh|git|file):\/\//.test(url) && !/^[A-Za-z0-9._-]+@[^:]+:/.test(url)) {
@@ -163,6 +186,28 @@ export const fetchMirror = async ({ data, source, run }) => {
 
 /** 镜像在不在。`GET /v1/skills/upstream` 只读已有的 —— 打开面板不该去打 GitHub。 */
 export const hasMirror = async ({ data, source }) => exists(path.join(mirrorPath(data, source.name), "HEAD"));
+
+/**
+ * 镜像占了多少地方。**这不是「我们在本机又存了一份内容」**，是缓存 ——
+ * 一个 `--filter=blob:none` 的裸仓，删掉下次 fetch 从源头重建。
+ * 但它是真的站在你盘上，所以面板上得把数摆出来，别让「本机到底存没存」变成一句猜测。
+ */
+export const mirrorBytes = async ({ data, source }) => {
+  const dir = mirrorPath(data, source.name);
+  let total = 0;
+  const walk = async (at) => {
+    const stat_ = await stat(at).catch(() => null);
+    if (!stat_) return;
+    if (stat_.isFile()) {
+      total += stat_.size;
+      return;
+    }
+    if (!stat_.isDirectory()) return;
+    for (const name of await readdir(at)) await walk(path.join(at, name));
+  };
+  await walk(dir);
+  return total;
+};
 
 /** 这个 source 现在指向哪个 commit：指定的 branch，否则镜像的 HEAD。 */
 export const resolveHead = async ({ data, source, run }) => {

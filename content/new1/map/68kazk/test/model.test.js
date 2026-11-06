@@ -20,6 +20,7 @@ import {
   fileTree,
   filterCards,
   flattenTree,
+  repoNameFromUrl,
   stateFilterOf,
   suggestedAdoptName,
   upstreamSummary,
@@ -206,6 +207,16 @@ const up = (path, local = "none") => ({ source: "matt", path, name: path.split("
 
 // 上游那一层不再有「清单折成树」这件事：一个订阅 = 一条技能（整个仓），
 // 目录只活在抽屉里那棵用 `fileTree` 算出来的树里。`upstreamTree` 跟着删了。
+
+test("repoNameFromUrl：订阅名就是仓库名，不是人家的用户名", () => {
+  // 这就是那次整改的由头：一个 `matt` 摆在订阅列表里，谁看得出那是个仓。
+  assert.equal(repoNameFromUrl("https://github.com/mattpocock/skills"), "skills");
+  assert.equal(repoNameFromUrl("https://github.com/mattpocock/skills.git"), "skills");
+  assert.equal(repoNameFromUrl("git@github.com:mattpocock/skills.git"), "skills");
+  assert.equal(repoNameFromUrl("/srv/repos/notes"), "notes");
+  assert.equal(repoNameFromUrl("https://github.com/a/b/deep-repo/"), "deep-repo");
+  assert.equal(repoNameFromUrl(""), "");
+});
 
 // 目录是**筛子**不是页面：上游那一屏的地址只到订阅（`#upstream/matt`），
 // 所以「钻到某一层」「面包屑」这两个纯函数跟着一起去掉了 —— 那套是文件管理器的形状。

@@ -302,22 +302,19 @@ export function suggestedAdoptName(entry) {
 }
 
 /**
- * 从地址推一个订阅名：`https://github.com/mattpocock/skills.git` → `matt`。
+ * 订阅名 = **仓库名**。`https://github.com/mattpocock/skills.git` → `skills`。
  *
- * 为什么用**倒数第二段**而不是最后一段：仓库名谁都有（`skills`、`notes`），
- * 名字撞了要比对半天；`宿主/人/仓` 这个形状里，人是唯一的那一段。
- * 推不对就自己改 —— 这只是默认值。
+ * 早先这里取的是倒数第二段（宿主/人），结果订阅叫 `matt` —— 一个人的名字，
+ * 不是那个仓。地址栏里 `#upstream/matt` 看着像谁的私聊，不像一个仓库。
+ * 现在就跟仓走：**你订阅的是仓，名字就是仓的名字**。
+ *
+ * 撞名（两个仓都叫 `skills`）才需要人插手，那时自己加前缀（`mattpocock-skills`）。
  */
-export function sourceNameFromUrl(url) {
+export function repoNameFromUrl(url) {
   const raw = String(url ?? "").trim().replace(/[/:]+$/, "").replace(/\.git$/i, "");
   if (!raw) return "";
-  const parts = raw.split(/[/:]/).map((part) => part.trim()).filter(Boolean);
-  // `git@github.com:matt/skills` → ["git@github.com", "matt", "skills"]；`/srv/skills` → ["srv","skills"]
-  // 本机路径的倒数第二段常常是 srv / opt / home 这种废话，那就退到仓名。
-  const boring = new Set(["srv", "opt", "home", "var", "tmp", "root", "users", "mnt", "data", "git", "repos", "src"]);
-  const parent = parts.length >= 2 ? parts[parts.length - 2] : "";
-  const slug = parent && !boring.has(parent.toLowerCase()) ? parent : parts.at(-1) ?? "";
-  return slug
+  const last = raw.split(/[/:]/).map((part) => part.trim()).filter(Boolean).at(-1) ?? "";
+  return last
     .toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^[-._]+|[-._]+$/g, "")

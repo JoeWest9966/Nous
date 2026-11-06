@@ -376,13 +376,13 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 |---|---|---|---|
 | `sources.json` | 仓根，跟 `categories.json` 并列 | **是** | 订阅了谁。内容，不是配置 —— 换台机器 clone 下来照样知道 |
 | `data/upstream/<name>` | 块的 `NOUS_DATA` | 否 | bare 镜像。**缓存**，删了下次 fetch 重 clone |
-| `nous.json.upstream` | 每条技能自己的目录 | **是** | 注脚 `matt/skills/x/code-review@<tree-sha>`，只写不读逻辑 |
+| `nous.json.upstream` | 每条技能自己的目录 | **是** | 注脚 `skills/skills/x/code-review@<tree-sha>`（source 名 / 仓内路径 / tree-sha），只写不读逻辑 |
 
 ### 12.1 `sources.json`
 
 ```json
 { "v": 1, "sources": [
-  { "name": "matt", "url": "https://github.com/mattpocock/skills", "prefix": "skills" }
+  { "name": "skills", "url": "https://github.com/mattpocock/skills", "prefix": "skills" }
 ]}
 ```
 
@@ -431,10 +431,14 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 
 ### 12.6 面板怎么摆（**一个订阅 = 一条技能**）
 
+**订阅名 = 仓库名。** `https://github.com/mattpocock/skills` → `skills`。早先取的是倒数第二段
+（`matt`：一个人的名字），净是误会 —— 订阅的是仓，名字就该是仓的名字。同名两个仓才需要人插手
+（前端会拦，服务端 `repoName()` 兜底推）。名字同时是 `data/upstream/<name>/` 的目录名。
+
 上游按「**一个仓 = 一条技能**」理解 —— 这是这一节唯一需要记住的一句。剩下的都跟着它走：
 
 - 上游那一屏是**主区换页**（列的不是「某一条」，是一整张表），但表里**一个订阅只有一张卡**：
-  `matt`，写着「整个仓 · 39 条技能」。没有目录卡、没有面包屑、没有 `‹ 上一层`，
+  `skills`，写着「整个仓 · 39 条技能」。没有目录卡、没有面包屑、没有 `‹ 上一层`，
   更没有「一条上游技能一张卡」—— 那等于把别人的仓拆成 39 个碎片。
 - 点这张卡 = **半扇浮层**（跟本地那条同一扇）：地址、prefix、多少条待看、看正文 / 刷新。
 - 浮层里 `看正文 ›` = **那只抽屉**，只读，左栏是**整个仓的文件树**（根是仓根，
@@ -443,7 +447,8 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 - **取用仍然按「一条」算**（一个仓里 39 条技能是能分别取的），所以它挂在树里那条
   `SKILL.md` 的行尾；浮层里只留一句话指路。这是全节唯一的例外，有意的。
 - 左栏 = **订阅列表**（一个订阅一行）。目录不在这儿 —— 目录只在抽屉那棵树里。
-- **地址只到订阅：`#upstream/matt`。** 老的深链接也只落到这一层，后面几段当没看见。
+- **地址只到订阅：`#upstream/skills`。** 老的深链接也只落到这一层，后面几段当没看见；
+  名字对不上（改过名、`#upstream/matt`）就落到第一个订阅 —— 地址换了不该是白屏。
 - 订阅多于一个时，左栏一行一个，主区一张卡一个。
 
 `model.js` 里跟「清单折成树」有关的零件（`upstreamTree` / `upstreamAt` / `upstreamCrumb` /
