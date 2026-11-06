@@ -344,3 +344,73 @@ test("dirPaths：所有文件夹（打开抽屉时默认全展开）", () => {
   const tree = fileTree([{ path: "a/b/c.md" }, { path: "d.md" }]);
   assert.deepEqual(dirPaths(tree), ["a", "a/b"]);
 });
+
+// ── 上游并进同一张网格 ──────────────────────────────────────────────────────
+//
+// 上游的条目现在也住「全部」和「未分类」里，所以 buildView 收两份数据。
+// 认身份靠 `kind`，不靠名字：上游撞上来我们管不了（见 spec §12）。
+
+const ENTRIES = [
+  {
+    source: "matt",
+    path: "skills/engineering/code-review",
+    name: "code-review",
+    description: "别人家的审查",
+    category: [],
+    sha: "a".repeat(40),
+    local: "none",
+  },
+  {
+    source: "matt",
+    path: "skills/engineering/zip",
+    name: "zip",
+    description: "别人的打包",
+    category: ["Basics"],
+    sha: "b".repeat(40),
+    local: "same",
+  },
+];
+
+test("buildView：上游并进网格，沉在本地后面，靠 kind 认身份", () => {
+  const view = buildView(FIXTURE, ENTRIES);
+  assert.equal(view.skillCount, view.localCount + view.upstreamCount);
+  assert.equal(view.upstreamCount, 2);
+  const kinds = view.cards.map((card) => card.kind ?? "local");
+  // 本地的都在前面（上游 rank 3），但每一段内部照旧按名字排。
+  assert.deepEqual(kinds.slice(-2), ["upstream", "upstream"]);
+  const up = view.cards.filter((card) => card.kind === "upstream");
+  assert.deepEqual(up.map((card) => card.name), ["code-review", "zip"]);
+  assert.equal(up[0].state, "upstream");
+});
+
+test("buildView：本地和上游同名 —— 两条都在，本地在前", () => {
+  const view = buildView(FIXTURE, ENTRIES);
+  const same = view.cards.filter((card) => card.name === "code-review");
+  assert.equal(same.length, 2);
+  assert.equal(same[0].kind ?? "local", "local");
+  assert.equal(same[1].kind, "upstream");
+  // 倒过来喂也一个样：顺序不能跟着数据来
+  const reversed = buildView(FIXTURE, [...ENTRIES].reverse());
+  assert.deepEqual(
+    reversed.cards.filter((card) => card.name === "code-review").map((card) => card.kind ?? "local"),
+    ["local", "upstream"],
+  );
+});
+
+test("buildView：未分类和类别计数都把上游算进去", () => {
+  const view = buildView(FIXTURE, ENTRIES);
+  // 上游那条 code-review 没类别 → 未分类 +1
+  assert.equal(view.uncategorized, buildView(FIXTURE).uncategorized + 1);
+  // 「Basics」底下多了一条上游的
+  assert.equal(view.counts.get("Basics"), buildView(FIXTURE).counts.get("Basics") + 1);
+  // 类别词表认得上游那条挂的类别（哪怕 categories.json 里没登记）
+  assert.ok(view.categoryNames.includes("Basics"));
+});
+
+test("buildView：上游的类别也进筛选 —— 按类别筛能筛到它", () => {
+  const view = buildView(FIXTURE, ENTRIES);
+  const shown = filterCards(view.cards, { filter: "Basics" });
+  assert.ok(shown.some((card) => card.kind === "upstream" && card.name === "zip"));
+  const none = filterCards(view.cards, { filter: UNCATEGORIZED });
+  assert.ok(none.some((card) => card.kind === "upstream" && card.name === "code-review"));
+});

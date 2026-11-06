@@ -313,7 +313,58 @@ const groupsOf = async (root) => {
   return out.sort((a, b) => a.localeCompare(b, "zh-CN"));
 };
 
-const createSkill = async (repo, root, body) => {
+/**
+ * 上游那些条目的名字（离线：只读已有镜像，不联网）。新建的时候拿它挡一道。
+ *
+ * 为什么挡：两边的名字会并排出现在「全部」里，撞了以后取用、看正文、改类别
+ * 分不清说的是哪一条。挡在**我们创建的那一刻** —— 上游后来改名撞上来，我们管不了，
+ * 那种情况卡片上标「名字被占」就够了。
+ */
+const upstreamNames = async ({ root, data, repo }) => {
+  const out = new Map();
+  if (!data) return out;
+  let sources = [];
+  try {
+    sources = (await upstream.readSources(root)).sources;
+  } catch {
+    return out;
+  }
+  for (const source of sources) {
+    if (!(await upstream.hasMirror({ data, source }))) continue;
+    try {
+      for (const entry of await upstream.listEntries({ data, source, run: repo.run })) {
+        if (!out.has(entry.name)) out.set(entry.name, `${source.name}/${entry.path}`);
+      }
+    } catch {
+      // 一个上游读不了（镜像坏了、分支没了）不该拦住新建 —— 它不是我们要管的那摊。
+    }
+  }
+  return out;
+};
+
+/**
+ * 类别改名 / 删除也要跟着改**上游那份注记**。
+ *
+ * 词表是共用的（本地和上游的技能排在同一个「工程」底下），但注记存在两个地方：
+ * 我们自己的 `nous.json` 和上游的 `upstream-categories.json`。
+ * 只改一处 = 左栏还留着一格，点进去是空的 —— 那跟「两份真相」是同一个病。
+ */
+const retagMarks = async (root, op, name, to) => {
+  if (op !== "rename" && op !== "remove") return;
+  const marks = await upstream.readCategories(root);
+  const under = (tag) => tag === name || String(tag).startsWith(`${name}/`);
+  let changed = false;
+  for (const [key, list] of Object.entries(marks)) {
+    const next =
+      op === "rename" ? list.map((tag) => (under(tag) ? to + tag.slice(name.length) : tag)) : list.filter((tag) => !under(tag));
+    if (next.join("\u0000") === list.join("\u0000")) continue;
+    marks[key] = [...new Set(next)].sort((a, b) => a.localeCompare(b, "zh-CN"));
+    changed = true;
+  }
+  if (changed) await upstream.writeCategories(root, marks);
+};
+
+const createSkill = async (repo, root, data, body) => {
   const name = checkName(body.name);
   const group = checkGroup(body.group);
   // 分组只是抽屉，名字还是最后一段：`deprecated/demo` 的技能叫 `demo`。
@@ -330,6 +381,13 @@ const createSkill = async (repo, root, body) => {
   }
   if (await stat(path.join(root, repo.ARCHIVE_DIR, name)).catch(() => null)) {
     throw withStatus(new Error(`${name}/ 在 .archive/ 里 —— 点「恢复」把它捡回来，别建第二个`), 400);
+  }
+  const upstreamHome = (await upstreamNames({ root, data, repo })).get(name);
+  if (upstreamHome) {
+    throw withStatus(
+      new Error(`${name} 这个名字上游已经有了（${upstreamHome}）—— 两边会并排出现，名字得能分开`),
+      409,
+    );
   }
 
   const beforeVocab = await repo.readCategories(root, NO_PROTECT);
@@ -624,13 +682,15 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       if (method === "GET") return send(res, 200, { categories: await repo.readCategories(root, NO_PROTECT) });
       if (method !== "POST") return send(res, 405, { error: "类别词表只有 GET / POST" });
       const body = await parseJsonBody(req);
-      const result = await repo.serializeRepoWrite(root, () =>
-        repo.mutateCategories(
+      const result = await repo.serializeRepoWrite(root, async () => {
+        const done = await repo.mutateCategories(
           root,
           { op: body.op, name: body.name, to: body.to },
           { index: skillsIndex(repo, root), ...NO_PROTECT },
-        ),
-      );
+        );
+        await retagMarks(root, body.op, String(body.name ?? ""), String(body.to ?? ""));
+        return done;
+      });
       const loadError = await reloadRoster(skills);
       return send(res, 200, {
         categories: result.categories,
@@ -742,7 +802,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
     if (at[0] === "create") {
       if (method !== "POST") return send(res, 405, { error: "新建只有 POST" });
       const body = await parseJsonBody(req);
-      await repo.serializeRepoWrite(root, () => createSkill(repo, root, body));
+      await repo.serializeRepoWrite(root, () => createSkill(repo, root, data, body));
       const loadError = await reloadRoster(skills);
       const roster = skills.list();
       return send(res, 200, {
@@ -840,6 +900,8 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
       if (!at[1]) {
         if (method !== "GET") return send(res, 405, { error: "上游清单只有 GET" });
         const { sources } = await upstream.readSources(root);
+        // 我们给上游技能打的类别（别人的仓里写不进去，所以注记在我们这边）。
+        const marks = await upstream.readCategories(root);
         const roster = skills.list() ?? [];
         const reported = [];
         const entries = [];
@@ -851,7 +913,15 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           if (!ready) continue;
           try {
             for (const entry of await upstream.listEntries({ data, source, run: repo.run })) {
-              entries.push({ ...entry, local: localStateOf(roster, await footOf(root, relOf(skills, entry.name)), entry) });
+              const key = upstream.categoryKey(source.name, entry.path);
+              // 标过就用我们的（哪怕是空数组 = 明确「没有类别」）；没标过就沿用上游 nous.json 里的。
+              const category = Object.prototype.hasOwnProperty.call(marks, key) ? marks[key] : entry.category;
+              entries.push({
+                ...entry,
+                category,
+                marked: Object.prototype.hasOwnProperty.call(marks, key),
+                local: localStateOf(roster, await footOf(root, relOf(skills, entry.name)), entry),
+              });
             }
           } catch (error) {
             errors.push({ source: source.name, error: errorLine(error) });
@@ -878,6 +948,54 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           }
         }
         return send(res, 200, { ok: out.every((item) => item.ok), sources: out });
+      }
+
+      // 上游的正文：**只读**。上游那一侧没有写入口，这条路上也不许长出写入口
+      // （改别人的技能 = 去他们的仓提 PR，不是在我们的面板里）。
+      if (at[1] === "file") {
+        if (method !== "GET") return send(res, 405, { error: "上游正文只有 GET —— 别人的仓我们只读" });
+        const sourceName = String(url.searchParams.get("source") ?? "").trim();
+        const home = String(url.searchParams.get("path") ?? "").trim().replace(/^\/+|\/+$/g, "");
+        const rel = String(url.searchParams.get("file") ?? "").trim() || "SKILL.md";
+        const { sources } = await upstream.readSources(root);
+        const source = sources.find((item) => item.name === sourceName);
+        if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+        if (!home) throw withStatus(new Error("没说看哪一条（path 是空的）"), 400);
+        if (!(await upstream.hasMirror({ data: mirrors(), source }))) {
+          throw withStatus(new Error(`${sourceName}: 还没拉过镜像 —— 先点刷新`), 400);
+        }
+        const file = await upstream.entryText({ data: mirrors(), source, run: repo.run, home, rel });
+        return send(res, 200, { source: source.name, path: home, file: rel, text: file.text, size: file.size });
+      }
+
+      // 我们给上游技能打的类别。**我们的注记**，跟 sources.json 一样是内容：不提交，等发布。
+      if (at[1] === "category") {
+        if (method !== "POST") return send(res, 405, { error: "上游类别只有 POST" });
+        const body = await parseJsonBody(req);
+        const sourceName = String(body.source ?? "").trim();
+        const home = String(body.path ?? "").trim().replace(/^\/+|\/+$/g, "");
+        if (!sourceName) throw withStatus(new Error("没说哪个上游（source 是空的）"), 400);
+        if (!home) throw withStatus(new Error("没说哪一条（path 是空的）"), 400);
+        const { sources } = await upstream.readSources(root);
+        const source = sources.find((item) => item.name === sourceName);
+        if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+        const next = repo.sortCategories(repo.normalizeCategories(body.category ?? []));
+        const vocab = await repo.serializeRepoWrite(root, async () => {
+          const marks = await upstream.readCategories(root);
+          marks[upstream.categoryKey(source.name, home)] = next;
+          await upstream.writeCategories(root, marks);
+          if (!next.length) return repo.readCategories(root, NO_PROTECT);
+          // 词表跟本地共用一份：新造的类别也得进 categories.json，否则左栏看不见它。
+          const before = await repo.readCategories(root, NO_PROTECT);
+          return repo.writeCategories(root, [...before, ...next], NO_PROTECT);
+        });
+        return send(res, 200, {
+          ok: true,
+          source: source.name,
+          path: home,
+          category: next,
+          categories: vocab,
+        });
       }
 
       if (at[1] === "files") {

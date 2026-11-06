@@ -232,6 +232,14 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 - **每个写端点都在本仓的串行锁里，写完重扫名册**：不重扫的话，面板说有、会话里看不见 ——
   两份真相就是这么长出来的。
 
+**上游的类别是我们的注记。** 别人的仓里写不进 `nous.json`，所以「这条属于工程」存在
+仓根的 `upstream-categories.json`（键是 `<订阅名>/<路径>`）。词表跟本地**共用一份**
+`categories.json`，所以类别改名 / 删除时两处都要动（`retagMarks`）—— 只改一处就是
+左栏留着一格、点进去是空的。
+
+**名字是单向独占的。** 我们创建的那一刻不许跟上游撞（`create` 会拿镜像里的名字比一遍，
+409 并点出是哪一条）；上游后来改名撞上来我们管不了，卡片上标「名字被占」就完了。
+
 历史一句：连到 2026-10，技能是「从上游编目把 tarball 拉进 `data/skills/`、按 sha 记收据、
 用 bare clone 缓存算版本号」。那套的第二真相（收据 + 缓存 + 编目快照三份会漂的账）就是它
 被删的原因 —— 收据格式、缓存目录、安装/卸载端点全没了，别照着老记忆写。
@@ -283,6 +291,14 @@ GET  /v1/skills/pending/diff      ?path= → { path, before, after }（对 HEAD�
 GET  /v1/skills/pending/commit    ?hash= → { hash, subject, files:[{path,status}] }（status 是 A/M/D/R）
 POST /v1/skills/sync              {message, paths?} → 只提交点名的路径
 POST /v1/skills/reload            重扫仓库（拿不准的时候用；写端点自己会扫）
+GET  /v1/skills/sources           订阅了哪些上游（sources.json 是内容，进版本库）
+POST /v1/skills/sources           {sources} 整份替换，不提交
+GET  /v1/skills/upstream          {sources:[…mirror], entries:[…], errors[]}。**不联网**：镜像不在就报 missing
+POST /v1/skills/upstream/refresh  {name?} 唯一联网动作（clone / fetch）
+GET  /v1/skills/upstream/file     ?source=&path=&file= → { text, size }：从镜像 cat-file 读，**只读**
+POST /v1/skills/upstream/category {source, path, category[]} → 我们给上游技能打的类别（并进共用词表）
+GET  /v1/skills/upstream/files    ?source=&path= → 逐文件跟本地比 git blob sha
+POST /v1/skills/upstream/adopt    {source, path, name?, group?} → 取用（未发布）
 GET  /v1/prompts                  模板私库全景：repo + prompts[]（带 tracked）+ archived[] + categories[] + default
 GET  /v1/prompts/categories       词表（同样一个都不护）
 POST /v1/prompts/categories       {op:"add"|"rename"|"remove", name, to}

@@ -14,10 +14,11 @@ export const STATE_LABEL = {
   unpublished: "未发布",
   failed: "装载失败",
   archived: "已归档",
+  upstream: "上游",
 };
 
-/** 网格里的先后：能用的先看，待发布的其次，坏了的再其次；归档根本不进网格。 */
-const STATE_RANK = { ok: 0, unpublished: 1, failed: 2 };
+/** 网格里的先后：能用的先看，待发布的其次，坏了的再其次；上游沉底；归档根本不进网格。 */
+const STATE_RANK = { ok: 0, unpublished: 1, failed: 2, upstream: 3 };
 
 export const stateFilterOf = (value) =>
   typeof value === "string" && value.startsWith(STATE_PREFIX) ? value.slice(STATE_PREFIX.length) : null;
@@ -76,6 +77,16 @@ export function cardState(skill) {
 }
 
 /**
+ * 上游的一条 → 网格里的一张卡。
+ *
+ * `kind` 是**唯一**分得清「我们自己的」和「别人仓里的」的东西：两边会有同名
+ * （上游撞上来我们管不了），所以卡片上认身份不能靠名字。
+ */
+export function upstreamCard(entry) {
+  return { ...entry, kind: "upstream", state: "upstream" };
+}
+
+/**
  * facet 计数：对**全量**技能算，父级 = 自身 + 整枝，同一条技能挂了父子只算一次。
  * `vocabulary` 里的路径先落 0 —— 一个刚建、还没挂到任何技能上的类别不能建了看不见。
  */
@@ -100,8 +111,8 @@ export function facetCounts(skills, vocabulary = []) {
   return counts;
 }
 
-/** 类别词表 = `categories.json` 的词表 ∪ 每条技能自己的 category，补上祖先，排好序。 */
-export function categoryVocabulary(data) {
+/** 类别词表 = `categories.json` 的词表 ∪ 每条技能自己的 category ∪ 上游那些注记，补上祖先，排好序。 */
+export function categoryVocabulary(data, extra = []) {
   const set = new Set();
   const add = (raw) => {
     const path = normalizeCategory(raw);
@@ -113,27 +124,37 @@ export function categoryVocabulary(data) {
   for (const skill of Array.isArray(data?.skills) ? data.skills : []) {
     for (const tag of categoriesOf(skill)) add(tag);
   }
+  for (const card of Array.isArray(extra) ? extra : []) {
+    for (const tag of categoriesOf(card)) add(tag);
+  }
   return [...set].sort(compareCategories);
 }
 
+// 同名不算并列：本地的在前（它是我们自己的），上游的在后 —— 顺序不能跟着数据来。
 const compareCards = (a, b) =>
-  (STATE_RANK[a.state] ?? 9) - (STATE_RANK[b.state] ?? 9) || a.name.localeCompare(b.name);
+  (STATE_RANK[a.state] ?? 9) - (STATE_RANK[b.state] ?? 9) ||
+  a.name.localeCompare(b.name) ||
+  Number(a.kind === "upstream") - Number(b.kind === "upstream") ||
+  String(a.path ?? "").localeCompare(String(b.path ?? ""));
 
 /**
- * `GET /v1/skills` 的响应 → 页面要的那一份。
- * `archived` 只给名字（恢复不需要别的），但也要进 total —— 它是仓库里的东西。
+ * `GET /v1/skills` 的响应（+ `GET /v1/skills/upstream` 的 entries）→ 页面要的那一份。
+ *
+ * 上游的条目**并进同一张网格**：它们在「全部」和「未分类」里跟我们自己的技能并排。
+ * 区别只有一个 —— `kind`，它决定颜色和菜单（见 `app.js` 的 `productCard`）。
+ * 传入上游用的是**原样的 entries**，不先转卡：调用方手里那份还要给上游那一屏用。
  */
-export function buildView(data) {
+export function buildView(data, upstreamEntries = []) {
   const skills = Array.isArray(data?.skills) ? data.skills : [];
-  const vocabulary = categoryVocabulary(data);
-  const counts = facetCounts(skills, Array.isArray(data?.categories) ? data.categories : []);
-  const cards = skills
-    .map((skill) => ({ ...skill, state: cardState(skill) }))
-    .sort(compareCards);
+  const upstream = (Array.isArray(upstreamEntries) ? upstreamEntries : []).map(upstreamCard);
+  const all = [...skills, ...upstream];
+  const vocabulary = categoryVocabulary(data, upstream);
+  const counts = facetCounts(all, Array.isArray(data?.categories) ? data.categories : []);
+  const cards = [...skills.map((skill) => ({ ...skill, state: cardState(skill) })), ...upstream].sort(compareCards);
   const archived = (Array.isArray(data?.archived) ? data.archived : [])
     .map((name) => ({ name, state: "archived" }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const uncategorized = skills.filter((skill) => !categoriesOf(skill).length).length;
+  const uncategorized = all.filter((skill) => !categoriesOf(skill).length).length;
   const rows = vocabulary.map((path) => ({
     path,
     label: leafOf(path),
@@ -149,6 +170,8 @@ export function buildView(data) {
     categoryNames: vocabulary,
     rows,
     skillCount: cards.length,
+    localCount: skills.length,
+    upstreamCount: upstream.length,
     total: cards.length + archived.length,
   };
 }
@@ -166,7 +189,12 @@ export function filterCards(cards, { filter = "", query = "" } = {}) {
   const needle = String(query ?? "").trim().toLowerCase();
   if (needle) {
     out = out.filter((card) =>
-      [card.name, card.description, ...categoriesOf(card)].join(" ").toLowerCase().includes(needle),
+      // `summary` 只有上游那些卡上有；`source` **不进搜索** —— 一条订阅底下几十条
+      // 全带着同一个名字，搜「matt」会把整个上游都捞出来，那不是筛，那是噪声。
+      [card.name, card.description, card.summary, ...categoriesOf(card)]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle),
     );
   }
   return out;

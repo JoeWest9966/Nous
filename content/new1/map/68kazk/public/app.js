@@ -118,7 +118,9 @@ const catCount = (path) => state.view?.counts.get(path) ?? 0;
 
 /** 数据变了就重算派生层 —— 页面各处都读 state.view，别各算一遍。 */
 function refreshView() {
-  state.view = buildView(state.data);
+  // 上游的条目并进同一张网格（`buildView` 的第二个参数）：「全部」「未分类」里
+  // 本地和上游并排，认身份看 `kind`，不看名字。
+  state.view = buildView(state.data, state.upstream?.entries ?? []);
   // 筛着的东西没了就落回「全部」：别让人盯着一面空墙以为是仓库空了。
   const value = state.filter;
   if (!value) return;
@@ -185,6 +187,10 @@ async function load({ quiet = false } = {}) {
 // 两份取并集（spec §3）。所以这一页只有一块 8 秒的写入队列（categoryWrites）：
 // 先乐观地画出来，攒够 8 秒发一次；离开详情页 / 发布前立刻 flush。
 
+/** 一条技能 / 一条上游条目在界面上的身份键。同名是可能的（上游撞上来我们管不了），所以带上 kind。 */
+const editKey = (entity) =>
+  entity?.kind === "upstream" ? `up:${entity.source}/${entity.path}` : String(entity?.name ?? "");
+
 function saveCategories(name, next) {
   const skill = skillNow(name);
   if (!skill || !transport) return;
@@ -195,22 +201,41 @@ function saveCategories(name, next) {
   categoryWrites.schedule(name, wanted);
 }
 
-function addTag(name, value) {
-  const skill = skillNow(name);
-  if (!skill) return;
-  const tag = normalizeCategory(value);
-  if (!tag) return;
-  const set = new Set(categoriesOf(skill));
-  if (set.has(tag)) return;
-  saveCategories(name, [...set, tag]);
+/**
+ * 上游那一条的类别 —— **我们的注记**（别人仓里写不进去）。
+ * 单独一条端点、单独一份文件（`upstream-categories.json`），但词表是共用的：
+ * 左栏那个「工程」底下，本地和上游的技能本来就该排在一起。
+ */
+function saveUpstreamCategories(entry, next) {
+  if (!transport) return;
+  const wanted = [...new Set(next.map(normalizeCategory).filter(Boolean))].sort(compareCategories);
+  entry.category = wanted;
+  entry.marked = true;
+  refreshView();
+  render();
+  const { source, path: home } = entry;
+  categoryWrites.schedule(editKey(entry), wanted, (list) =>
+    transport.post("v1/skills/upstream/category", { source, path: home, category: list }),
+  );
 }
 
-function removeTag(name, value) {
-  const skill = skillNow(name);
-  if (!skill) return;
-  saveCategories(
-    name,
-    categoriesOf(skill).filter((tag) => tag !== value),
+function setEntityCategories(entity, next) {
+  if (entity?.kind === "upstream") return saveUpstreamCategories(entity, next);
+  return saveCategories(entity?.name, next);
+}
+
+function addTag(entity, value) {
+  const tag = normalizeCategory(value);
+  if (!tag) return;
+  const set = new Set(categoriesOf(entity));
+  if (set.has(tag)) return;
+  setEntityCategories(entity, [...set, tag]);
+}
+
+function removeTag(entity, value) {
+  setEntityCategories(
+    entity,
+    categoriesOf(entity).filter((tag) => tag !== value),
   );
 }
 
@@ -378,6 +403,8 @@ function openCategoryMenu(x, y, path) {
 }
 
 function openCardMenu(x, y, skill) {
+  // 上游那条的菜单是另一份：没有归档、没有删除，多一个「取用」。
+  if (skill?.kind === "upstream") return openUpstreamCardMenu(x, y, skill);
   closeMenu();
   const menu = $("ctxmenu");
   menu.textContent = "";
@@ -396,6 +423,31 @@ function openCardMenu(x, y, skill) {
   // 所以这里没有第二条更狠的路，菜单里也就不写「删掉」那种话。
   menuItem(menu, "归档", "可从归档恢复", () => void archiveSkill(skill.name), { danger: true });
 
+  mountMenu(menu, x, y, first);
+}
+
+/** 上游卡片上的菜单：跟我们自己那条同一个位置、同一副骨头，少两样、多一样。 */
+function openUpstreamCardMenu(x, y, entry) {
+  closeMenu();
+  const menu = $("ctxmenu");
+  menu.textContent = "";
+  menu.hidden = false;
+  menuOpen = true;
+
+  const badge = upstreamBadge(entry);
+  menuHead(menu, entry.name, `上游 · ${badge.label}`);
+  const first = menuItem(menu, "查看详情", `${entry.source}/${entry.path}`, () => openUpstreamCardDetail(entry));
+  menuItem(menu, "看正文", "SKILL.md · 只读", () => openUpstreamCardDetail(entry, { focusBody: true }));
+  menuItem(menu, "类别", "我们这边的注记", () => openUpstreamCardDetail(entry, { editTags: true }));
+  menu.append(el("div", "ctx-sep"));
+  if (entry.local === "none") {
+    menuItem(menu, "取用", "拷进我们仓里（不提交）", () => void adoptEntry(entry));
+  } else if (entry.local === "taken") {
+    // 同名的那条是我们自己的：改名取用只能在浮层里做（那儿有个输入框）。
+    menuItem(menu, "取用", "名字被占 —— 去详情里改名", () => openUpstreamCardDetail(entry), { disabled: true });
+  } else {
+    menuItem(menu, "看差在哪", "跟本地那条比", () => openUpstreamCardDetail(entry, { showDiff: true }));
+  }
   mountMenu(menu, x, y, first);
 }
 
@@ -458,6 +510,7 @@ function swallowNextClick() {
 
 function tagRow(skill, { readOnly = false } = {}) {
   const wrap = el("div", "tags " + (readOnly ? "product-tags" : "detail-tags"));
+  const key = editKey(skill);
 
   for (const tag of categoriesOf(skill)) {
     const chip = el("span", "tag");
@@ -475,7 +528,7 @@ function tagRow(skill, { readOnly = false } = {}) {
       const remove = el("button", "tag-x", "×");
       remove.type = "button";
       remove.title = `从 ${skill.name} 摘掉「${tag}」`;
-      remove.onclick = () => removeTag(skill.name, tag);
+      remove.onclick = () => removeTag(skill, tag);
       chip.append(remove);
     }
     wrap.append(chip);
@@ -483,7 +536,7 @@ function tagRow(skill, { readOnly = false } = {}) {
 
   if (readOnly) return wrap;
 
-  if (state.editing === skill.name) {
+  if (state.editing === key) {
     const input = el("input", "tag-input");
     input.type = "text";
     input.placeholder = "类别，回车";
@@ -495,7 +548,7 @@ function tagRow(skill, { readOnly = false } = {}) {
       const value = input.value;
       state.editing = null;
       render();
-      if (value.trim()) addTag(skill.name, value);
+      if (value.trim()) addTag(skill, value);
     };
     input.onkeydown = (event) => {
       if (event.key === "Enter") {
@@ -515,7 +568,7 @@ function tagRow(skill, { readOnly = false } = {}) {
     const add = el("button", "tag-add", "+ 类别");
     add.type = "button";
     add.onclick = () => {
-      state.editing = skill.name;
+      state.editing = key;
       render();
     };
     wrap.append(add);
@@ -530,6 +583,8 @@ function tagRow(skill, { readOnly = false } = {}) {
 // **状态角标一个都不许搬走** —— 扫一眼看谁坏了、谁还没发布，是这页存在的理由（spec §7.1）。
 
 function productCard(card) {
+  // 上游的卡：同一副骨头，颜色和菜单不一样（颜色是上游独属的，见 style.css 的 `--up`）。
+  if (card.kind === "upstream") return upstreamProductCard(card);
   const skill = card;
   const failed = card.state === "failed";
   const unpublished = card.state === "unpublished";
@@ -600,6 +655,78 @@ function productCard(card) {
   if (tags.childNodes.length) body.append(tags);
   node.append(body);
   return node;
+}
+
+/**
+ * 别人的仓里的一条 —— 在「全部」/「未分类」里跟我们的技能并排。
+ *
+ * 三处不一样，都是有意的：
+ *   · 颜色：**上游独属的暖金**，不跟名字取色（`--hue` 是整个色轮，撞上谁都是撞）；
+ *   · 名字旁边挂订阅名：同名的时候这是唯一分得清的地方；
+ *   · 菜单里没有归档 / 删除 —— 别人的东西我们删不掉，能做的只有「取用」。
+ */
+function upstreamProductCard(entry) {
+  const badge = upstreamBadge(entry);
+  const card = el("article", "product up-card");
+  card.tabIndex = 0;
+  card.setAttribute("role", "button");
+  card.setAttribute("aria-label", `${entry.name} · 上游 ${entry.source} · ${badge.label}`);
+  card.dataset.name = entry.name;
+  card.dataset.kind = "upstream";
+  card.title = `${entry.source}/${entry.path}`;
+
+  const openMenuAt = (mx, my) => openUpstreamCardMenu(mx, my, entry);
+  card.onclick = () => openUpstreamCardDetail(entry);
+  card.oncontextmenu = (event) => {
+    event.preventDefault();
+    openMenuAt(event.clientX, event.clientY);
+  };
+  card.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openUpstreamCardDetail(entry);
+    } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      const rect = card.getBoundingClientRect();
+      openMenuAt(rect.left + 8, rect.bottom - 6);
+    }
+  };
+  attachMenuGesture(card, openMenuAt);
+
+  // 不设 `--hue`：上游的颜色由 `.up-card` 定，跟名字无关。
+  const visual = el("div", "visual");
+  visual.append(el("span", "visual-mono", initialsOf(entry.name)));
+  if (entry.local !== "same") visual.append(el("span", `badge-float ${badge.tone}`, badge.label));
+  card.append(visual);
+
+  const body = el("div", "product-body");
+  const title = el("div", "product-title");
+  title.append(el("span", "product-name", entry.name));
+  const src = el("span", "product-hidden up-src", entry.source);
+  src.title = `${entry.source}/${entry.path} —— 在别人的仓里`;
+  title.append(src);
+
+  const menuBtn = el("button", "product-menu", "⋯");
+  menuBtn.type = "button";
+  menuBtn.title = `${entry.name} 的菜单：正文 / 类别 / 取用`;
+  menuBtn.setAttribute("aria-label", `${entry.name} 的菜单`);
+  menuBtn.onclick = (event) => {
+    event.stopPropagation();
+    const rect = menuBtn.getBoundingClientRect();
+    openMenuAt(rect.left, rect.bottom + 4);
+  };
+  menuBtn.onkeydown = (event) => {
+    if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+  };
+  title.append(menuBtn);
+  body.append(title);
+
+  const sum = entry.description || entry.summary;
+  if (sum) body.append(el("p", "product-sum", sum));
+  const tags = tagRow(entry, { readOnly: true });
+  if (tags.childNodes.length) body.append(tags);
+  card.append(body);
+  return card;
 }
 
 // ── 筛选栏 + 左栏 facet ────────────────────────────────────────────────────
@@ -979,6 +1106,7 @@ function renderDetail() {
   $("dt-name").textContent = skill.name;
   $("dt-meta").textContent = cats.length ? cats.join(" · ") : "未分类";
   $("dt-tile").style.setProperty("--hue", String(hueOf(skill.name)));
+  delete $("dt-tile").dataset.kind; // 同一扇浮层也装上游，别把暖金带过来
   $("dt-mono").textContent = initialsOf(skill.name);
   const badges = $("dt-badges");
   badges.textContent = "";
@@ -1105,14 +1233,18 @@ function renderGrid() {
             ? `没有「${STATE_LABEL[stateFilterOf(state.filter)] ?? stateFilterOf(state.filter)}」的技能。`
             : state.filter
               ? `没有标「${state.filter}」的技能。`
-              : "仓库里一条技能都没有 —— 点右上「＋ 新建技能」开一条。";
+              : state.view.upstreamCount
+                ? "这个筛选下没有我们的技能，也没有上游的。"
+                : "仓库里一条技能都没有 —— 点右上「＋ 新建技能」开一条。";
     grid.append(el("div", "empty", why));
   }
 
+  const upShown = shown.filter((card) => card.kind === "upstream").length;
+  const tail = upShown ? ` · 其中 ${upShown} 条来自上游` : "";
   $("result-count").textContent =
     shown.length === view.skillCount
-      ? `${view.skillCount} 条技能`
-      : `${shown.length} / ${view.skillCount} 条技能`;
+      ? `${view.skillCount} 条技能${tail}`
+      : `${shown.length} / ${view.skillCount} 条技能${tail}`;
 }
 
 // ── 渲染入口 ───────────────────────────────────────────────────────────────
@@ -1192,7 +1324,12 @@ function render() {
     $("dt-scrim").hidden = true;
   }
 
-  $("count").textContent = `${state.view.skillCount} 条技能${state.view.archived.length ? ` · ${state.view.archived.length} 条归档` : ""}`;
+  // 上游并进网格之后，「N 条技能」里混着别人的 —— 拆开说，不然会以为仓里真有那么多。
+  const upN = state.view.upstreamCount;
+  $("count").textContent =
+    `${state.view.skillCount} 条技能` +
+    (upN ? `（${state.view.localCount} + ${upN} 上游）` : "") +
+    (state.view.archived.length ? ` · ${state.view.archived.length} 条归档` : "");
   setBehindInert();
 }
 
@@ -1215,7 +1352,10 @@ function render() {
 async function loadUpstream({ quiet = true } = {}) {
   try {
     if (!transport) await connect();
-    state.upstream = await transport.get("v1/skills/upstream");
+    const payload = await transport.get("v1/skills/upstream");
+    upstreamTexts.clear(); // 刷新过就来过新的 blob，旧的正文别再端出来
+    // 每一条都带 `kind`：本地和上游会同名（我们管不了），界面上分身份只能靠它。
+    state.upstream = { ...payload, entries: (payload.entries ?? []).map((entry) => ({ ...entry, kind: "upstream" })) };
   } catch (error) {
     state.upstream = { sources: [], entries: [], errors: [], error: String(error?.message ?? error) };
     if (!quiet) toast(`读不到上游清单：${error.message}`, "bad");
@@ -1232,10 +1372,18 @@ const upstreamSourceNow = () =>
 
 const upstreamTreeNow = () => upstreamTree(upstreamEntriesOf(state.upstreamSource));
 
-const upstreamEntryAt = (path) =>
-  (state.upstream?.entries ?? []).find(
-    (entry) => entry.source === state.upstreamSource && entry.path === path,
-  ) ?? null;
+/**
+ * 浮层里正在看的是哪一条。两种指法：
+ *   · 字符串 —— 上游那一屏用的，路径在**当前订阅**里找（地址栏就是 `#upstream/<订阅>/<路径>`）；
+ *   · `{source, path}` —— 从「全部」的网格点进来的，那儿的卡片不知道当前订阅是谁。
+ */
+const upstreamEntryAt = (target) => {
+  const list = state.upstream?.entries ?? [];
+  if (target && typeof target === "object") {
+    return list.find((entry) => entry.source === target.source && entry.path === target.path) ?? null;
+  }
+  return list.find((entry) => entry.source === state.upstreamSource && entry.path === target) ?? null;
+};
 
 // ── 地址 ────────────────────────────────────────────────────────────────────
 //
@@ -1258,7 +1406,7 @@ const writeHash = () => {
     if (hashTarget()) history.replaceState(null, "", location.pathname + location.search);
     return;
   }
-  const leaf = state.upstreamDetail ?? state.upstreamPath ?? "";
+  const leaf = (typeof state.upstreamDetail === "string" ? state.upstreamDetail : "") || state.upstreamPath || "";
   const parts = ["upstream", state.upstreamSource ?? "", leaf].filter((item, index) => index < 2 || item);
   const next = `#${parts.join("/")}`;
   if (location.hash !== next) history.replaceState(null, "", next);
@@ -1266,6 +1414,8 @@ const writeHash = () => {
 
 function openUpstream(name = undefined, path = undefined) {
   leaveDetail();
+  // 从网格点开过的上游浮层指法是 `{source, path}`，那儿不是这一屏的地址 —— 收掉。
+  state.upstreamDetail = null;
   state.upstreamOpen = true;
   // 没说看哪个就落到第一个订阅；一个都没有就停在「添加上游」那张空状态上。
   state.upstreamSource = name ?? state.upstreamSource ?? state.upstream?.sources?.[0]?.name ?? null;
@@ -1460,7 +1610,7 @@ function upstreamDirCard(node) {
 
 function upstreamSkillCard(entry) {
   const badge = upstreamBadge(entry);
-  const card = el("article", "product");
+  const card = el("article", "product up-card");
   card.tabIndex = 0;
   card.setAttribute("role", "button");
   card.setAttribute("aria-label", `${entry.name} · ${badge.label}`);
@@ -1479,8 +1629,8 @@ function upstreamSkillCard(entry) {
     }
   };
 
+  // 不设 `--hue`：上游独属的暖金由 `.up-card` 定。
   const visual = el("div", "visual");
-  visual.style.setProperty("--hue", String(hueOf(entry.name)));
   visual.append(el("span", "visual-mono", initialsOf(entry.name)));
   if (entry.local !== "same") visual.append(el("span", `badge-float ${badge.tone}`, badge.label));
   card.append(visual);
@@ -1495,18 +1645,37 @@ function upstreamSkillCard(entry) {
   return card;
 }
 
-/** 浮层里的正文：说明、上游路径、版本、动作（取用 / 看差在哪 / 已取用）。 */
+/**
+ * 浮层里的正文：说明、上游路径、版本、类别、**正文（只读）**、动作。
+ *
+ * 上游那条跟我们自己那条摆在一起，所以这里也长了三样：能改类别（注记在我们这边）、
+ * 能读正文（从镜像里 `cat-file`）、菜单跟卡片同一套。**唯独没有编辑** ——
+ * 别人的仓我们没有写入口，给一个灰着的保存按钮比不给更坏。
+ */
 function upstreamDetailBody(entry) {
   const wrap = el("div", "up-detail");
   const badge = upstreamBadge(entry);
   if (entry.description) wrap.append(detailRow("说明", entry.description));
   if (entry.summary && entry.summary !== entry.description) wrap.append(detailRow("摘要", entry.summary));
-  if (entry.category?.length) wrap.append(detailRow("类别", entry.category.join(" · ")));
   wrap.append(detailRow("上游", `${entry.source}/${entry.path}`, entry.path));
   wrap.append(
     detailRow("上游版本", `${String(entry.sha ?? "").slice(0, 8)} · ${entry.files} 个文件`, entry.sha ?? ""),
   );
   wrap.append(detailRow("跟本地", badge.label));
+
+  // ── 类别：跟本地那份同一个词表，只是注记落在 `upstream-categories.json` ──
+  const cats = detailSection("类别", "我们这边的注记 · 上游的仓里写不进去");
+  cats.body.append(tagRow(entry, {}));
+  wrap.append(cats.node);
+
+  // ── 正文：只读 ────────────────────────────────────────────────────────
+  const body = detailSection("正文", "SKILL.md · 只读");
+  const text = upstreamTextNow(entry);
+  const pre = el("pre", "detail-body-text");
+  pre.id = "up-text";
+  pre.textContent = text.loading ? "读 SKILL.md…" : text.error ? `读不到：${text.error}` : text.text;
+  body.body.append(pre);
+  wrap.append(body.node);
 
   let input = null;
   if (entry.local === "taken") {
@@ -1542,15 +1711,61 @@ function upstreamDetailBody(entry) {
   return wrap;
 }
 
+/**
+ * 上游那条的正文。**只读** —— 服务端在 `upstream/file` 上根本没有写入口。
+ *
+ * 缓存按 `订阅/路径` 存：浮层每画一次都重新请求的话，滚动一下就闪一次「读取中」。
+ */
+const upstreamTexts = new Map();
+
+function upstreamTextNow(entry) {
+  const key = `${entry.source}/${entry.path}`;
+  const hit = upstreamTexts.get(key);
+  if (hit) return hit;
+  const slot = { loading: true, text: "", error: "" };
+  upstreamTexts.set(key, slot);
+  if (!transport) {
+    Object.assign(slot, { loading: false, error: "还没连上 qrd3wh" });
+    return slot;
+  }
+  transport
+    .get(`v1/skills/upstream/file?source=${encodeURIComponent(entry.source)}&path=${encodeURIComponent(entry.path)}`)
+    .then((file) => Object.assign(slot, { loading: false, text: file.text }))
+    .catch((error) => Object.assign(slot, { loading: false, error: String(error?.message ?? error) }))
+    .then(() => {
+      // 画到一半关掉了就别再画：`render()` 会自己认状态。
+      if (state.upstreamDetail) render();
+    });
+  return slot;
+}
+
 function closeUpstreamDetail() {
   if (!state.upstreamDetail) return;
-  const path = state.upstreamDetail;
+  const path = typeof state.upstreamDetail === "object" ? state.upstreamDetail.path : state.upstreamDetail;
   state.upstreamDetail = null;
   writeHash();
   render();
   // 焦点还回那张卡（卡片是重画过的，所以按路径重新找一遍）。
-  const card = [...document.querySelectorAll("#upstream .product")].find((node) => node.title === path);
+  // 网格里那张卡的 title 是 `订阅/路径`，上游那一屏的卡 title 就是路径。
+  const card = [...document.querySelectorAll(".product")].find(
+    (node) => node.title === path || node.title?.endsWith(`/${path}`),
+  );
   card?.focus({ preventScroll: true });
+}
+
+/**
+ * 从「全部」的网格点开上游那条：用的是**同一扇浮层**（`#detail`），
+ * 但指法是 `{source, path}` —— 网格里的卡片不知道「当前订阅」是谁。
+ */
+function openUpstreamCardDetail(entry, { editTags = false, focusBody = false, showDiff = false } = {}) {
+  leaveDetail(); // 本地那条的浮层让位：一扇窗里只放一个东西
+  state.upstreamDetail = { source: entry.source, path: entry.path };
+  state.editing = editTags ? editKey(entry) : null;
+  render();
+  $("dt-body").scrollTop = 0;
+  $("detail").focus({ preventScroll: true });
+  if (showDiff) void showUpstreamDiff(entry, $("dt-body"));
+  else if (focusBody) $("up-text")?.scrollIntoView({ block: "nearest" });
 }
 
 /** 浮层只有一个开关：正在看哪条就关哪条。 */
@@ -1567,7 +1782,9 @@ function renderUpstreamDetail() {
     return false;
   }
   $("dt-mono").textContent = initialsOf(entry.name);
-  $("dt-tile").style?.setProperty?.("--hue", String(hueOf(entry.name)));
+  // 上游独属的暖金：**不设 `--hue`**，交给 `#dt-tile[data-kind="upstream"]`。
+  // 设了 `--hue` 就会跟某条本地技能撞色 —— 色轮是整圈的，总有一个名字落在那儿。
+  $("dt-tile").dataset.kind = "upstream";
   $("dt-name").textContent = entry.name;
   const badges = $("dt-badges");
   badges.textContent = "";
@@ -2809,6 +3026,16 @@ function validateCreate() {
 
   // 空名字是唯一拦下来的东西：没名字连「建什么」都说不清。
   if (!name) return { ok: false, tone: "bad", message: `先起个名字。会建在 ${root}/${where}` };
+  // 名字跟上游那条撞了，服务端一定 409（名字得能分开）。在这儿先说，省一个来回。
+  // 这是**提醒**不是闸：真正拦住的是服务端，它还会在 #create-err 里说完整那一句。
+  const clash = (state.upstream?.entries ?? []).find((entry) => entry.name === name);
+  if (clash) {
+    return {
+      ok: true,
+      tone: "warn",
+      message: `上游已经有「${clash.name}」了（${clash.source}/${clash.path}）—— 两个字不能都叫这个，服务端会拦。`,
+    };
+  }
   // 空说明只提醒，**不拦**：拦不拦是服务端的事（它会回 400 并把原因写在 #create-err 里）。
   if (!description) {
     return {

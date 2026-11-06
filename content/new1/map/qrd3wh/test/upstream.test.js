@@ -312,3 +312,150 @@ test("materialize 只摊 blob，路径不许跑出目标目录", async () => {
     await cleanup(source);
   }
 });
+
+// ── 正文（只读）────────────────────────────────────────────────────────────
+
+test("上游正文从镜像里读：GET 拿得到，POST 是 405 —— 别人的仓我们没有写入口", async () => {
+  const source = await makeUpstreamRepo();
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/tdd");
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.file, "SKILL.md");
+    assert.match(out.body.text, /name: tdd/);
+    assert.match(out.body.text, /先写测试/);
+
+    const nope = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/tdd&file=none.md");
+    assert.equal(nope.status, 404);
+
+    const write = await ctx.call("POST", "/v1/skills/upstream/file", {});
+    assert.equal(write.status, 405);
+    assert.match(write.body.error, /只读/);
+
+    // 路径不许跑出那一条
+    const escape = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/tdd&file=../../README.md");
+    assert.equal(escape.status, 400);
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
+  }
+});
+
+// ── 我们给上游技能打的类别 ──────────────────────────────────────────────────
+
+test("上游的类别是我们的注记：标过就用我们的，没标过沿用上游自己的", async () => {
+  const source = await makeUpstreamRepo();
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+
+    // 上游 nous.json 里带的是 Basics
+    let list = await ctx.call("GET", "/v1/skills/upstream");
+    const before = list.body.entries.find((entry) => entry.name === "code-review");
+    assert.deepEqual(before.category, ["Basics"]);
+    assert.equal(before.marked, false);
+
+    const saved = await ctx.call("POST", "/v1/skills/upstream/category", {
+      source: "matt",
+      path: "skills/engineering/code-review",
+      category: ["工程/审查"],
+    });
+    assert.equal(saved.status, 200, saved.body?.error);
+    assert.deepEqual(saved.body.category, ["工程/审查"]);
+    // 词表跟本地共用一份：新造的类别得进 categories.json，否则左栏看不见它
+    assert.ok(saved.body.categories.includes("工程/审查"));
+    assert.ok(saved.body.categories.includes("工程"));
+
+    list = await ctx.call("GET", "/v1/skills/upstream");
+    const after = list.body.entries.find((entry) => entry.name === "code-review");
+    assert.deepEqual(after.category, ["工程/审查"]);
+    assert.equal(after.marked, true);
+
+    // 空数组 = 明确「没有类别」，不是「沿用上游的」
+    await ctx.call("POST", "/v1/skills/upstream/category", {
+      source: "matt",
+      path: "skills/engineering/code-review",
+      category: [],
+    });
+    list = await ctx.call("GET", "/v1/skills/upstream");
+    assert.deepEqual(list.body.entries.find((entry) => entry.name === "code-review").category, []);
+
+    // 落盘，但没提交 —— 它跟技能一样是内容，等发布
+    assert.ok(await exists(path.join(ctx.root, "upstream-categories.json")));
+    assert.equal(await repo.isTrackedDir(ctx.root, "upstream-categories.json"), false);
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
+  }
+});
+
+test("上游类别：没订阅的上游 / 空 path → 400", async () => {
+  const ctx = await setup({ sources: [{ name: "matt", url: "https://example.invalid/x" }] });
+  try {
+    const noSource = await ctx.call("POST", "/v1/skills/upstream/category", { source: "nope", path: "a", category: [] });
+    assert.equal(noSource.status, 400);
+    assert.match(noSource.body.error, /没有订阅/);
+
+    const noPath = await ctx.call("POST", "/v1/skills/upstream/category", { source: "matt", path: "", category: [] });
+    assert.equal(noPath.status, 400);
+    assert.match(noPath.body.error, /path 是空的/);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+// ── 名字独占 ────────────────────────────────────────────────────────────────
+
+test("新建技能不许撞上游的名字（409）；上游撞我们是它的事，管不了", async () => {
+  const source = await makeUpstreamRepo();
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("POST", "/v1/skills/create", { name: "code-review", description: "我们自己也想有一条" });
+    assert.equal(out.status, 409);
+    assert.match(out.body.error, /上游已经有了/);
+    assert.match(out.body.error, /matt\/skills\/engineering\/code-review/);
+    assert.equal(await exists(path.join(ctx.root, "code-review")), false);
+
+    // 不撞的照建
+    const ok = await ctx.call("POST", "/v1/skills/create", { name: "our-own", description: "自己的" });
+    assert.equal(ok.status, 200, ok.body?.error);
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
+  }
+});
+
+test("没拉过镜像时新建不被上游拦住 —— 离线就按离线的判据来", async () => {
+  const source = await makeUpstreamRepo();
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    const out = await ctx.call("POST", "/v1/skills/create", { name: "code-review", description: "还没见过上游" });
+    assert.equal(out.status, 200, out.body?.error);
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
+  }
+});
+
+test("类别改名 / 删除也跟着改上游那份注记 —— 词表共用，注记两处", async () => {
+  const source = await makeUpstreamRepo();
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    await ctx.call("POST", "/v1/skills/upstream/category", {
+      source: "matt",
+      path: "skills/engineering/code-review",
+      category: ["工程/审查"],
+    });
+
+    const renamed = await ctx.call("POST", "/v1/skills/categories", { op: "rename", name: "工程", to: "arch" });
+    assert.equal(renamed.status, 200, renamed.body?.error);
+    let list = await ctx.call("GET", "/v1/skills/upstream");
+    assert.deepEqual(list.body.entries.find((entry) => entry.name === "code-review").category, ["arch/审查"]);
+
+    const removed = await ctx.call("POST", "/v1/skills/categories", { op: "remove", name: "arch" });
+    assert.equal(removed.status, 200, removed.body?.error);
+    list = await ctx.call("GET", "/v1/skills/upstream");
+    assert.deepEqual(list.body.entries.find((entry) => entry.name === "code-review").category, []);
+  } finally {
+    await teardown(ctx.root, ctx.data, source);
+  }
+});
