@@ -492,6 +492,10 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .detail-row { display: flex; gap: 10px; align-items: baseline; font-size: 12px; }
 .detail-row-k { flex: none; width: 52px; color: var(--dim); white-space: nowrap; }
 .detail-row-v { min-width: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+/* 本机路径那一行：等宽、可点（点了就复制）—— 人是要拿它去终端里粘的。 */
+.detail-row.detail-path { cursor: copy; border-radius: 4px; margin-left: -4px; padding: 1px 4px; }
+.detail-row.detail-path:hover { background: var(--surface-2, rgba(0, 0, 0, 0.04)); }
+.detail-row.detail-path .detail-row-v { font-family: var(--mono); font-size: 11px; }
 .detail-tags { padding: 0; }
 
 /* ── 右键 / 长按菜单 ───────────────────────────────────────────────────── */
@@ -637,12 +641,14 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .ed-file .ed-file-caret { flex: none; width: 8px; color: var(--dim); font-size: 9px; }
 .ed-file[data-kind="markdown"] { color: var(--ink-2); }
 .ed-file[data-kind="dir"] { color: var(--ink); font-weight: 600; }
-.ed-file-del {
+/* 行尾的「⋯」：菜单入口。桌面 hover / 键盘聚焦才显形，触屏常驻（见窄屏段）。
+   删除挪进菜单了 —— 小叉子又窄又容易被当成行里唯一的动作。 */
+.ed-file-more {
   flex: none; border: 0; background: none; color: var(--dim); cursor: pointer;
-  font-size: 14px; line-height: 1; padding: 2px 5px; border-radius: 5px; opacity: 0;
+  font-size: 13px; line-height: 1; padding: 3px 5px; border-radius: 5px; opacity: 0;
 }
-.ed-row:hover .ed-file-del, .ed-row:focus-within .ed-file-del { opacity: 1; }
-.ed-file-del:hover, .ed-file-del:focus-visible { background: #fbeeec; color: var(--bad); outline: none; }
+.ed-row:hover .ed-file-more, .ed-row:focus-within .ed-file-more { opacity: 1; }
+.ed-file-more:hover, .ed-file-more:focus-visible { background: var(--wash); color: var(--ink); outline: none; }
 .ed-files-empty { padding: 8px; color: var(--dim); font-size: 11.5px; }
 
 /* 取用过的上游那条：这份文件跟本地那份比下来是什么。`≠` 变了、`+` 本地没有。
@@ -716,8 +722,8 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   }
   .ed-files { overflow: auto; }
   .ed-file { width: auto; }
-  /* 触屏没有 hover：删除按钮常驻，不然手机上永远点不到。 */
-  .ed-file-del { opacity: 1; }
+  /* 触屏没有 hover：菜单入口常驻，不然手机上永远点不到（长按也行，但没人猜得到）。 */
+  .ed-file-more { opacity: 1; }
   .ed-foot { flex-direction: column; align-items: flex-start; }
 }
 

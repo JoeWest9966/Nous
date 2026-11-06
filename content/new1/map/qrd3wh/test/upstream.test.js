@@ -376,13 +376,16 @@ test("上游的文件清单带大小和子目录 —— 抽屉里那棵树要的
   }
 });
 
-test("整个仓的树：一个订阅 = 一条技能，根是仓根", async () => {
+test("抽屉那棵树只有技能：仓里的 README / .github 一个字都不进来", async () => {
   const source = await makeRepo({
     files: {
       "skills/engineering/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n`,
       "skills/engineering/x/references/a.md": "# a\n",
       "skills/in-progress/y/SKILL.md": `---\nname: y\ndescription: "y"\n---\n\n正文\n`,
       "README.md": "别人的仓\n",
+      ".github/workflows/ci.yml": "on: push\n",
+      "docs/guide.md": "文档\n",
+      "skills/engineering/README.md": "分组说明，不是技能\n",
     },
   });
   const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
@@ -390,29 +393,45 @@ test("整个仓的树：一个订阅 = 一条技能，根是仓根", async () =>
     await ctx.call("POST", "/v1/skills/upstream/refresh", {});
     const out = await ctx.call("GET", "/v1/skills/upstream/tree?source=matt");
     assert.equal(out.status, 200, out.body?.error);
-    // 整仓：README 也在（prefix 只筛「哪些是技能」，不筛「仓里有什么」）
+    // 只有「带 SKILL.md 的目录」里的文件，而且路径已经剥掉 prefix
     assert.deepEqual(out.body.files.map((file) => file.path).sort(), [
-      "README.md",
+      "engineering/x/SKILL.md",
+      "engineering/x/references/a.md",
+      "in-progress/y/SKILL.md",
+    ]);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("工作区只 check out 技能目录 —— 别人的 README 不该躺在我们盘上", async () => {
+  const source = await makeRepo({
+    files: {
+      "skills/engineering/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n`,
+      "skills/in-progress/y/SKILL.md": `---\nname: y\ndescription: "y"\n---\n\n正文\n`,
+      "README.md": "别人的仓\n",
+      ".github/workflows/ci.yml": "on: push\n",
+    },
+  });
+  const ctx = await setup({ sources: [{ name: "matt", url: source, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const home = path.join(ctx.data, "upstream", "matt");
+    const onDisk = [];
+    const walk = async (at, rel = "") => {
+      for (const item of await readdir(at, { withFileTypes: true })) {
+        if (item.name === ".git") continue;
+        const next = rel ? `${rel}/${item.name}` : item.name;
+        if (item.isDirectory()) await walk(path.join(at, item.name), next);
+        else onDisk.push(next);
+      }
+    };
+    await walk(home);
+    assert.deepEqual(onDisk.sort(), [
       "skills/engineering/x/SKILL.md",
-      "skills/engineering/x/references/a.md",
       "skills/in-progress/y/SKILL.md",
     ]);
-    assert.ok(out.body.files.every((file) => file.size > 0));
-
-    // 从仓根读：`path` 空 + `file` 是仓里的路径
-    const text = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&file=skills/engineering/x/references/a.md");
-    assert.equal(text.status, 200, text.body?.error);
-    assert.equal(text.body.text, "# a\n");
-    assert.equal(text.body.file, "skills/engineering/x/references/a.md");
-
-    // 老形状（目录 + 文件名）也还认
-    const old = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&path=skills/engineering/x&file=SKILL.md");
-    assert.equal(old.status, 200, old.body?.error);
-    assert.match(old.body.text, /name: x/);
-
-    const escape = await ctx.call("GET", "/v1/skills/upstream/file?source=matt&file=../../../etc/passwd");
-    assert.equal(escape.status, 400);
   } finally {
-    await teardown(ctx.root, ctx.data, source);
+    await teardown(ctx.root, ctx.data);
   }
 });

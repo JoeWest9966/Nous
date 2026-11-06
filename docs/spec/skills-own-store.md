@@ -375,7 +375,7 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 | 东西 | 存哪 | 进版本库 | 是什么 |
 |---|---|---|---|
 | `sources.json` | 仓根，跟 `categories.json` 并列 | **是** | 订阅了谁。内容，不是配置 —— 换台机器 clone 下来照样知道 |
-| `data/upstream/<name>` | 块的 `NOUS_DATA` | 否 | bare 镜像。**缓存**，删了下次 fetch 重 clone |
+| `data/upstream/<name>` | 块的 `NOUS_DATA` | 否 | **只装技能的稀疏工作区**（不是 bare、不是整仓）。缓存，删了下次 fetch 重 clone |
 | `nous.json.upstream` | 每条技能自己的目录 | **是** | 注脚 `skills/skills/x/code-review@<tree-sha>`（source 名 / 仓内路径 / tree-sha），只写不读逻辑 |
 
 ### 12.1 `sources.json`
@@ -396,9 +396,10 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 
 | 方法 · 路径 | 说明 |
 |---|---|
-| `GET /v1/skills/upstream` | `{sources:[{…, mirror:"ready"｜"missing"}], entries:[…], errors:[{source,error}]}`。**不联网**：镜像不在就报 `missing` |
+| `GET /v1/skills/upstream` | `{sources:[{…, mirror:"ready"｜"missing", dir, bytes}], entries:[…], errors:[{source,error}]}`。`dir` 是本机能 `cd` 进去的那个目录，`bytes` 是它占的地方。**不联网**：镜像不在就报 `missing` |
 | `POST /v1/skills/upstream/refresh` | `{name?}` → 唯一联网动作（clone/fetch）。逐个 source 各报 `ok/error` |
 | `GET /v1/skills/upstream/files?source=&path=` | 文件清单：`{path, size, state}` + `adopted`。`state` 是逐文件跟本地比 git blob sha（`same` / `diff` / `missing`），**没取用过就没有意义** |
+| `GET /v1/skills/upstream/tree?source=` | `{head, files:[{path,size}]}`。**只有技能**：带 `SKILL.md` 的那些目录里的文件，路径已剥掉 `prefix`。仓里的 `README` / `.github` / `docs` 一条都不出现 |
 | `GET /v1/skills/upstream/file?source=&path=&file=` | `{text, size}`，从镜像 `cat-file` 读。**只读** —— 这条路上只有 GET，POST 是 405 |
 | `POST /v1/skills/upstream/adopt` | `{source, path, name?}` → 取用（见 12.4） |
 
@@ -411,11 +412,35 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 | `taken` | 本地有同名但不是从这条取的 | 改名取用（输入框） |
 | `same` | 取用过，上游没动 | 无（按钮灰着） |
 
-### 12.3 镜像纪律
+### 12.3 镜像纪律：**只装技能，不装那个仓**
+
+我们订阅的是**一个仓里的技能**，不是那个仓。`.github/`、`.changeset/`、`docs/`、根 README、
+553 个 commit 的历史 —— 这些跟我们一点关系都没有，落到盘上就是垃圾。
+
+判据只有一个：**带 `SKILL.md` 的目录算一条技能**（去掉点开头的、去掉 `prefix` 之外的）。
+工作区、抽屉里那棵树、取用的单位，全从这一个判据出去。
+
+四道闸一起上，缺一道整仓就下来了：
+
+| 闸 | 挡掉什么 |
+|---|---|
+| `--depth=1` | 553 个 commit 的历史 |
+| `--filter=blob:none` | 没读过的文件（blob 按需拉） |
+| `--no-checkout` + `sparse-checkout set --no-cone /<技能目录>/…` | 工作区里不是技能的东西 |
+| `git clean -fd` + 重设 sparse（每次 fetch 后） | 上游删掉的技能 |
+
+**没有「失败了退回全量 clone」这条路。** 那条退路正是当初把整仓拉下来的入口 ——
+184 个文件全躺在盘上，用户打开一看：这他妈是别人的仓。「省空间失败」的正确答案是报错，
+不是偷偷下 184 个文件。
+
+于是 `dir`（`data/upstream/<name>/<prefix>`）是一个**真的能 `cd` 进去的目录**：
+`ls` 就是 39 个技能，`grep -r` 就是在这 39 条里找，粘到编辑器里就是那些 markdown。
+「复制路径」复制的是它 —— 不是 GitHub 地址（点不进去、grep 不了）。
 
 - 只在 `refresh` 里 clone/fetch。**`GET /v1/skills/upstream` 的调用路径上没有联网代码** —— 打开面板不打 GitHub。
 - 清单从 `git ls-tree -r` + `git cat-file` 读，**不 checkout**：一条技能的清单是一次 tree walk。
-- `--filter=blob:none` 省空间；服务端不支持就退回全量 clone（「省空间失败」不等于「上游用不了」）。
+- 刷新完顺手 `reflog expire` + `gc --prune=now`（best-effort）：不收拾的话，几十次刷新之后
+  盘上全是松散对象，比技能本身还大。
 
 ### 12.4 `adopt` 的规矩
 
@@ -441,9 +466,11 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
   `skills`，写着「整个仓 · 39 条技能」。没有目录卡、没有面包屑、没有 `‹ 上一层`，
   更没有「一条上游技能一张卡」—— 那等于把别人的仓拆成 39 个碎片。
 - 点这张卡 = **半扇浮层**（跟本地那条同一扇）：地址、prefix、多少条待看、看正文 / 刷新。
-- 浮层里 `看正文 ›` = **那只抽屉**，只读，左栏是**整个仓的文件树**（根是仓根，
-  `skills/engineering/x/SKILL.md` 一路展开）。打开时自动滚到 `prefix` 那一段 ——
-  字母序第一屏是 `.agents` / `.github`，那不是人要看的东西。
+- 浮层里 `看正文 ›` = **那只抽屉**，只读，左栏是**技能的文件树**：只有带 `SKILL.md`
+  的那些目录（`engineering/tdd/`）和目录里的文件，`deprecated/` 这种只有 README 的
+  分组不出现。路径剥掉 `prefix`，树根就是技能那一层。
+- 这个「只装技能」的判据在服务端（`skillHomes`），工作区、树、取用三处共用一份 ——
+  想改成「整仓」就只改它一处，但那等于把别人的 `.github` 搬到自己盘上。
 - **取用仍然按「一条」算**（一个仓里 39 条技能是能分别取的），所以它挂在树里那条
   `SKILL.md` 的行尾；浮层里只留一句话指路。这是全节唯一的例外，有意的。
 - 左栏 = **订阅列表**（一个订阅一行）。目录不在这儿 —— 目录只在抽屉那棵树里。

@@ -850,7 +850,9 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           reported.push({
             ...source,
             mirror: ready ? "ready" : "missing",
-            // 本机缓存占了多少（面板上摆出来：删了下次 fetch 重建，不是第二份真相）。
+            // 本机那个目录：只装了技能（sparse checkout），复制地址给的就是它。
+            dir: upstream.localPath(mirrors(), source),
+            // 占了多少（面板上摆出来：删了下次 fetch 重建，不是第二份真相）。
             bytes: ready ? await upstream.mirrorBytes({ data: mirrors(), source }) : 0,
           });
           if (!ready) continue;

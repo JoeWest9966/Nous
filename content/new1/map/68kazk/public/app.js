@@ -1198,7 +1198,8 @@ function render() {
 //
 // **它跟本地那个网格长同一个样子**：别人的仓也是多级目录（`plugins/x/skills/y`），
 // 所以这里是「左栏目录树 + 网格 + 半扇浮层」，不是一列条目配一排按钮。
-// 一个订阅 = 一张卡，代表**整个仓**：点开是浮层，看正文是抽屉（整仓的文件树）。
+// 一个订阅 = 一张卡：那不是「39 张卡」，是**一捆技能**（那个仓里带 SKILL.md 的全部）。
+// 点开是浮层，看正文是抽屉（那一捆的文件树）—— 仓里跟技能无关的东西不进来。
 //
 // 三个动作，边界很清楚：
 //   1. 看清单 / 钻目录 —— 读本地镜像，**打开页面不联网**；
@@ -1227,7 +1228,7 @@ const upstreamSourceNow = () =>
 
 // ── 地址 ────────────────────────────────────────────────────────────────────
 //
-// `#upstream` / `#upstream/skills` —— **只到订阅**。一个订阅 = 一条「技能」（整个仓），
+// `#upstream` / `#upstream/skills` —— **只到订阅**。一个订阅 = 一条「技能」（一捆），
 // 所以地址里没有「哪一条」。
 
 const hashTarget = () => {
@@ -1367,7 +1368,7 @@ async function adoptEntry(entry, name) {
 
 const upstreamBusyOn = (entry) => state.upstreamBusy === `adopt:${entry.source}/${entry.path}`;
 
-/** 上游那张卡的菜单：看正文（整个仓）/ 刷新 / 复制地址。别人的仓，没有删除。 */
+/** 上游那张卡的菜单：看正文 / 刷新 / 复制路径。别人的仓，没有删除。 */
 function openUpstreamMenu(x, y, source) {
   closeMenu();
   const menu = $("ctxmenu");
@@ -1376,19 +1377,21 @@ function openUpstreamMenu(x, y, source) {
   menuOpen = true;
 
   const mine = upstreamSummary(upstreamEntriesOf(source.name));
-  menuHead(menu, source.name, `上游 · 整个仓 · ${mine.total} 条`);
-  const first = menuItem(menu, "看正文", "整个仓的文件树 · 只读", () => void openUpstreamEditor(source));
+  menuHead(menu, source.name, `上游 · ${mine.total} 条技能 · 只读`);
+  const first = menuItem(menu, "看正文", "技能的文件树 · 只读", () => void openUpstreamEditor(source));
   menuItem(menu, "刷新", "git fetch（唯一联网动作）", () => void refreshSource(source.name));
-  menuItem(menu, "复制地址", source.url, () => {
-    navigator.clipboard?.writeText(source.url).then(
-      () => toast("地址已复制"),
-      () => toast(source.url),
+  // **本机那个目录**，不是 GitHub 地址：粘出来能直接 `cd` 进去 `ls` / `cat` / grep。
+  menuItem(menu, "复制路径", source.dir ?? "", () => {
+    const where = source.dir ?? "";
+    navigator.clipboard?.writeText(where).then(
+      () => toast("本机路径已复制"),
+      () => toast(where),
     );
   });
   mountMenu(menu, x, y, first);
 }
 
-/** 浮层里的正文：**整个仓**那一层的事（订阅 / 地址 / 多少条 / 版本 / 动作）。 */
+/** 浮层里的正文：一个订阅那一层的事（仓库 / 路径 / 多少条 / 动作）。 */
 /** `1.4 MB` / `812 KB` / `96 B` —— 盘上的数，别摆一串原始字节。 */
 function bytesText(bytes) {
   const n = Number(bytes) || 0;
@@ -1405,24 +1408,34 @@ function upstreamDetailBody(source) {
   wrap.append(detailRow("仓库", source.name, source.url));
   if (source.prefix) wrap.append(detailRow("只看", `${source.prefix}/`, "仓里的这一段才算技能"));
   wrap.append(detailRow("技能", `${mine.total} 条${mine.todo ? ` · ${mine.todo} 条待看` : ""}`));
-  // 「本机到底存没存」是个人会问的问题，所以直接答：存了，多大，删了会怎样。
+  // 「本机到底存没存、存在哪、存了多大」是个人会问的问题，所以三句都直接答。
+  // 路径那一行是可点的：点一下复制（就是「复制路径」给的那个东西）。
   if (source.mirror === "ready") {
-    wrap.append(
-      detailRow("本机镜像", bytesText(source.bytes), "缓存，不是第二份真相：删了下次 fetch 从源头重建"),
-    );
+    const where = detailRow("本机路径", source.dir ?? "", "只装技能，没有别人的 README / .github —— 点一下复制");
+    where.classList.add("detail-path");
+    where.tabIndex = 0;
+    where.title = "点一下复制这个路径";
+    where.onclick = () => {
+      navigator.clipboard?.writeText(source.dir ?? "").then(
+        () => toast("本机路径已复制"),
+        () => toast(source.dir ?? ""),
+      );
+    };
+    wrap.append(where);
+    wrap.append(detailRow("占用", bytesText(source.bytes), "删了下次 fetch 从源头重建，不是第二份真相"));
   }
   if (source.mirror === "missing") {
     wrap.append(alertLine("warn", "还没镜像", "点「刷新（fetch）」把它拉下来。第一次要联网。"));
   }
 
   wrap.append(
-    el("p", "detail-sum", "取用不在这儿：进正文，找到那条的 SKILL.md，行尾有「取用」——一个仓里是一条一条拿的。"),
+    el("p", "detail-sum", "取用不在这儿：进正文，找到那条的 SKILL.md，行尾有「取用」—— 一个仓里是一条一条拿的。"),
   );
 
   const acts = el("div", "detail-sec-acts");
   const read = el("button", "btn btn-small", "看正文 ›");
   read.type = "button";
-  read.title = "整个仓的文件树：SKILL.md + 里面的文件 / 文件夹（只读）";
+  read.title = "技能的文件树：带 SKILL.md 的目录 + 目录里的文件（只读）";
   read.onclick = () => void openUpstreamEditor(source);
   acts.append(read);
 
@@ -1467,10 +1480,10 @@ function renderUpstreamDetail() {
   $("dt-name").textContent = entry.name;
   const badges = $("dt-badges");
   badges.textContent = "";
-  // 上游那一层的徽章说的是「这是整个仓」，不是某一条的取用状态（那在抽屉里按文件标）。
-  const chip = el("span", "detail-badge", "整个仓");
+  // 上游那一层的徽章说的是「这是别人家的仓」，不是某一条的取用状态（那在抽屉里按文件标）。
+  const chip = el("span", "detail-badge", "别人的仓");
   chip.dataset.tone = entry.mirror === "missing" ? "unpub" : "ok";
-  chip.title = "上游按「一个仓 = 一条技能」算：看正文打开的是整个仓";
+  chip.title = "上游按「一个仓 = 一条技能」算：看正文打开的是那一捆技能（不是整仓的每个字节）";
   badges.append(chip);
   $("dt-meta").textContent = `${mine.total} 条技能 · ${entry.url}`;
   const body = $("dt-body");
@@ -1516,7 +1529,7 @@ function sourceForm() {
 // 只在主区是上游的时候出现 —— 左栏永远只说当前主区那一件事。
 
 /**
- * 左栏：**订阅列表**。一个订阅 = 一条「技能」（整个仓），所以这里不摆目录 ——
+ * 左栏：**订阅列表**。一个订阅 = 一条「技能」（一捆），所以这里不摆目录 ——
  * 目录住在抽屉那棵树里（`看正文`）。
  */
 function renderUpstreamFacets() {
@@ -1586,19 +1599,19 @@ function renderUpstreamPanel() {
   if (state.addingSource || !sources.length) host.append(sourceForm());
 
   if (!source) {
-    host.append(el("p", "detail-sum", "别的 git 仓库里的技能：一眼看整个仓，觉得有用就取用过来。"));
+    host.append(el("p", "detail-sum", "别的 git 仓库里的技能：订阅一个仓，它带 SKILL.md 的那几层就都在这儿，觉得有用就一条一条取用。"));
     return;
   }
 
-  // 一个订阅 = 一张卡。卡上写的是「整个仓」那一层的事。
+  // 一个订阅 = 一张卡。卡上写的是那一捆技能的事。
   const grid = el("div", "grid");
   grid.append(upstreamRepoCard(source));
   host.append(grid);
 }
 
 /**
- * 上游那张卡：**一个订阅一张**。它代表整个仓 —— 点开是半扇浮层，
- * 浮层里 `看正文 ›` 是那只抽屉，左栏是**整个仓的文件树**。
+ * 上游那张卡：**一个订阅一张**。它代表那个仓里的一捆技能 —— 点开是半扇浮层，
+ * 浮层里 `看正文 ›` 是那只抽屉，左栏是**那一捆的文件树**（技能目录，不是整仓）。
  *
  * 上游按「一个仓 = 一条技能」理解：所以这里没有一条一条的卡片，
  * 也没有目录卡（目录只在抽屉那棵树里）。
@@ -1609,7 +1622,7 @@ function upstreamRepoCard(source) {
   const card = el("article", "product up-card up-repo");
   card.tabIndex = 0;
   card.setAttribute("role", "button");
-  card.setAttribute("aria-label", `${source.name} · 整个仓 · ${mine.total} 条技能`);
+  card.setAttribute("aria-label", `${source.name} · 上游 · ${mine.total} 条技能`);
   card.dataset.source = source.name;
   card.title = source.url;
 
@@ -1645,8 +1658,8 @@ function upstreamRepoCard(source) {
   const body = el("div", "product-body");
   const title = el("div", "product-title");
   title.append(el("span", "product-name", source.name));
-  const kind = el("span", "product-hidden", "整个仓");
-  kind.title = "上游按「一个仓 = 一条技能」算：看正文打开的是整个仓的树";
+  const kind = el("span", "product-hidden", "上游");
+  kind.title = "别的 git 仓库：它带 SKILL.md 的那几层就是技能，一条一条取用";
   title.append(kind);
 
   const menuBtn = el("button", "product-menu", "⋯");
@@ -2045,6 +2058,9 @@ async function openUpstreamEditor(source, { path = null } = {}) {
     readOnly: true,
     source: source.name,
     name: source.name,
+    // 树里的路径相对**技能根**（`engineering/tdd/SKILL.md`），调接口时要加回 prefix。
+    prefix: source.prefix ?? "",
+    dir: source.dir ?? "",
     files: [],
     filesLoading: true,
     path: null,
@@ -2066,7 +2082,9 @@ async function openUpstreamEditor(source, { path = null } = {}) {
   $("editor").dataset.readonly = "1";
   setBehindInert();
   $("ed-name").textContent = source.name;
-  $("ed-meta").textContent = `${source.url} · 上游 · 只读`;
+  // 标题下面那行写**本机路径**：看正文时人想知道的是「这些字从哪来」，
+  // 而 GitHub 地址点不进去、grep 不了。
+  $("ed-meta").textContent = `${source.dir || source.url} · 只读`;
   closeNewEntry();
   setEditorMode("edit");
   renderEditorFiles();
@@ -2076,13 +2094,9 @@ async function openUpstreamEditor(source, { path = null } = {}) {
     const tree = await transport.get(`v1/skills/upstream/tree?source=${encodeURIComponent(source.name)}`);
     state.editor.files = tree.files ?? [];
     state.editor.filesLoading = false;
-    // 一个仓几百个文件，全展开等于没展开：只展开头两层（`skills/` 和它下面那一层），
-    // 剩下的谁想看谁点。
+    // 树里只有技能（服务端已经裁过）。头两层全展开，剩下谁想看谁点。
     state.editor.dirs = new Set(dirPaths(fileTree(state.editor.files)).filter((dir) => dir.split("/").length <= 2));
     renderEditorFiles();
-    // 整仓的树第一屏会从 `.agents` / `.github` 开始（字母序），把视线带到真正的那一段。
-    const hint = source.prefix ? $("ed-files").querySelector(`.ed-row[data-path="${source.prefix}"]`) : null;
-    hint?.scrollIntoView({ block: "start" });
     const first = path
       ? state.editor.files.find((file) => file.path === path || file.path.endsWith(`/${path}`))
       : null;
@@ -2134,7 +2148,7 @@ function renderEditorFiles() {
   }
 }
 
-/** 一行的壳：缩进靠 `--depth`，行尾那个 × 是删除。 */
+/** 一行的壳：缩进靠 `--depth`。行尾那个「⋯」和右键 / 长按开的是同一个菜单。 */
 function editorRowShell(node) {
   const row = el("div", "ed-row");
   row.style.setProperty("--depth", String(node.depth));
@@ -2142,16 +2156,85 @@ function editorRowShell(node) {
   return row;
 }
 
-function editorRowDelete(node) {
-  const btn = el("button", "ed-file-del", "×");
+/** 行尾那个「⋯」：菜单的可见入口（hover / 焦点时才亮，触屏常驻）。 */
+function editorRowMore(node) {
+  const btn = el("button", "ed-file-more", "⋯");
   btn.type = "button";
-  btn.title = `删除 ${node.path}${node.type === "dir" ? "/（整棵）" : ""}`;
-  btn.setAttribute("aria-label", btn.title);
-  btn.onclick = (event) => {
-    event.stopPropagation();
-    void deleteEditorEntry(node);
-  };
+  btn.title = `${node.path}${node.type === "dir" ? "/" : ""} 的操作`;
+  btn.setAttribute("aria-label", `打开 ${node.path} 的操作菜单`);
   return btn;
+}
+
+/**
+ * 行菜单：打开 / 展开 / 复制路径 / 删除。
+ *
+ * 删除从「行尾那个 ×」挪到这里 —— 一是 × 太窄，手指点不中、鼠标也容易误触；
+ * 二是这一行能做的事本来就不止删除，挤成一个小叉子只是把删除冒充成唯一动作。
+ * 行尾仍留一个「⋯」当可见入口：只藏在右键里的动作，第一次进来的人永远找不到。
+ */
+function openEditorEntryMenu(x, y, node) {
+  const ed = state.editor;
+  if (!ed) return;
+  closeMenu();
+  const menu = $("ctxmenu");
+  menu.textContent = "";
+  menu.hidden = false;
+  menuOpen = true;
+
+  const isDir = node.type === "dir";
+  menuHead(menu, node.name, isDir ? `${node.children.length} 项` : bytes(node.size));
+
+  let first;
+  if (isDir) {
+    const open = ed.dirs.has(node.path);
+    first = menuItem(menu, open ? "收起" : "展开", `${node.path}/`, () => {
+      if (open) ed.dirs.delete(node.path);
+      else ed.dirs.add(node.path);
+      renderEditorFiles();
+    });
+  } else {
+    first = menuItem(menu, "打开", "在右边改", () => void openEditorFile(node.path));
+  }
+
+  menuItem(menu, "复制路径", node.path, () => {
+    navigator.clipboard?.writeText(node.path).then(
+      () => toast("路径已复制"),
+      () => toast(node.path),
+    );
+  });
+
+  // 别人的仓（只读）：菜单只剩看和复制的部分，删除那一格干脆不出现。
+  if (!ed.readOnly) {
+    menu.append(el("div", "ctx-sep"));
+    menuItem(
+      menu,
+      isDir ? "删除文件夹" : "删除文件",
+      isDir ? `连同 ${node.children.length} 项` : "只落盘，没发布前都在 git 里",
+      () => void deleteEditorEntry(node),
+      { danger: true },
+    );
+  }
+
+  mountMenu(menu, x, y, first);
+}
+
+/** 右键 / 长按 / 行尾「⋯」三张嘴，喂同一个菜单。 */
+function attachEditorRowMenu(row, node, trigger) {
+  const openMenuAt = (mx, my) => openEditorEntryMenu(mx, my, node);
+
+  row.oncontextmenu = (event) => {
+    event.preventDefault();
+    openMenuAt(event.clientX, event.clientY);
+  };
+  attachMenuGesture(row, openMenuAt);
+
+  if (!trigger) return;
+  trigger.setAttribute("aria-haspopup", "menu");
+  trigger.onclick = (event) => {
+    event.stopPropagation();
+    const rect = trigger.getBoundingClientRect();
+    openMenuAt(rect.left, rect.bottom + 4);
+  };
 }
 
 /**
@@ -2161,10 +2244,13 @@ function editorRowDelete(node) {
 function upstreamEntryOfFile(node) {
   const ed = state.editor;
   if (ed?.kind !== "upstream" || node.type !== "file" || node.name !== "SKILL.md") return null;
+  // 树里的路径相对**技能根**（`engineering/tdd/SKILL.md`），而 `entry.path` 是仓内
+  // 完整路径（`skills/engineering/tdd`）—— 差的那一层就是 prefix，得加回去才比得上。
   const home = node.path.slice(0, -"/SKILL.md".length);
   if (!home) return null;
+  const want = ed.prefix ? `${ed.prefix}/${home}` : home;
   return (state.upstream?.entries ?? []).find(
-    (entry) => entry.source === ed.source && entry.path === home,
+    (entry) => entry.source === ed.source && entry.path === want,
   ) ?? null;
 }
 
@@ -2173,16 +2259,28 @@ function editorFileMark(node) {
   if (!entry) return null;
   const busy = upstreamBusyOn(entry);
   const taken = entry.local === "same" || entry.local === "changed";
-  const mark = el("button", "ed-file-mark", busy ? "取用中…" : taken ? "已取用" : "取用");
-  mark.type = "button";
-  mark.disabled = busy || taken || Boolean(state.upstreamBusy);
+  // **不能用 `<button>`**：这一行的行体本身就是个 button，HTML 不许 button 套 button ——
+  // 浏览器会把内层的拆到外面，行体的 onclick 跟着哑掉（点了没反应，也不报错）。
+  // 所以这里是个带 role 的 span，键盘照样能到。
+  const mark = el("span", "ed-file-mark", busy ? "取用中…" : taken ? "已取用" : "取用");
+  mark.setAttribute("role", "button");
+  mark.tabIndex = 0;
+  const off = busy || taken || Boolean(state.upstreamBusy);
+  mark.setAttribute("aria-disabled", String(off));
+  mark.dataset.tone = taken ? "missing" : "diff";
   mark.title = taken
     ? "本地已经有这一条了"
     : "拷进我们仓里（不提交）—— 取用之后它是我们自己的一条技能";
-  mark.dataset.tone = taken ? "missing" : "diff";
-  mark.onclick = (event) => {
+  const fire = (event) => {
     event.stopPropagation();
+    event.preventDefault();
+    if (off) return;
     void adoptEntry(entry, entry.local === "taken" ? suggestedAdoptName(entry) : undefined);
+  };
+  mark.onclick = fire;
+  mark.onkeydown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    fire(event);
   };
   return mark;
 }
@@ -2201,9 +2299,10 @@ function editorFileRow(node) {
   main.append(el("span", "ed-file-size", bytes(node.size)));
   main.title = `${node.path} · ${bytes(node.size)}`;
   main.onclick = () => void openEditorFile(node.path);
-  // 只读：连那个 × 都不长出来 —— 灰着的删除比没有更坏。
-  if (ed.readOnly) row.append(main);
-  else row.append(main, editorRowDelete(node));
+  // 只读也长「⋯」（打开 / 复制路径还要用），只是菜单里没有删除那一格。
+  const more = editorRowMore(node);
+  row.append(main, more);
+  attachEditorRowMenu(row, node, more);
   return row;
 }
 
@@ -2224,8 +2323,9 @@ function editorDirRow(node) {
     else ed.dirs.add(node.path);
     renderEditorFiles();
   };
-  if (ed.readOnly) row.append(main);
-  else row.append(main, editorRowDelete(node));
+  const more = editorRowMore(node);
+  row.append(main, more);
+  attachEditorRowMenu(row, node, more);
   return row;
 }
 
@@ -2450,11 +2550,12 @@ async function openUpstreamFile(path) {
   const ed = state.editor;
   if (!ed) return;
   try {
+    const want = ed.prefix ? `${ed.prefix}/${path}` : path;
     const file = await transport.get(
-      `v1/skills/upstream/file?source=${encodeURIComponent(ed.source)}&file=${encodeURIComponent(path)}`,
+      `v1/skills/upstream/file?source=${encodeURIComponent(ed.source)}&file=${encodeURIComponent(want)}`,
     );
     if (state.editor !== ed) return;
-    ed.path = file.file;
+    ed.path = path;
     ed.text = file.text;
     ed.error = "";
     ed.notice = "";
@@ -2464,9 +2565,8 @@ async function openUpstreamFile(path) {
     area.readOnly = true;
     area.disabled = false;
     area.value = file.text;
-    // 仓内路径本身就是全的（`skills/engineering/tdd/SKILL.md`）—— 前面再挂订阅名
-    // 会长成 `skills/skills/...`，看着像打错了。订阅是谁，标题那一行已经写着。
-    $("ed-path").textContent = file.file;
+    // 相对技能根（`engineering/tdd/SKILL.md`）—— 跟左栏那棵树里的路径一模一样。
+    $("ed-path").textContent = path;
     renderGutter();
     renderDelta();
     renderEditorFiles();

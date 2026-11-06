@@ -144,29 +144,75 @@ const git = (run, dir, args, opts = {}) =>
   run("git", ["-C", dir, ...args], { timeout: 60_000, maxBuffer: 64 << 20, ...opts });
 
 /**
- * 有就用了，没有就 clone 一个 bare 镜像。
+ * **一个仓里哪些目录算技能**：带 `SKILL.md` 的那些（去掉点开头的、去掉 prefix 之外的）。
  *
- * `--filter=blob:none` 是省空间用的（只拉 refs + tree，blob 按需 —— 反正我们按需
- * `cat-file`）。有的服务端不支持（老 git、某些自建桶），失败了就退回全量 clone：
- * 「省空间失败」不该等于「上游用不了」。
+ * 这一个判据是全流程的枢纽 —— 拉什么、摆什么、取什么，都从它出去：
+ *   · 工作区只 check out 这些目录（`syncWorktree`）
+ *   · 抽屉里那棵树只有这些目录（`skillFiles`）
+ *   · 取用的单位是这里的一条（`listEntries`）
+ *
+ * 早先这里没有它，`ls-tree -r` 一把全 checkout —— 于是 `.github/`、`.changeset/`、
+ * `docs/`、根 README 全都躺到了我们盘上。那些字跟我们一点关系都没有。
+ */
+const skillHomes = (rows, prefix) => {
+  const homes = new Set();
+  for (const row of rows) {
+    if (!row.path.endsWith("/SKILL.md")) continue;
+    const home = row.path.slice(0, -"/SKILL.md".length);
+    if (!home) continue; // 仓库根上放一个 SKILL.md = 整个仓是一条技能，这种形状不认
+    if (home.split("/").some((part) => part.startsWith("."))) continue; // .archive/ .github/ …
+    if (prefix && !(home === prefix || home.startsWith(`${prefix}/`))) continue;
+    homes.add(home);
+  }
+  return [...homes].sort();
+};
+
+/**
+ * 工作区只放出技能目录。**不是整仓。**
+ *
+ * `--no-cone` 是必须的：cone 模式会把技能目录的父目录整层也放出来（`skills/engineering/`
+ * 里什么文件都会下来）；no-cone 能精确到 `/a/b/c/` 这一枝。
+ */
+const syncWorktree = async ({ dir, source, run }) => {
+  const head = (await git(run, dir, ["rev-parse", "HEAD"])).stdout.trim();
+  const rows = await treeOf(run, dir, head);
+  const homes = skillHomes(rows, source.prefix ?? "");
+  // 一条技能都没有：给一个不存在的 pattern，别让 `set` 空参数退化成「全放出来」。
+  const patterns = homes.length ? homes.map((home) => `/${home}/`) : ["/.nous-no-skills/"];
+  await git(run, dir, ["sparse-checkout", "set", "--no-cone", ...patterns]);
+  await git(run, dir, ["checkout", "--quiet", "--force", "HEAD"]);
+  return homes;
+};
+
+/**
+ * 有就用了，没有就 clone 一份**只要技能**的工作区。
+ *
+ * 三道闸一起上，缺一道整仓就下来了：
+ *   · `--depth=1`  只要最新那棵 tree，不要 553 个 commit 的历史
+ *   · `--filter=blob:none`  blob 按需（读某个文件时才拉它）
+ *   · `--no-checkout` + sparse-checkout  工作区只放技能目录
+ *
+ * 没有「失败了退回全量」这条路：退化成全量 clone 正是当初把整仓拉下来的入口，
+ * 「省空间失败」的正确答案是报错让人知道，不是偷偷下 184 个文件。
+ *
+ * 老的 bare 镜像（根上有 `HEAD`、没有 `.git`）结构不一样，直接删了重建 —— 它本来
+ * 就是个缓存，重建只花一次 clone。
  */
 export const ensureMirror = async ({ data, source, run }) => {
   const dir = mirrorPath(data, source.name);
-  if (await exists(path.join(dir, "HEAD"))) return dir;
+  if (await exists(path.join(dir, ".git"))) return dir;
   await mkdir(path.dirname(dir), { recursive: true });
-  const clone = async (extra) => {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
-    await run("git", ["clone", "--bare", "--quiet", ...extra, source.url, dir], {
-      timeout: 180_000,
-      maxBuffer: 16 << 20,
-    });
-  };
+  await rm(dir, { recursive: true, force: true }).catch(() => {});
   try {
-    await clone(["--filter=blob:none", "--no-single-branch"]);
+    await run(
+      "git",
+      ["clone", "--quiet", "--depth=1", "--filter=blob:none", "--no-checkout", source.url, dir],
+      { timeout: 180_000, maxBuffer: 16 << 20 },
+    );
+    await syncWorktree({ dir, source, run });
   } catch (error) {
-    await clone([]).catch(() => {
-      throw withStatus(new Error(`${source.name}: clone 失败 —— ${errorLine(error)}`), 400);
-    });
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw withStatus(new Error(`${source.name}: clone 失败 —— ${errorLine(error)}`), 400);
   }
   return dir;
 };
@@ -174,18 +220,34 @@ export const ensureMirror = async ({ data, source, run }) => {
 /** 唯一的联网动作。调用点是 `POST /v1/skills/upstream/refresh`，别的地方不许调。 */
 export const fetchMirror = async ({ data, source, run }) => {
   const dir = await ensureMirror({ data, source, run });
+  const branch = (await git(run, dir, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim() || "main";
   try {
-    await git(run, dir, ["fetch", "--quiet", "--prune", "origin", "+refs/heads/*:refs/heads/*"], {
-      timeout: 180_000,
-    });
+    await git(
+      run,
+      dir,
+      ["fetch", "--quiet", "--depth=1", "--filter=blob:none", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*"],
+      { timeout: 180_000 },
+    );
+    await git(run, dir, ["reset", "--hard", "--quiet", `origin/${branch}`]);
   } catch (error) {
     throw withStatus(new Error(`${source.name}: fetch 失败 —— ${errorLine(error)}`), 400);
   }
+  await syncWorktree({ dir, source, run });
+  // 上游删掉的技能，工作区里也得跟着消失（`reset --hard` 只按旧 sparse 规则收拾过一遍）。
+  await git(run, dir, ["clean", "-fdq"]).catch(() => {});
+  // 每刷一次都留一份 reflog + 松散对象，几十次之后磁盘比技能本身还大。
+  // 这是缓存，历史在这儿没有用 —— best-effort 收一下，失败了不算刷新失败。
+  await git(run, dir, ["reflog", "expire", "--expire=now", "--all"]).catch(() => {});
+  await git(run, dir, ["gc", "--quiet", "--prune=now"]).catch(() => {});
   return dir;
 };
 
+/** 本机那个**能 `cd` 进去看**的目录：复制地址给的就是它（不是 GitHub URL，也不是裸仓）。 */
+export const localPath = (data, source) =>
+  source.prefix ? path.join(mirrorPath(data, source.name), ...source.prefix.split("/")) : mirrorPath(data, source.name);
+
 /** 镜像在不在。`GET /v1/skills/upstream` 只读已有的 —— 打开面板不该去打 GitHub。 */
-export const hasMirror = async ({ data, source }) => exists(path.join(mirrorPath(data, source.name), "HEAD"));
+export const hasMirror = async ({ data, source }) => exists(path.join(mirrorPath(data, source.name), ".git", "HEAD"));
 
 /**
  * 镜像占了多少地方。**这不是「我们在本机又存了一份内容」**，是缓存 ——
@@ -281,13 +343,9 @@ export const listEntries = async ({ data, source, run }) => {
   const prefix = source.prefix ?? "";
 
   const skillDirs = new Map();
-  for (const row of rows) {
-    if (!row.path.endsWith("/SKILL.md")) continue;
-    const home = row.path.slice(0, -"/SKILL.md".length);
-    if (!home) continue; // 仓库根上放一个 SKILL.md = 整个仓是一条技能，这种形状不认
-    if (home.split("/").some((part) => part.startsWith("."))) continue; // .archive/ .github/ …
-    if (prefix && !(home === prefix || home.startsWith(`${prefix}/`))) continue;
-    skillDirs.set(home, { home, skillSha: row.sha });
+  for (const home of skillHomes(rows, prefix)) {
+    const skillSha = rows.find((row) => row.path === `${home}/SKILL.md`)?.sha;
+    if (skillSha) skillDirs.set(home, { home, skillSha });
   }
 
   const entries = [];
@@ -326,20 +384,31 @@ export const listEntries = async ({ data, source, run }) => {
 };
 
 /**
- * **整个仓**的文件清单 —— 上游是按「一个仓 = 一条技能」来理解的，
- * 所以抽屉里那棵树的根是仓根（`skills/engineering/x/SKILL.md` 一路展开），
- * 不是某一条技能。只列 blob（目录由面板从路径推出来，跟本地那条一样）。
+ * 抽屉里那棵树：**只有技能**（`skillHomes` 选中的那些目录，连同目录里的文件）。
+ *
+ * 早先这里是 `ls-tree -r` 一把全给 —— 于是第一屏是 `.agents/`、`.changeset/`、
+ * `.github/`，133 行里 19 行跟技能有关。上游说的是「一个仓 = 一条技能」，
+ * 意思是那个仓**能用的部分**是一捆技能，不是那个仓的每一个字节。
+ *
+ * 路径已经剥掉 `prefix`（`engineering/tdd/SKILL.md`），树根就是技能那一层；
+ * 分组目录（`engineering/`）留着 —— 那是技能在仓里的位置，平铺会把位置丢掉。
  */
 export const repoFiles = async ({ data, source, run, maxFiles = 2000 }) => {
   const head = await resolveHead({ data, source, run });
   const dir = mirrorPath(data, source.name);
   const rows = await treeOf(run, dir, head, { long: true });
+  const homes = skillHomes(rows, source.prefix ?? "");
+  const skip = source.prefix ? `${source.prefix}/` : "";
+  const inSkill = (filePath) => homes.some((home) => filePath.startsWith(`${home}/`));
   const files = rows
-    .filter((row) => row.type === "blob")
-    .map((row) => ({ path: row.path, size: row.size ?? 0 }))
+    .filter((row) => row.type === "blob" && inSkill(row.path))
+    .map((row) => ({
+      path: skip && row.path.startsWith(skip) ? row.path.slice(skip.length) : row.path,
+      size: row.size ?? 0,
+    }))
     .sort((a, b) => a.path.localeCompare(b.path));
   if (files.length > maxFiles) {
-    throw withStatus(new Error(`${source.name}: 这个仓有 ${files.length} 个文件，超过 ${maxFiles} —— 面板里不展开`), 400);
+    throw withStatus(new Error(`${source.name}: 技能里有 ${files.length} 个文件，超过 ${maxFiles} —— 面板里不展开`), 400);
   }
   return { head, files };
 };

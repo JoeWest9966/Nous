@@ -234,6 +234,10 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 
 **上游只有读。** 那一侧（`upstream.js`）没有任何写入口：没有 `upstream/file` 的 PUT，
 没有定时同步，没有双向推送。看正文和「看差在哪」都是 `git cat-file` 读镜像 ——
+**镜像里只有技能**：`--depth=1 --filter=blob:none` + sparse checkout 到「带 SKILL.md 的目录」，
+没有 `.github/`、没有别人的 README、没有 553 个 commit。判据是 `skillHomes()`，
+工作区 / `upstream/tree` / 取用三处共用它。
+
 「上游一改本地跟着改」是刻意不做的（那会回到会漂的第二份真相）。
 
 历史一句：连到 2026-10，技能是「从上游编目把 tarball 拉进 `data/skills/`、按 sha 记收据、
