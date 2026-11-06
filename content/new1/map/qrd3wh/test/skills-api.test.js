@@ -193,37 +193,6 @@ test("POST /v1/skills/duplicate 撞已有目录 / 撞归档：409，不留半截
   }
 });
 
-test("POST /v1/skills/duplicate 带 variant：nous.json 多一格 variant，family 永远是源那条", async () => {
-  const { root, skills } = await setup({
-    ...skillFiles("tdd"),
-    // 源自己是变体：复制品不能把别人家的 family 带过来。
-    "tdd/nous.json": JSON.stringify({ name: "tdd", summary: "", category: [], variant: { family: "other", id: "x" } }) + "\n",
-  });
-  const api1 = api(root, skills);
-  try {
-    const made = await api1.call("POST", "/v1/skills/duplicate", {
-      from: "tdd",
-      name: "tdd-strict",
-      variant: "strict",
-    });
-    assert.equal(made.status, 200);
-    assert.deepEqual(made.body.variant, { family: "tdd", id: "strict" });
-    const manifest = await readJson(root, "tdd-strict/nous.json");
-    assert.deepEqual(manifest.variant, { family: "tdd", id: "strict" });
-    // 不带 variant 的复制：不该凭空长出一格。
-    const plain = await api1.call("POST", "/v1/skills/duplicate", { from: "tdd", name: "tdd-plain" });
-    assert.equal(plain.status, 200);
-    const plainManifest = await readJson(root, "tdd-plain/nous.json");
-    assert.equal(plainManifest.variant, undefined);
-    // 变体 id 不合法：400。
-    const bad = await api1.call("POST", "/v1/skills/duplicate", { from: "tdd", name: "tdd-bad", variant: "Bad Id" });
-    assert.equal(bad.status, 400);
-    assert.match(bad.body.error, /Bad Id/);
-  } finally {
-    await cleanup(root);
-  }
-});
-
 test("POST /v1/skills/duplicate：取用注脚不搬（复制品的来源是隔壁那条）", async () => {
   const { root, skills } = await setup({
     "adopted/SKILL.md": `---\nname: adopted\ndescription: "从上游取的"\n---\n\n# adopted\n`,

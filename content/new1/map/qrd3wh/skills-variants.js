@@ -89,15 +89,38 @@ export const createVariantStore = ({ dataDir, skillsRoot }) => {
     );
   };
 
-  /** 给装载器用：`[{family, id, root}]`。树不见了的那条跳过（删了目录不该让整页空掉）。 */
-  const list = async () => {
+  /**
+   * 给装载器用：`[{family, id, root, branch, exists}]`。树不见了的那条照样列出来
+   * （面板要能说「绑过，树没了」，而不是凭空少一行）。
+   *
+   * `facts: true` 时顺手多问两个 git 问题 —— 拆树前得有数才值得拦人：
+   *   · `unmerged`：`main..<分支>` 有几笔提交（有才手输确认，空壳/已合并的直接拆）；
+   *   · `remoteBranch`：远端那条在不在（在的话拆树会一起删 GitHub 上那条）。
+   */
+  const list = async ({ facts = false } = {}) => {
     const variants = await read();
     const out = [];
     for (const [family, map] of Object.entries(variants)) {
       for (const [id, bound] of Object.entries(map ?? {})) {
         const root = String(bound?.root ?? "");
         if (!root) continue;
-        out.push({ family, id, root, branch: bound?.branch ?? null, exists: Boolean(await stat(root).catch(() => null)) });
+        const branch = bound?.branch ?? null;
+        const entry = { family, id, root, branch, exists: Boolean(await stat(root).catch(() => null)) };
+        if (facts && branch) {
+          entry.unmerged = Number(
+            (await run("git", ["-C", skillsRoot, "rev-list", "--count", `main..${branch}`], { timeout: 15_000 })
+              .then((out) => out.stdout.trim())
+              .catch(() => 0)) || 0,
+          );
+          entry.remoteBranch = await run(
+            "git",
+            ["-C", skillsRoot, "rev-parse", "--verify", `refs/remotes/origin/${branch}`],
+            { timeout: 15_000 },
+          )
+            .then(() => true)
+            .catch(() => false);
+        }
+        out.push(entry);
       }
     }
     return out;
@@ -233,6 +256,96 @@ export const createVariantStore = ({ dataDir, skillsRoot }) => {
     return { committed: true, branch, changed, head, pushed, pushError };
   };
 
+  /**
+   * 拆树并解绑：worktree + 本地分支 + **远端那条分支**一起删。主干永远不碰。
+   *
+   * 三条不肯动的地方，跟扩展那边一模一样：
+   *   · `git worktree remove` **不带 --force**：树里有没提交的正文就拒绝 —— 那是人写的，不是垃圾；
+   *   · `main` / `master` / 游离 HEAD 一律拒绝；
+   *   · 远端那条只是「尽力删」：没有 origin、或远端本来就没有这条，都不算失败。
+   */
+  const prune = async ({ family, id }) => {
+    const safeId = assertVariantId(id);
+    const variants = await read();
+    const bound = variants?.[family]?.[safeId];
+    if (!bound) throw withStatus(new Error(`${family}@${safeId} 没绑 —— 没东西可拆`), 404);
+
+    const root = String(bound.root);
+    const target = worktreePath(skillsRoot, family, safeId);
+    const gitRoot = (await gitRootOf(target, skillsRoot)) || skillsRoot;
+    const listed = (await run("git", ["-C", skillsRoot, "worktree", "list", "--porcelain"], { timeout: 15_000 })).stdout;
+    const exists = listed.split("\n").some((line) => line.trim() === `worktree ${target}`);
+
+    let branch = bound.branch ? String(bound.branch) : null;
+    if (!branch && exists) {
+      branch = (await run("git", ["-C", target, "rev-parse", "--abbrev-ref", "HEAD"], { timeout: 15_000 })).stdout.trim() || null;
+    }
+    if (branch && (branch === "main" || branch === "master" || branch === "HEAD")) {
+      throw withStatus(new Error(`那条树上跑的是 ${branch} —— 主干不能从这儿删`), 409);
+    }
+
+    // 1) 拆树。不带 --force：有没提交的东西就让 git 自己拒绝，把人写的字留住。
+    if (exists) {
+      try {
+        await run("git", ["-C", skillsRoot, "worktree", "remove", target], { timeout: 120_000 });
+      } catch (error) {
+        const text = String(error?.stderr || error?.message || error).trim().split("\n").slice(-2).join(" ");
+        throw withStatus(new Error(`树里还有没提交的东西，没拆：${text} —— 先在那边提交（或命令行 worktree remove --force）`), 409);
+      }
+    }
+
+    // 2) 这条分支上有几笔没并进 main。有才值得拦一句，空壳 / 已合并的没什么可惜的。
+    let unmerged = 0;
+    if (branch) {
+      unmerged = Number(
+        (await run("git", ["-C", skillsRoot, "rev-list", "--count", `main..${branch}`], { timeout: 30_000 })
+          .then((out) => out.stdout.trim())
+          .catch(() => 0)) || 0,
+      );
+    }
+
+    // 3) 远端那条分支。判据是 `refs/remotes/origin/<分支>` 在不在 —— 不是「配没配 origin」：
+    //    从没推上去过的变体分支，远端本来就没有，也就没什么可删的。
+    const hadRemote = branch
+      ? await run("git", ["-C", skillsRoot, "rev-parse", "--verify", `refs/remotes/origin/${branch}`], {
+          timeout: 15_000,
+        })
+          .then(() => true)
+          .catch(() => false)
+      : false;
+    let remoteDeleted = false;
+    let remoteError = "";
+    if (hadRemote) {
+      try {
+        await run("git", ["-C", skillsRoot, "push", "origin", "--delete", branch], { timeout: 120_000 });
+        remoteDeleted = true;
+      } catch (error) {
+        const text = errorDetail(error);
+        // 远端已经被别人删了 → 目的达到了，不算失败；别的错误（网络 / 权限）原话带回去。
+        if (/remote ref does not exist|unable to find/i.test(text)) remoteDeleted = true;
+        else remoteError = text;
+      }
+    }
+
+    // 4) 本地分支。有没并进 main 的提交时前端已经手输确认过，所以是 `-D`。
+    let branchDeleted = false;
+    if (branch) {
+      branchDeleted = await run("git", ["-C", skillsRoot, "branch", "-D", branch], { timeout: 30_000 })
+        .then(() => true)
+        .catch(() => false);
+    }
+
+    // 5) 绑定记录。
+    const familyMap = { ...(variants[family] ?? {}) };
+    delete familyMap[safeId];
+    const next = { ...variants };
+    if (Object.keys(familyMap).length) next[family] = familyMap;
+    else delete next[family];
+    await write(next);
+
+    return { root: target, branch, branchDeleted, remoteDeleted, remoteError, unmerged, worktreeRemoved: exists };
+  };
+
   return {
     file,
     read,
@@ -240,6 +353,7 @@ export const createVariantStore = ({ dataDir, skillsRoot }) => {
     loadable,
     bind,
     unbind,
+    prune,
     publish,
     rootOf: async (family, id) => {
       const bound = (await read())?.[family]?.[String(id)];

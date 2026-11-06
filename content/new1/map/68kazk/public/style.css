@@ -676,6 +676,28 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .ed-file-mark[data-tone="diff"] { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent); }
 .ed-file-mark[data-tone="missing"] { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
 .ed-file-mark + .ed-file-size { margin-left: 0; }
+/* 「抄」：把上游的东西变成自己的。跟「取用」同一副壳，但语气不一样 ——
+   取用带溯源，抄是完全拿走，所以颜色用中性墨色，不暗示「差异」。 */
+.ed-file-mark[data-tone="copy"] {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  cursor: pointer;
+}
+.ed-file-mark[data-tone="copy"]:hover { background: color-mix(in srgb, var(--ink) 17%, transparent); }
+.ed-file-mark[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+
+/* 抄单个文件时那行「抄到哪个技能里」—— 内联，不弹模态（弹模态会盖住你正在比的那棵树）。 */
+.ed-copy-pick {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px 7px 26px;
+  font-size: 11.5px; color: var(--dim);
+}
+.ed-copy-pick-select {
+  flex: 1; min-width: 0; max-width: 200px;
+  font: inherit; font-size: 11.5px;
+  padding: 2px 4px; border-radius: 5px;
+  border: 1px solid var(--line-2); background: var(--surface); color: var(--ink);
+}
 
 .ed-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ed-bar {
@@ -964,20 +986,30 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   .create-actions > .mono { flex: 1 0 100%; margin-bottom: 4px; }
 }
 
-/* ── 变体弹层 ─────────────────────────────────────────────────────────────
-   用的是新建弹层那套骨架（`.create`），只多一块「这个变体现在怎么装」。 */
+/* ── 变体：一条技能的多个可装载名字 ────────────────────────────────────────
+   跟扩展面板（vbe4pt）同一个形状：详情里一条变体一个 chip，点开是那一层弹层。
+   chip 上的圆点就是装载状态（绿 ok / 红 failed / 灰没名册）。 */
 
-.var-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-.var-list:empty { display: none; }
-.var-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--paper);
+.variants { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.variants-label { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.variant {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--card);
+  padding: 2px 9px 2px 7px; font: inherit; font-size: 11px; color: var(--ink-2); cursor: pointer;
 }
-.var-row[data-bad="true"] { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
-.var-key { font-family: var(--mono); font-size: 12px; color: var(--ink); }
-.var-branch { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
-.var-state { font-size: 10.5px; color: var(--ok); }
-.var-state[data-tone="bad"] { color: var(--bad); }
-.var-err { flex-basis: 100%; font-size: 10.5px; color: var(--bad); line-height: 1.5; word-break: break-word; }
-.var-actions { margin-left: auto; display: flex; gap: 4px; }
-.var-actions .btn { padding: 2px 8px; font-size: 11px; }
+.variant:hover { border-color: color-mix(in srgb, var(--ink) 22%, transparent); }
+.variant::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--dim); }
+.variant[data-tone="ok"]::before { background: var(--ok); }
+.variant[data-tone="bad"]::before { background: var(--bad); }
+.variant-id { font-family: var(--mono); font-size: 10.5px; color: var(--ink); }
+.variant-src { color: var(--dim); font-size: 10px; }
+.variant-add {
+  border: 1px dashed var(--line); background: transparent; color: var(--dim);
+  border-radius: 999px; padding: 2px 9px; font: inherit; font-size: 10.5px; cursor: pointer;
+}
+.variant-add:hover { color: var(--ink-2); border-color: var(--dim); }
+.variant-info {
+  margin: 0 0 12px; padding: 9px 11px; border-radius: 8px;
+  background: var(--wash); color: var(--ink-2);
+  font-size: 11px; line-height: 1.65; white-space: pre-wrap; word-break: break-all;
+}

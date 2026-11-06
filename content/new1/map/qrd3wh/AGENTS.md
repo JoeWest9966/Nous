@@ -324,6 +324,8 @@ GET  /v1/skills/upstream          {sources:[…mirror,head,drift,dir,bytes], ent
 POST /v1/skills/upstream/pin      {source,commit?} → 把「认的版本」钉到镜像 HEAD。**唯一改 version 的入口**
 POST /v1/skills/upstream/check    {name?} → 只 ls-remote 问远端，不下载；结果缓存 .git/nous-check.json
 POST /v1/skills/upstream/sync     {source} → fetch + pin 一步（面板上的「更新到最新」）
+POST /v1/skills/upstream/copy     {source,path} 整条抄（重名自动 -2）| {…,file,to} 单文件抄（撞名 409）
+                                  抄 = 变成自己的：**不写 upstream**，只留 copiedFrom 便条
                                   版本号优先用上游 tag（v1.3.2 或 v1.3.2+），tag 表缓存在镜像的 .git/nous-tags.json
 POST /v1/skills/upstream/refresh  {name?} 唯一联网动作（clone / fetch）
 GET  /v1/skills/upstream/file     ?source=&path=&file= → {text, size}：从镜像 cat-file 读，**只读**

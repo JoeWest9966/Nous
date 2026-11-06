@@ -607,7 +607,7 @@ const copyTree = async (from, to, rel = "") => {
  * `variant` 给了 = 顺手标成「某条的变体」：`nous.json` 多一格 `variant: { family, id }`。
  * `family` 永远是**源那条**的名字 —— 变体不能改姓。
  */
-const duplicateSkill = async (repo, root, skills, body) => {
+const duplicateSkill = async (repo, root, skills, variants, body) => {
   const from = checkName(body.from);
   const fromRel = relOf(skills, from);
   if (!(await stat(path.join(root, fromRel, "SKILL.md")).catch(() => null))) {
@@ -631,10 +631,10 @@ const duplicateSkill = async (repo, root, skills, body) => {
     throw withStatus(new Error(`${name}/ 在 .archive/ 里 —— 先恢复或彻底删掉，别建第二个`), 409);
   }
 
-  const variant =
-    body.variant === undefined || body.variant === null || String(body.variant).trim() === ""
-      ? null
-      : { family: from, id: checkVariantId(body.variant) };
+  // `variant` = **从哪棵变体树拷**（「独立成技能 ›」走这条）。拷完它还是自己一条新技能，
+  // 不是变体；变体是 `/v1/skills/variant` 那两条路的事，别在这儿混。
+  const variantFrom = variantParam(body.variant);
+  const sourceDir = await placeOf(root, skills, variants, from, variantFrom);
 
   const beforeVocab = await repo.readCategories(root, NO_PROTECT);
   const staging = path.join(root, `.new-${name}-${Date.now()}`);
@@ -642,7 +642,7 @@ const duplicateSkill = async (repo, root, skills, body) => {
   let landed = false;
   let fileCount = 0;
   try {
-    fileCount = await copyTree(path.join(root, fromRel), staging);
+    fileCount = await copyTree(sourceDir, staging);
 
     // 名字对齐：目录名、frontmatter 的 name、nous.json 的 name 必须是同一个（I3）。
     const skillFile = path.join(staging, "SKILL.md");
@@ -650,11 +650,12 @@ const duplicateSkill = async (repo, root, skills, body) => {
     const renamed = renameInFrontmatter(text, name);
     if (renamed !== text) await writeFile(skillFile, renamed, "utf8");
 
-    const sourceManifest = (await readManifestOf(path.join(root, fromRel))) ?? {};
+    const sourceManifest = (await readManifestOf(sourceDir)) ?? {};
     const kept = { ...sourceManifest };
     delete kept.upstream;
     delete kept.archiveOrigin;
-    // 源自己就是个变体的话，`variant` 也得先摘掉 —— 搬过来的那格写着别人的 family。
+    // 早先在 `nous.json` 里留过 `variant: {family, id}` 当注脚，后来照扩展那套改掉了：
+    // 变体 = 一棵 worktree + 一条分支，仓库里不留痕。旧痕顺手清掉，别跟着复制品跑。
     delete kept.variant;
     const categories = repo.sortCategories(
       repo.normalizeCategories([
@@ -670,7 +671,6 @@ const duplicateSkill = async (repo, root, skills, body) => {
           name,
           summary: typeof kept.summary === "string" ? kept.summary : "",
           category: categories,
-          ...(variant ? { variant } : {}),
         },
         null,
         2,
@@ -692,7 +692,147 @@ const duplicateSkill = async (repo, root, skills, body) => {
     if (beforeVocab.length) await repo.writeCategories(root, beforeVocab, NO_PROTECT).catch(() => {});
     throw error;
   }
-  return { ok: true, name, path: rel, from, variant, fileCount };
+  return { ok: true, name, path: rel, from, variant: variantFrom, fileCount };
+};
+
+/** 名字被占了就 `<base>-2`、`-3`… 一直试。上限 64 字（I3），所以 base 先截短。 */
+const uniqueSkillName = async (root, repo, base) => {
+  const trimmed = base.length > MAX_NAME - 4 ? base.slice(0, MAX_NAME - 4) : base;
+  for (let i = 1; i < 100; i++) {
+    const name = i === 1 ? trimmed : `${trimmed}-${i}`;
+    const free =
+      !(await stat(path.join(root, name)).catch(() => null)) &&
+      !(await stat(path.join(root, repo.ARCHIVE_DIR, name)).catch(() => null));
+    if (free) return name;
+  }
+  throw withStatus(new Error(`${base} 这个名字的副本太多（到 ${base}-99 都占了）`), 409);
+};
+
+/** 上游目录名未必合规（`My Skill!`）—— 落成我们能用的名字，别直接 400 把人挡在外面。 */
+const skillNameFromDir = (dir) =>
+  String(dir)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .replace(/-{2,}/g, "-")
+    .slice(0, 64);
+
+/**
+ * 从上游**抄**一条技能 / 一个文件到自己仓里。
+ *
+ * 跟 `adoptSkill` 的区别只有一件事：**不写 `upstream`**。
+ * 取用是「我认这一条，将来要跟上游对版本」；复制是「这文件我拿走了，现在是我的」。
+ * 所以复制品在面板上没有「上游」角标、`localStateOf` 也不认它 ——
+ * 只在 `nous.json` 里留一行 `copiedFrom`，那是便条（将来它上游修了 bug，你知道该去哪看），
+ * 不是契约：改了它、删了它、跟上游说得不一样，都不算漂移。
+ *
+ * 重名：**整条技能自动叫 `<名字>-2`**（一整条新技能，重名不丢东西）；
+ * **单个文件一律 409** —— 同一个技能里堆 `notes-2.md`、`notes-3.md`，三天之后没人分得清。
+ */
+const copyFromUpstream = async (repo, root, skills, data, body) => {
+  const sourceName = String(body.source ?? "").trim();
+  if (!sourceName) throw withStatus(new Error("没说从哪个上游抄（source 是空的）"), 400);
+  const { sources } = await upstream.readSources(root);
+  const source = sources.find((item) => item.name === sourceName);
+  if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+  if (!(await upstream.hasMirror({ data, source }))) {
+    throw withStatus(new Error(`${sourceName}: 还没拉过镜像 —— 先点刷新（POST /v1/skills/upstream/refresh）`), 400);
+  }
+
+  const home = String(body.path ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!home) throw withStatus(new Error("没说抄哪一条（path 是空的）"), 400);
+  const file = String(body.file ?? "").trim().replace(/^\/+/, "");
+
+  // ── 单个文件：落到仓里某一条技能底下 ──────────────────────────────────
+  if (file) {
+    if (file.split("/").includes("..")) throw withStatus(new Error(`路径不能往上走 —— ${file}`), 400);
+    const to = checkName(body.to);
+    const toRel = relOf(skills, to);
+    if (!(await stat(path.join(root, toRel, "SKILL.md")).catch(() => null))) {
+      throw withStatus(new Error(`仓里没有「${to}」这一条 —— 文件抄到哪儿？`), 404);
+    }
+    const rel = `${toRel}/${file}`;
+    if (await stat(path.join(root, rel)).catch(() => null)) {
+      throw withStatus(new Error(`${rel} 已经在了 —— 先删掉它，或者改个名字再抄`), 409);
+    }
+    // 先写到隔壁临时名再 rename：半截文件比没有文件更坏。
+    const staging = path.join(root, toRel, `.${path.posix.basename(file)}-${Date.now()}`);
+    try {
+      const out = await upstream.materializeFile({ data, source, run: repo.run, home, rel: file, target: staging });
+      // 上游那个文件可能住在子目录里（`deep/extra.md`）—— 目标那边的目录得先有。
+      await mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+      await rename(staging, path.join(root, rel));
+      return { ok: true, name: to, path: rel, from: `${sourceName}/${home}/${file}`, size: out.size };
+    } catch (error) {
+      await rm(staging, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
+  // ── 整条技能 ────────────────────────────────────────────────────────
+  const files = await upstream.entryFiles({ data, source, run: repo.run, dir: home });
+  if (!files.length) throw withStatus(new Error(`${home}: 上游这一条里一个文件都没有`), 404);
+  if (!files.some((item) => item.path === "SKILL.md")) {
+    throw withStatus(new Error(`${home}: 这里没有 SKILL.md —— 它不是一个技能，没法整条抄`), 400);
+  }
+
+  const base = checkName(body.name ?? skillNameFromDir(path.posix.basename(home) || "skill"));
+  const name = await uniqueSkillName(root, repo, base);
+  const group = checkGroup(body.group);
+  const rel = group ? `${group}/${name}` : name;
+  if (group && (await stat(path.join(root, group, "SKILL.md")).catch(() => null))) {
+    throw withStatus(new Error(`「${group}」已经是一条技能了 —— 技能里面不能再套技能`), 400);
+  }
+  if (await stat(path.join(root, rel)).catch(() => null)) {
+    throw withStatus(new Error(`${rel}/ 已经在了`), 409);
+  }
+
+  const beforeVocab = await repo.readCategories(root, NO_PROTECT);
+  const staging = path.join(root, `.new-${name}-${Date.now()}`);
+  await mkdir(staging, { recursive: false });
+  let landed = false;
+  try {
+    await upstream.materialize({ data, source, run: repo.run, home, target: staging });
+
+    // 名字对齐（I3）：目录名 = frontmatter 的 name = nous.json 的 name。
+    const skillFile = path.join(staging, "SKILL.md");
+    const text = await readFile(skillFile, "utf8");
+    const renamed = renameInFrontmatter(text, name);
+    if (renamed !== text) await writeFile(skillFile, renamed, "utf8");
+
+    const manifest = (await readManifestOf(staging)) ?? {};
+    const categories = repo.sortCategories(repo.normalizeCategories(Array.isArray(manifest.category) ? manifest.category : []));
+    await writeFile(
+      path.join(staging, "nous.json"),
+      JSON.stringify(
+        {
+          name,
+          summary: typeof manifest.summary === "string" ? manifest.summary : "",
+          category: categories,
+          // 便条，不是契约：有它 = 抄的时候上游长这样。不参与 `localStateOf`，不算漂移。
+          copiedFrom: `${source.name}/${home}`,
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+
+    const problems = await checkSkillContent(root, rel, staging);
+    if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
+
+    if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories], NO_PROTECT);
+    if (group) await mkdir(path.join(root, group), { recursive: true });
+    await rename(staging, path.join(root, rel));
+    landed = true;
+    await repo.regenIndex(root, { required: false });
+    return { ok: true, name, path: rel, from: `${source.name}/${home}`, original: base };
+  } catch (error) {
+    if (landed) await rm(path.join(root, rel), { recursive: true, force: true }).catch(() => {});
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+    if (beforeVocab.length) await repo.writeCategories(root, beforeVocab, NO_PROTECT).catch(() => {});
+    throw error;
+  }
 };
 
 /**
@@ -810,7 +950,30 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
   try {
     if (!at.length) {
       if (method !== "GET") return send(res, 405, { error: "技能仓库只有 GET" });
-      return send(res, 200, await overview(repo, root, skills));
+      const data = await overview(repo, root, skills);
+      // 变体挂在**本体名下**（`variants[本名] = [{id, key, dir, branch, installed}]`），
+      // 跟扩展那边 `state.data.variants` 一个形状 —— 面板的变体条直接吃它，不用再问一轮。
+      if (variants) {
+        const roster = skills.list() ?? [];
+        const grouped = {};
+        for (const entry of await variants.list({ facts: true })) {
+          const key = `${entry.family}${VARIANT_SEP}${entry.id}`;
+          const skill = roster.find((item) => item.name === key) ?? null;
+          (grouped[entry.family] ??= []).push({
+            id: entry.id,
+            key,
+            dir: entry.root,
+            branch: entry.branch,
+            // 拆树前拦不拦人，就看这两个：有没并进 main 的提交（才手输确认）、远端那条在不在。
+            unmerged: entry.unmerged ?? 0,
+            remoteBranch: entry.remoteBranch ?? false,
+            installed: skill?.load?.state === "ok",
+            load: skill?.load ?? { state: "missing", error: "名册里没有这一条（树没了？）" },
+          });
+        }
+        data.variants = grouped;
+      }
+      return send(res, 200, data);
     }
 
     if (at[0] === "categories") {
@@ -955,7 +1118,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
     if (at[0] === "duplicate") {
       if (method !== "POST") return send(res, 405, { error: "复制只有 POST" });
       const body = await parseJsonBody(req);
-      const result = await repo.serializeRepoWrite(root, () => duplicateSkill(repo, root, skills, body));
+      const result = await repo.serializeRepoWrite(root, () => duplicateSkill(repo, root, skills, variants, body));
       const loadError = await reloadRoster(skills);
       const roster = skills.list();
       return send(res, 200, {
@@ -1016,6 +1179,26 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         });
       }
 
+      // 拆树并解绑：树 + 本地分支 + 远端那条一起删。`unbind` 只摘记录，两个别混。
+      if (op === "prune") {
+        const id = checkVariantId(body.id);
+        const gone = await variants.prune({ family, id });
+        if (reload) await reload();
+        return send(res, 200, {
+          ok: true,
+          op,
+          key: `${family}${VARIANT_SEP}${id}`,
+          worktree: {
+            branch: gone.branch,
+            branchDeleted: gone.branchDeleted,
+            remoteDeleted: gone.remoteDeleted,
+            remoteError: gone.remoteError,
+            unmerged: gone.unmerged ?? 0,
+          },
+          skills: skills.list(),
+        });
+      }
+
       if (op === "unbind") {
         const id = checkVariantId(body.id);
         const gone = await variants.unbind({ family, id });
@@ -1031,7 +1214,7 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
         });
       }
 
-      throw withStatus(new Error(`变体没有「${op}」这个动作（bind / unbind）`), 400);
+      throw withStatus(new Error(`变体没有「${op}」这个动作（bind / unbind / prune）`), 400);
     }
 
     if (at[0] === "publish") {
@@ -1236,6 +1419,15 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           upstream.pinVersion({ root, data: mirrors(), source, run: repo.run, commit }),
         );
         return send(res, 200, { ok: true, source: source.name, version });
+      }
+
+      // 抄：把上游的一条技能 / 一个文件拿过来变成自己的（**不写 upstream**）。
+      if (at[1] === "copy") {
+        if (method !== "POST") return send(res, 405, { error: "抄只有 POST" });
+        const body = await parseJsonBody(req);
+        const result = await repo.serializeRepoWrite(root, () => copyFromUpstream(repo, root, skills, mirrors(), body));
+        await reloadRoster(skills);
+        return send(res, 200, result);
       }
 
       // 只问远端 refs，不拉内容。面板上「检查更新」按的就是这个。

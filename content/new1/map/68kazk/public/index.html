@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>skills · Nous 技能</title>
-    <link rel="stylesheet" href="./style.css?v=9" />
+    <link rel="stylesheet" href="./style.css?v=12" />
     <script>
       // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -227,6 +227,96 @@
     </form>
 
     <!-- 变体：同一条技能的另一个可装载名字（`本名@id`）。正文在那条分支上，
+         这一层只管「绑一条 / 改它 / 独立成一条新技能 / 解绑」——跟扩展 vbe4pt 那层同一副骨头。 -->
+    <div class="danger-scrim" id="variant-scrim" hidden></div>
+    <form class="create" id="variant" hidden role="dialog" aria-modal="true" aria-labelledby="variant-title">
+      <h2 id="variant-title">变体</h2>
+      <div id="variant-fields">
+        <p class="create-hint dim">
+          变体 = 同一条技能的<b>另一个可装载名字</b>（<span class="mono">本名@id</span>）。开对话时挑哪个，用的就是哪个。
+        </p>
+        <label class="create-label" for="variant-id">
+          <span>变体 id <b>只进名字，不进目录名</b></span>
+          <input id="variant-id" type="text" autocomplete="off" spellcheck="false" placeholder="strict" />
+        </label>
+        <label class="create-label" for="variant-branch" id="variant-branch-wrap">
+          <span>分支名 <i class="dim">空 = skill/本名-id；已存在就 checkout 那一条</i></span>
+          <input id="variant-branch" type="text" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="create-hint dim">
+          会新建一份 checkout（<span class="mono">git worktree add</span>）挂在一条分支上，主树一个字节不动。
+        </p>
+      </div>
+      <p class="variant-info mono" id="variant-info" hidden></p>
+      <p class="create-err" id="variant-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small" id="variant-where"></span>
+        <button class="btn" id="variant-close" type="button">取消</button>
+        <button class="btn" id="variant-code" type="button" hidden>改正文 ›</button>
+        <button class="btn" id="variant-promote" type="button" hidden>独立成技能 ›</button>
+        <button class="btn btn-bad" id="variant-remove" type="button" hidden>解绑</button>
+        <button class="btn btn-good" id="variant-ok" type="submit">绑定</button>
+      </div>
+    </form>
+
+    <!-- 破坏性动作的确认层：会真提交 + 推送，要求手输技能名。 -->
+    <div class="danger-scrim" id="danger-scrim" hidden></div>
+    <div class="danger" id="danger" hidden role="dialog" aria-modal="true" aria-labelledby="danger-title">
+      <h2 id="danger-title">—</h2>
+      <p class="danger-hint dim" id="danger-hint"></p>
+      <label class="danger-label" for="danger-input">
+        <span><span id="danger-field">手输技能名</span> <code id="danger-name">—</code> 确认</span>
+        <input id="danger-input" type="text" autocomplete="off" spellcheck="false" />
+      </label>
+      <p class="danger-err" id="danger-err" hidden></p>
+      <div class="danger-actions">
+        <button class="btn" id="danger-cancel" type="button">取消</button>
+        <button class="btn btn-bad" id="danger-ok" type="button" disabled>确定</button>
+      </div>
+    </div>
+
+    <!-- 新建技能：只问三样（spec §6.5）。名字是会话里的 API 键，建完改不了。 -->
+    <div class="danger-scrim" id="create-scrim" hidden></div>
+    <form class="create" id="create" hidden role="dialog" aria-modal="true" aria-labelledby="create-title">
+      <h2 id="create-title">新建技能</h2>
+      <p class="create-hint dim" id="create-hint">
+        一个目录 + 一份 <code>SKILL.md</code> + 一份 <code>nous.json</code>。建完是<b>未发布</b>：
+        只在你这台、远端上看不到，满意了再点发布。
+      </p>
+
+      <label class="create-label" for="create-name">
+        <span>技能名 <b>建完就改不了 —— 会话里存的就是它</b></span>
+        <input id="create-name" type="text" autocomplete="off" spellcheck="false" placeholder="code-review" />
+      </label>
+      <p class="create-note" id="create-name-note"></p>
+
+      <label class="create-label" for="create-description" id="create-desc-wrap">
+        <span>一句话说明 <b>模型靠它决定用不用这条技能</b></span>
+        <input id="create-description" type="text" autocomplete="off" maxlength="200"
+               placeholder="审查从某个点以来的改动：标准 + 规格两条轴" />
+      </label>
+
+      <label class="create-label" for="create-cat">
+        <span>类别 <i class="dim">可空 = 未分类；写个不存在的名字就顺手建了</i></span>
+        <input id="create-cat" type="text" autocomplete="off" list="create-cats" placeholder="工具/搜索" />
+        <datalist id="create-cats"></datalist>
+      </label>
+
+      <label class="create-label" for="create-group">
+        <span>分组 <i class="dim">可空 = 放在仓根。`deprecated` 那种只用来放技能的文件夹，一层</i></span>
+        <input id="create-group" type="text" autocomplete="off" list="create-groups" placeholder="deprecated" />
+        <datalist id="create-groups"></datalist>
+      </label>
+
+      <p class="create-err" id="create-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small mono" id="create-where"></span>
+        <button class="btn" id="create-cancel" type="button">取消</button>
+        <button class="btn btn-good" id="create-ok" type="submit" disabled>建</button>
+      </div>
+    </form>
+
+    <!-- 变体：同一条技能的另一个可装载名字（`本名@id`）。正文在那条分支上，
          这里只管「这台绑了谁」——跟扩展那边一个形状。 -->
     <div class="danger-scrim" id="var-scrim" hidden></div>
     <form class="create" id="var" hidden role="dialog" aria-modal="true" aria-labelledby="var-title">
@@ -250,6 +340,6 @@
     </form>
 
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=9"></script>
+    <script type="module" src="./app.js?v=12"></script>
   </body>
 </html>

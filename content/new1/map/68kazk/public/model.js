@@ -126,14 +126,17 @@ const compareCards = (a, b) =>
 export function buildView(data) {
   const skills = Array.isArray(data?.skills) ? data.skills : [];
   const vocabulary = categoryVocabulary(data);
-  const counts = facetCounts(skills, Array.isArray(data?.categories) ? data.categories : []);
-  const cards = skills
+  // 变体**不另开卡**：它在本体详情里是一行（`variants[本名]`），跟扩展面板同一个分组法。
+  // 名册里它是一条独立条目（会话按 `本名@id` 存），但网格上再长一张卡就成了「两条技能」。
+  const main = skills.filter((skill) => !skill.variant);
+  const counts = facetCounts(main, Array.isArray(data?.categories) ? data.categories : []);
+  const cards = main
     .map((skill) => ({ ...skill, state: cardState(skill) }))
     .sort(compareCards);
   const archived = (Array.isArray(data?.archived) ? data.archived : [])
     .map((name) => ({ name, state: "archived" }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const uncategorized = skills.filter((skill) => !categoriesOf(skill).length).length;
+  const uncategorized = main.filter((skill) => !categoriesOf(skill).length).length;
   const rows = vocabulary.map((path) => ({
     path,
     label: leafOf(path),

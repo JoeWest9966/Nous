@@ -6,7 +6,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -641,6 +641,134 @@ test("检查更新：没镜像就直说，不假装检查过", async () => {
     assert.equal(out.status, 200);
     assert.equal(out.body.sources[0].ok, false);
     assert.match(out.body.sources[0].error, /先刷新/);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+// ── 抄（copy）：变成自己的，不留 upstream ────────────────────────────────────
+
+const makeUpstreamSkill = async () => {
+  const upstreamRepo = await makeRepo({
+    files: {
+      "skills/eng/tdd/SKILL.md": `---\nname: tdd\ndescription: "上游的 tdd"\n---\n\n上游正文\n`,
+      "skills/eng/tdd/notes.md": "上游的笔记\n",
+      "skills/eng/tdd/deep/extra.md": "深处\n",
+    },
+  });
+  return upstreamRepo;
+};
+
+test("抄整条：落到自己仓里、名字对齐、没有 upstream 但有 copiedFrom", async () => {
+  const upstreamRepo = await makeUpstreamSkill();
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("POST", "/v1/skills/upstream/copy", { source: "matt", path: "skills/eng/tdd" });
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.name, "tdd");
+
+    const dir = path.join(ctx.root, "tdd");
+    assert.equal(await exists(path.join(dir, "SKILL.md")), true);
+    assert.equal(await exists(path.join(dir, "notes.md")), true);
+    // 子目录跟着走
+    assert.equal(await exists(path.join(dir, "deep/extra.md")), true);
+
+    const manifest = JSON.parse(await readFile(path.join(dir, "nous.json"), "utf8"));
+    assert.equal(manifest.name, "tdd");
+    assert.equal(manifest.upstream, undefined, "抄来的不是取用 —— 不许有 upstream");
+    assert.equal(manifest.copiedFrom, "matt/skills/eng/tdd");
+
+    // 面板上它是自己的：没有上游版本可对
+    const list = await ctx.call("GET", "/v1/skills");
+    const row = list.body.skills.find((item) => item.name === "tdd");
+    assert.equal(row.upstream ?? null, null);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("抄整条：名字撞了就 tdd-2，再撞 tdd-3 —— 不覆盖、不报错", async () => {
+  const upstreamRepo = await makeUpstreamSkill();
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    await mkdir(path.join(ctx.root, "tdd"), { recursive: true });
+    await writeFile(path.join(ctx.root, "tdd", "SKILL.md"), `---\nname: tdd\ndescription: "我自己的"\n---\n\n我的\n`);
+    await writeFile(path.join(ctx.root, "tdd", "nous.json"), JSON.stringify({ name: "tdd", summary: "", category: [] }) + "\n");
+
+    const out = await ctx.call("POST", "/v1/skills/upstream/copy", { source: "matt", path: "skills/eng/tdd" });
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.name, "tdd-2");
+    assert.equal(out.body.original, "tdd");
+    // 原来那条一个字没动
+    assert.match(await readFile(path.join(ctx.root, "tdd", "SKILL.md"), "utf8"), /我自己的/);
+
+    const again = await ctx.call("POST", "/v1/skills/upstream/copy", { source: "matt", path: "skills/eng/tdd" });
+    assert.equal(again.body.name, "tdd-3");
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("抄单个文件：落到指定技能里；撞名 409，不覆盖", async () => {
+  const upstreamRepo = await makeUpstreamSkill();
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    await mkdir(path.join(ctx.root, "mine"), { recursive: true });
+    await writeFile(path.join(ctx.root, "mine", "SKILL.md"), `---\nname: mine\ndescription: "我的"\n---\n\n我的\n`);
+    await writeFile(path.join(ctx.root, "mine", "nous.json"), JSON.stringify({ name: "mine", summary: "", category: [] }) + "\n");
+
+    const out = await ctx.call("POST", "/v1/skills/upstream/copy", {
+      source: "matt",
+      path: "skills/eng/tdd",
+      file: "deep/extra.md",
+      to: "mine",
+    });
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.path, "mine/deep/extra.md");
+    assert.equal((await readFile(path.join(ctx.root, "mine", "deep", "extra.md"), "utf8")).trim(), "深处");
+
+    const again = await ctx.call("POST", "/v1/skills/upstream/copy", {
+      source: "matt",
+      path: "skills/eng/tdd",
+      file: "deep/extra.md",
+      to: "mine",
+    });
+    assert.equal(again.status, 409, "同名文件一律拒绝，不许悄悄 -2");
+    assert.equal((await readFile(path.join(ctx.root, "mine", "deep", "extra.md"), "utf8")).trim(), "深处");
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("抄单个文件：目标技能不存在就 404，别在原地凭空造一个", async () => {
+  const upstreamRepo = await makeUpstreamSkill();
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("POST", "/v1/skills/upstream/copy", {
+      source: "matt",
+      path: "skills/eng/tdd",
+      file: "notes.md",
+      to: "nope",
+    });
+    assert.equal(out.status, 404);
+    assert.equal(await exists(path.join(ctx.root, "nope")), false);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("抄：没有 SKILL.md 的目录不叫技能，整条抄不了", async () => {
+  const upstreamRepo = await makeRepo({ files: { "skills/junk/a.md": "杂物\n" } });
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    const out = await ctx.call("POST", "/v1/skills/upstream/copy", { source: "matt", path: "skills/junk" });
+    assert.equal(out.status, 400);
+    assert.match(out.body.error, /SKILL\.md/);
   } finally {
     await teardown(ctx.root, ctx.data);
   }

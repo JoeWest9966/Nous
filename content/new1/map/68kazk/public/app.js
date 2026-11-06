@@ -91,7 +91,8 @@ const state = {
   query: "",
   creating: false, // 左栏「新建类别」的输入框开着
   duplicating: null, // 复制弹层开着的话，这里是源技能的名字
-  variant: null, // 变体弹层：{name, variants, loading, busy, error}
+  duplicatingVariant: null, // 从变体那棵树拷（「独立成技能 ›」）时是变体 id
+  variant: null, // 变体弹层：{skill, item}（item 为空 = 新增）
   createPrefix: "", // 「新建子类别」预填的 `工具/`
   renaming: null, // 正在原地改名的类别
   editing: null, // 正在输入类别的技能名（只住在详情里）
@@ -408,9 +409,7 @@ function openCardMenu(x, y, skill) {
 
   // 变体：同一条技能的另一个可装载名字。本体才有这一项 —— 变体自己再开变体没有意义
   // （要那样就该「独立成一个新技能」）。
-  if (!skill.variant) {
-    menuItem(menu, "变体…", "另一条分支，另一个名字", () => void openVariant(skill.name));
-  }
+  menuItem(menu, "变体…", "另一条分支，另一个名字", () => openVariantDialog(skill, null));
 
   menu.append(el("div", "ctx-sep"));
   // 复制 = 整目录拷成新的一条（`POST v1/skills/duplicate`）：正文、附件、类别、summary
@@ -1037,15 +1036,6 @@ function renderDetail() {
   dup.title = `整目录拷成另一条技能（POST v1/skills/duplicate）—— 历史不带，出来是未发布`;
   dup.onclick = () => openDuplicate(skill.name);
   acts.append(dup);
-  // 变体也必须在这儿有一扇门：卡上的 `⋯` 是快捷入口，进详情的人找不到就是没有。
-  // 变体自己不再开变体（要那样就该复制成一条新技能）。
-  if (!skill.variant) {
-    const variants = el("button", "btn btn-small", "变体…");
-    variants.type = "button";
-    variants.title = `同一条技能的另一个可装载名字（${skill.name}@id）：正文在它自己那条分支上，主干不碰`;
-    variants.onclick = () => void openVariant(skill.name);
-    acts.append(variants);
-  }
   host.append(acts);
 
   // ── 真话说在最前面：装载失败 ──────────────────────────────────────────
@@ -1071,6 +1061,14 @@ function renderDetail() {
   const cat = detailSection("类别", "写回仓库 · qrd3wh 落盘");
   cat.body.append(tagRow(skill));
   grid.append(cat.node);
+
+  // 变体：本体详情里的一行一行（跟扩展面板同一个分组法）。变体的卡不另开，
+  // 但点它自己的那一行照样能开它的抽屉 —— 正文、差异、发布全在它那棵树上。
+  const family = splitSkillKey(skill.name).family;
+  const variants = state.data?.variants?.[family] ?? [];
+  const varSection = detailSection("变体", variants.length ? `${variants.length} 个可装载名字` : "另一个可装载名字");
+  varSection.body.append(variantStrip(skill, variants));
+  grid.append(varSection.node);
 
   // 正文：说明是 frontmatter 的 description（给模型看），SKILL.md 的正文才是人写的那一段。
   const text = detailSection("正文", "SKILL.md");
@@ -2300,6 +2298,7 @@ async function openUpstreamEditor(source, { path = null } = {}) {
     error: "",
     notice: "",
     mode: "edit",
+    copyPick: null,
     expanded: new Set(),
     lineCount: 1,
     dirs: new Set(),
@@ -2377,6 +2376,7 @@ function renderEditorFiles() {
   const tree = fileTree(ed.files);
   for (const node of flattenTree(tree, (path) => ed.dirs.has(path))) {
     nav.append(node.type === "dir" ? editorDirRow(node) : editorFileRow(node));
+    if (state.editor.copyPick?.path === node.path) nav.append(copyPickRow(node));
   }
 }
 
@@ -2486,6 +2486,123 @@ function upstreamEntryOfFile(node) {
   ) ?? null;
 }
 
+/** 上游里的一条技能 = 一个装着 `SKILL.md` 的目录。整条抄只认这种目录。 */
+function isUpstreamSkillDir(node) {
+  const ed = state.editor;
+  if (ed?.kind !== "upstream" || node.type !== "dir") return false;
+  return (ed.files ?? []).some((file) => file.path === `${node.path}/SKILL.md`);
+}
+
+/** 抽屉里那条「抄」标 —— 骨子里跟「取用」一样，也是一个 role=button 的 span（不许 button 套 button）。 */
+function copyMark(node, label, title, onFire) {
+  const mark = el("span", "ed-file-mark", label);
+  mark.setAttribute("role", "button");
+  mark.tabIndex = 0;
+  mark.dataset.tone = "copy";
+  mark.title = title;
+  const off = Boolean(state.upstreamBusy);
+  mark.setAttribute("aria-disabled", String(off));
+  const fire = (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    if (off) return;
+    onFire();
+  };
+  mark.onclick = fire;
+  mark.onkeydown = (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    fire(event);
+  };
+  return mark;
+}
+
+/** 把上游的一条技能整抄过来。重名由服务端接（`tdd-2`、`tdd-3`…），我们只管说结果。 */
+async function copyUpstreamSkill(home) {
+  if (state.upstreamBusy) return;
+  const ed = state.editor;
+  state.upstreamBusy = `copy:${home}`;
+  renderEditorFiles();
+  try {
+    const out = await transport.post("v1/skills/upstream/copy", { source: ed.source, path: home });
+    if (out.name !== out.original) toast(`抄好了：${out.name}（原来那条叫 ${out.original}，名字被占了）`);
+    else toast(`抄好了：${out.name}`);
+    await load({ quiet: true });
+    await loadUpstream({ quiet: true });
+  } catch (error) {
+    toast(`抄失败：${error.message}`, "bad");
+  } finally {
+    state.upstreamBusy = null;
+    renderEditorFiles();
+  }
+}
+
+/** 抄单个文件要先说「落到我哪个技能里」—— 内联一行，不弹模态。 */
+function openCopyPick(node) {
+  const ed = state.editor;
+  if (!ed) return;
+  const mine = (state.data?.skills ?? []).map((skill) => skill.name);
+  if (!mine.length) {
+    toast("你还没有自己的技能 —— 先建一条，再往里抄文件", "bad");
+    return;
+  }
+  ed.copyPick = { path: node.path, value: mine[0] };
+  renderEditorFiles();
+}
+
+async function confirmCopyPick(node) {
+  const ed = state.editor;
+  const pick = ed?.copyPick;
+  if (!pick || !pick.value) return;
+  const home = node.path.includes("/") ? node.path.slice(0, node.path.lastIndexOf("/")) : "";
+  const file = node.name;
+  state.upstreamBusy = `copy:${node.path}`;
+  try {
+    const out = await transport.post("v1/skills/upstream/copy", {
+      source: ed.source,
+      path: ed.prefix ? `${ed.prefix}/${home}` : home,
+      file,
+      to: pick.value,
+    });
+    toast(`抄好了：${out.path}`);
+    ed.copyPick = null;
+    await load({ quiet: true });
+  } catch (error) {
+    toast(`抄失败：${error.message}`, "bad");
+  } finally {
+    state.upstreamBusy = null;
+    renderEditorFiles();
+  }
+}
+
+/** 那行内联选择器：抄到哪个技能里。 */
+function copyPickRow(node) {
+  const ed = state.editor;
+  const wrap = el("div", "ed-copy-pick");
+  wrap.append(el("span", "ed-copy-pick-label", "抄到"));
+  const select = el("select", "ed-copy-pick-select");
+  for (const skill of state.data?.skills ?? []) {
+    const option = el("option", "", skill.name);
+    option.value = skill.name;
+    select.append(option);
+  }
+  select.value = ed.copyPick.value;
+  select.onchange = () => {
+    ed.copyPick.value = select.value;
+  };
+  wrap.append(select);
+  const go = el("button", "btn btn-small", "抄过来");
+  go.type = "button";
+  go.onclick = () => void confirmCopyPick(node);
+  const no = el("button", "btn btn-small btn-ghost", "算了");
+  no.type = "button";
+  no.onclick = () => {
+    ed.copyPick = null;
+    renderEditorFiles();
+  };
+  wrap.append(go, no);
+  return wrap;
+}
+
 function editorFileMark(node) {
   const entry = upstreamEntryOfFile(node);
   if (!entry) return null;
@@ -2528,6 +2645,11 @@ function editorFileRow(node) {
   main.append(el("span", "ed-file-name", node.name));
   const mark = editorFileMark(node);
   if (mark) main.append(mark);
+  if (ed.kind === "upstream") {
+    main.append(
+      copyMark(node, "抄", "把这个文件抄进我自己的某一条技能里", () => openCopyPick(node)),
+    );
+  }
   main.append(el("span", "ed-file-size", bytes(node.size)));
   main.title = `${node.path} · ${bytes(node.size)}`;
   main.onclick = () => void openEditorFile(node.path);
@@ -2548,6 +2670,15 @@ function editorDirRow(node) {
   main.setAttribute("aria-expanded", String(open));
   main.append(el("span", "ed-file-caret", open ? "▾" : "▸"));
   main.append(el("span", "ed-file-name", node.name));
+  // 整条抄只对「装着 SKILL.md 的目录」开放 —— 别的目录抄下来是一堆没人认领的散文件。
+  if (isUpstreamSkillDir(node)) {
+    main.append(
+      copyMark(node, "抄一份", "整条抄进我们仓里（重名自动叫 -2、-3）", () => {
+        const home = ed.prefix ? `${ed.prefix}/${node.path}` : node.path;
+        void copyUpstreamSkill(home);
+      }),
+    );
+  }
   main.append(el("span", "ed-file-size", String(node.children.length)));
   main.title = `${node.path}/ · 点一下${open ? "收起" : "展开"}`;
   main.onclick = () => {
@@ -3231,17 +3362,24 @@ function freeCopyName(from) {
  * 复用新建那个弹层：除了名字和分组，其余一律照搬源那条 —— 所以说明那一格直接收起来，
  * 类别预填源那条的。跟新建共一套校验、一套报错位置（服务端的 400 原文照样进 #create-err）。
  */
-function openDuplicate(from) {
+function openDuplicate(from, { variantId = null } = {}) {
   closeMenu();
   const skill = skillNow(from);
   if (!skill) return toast(`找不到 ${from}`, "bad");
-  openCreate({ duplicating: from, name: freeCopyName(from), category: categoriesOf(skill)[0] ?? "" });
+  openCreate({
+    duplicating: from,
+    variantId,
+    // `独立成技能 ›` 的默认名字跟扩展那边一样：`本名-变体id`。
+    name: variantId ? freeCopyName(`${from}-${variantId}`) : freeCopyName(from),
+    category: categoriesOf(skill)[0] ?? "",
+  });
 }
 
-function openCreate({ duplicating = null, name = "", category = null } = {}) {
+function openCreate({ duplicating = null, variantId = null, name = "", category = null } = {}) {
   closeMenu();
   state.creating = false;
   state.duplicating = duplicating;
+  state.duplicatingVariant = variantId;
   $("create").reset();
   $("create-err").hidden = true;
   // 当前正筛着某个类别，新建时就默认挂上去 —— 少点一次。
@@ -3264,7 +3402,10 @@ function openCreate({ duplicating = null, name = "", category = null } = {}) {
   // 复制不问说明（照搬）、也不给分组（留在原地最安全；要搬就改分组那一格）。
   $("create-title").textContent = duplicating ? `复制 ${duplicating}` : "新建技能";
   $("create-desc-wrap").hidden = Boolean(duplicating);
-  $("create-hint").innerHTML = duplicating
+  $("create-hint").innerHTML = duplicating && variantId
+    ? `拷的是 <span class="mono">${duplicating}@${variantId}</span> <b>那棵树现在的样子</b>（含还没提交的改动）：<br>
+       出来是一条<b>新技能</b>，不跟那个变体沾亲。变体本身不动 —— 解绑要另外点。`
+    : duplicating
     ? `整目录拷一份：正文、附件、类别、说明都跟着走，名字换成新的。复制出来是<b>未发布</b>，满意了再发布。`
     : `一个目录 + 一份 <code>SKILL.md</code> + 一份 <code>nous.json</code>。建完是<b>未发布</b>：
         只在你这台、远端上看不到，满意了再发布。`;
@@ -3287,6 +3428,7 @@ function closeCreate() {
   $("create").hidden = true;
   state.creating = false;
   state.duplicating = null;
+  state.duplicatingVariant = null;
 }
 
 async function submitCreate(event) {
@@ -3304,7 +3446,13 @@ async function submitCreate(event) {
   $("create-ok").textContent = from ? "复制中…" : "建…";
   try {
     if (from) {
-      await transport.post("v1/skills/duplicate", { from, name, category: category ? [category] : [], group });
+      await transport.post("v1/skills/duplicate", {
+        from,
+        name,
+        category: category ? [category] : [],
+        group,
+        variant: state.duplicatingVariant,
+      });
       closeCreate();
       await load({ quiet: true });
       openDetail(name);
@@ -3331,172 +3479,214 @@ async function submitCreate(event) {
   }
 }
 
-// ── 变体：绑 / 解绑 / 发那条分支 ────────────────────────────────────────────
+// ── 变体：一条技能的多个可装载名字 ───────────────────────────────────────────
 //
-// 变体**不是复制**：内容在它自己那条分支上，这里只管「这台绑了谁」。所以这一屏只有三件事：
-// 绑一条（开一棵树）、解绑（只摘记录，树和分支都留着）、发那一条分支（commit + push 到它自己那条）。
+// 跟扩展面板（vbe4pt）同一副骨头：名册里变体是**另一个注册名**（`tdd@strict`），
+// 界面上它是本体**详情里的一行** —— 这一层只有四个动作，跟那边一一对应：
+// 绑定（开一棵 tree）/ 改正文 › / 独立成技能 › / 解绑。
 //
 // 一条铁律：`name` 永远是**本名**，变体 id 单独送（`variant=`）。拼成 `本名@id` 再让服务端
 // 拆开，等于让路径那一层去理解会话键 —— 扩展那边踩过，别再来一次。
 
-async function openVariant(name) {
+const VARIANT_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** 详情里的那一行：一条变体一个 chip，圆点就是装载状态，`+` 是新增。 */
+function variantStrip(skill, variants) {
+  const wrap = el("div", "variants");
+  wrap.append(el("span", "variants-label", "变体"));
+  for (const item of variants) {
+    const row = el("button", "variant");
+    row.type = "button";
+    row.dataset.tone = item.load?.state === "failed" ? "bad" : item.installed ? "ok" : "off";
+    row.append(el("span", "variant-id", item.id));
+    row.append(el("span", "variant-src", item.branch ? "分支" : "目录"));
+    row.title = `${item.key}\n${item.dir ?? ""}${item.branch ? `\n分支 ${item.branch}` : ""}`;
+    row.onclick = () => openVariantDialog(skill, item);
+    wrap.append(row);
+  }
+  const add = el("button", "variant-add", "+");
+  add.type = "button";
+  add.title = `给 ${splitSkillKey(skill.name).family} 加一个变体（另一个可装载名字）`;
+  add.onclick = () => openVariantDialog(skill, null);
+  wrap.append(add);
+  return wrap;
+}
+
+/** 路径和分支名都是**算**出来的，跟着当前技能和变体 id 走。别写死示例：对不上比空着更糟。 */
+function variantTargets() {
+  const skill = state.variant?.skill;
+  const family = skill ? splitSkillKey(skill.name).family : "技能";
+  const id = $("variant-id").value.trim() || "变体";
+  const repo = state.data?.root ?? "/opt/Nous-skills";
+  const parent = repo.replace(/\/+$/, "").replace(/\/[^/]+$/, "");
+  return { family, id, branch: `skill/${family}-${id}`, worktree: `${parent}/nous-skill-${family}-${id}` };
+}
+
+function renderVariantHints() {
+  const t = variantTargets();
+  $("variant-where").textContent = `树 ${t.worktree} · 分支 ${t.branch}`;
+  $("variant-where").title = `${t.worktree}\n分支 ${t.branch}`;
+}
+
+/**
+ * `item` 为空 = 新增（要那两格输入）；有 item = 看/管这一条（字段收起来，
+ * 摆出它现在在哪棵树、哪条分支、名册里装没装上）。
+ */
+function openVariantDialog(skill, item) {
   closeMenu();
-  const key = splitSkillKey(name);
-  state.variant = { name: key.family, variants: [], loading: true, busy: null, error: "" };
-  $("var-title").textContent = `变体 · ${key.family}`;
-  $("var-id").value = "";
-  $("var-err").hidden = true;
-  $("var-scrim").hidden = false;
-  $("var").hidden = false;
-  renderVariant();
-  $("var-id").focus();
-  await refreshVariant();
+  state.variant = { skill, item };
+  $("variant").reset();
+  $("variant-err").hidden = true;
+  $("variant-title").textContent = item ? `${splitSkillKey(skill.name).family}@${item.id}` : `给 ${splitSkillKey(skill.name).family} 加变体`;
+  $("variant-fields").hidden = Boolean(item);
+  $("variant-code").hidden = true;
+  $("variant-promote").hidden = true;
+  $("variant-where").textContent = "";
+  $("variant-info").hidden = !item;
+  $("variant-remove").hidden = !item;
+  $("variant-ok").hidden = Boolean(item);
+  if (item) {
+    // 只读的一段说明：变体这东西的真相在 git 里，面板上别再开第二个编辑面。
+    $("variant-info").textContent = [
+      "本机绑定：正文在那棵 checkout 上，只在这台存在；分支 push 上去，别的机器绑一下就有。",
+      item.branch ? `分支：${item.branch}` : null,
+      item.dir ? `树：${item.dir}` : null,
+      item.load?.state === "failed" ? `装载失败：${item.load.error}` : item.installed ? "名册里：已装载" : "名册里：没装上",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    $("variant-code").hidden = false;
+    $("variant-promote").hidden = false;
+    $("variant-remove").textContent = item.branch ? "拆树并解绑" : "解绑";
+  } else {
+    renderVariantHints();
+    setTimeout(() => $("variant-id").focus(), 0);
+  }
+  $("variant-scrim").hidden = false;
+  $("variant").hidden = false;
 }
 
-function closeVariant() {
+function closeVariantDialog() {
+  $("variant-scrim").hidden = true;
+  $("variant").hidden = true;
   state.variant = null;
-  $("var-scrim").hidden = true;
-  $("var").hidden = true;
 }
 
-async function refreshVariant() {
-  const layer = state.variant;
-  if (!layer) return;
-  try {
-    const data = await transport.get(`v1/skills/variant?name=${encodeURIComponent(layer.name)}`);
-    if (state.variant !== layer) return; // 弹层关掉了，别拿旧响应去画新的一层
-    layer.variants = data.variants ?? [];
-    layer.error = "";
-  } catch (error) {
-    layer.error = String(error?.message ?? error);
-  }
-  layer.loading = false;
-  renderVariant();
-}
-
-function renderVariant() {
-  const layer = state.variant;
-  if (!layer) return;
-  const box = $("var-list");
-  box.textContent = "";
-  if (layer.loading) box.append(el("div", "dim small", "读绑定…"));
-  else if (!layer.variants.length) box.append(el("div", "dim small", "这条技能还没绑过变体。"));
-
-  for (const item of layer.variants) {
-    const failed = item.skill?.load?.state === "failed";
-    const row = el("div", "var-row");
-    row.dataset.bad = String(failed);
-    row.append(el("span", "var-key", item.key));
-    row.append(el("span", "var-branch", item.branch ?? "（当前 HEAD）"));
-    const stateEl = el("span", "var-state", failed ? "装载失败" : "已装载");
-    stateEl.dataset.tone = failed ? "bad" : "ok";
-    row.append(stateEl);
-
-    const acts = el("div", "var-actions");
-    const edit = el("button", "btn", "改正文 ›");
-    edit.type = "button";
-    edit.title = `打开 ${item.key} 的文件树（读写的都是它那棵树）`;
-    edit.onclick = () => {
-      const skill = skillNow(item.key);
-      if (!skill) return toast(`名册里没有 ${item.key} —— 先重扫一下`, "bad");
-      closeVariant();
-      void openEditor(skill);
-    };
-    const pub = el("button", "btn", "发布");
-    pub.type = "button";
-    pub.title = `在它那棵树上 commit + push 到 ${item.branch ?? "它那条分支"}，主干不碰`;
-    pub.disabled = layer.busy !== null;
-    pub.onclick = () => void publishVariant(item);
-    const off = el("button", "btn btn-bad", "解绑");
-    off.type = "button";
-    off.title = "只摘这一台的绑定：树和分支都留着，随时能再绑回来";
-    off.disabled = layer.busy !== null;
-    off.onclick = () => void unbindVariant(item);
-    acts.append(edit, pub, off);
-    row.append(acts);
-
-    if (failed && item.skill?.load?.error) row.append(el("p", "var-err", item.skill.load.error));
-    box.append(row);
-  }
-
-  const id = $("var-id").value.trim();
-  $("var-bind").disabled = !id || layer.busy !== null;
-  $("var-bind").textContent = layer.busy === "bind" ? "绑…" : "绑定";
-  $("var-note").textContent = id
-    ? `会绑 ${layer.name}@${id}：分支 skill/${layer.name}-${id}，树开在仓的隔壁`
-    : "写个 id，比如 strict —— 只在名字里，目录名还是本名";
-  $("var-err").hidden = !layer.error;
-  $("var-err").textContent = layer.error ?? "";
-}
-
-async function submitBindVariant(event) {
+async function submitVariant(event) {
   event.preventDefault();
-  const layer = state.variant;
-  if (!layer || layer.busy) return;
-  const id = $("var-id").value.trim();
-  if (!id) return renderVariant();
-  layer.busy = "bind";
-  layer.error = "";
-  renderVariant();
+  const ctx = state.variant;
+  if (!ctx?.skill) return;
+  const err = $("variant-err");
+  err.hidden = true;
+  const id = $("variant-id").value.trim();
+  if (!VARIANT_ID_RE.test(id) || id.includes(VARIANT_SEP)) {
+    err.textContent = "变体 id 只能用字母、数字和 . _ -（不带 @）";
+    err.hidden = false;
+    return;
+  }
+  const family = splitSkillKey(ctx.skill.name).family;
+  const ok = $("variant-ok");
+  ok.disabled = true;
+  ok.textContent = "开树…";
   try {
-    await transport.post("v1/skills/variant", { op: "bind", name: layer.name, id });
-    $("var-id").value = "";
+    const result = await transport.post("v1/skills/variant", {
+      op: "bind",
+      name: family,
+      id,
+      branch: $("variant-branch").value.trim(),
+    });
+    closeVariantDialog();
     await load({ quiet: true });
-    await refreshVariant();
-    toast(`绑了 ${layer.name}@${id} —— 会话里挑它就能用`);
+    const key = `${family}${VARIANT_SEP}${id}`;
+    const failed = (result.skills ?? []).find((skill) => skill.name === key)?.load?.state === "failed";
+    toast(failed ? `${key} 绑上了，但装载失败（卡上是红的）` : `已加变体 ${key}`, failed ? "bad" : "");
   } catch (error) {
-    layer.error = String(error?.message ?? error);
-    renderVariant();
+    err.textContent = String(error?.message ?? error);
+    err.hidden = false;
   } finally {
-    layer.busy = null;
-    renderVariant();
+    ok.disabled = false;
+    ok.textContent = "绑定";
   }
 }
 
-async function unbindVariant(item) {
-  const layer = state.variant;
-  if (!layer || layer.busy) return;
-  if (!confirm(`解绑 ${item.key}？\n\n只摘这一台的绑定：树（${item.root ?? "变体目录"}）和分支都还在，随时能再绑回来。`)) return;
-  layer.busy = `unbind:${item.id}`;
-  renderVariant();
-  try {
-    await transport.post("v1/skills/variant", { op: "unbind", name: layer.name, id: item.id });
-    await load({ quiet: true });
-    await refreshVariant();
-    toast(`解绑了 ${item.key} —— 树和分支都留着`);
-  } catch (error) {
-    layer.error = String(error?.message ?? error);
-    renderVariant();
-  } finally {
-    layer.busy = null;
-    renderVariant();
-  }
-}
+/**
+ * 解绑 / 拆树。有分支 = 连树带分支一起拆（要手输确认，跟归档同一套骨头）；
+ * 没分支（老式的「登记型」变体）只摘记录。
+ */
+async function removeVariant() {
+  const ctx = state.variant;
+  const item = ctx?.item;
+  if (!item) return;
+  const family = splitSkillKey(ctx.skill.name).family;
+  const err = $("variant-err");
+  err.hidden = true;
 
-async function publishVariant(item) {
-  const layer = state.variant;
-  if (!layer || layer.busy) return;
-  layer.busy = `publish:${item.id}`;
-  renderVariant();
-  try {
-    // `variant` 给了就是「只发那一棵树」：服务端在它的 checkout 上 commit + push，
-    // 主干一个字节都不碰。不带 variant 才是发整个技能仓。
-    const result = await transport.post("v1/skills/publish", { name: layer.name, variant: item.id });
-    if (result.pushed === false && result.committed) {
-      toast(`已提交，但推送失败：${result.error ?? "看服务端"}`, "bad");
-    } else if (!result.committed) {
-      toast(`${item.key} 没有要发的东西`);
-    } else {
-      toast(`已发布 ${item.key} → ${result.branch}`);
+  const prune = Boolean(item.branch);
+  const run = async () => {
+    const btn = $("variant-remove");
+    btn.disabled = true;
+    try {
+      const result = await transport.post("v1/skills/variant", {
+        op: prune ? "prune" : "unbind",
+        name: family,
+        id: item.id,
+      });
+      closeVariantDialog();
+      await load({ quiet: true });
+      if (!prune) return toast(`已解绑 ${item.key} —— 树和分支都留着`);
+      const w = result.worktree ?? {};
+      if (w.remoteError) {
+        toast(`树和本地分支已删，但 GitHub 那条没删掉：\n${w.remoteError}`, "bad");
+      } else if (w.branchDeleted) {
+        toast(`已拆树并删掉分支 ${w.branch}${w.remoteDeleted ? "（本地 + GitHub）" : "（本地；GitHub 上本来没有）"}`);
+      } else {
+        toast(`已拆树并解绑 ${item.key}（分支 ${w.branch} 没删掉，去命令行看看）`, "bad");
+      }
+    } catch (error) {
+      err.textContent = String(error?.message ?? error);
+      err.hidden = false;
+    } finally {
+      btn.disabled = false;
     }
-    await refreshVariant();
-  } catch (error) {
-    layer.error = String(error?.message ?? error);
-    renderVariant();
-  } finally {
-    layer.busy = null;
-    renderVariant();
+  };
+
+  // 分支上有没并进 main 的提交 = 真会丢东西 → 手输分支名再删。
+  // 空壳 / 已合并的分支没什么可惜的，直接拆（跟扩展面板同一条规矩）。
+  if (item.branch && item.unmerged > 0) {
+    // 先关弹层再开确认框：两层叠着时，确认框的按钮点不到（被上层的 form 吞掉）。
+    closeVariantDialog();
+    const remoteNote = item.remoteBranch ? "，GitHub 上那条也一起删" : "";
+    confirmName({
+      title: `拆树并解绑 ${item.key}？`,
+      hint: `分支 ${item.branch} 上有 ${item.unmerged} 个提交没并进 main${remoteNote}。删了这些代码就只能从 reflog 里捞。`,
+      name: item.branch,
+      fieldLabel: "手输分支名",
+      label: "删掉",
+      onConfirm: run,
+    });
+    return;
   }
+  await run();
+}
+
+/** `改正文 ›`：打开的是**那棵树**的文件树 —— 读写、差异、发布全跟着走。 */
+function openVariantCode() {
+  const ctx = state.variant;
+  if (!ctx?.item) return;
+  const key = `${splitSkillKey(ctx.skill.name).family}${VARIANT_SEP}${ctx.item.id}`;
+  const skill = skillNow(key);
+  if (!skill) return toast(`名册里没有 ${key} —— 先重扫一下`, "bad");
+  closeVariantDialog();
+  void openEditor(skill);
+}
+
+/** `独立成技能 ›`：把那棵树的正文拷成**一条新技能**（历史不带），变体本身不动。 */
+function promoteVariant() {
+  const ctx = state.variant;
+  if (!ctx?.item) return;
+  const family = splitSkillKey(ctx.skill.name).family;
+  closeVariantDialog();
+  openDuplicate(family, { variantId: ctx.item.id });
 }
 
 // ── 绑定 ───────────────────────────────────────────────────────────────────
@@ -3534,10 +3724,14 @@ $("rescan").onclick = async () => {
   }
 };
 $("create-cancel").onclick = () => closeCreate();
-$("var-close").onclick = () => closeVariant();
-$("var-scrim").onclick = () => closeVariant();
-$("var").addEventListener("submit", submitBindVariant);
-$("var-id").addEventListener("input", renderVariant);
+$("variant-close").onclick = () => closeVariantDialog();
+$("variant-scrim").onclick = () => closeVariantDialog();
+$("variant").addEventListener("submit", submitVariant);
+$("variant-remove").onclick = () => void removeVariant();
+$("variant-code").onclick = () => openVariantCode();
+$("variant-promote").onclick = () => promoteVariant();
+// 树和分支名是算出来的：id 一变就得重算，不然那一行会挂着上一次的示例。
+$("variant-id").addEventListener("input", renderVariantHints);
 $("create-scrim").onclick = () => closeCreate();
 $("create").addEventListener("submit", submitCreate);
 for (const id of ["create-name", "create-description", "create-cat", "create-group"]) {
@@ -3632,8 +3826,9 @@ addEventListener("keydown", (event) => {
     closeNewEntry();
     return;
   }
+  // 变体弹层是从详情/卡片上开的，比新建层更靠外：Esc 先关它。
+  if (!$("variant").hidden) return closeVariantDialog();
   if (!$("create").hidden) return closeCreate();
-  if (!$("var").hidden) return closeVariant();
   if (state.editor) {
     if (state.editor.mode === "diff") setEditorMode("edit");
     else closeEditor();

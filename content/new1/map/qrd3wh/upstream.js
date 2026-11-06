@@ -624,6 +624,27 @@ export const entryText = async ({ data, source, run, home, rel }) => {
 };
 
 /**
+ * 把上游的**一个**文件摊到 `target` 这个具体路径上（复制单个文件走这条）。
+ * 二进制原样，不经过文本层 —— 上游的 `logo.png` 抄过来还得是 png。
+ */
+export const materializeFile = async ({ data, source, run, home, rel, target }) => {
+  const head = await resolveHead({ data, source, run });
+  const dir = mirrorPath(data, source.name);
+  if (rel.startsWith("/") || rel.split("/").includes("..")) {
+    throw withStatus(new Error(`${source.name}: 路径只能在上游那一条里面 —— ${rel}`), 400);
+  }
+  const want = path.posix.join(home, rel);
+  const rows = await treeOf(run, dir, head);
+  const row = rows.find((item) => item.path === want);
+  if (!row) throw withStatus(new Error(`${source.name}: ${want} 不在上游里`), 404);
+  if (row.type !== "blob") throw withStatus(new Error(`${source.name}: ${want} 不是文件`), 400);
+  await mkdir(path.dirname(target), { recursive: true });
+  const bytes = await blobBytes(run, dir, row.sha);
+  await writeFile(target, bytes);
+  return { head, size: bytes.length };
+};
+
+/**
  * 把一条上游技能摊到 `target` 目录里（调用方给的是点开头的暂存目录）。
  *
  * 不走 `git archive | tar`：这里没有 shell，也不想为一个 tar 引依赖。就按 blob 一个个写，

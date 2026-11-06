@@ -274,3 +274,155 @@ test("没发布的技能也能开变体：从工作区把那条拷进树里当�
     await rm(base, { recursive: true, force: true });
   }
 });
+
+test("独立成技能：`duplicate` 带 variant 时拷的是**那棵树**的正文", async () => {
+  const { base, root, api } = await setup();
+  try {
+    await api.call("POST", "/v1/skills/variant", { op: "bind", name: "tdd", id: "strict" });
+    const tree = path.join(base, "nous-skill-tdd-strict");
+
+    // 先在变体那棵树上改一版正文（不发布）。
+    await api.call("PUT", "/v1/skills/file", {
+      name: "tdd",
+      variant: "strict",
+      path: "SKILL.md",
+      text: "---\nname: tdd\ndescription: 变体那版\n---\n\n# 只有变体才有的正文\n",
+    });
+
+    const made = await api.call("POST", "/v1/skills/duplicate", { from: "tdd", name: "tdd-sole", variant: "strict" });
+    assert.equal(made.status, 200);
+    assert.equal(made.body.variant, "strict");
+
+    // 拷过来的正文来自变体树，不是本体。
+    assert.match(await readFile(path.join(root, "tdd-sole", "SKILL.md"), "utf8"), /只有变体才有的正文/);
+    assert.doesNotMatch(await readFile(path.join(root, "tdd", "SKILL.md"), "utf8"), /只有变体才有的正文/);
+    // 是**新的一条技能**，不是变体：nous.json 里没有 variant 那一格。
+    const manifest = await readJson(path.join(root, "tdd-sole", "nous.json"));
+    assert.equal(manifest.variant, undefined);
+    assert.equal(manifest.name, "tdd-sole");
+    // 变体本身一动不动（解绑是另一个显式动作）。
+    assert.equal(await exists(path.join(tree, "tdd", "SKILL.md")), true);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("GET /v1/skills 带上 `variants[本名]`：面板的变体条吃这一格", async () => {
+  const { base, api } = await setup();
+  try {
+    await api.call("POST", "/v1/skills/variant", { op: "bind", name: "tdd", id: "strict" });
+    const overview = await api.call("GET", "/v1/skills");
+    assert.equal(overview.status, 200);
+    const list = overview.body.variants.tdd;
+    assert.equal(list.length, 1);
+    assert.equal(list[0].key, "tdd@strict");
+    assert.equal(list[0].branch, "skill/tdd-strict");
+    assert.equal(list[0].installed, true);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+// ── 拆树并解绑（prune） ────────────────────────────────────────────────────
+
+test("prune：树、本地分支、绑定一起没，主干不动", async () => {
+  const { base, root, api } = await setup();
+  try {
+    await api.call("POST", "/v1/skills/variant", { op: "bind", name: "tdd", id: "strict" });
+    const tree = path.join(base, "nous-skill-tdd-strict");
+    const mainHead = await git(root, "rev-parse", "HEAD");
+
+    const out = await api.call("POST", "/v1/skills/variant", { op: "prune", name: "tdd", id: "strict" });
+    assert.equal(out.status, 200);
+    assert.equal(out.body.worktree.branch, "skill/tdd-strict");
+    assert.equal(out.body.worktree.branchDeleted, true);
+    // 夹具没有 origin：远端那一步跳过，不算失败。
+    assert.equal(out.body.worktree.remoteDeleted, false);
+    assert.equal(out.body.worktree.remoteError, "");
+
+    assert.equal(await exists(tree), false, "树要拆掉");
+    // 分支真的没了（`rev-parse` 失败才是对的）。
+    const stillThere = await run("git", ["-C", root, "rev-parse", "--verify", "refs/heads/skill/tdd-strict"])
+      .then(() => true)
+      .catch(() => false);
+    assert.equal(stillThere, false);
+    assert.deepEqual((await readJson(path.join(base, "data", "skills.local.json"))).variants, {});
+    // 主干的提交和分支一个字节没动。
+    assert.equal(await git(root, "rev-parse", "HEAD"), mainHead);
+    assert.deepEqual((await api.call("GET", "/v1/skills")).body.skills.map((s) => s.name), ["tdd"]);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("prune：树里有没提交的正文 → 409，树和绑定都留着（不能替人扔字）", async () => {
+  const { base, api } = await setup();
+  try {
+    await api.call("POST", "/v1/skills/variant", { op: "bind", name: "tdd", id: "strict" });
+    const tree = path.join(base, "nous-skill-tdd-strict");
+    await api.call("PUT", "/v1/skills/file", {
+      name: "tdd",
+      variant: "strict",
+      path: "SKILL.md",
+      text: "---\nname: tdd\ndescription: 没提交的字\n---\n\n# 别删我\n",
+    });
+
+    const out = await api.call("POST", "/v1/skills/variant", { op: "prune", name: "tdd", id: "strict" });
+    assert.equal(out.status, 409);
+    assert.match(out.body.error, /没提交/);
+    assert.equal(await exists(path.join(tree, "tdd", "SKILL.md")), true);
+    assert.match(await readFile(path.join(tree, "tdd", "SKILL.md"), "utf8"), /别删我/);
+    const bound = (await readJson(path.join(base, "data", "skills.local.json"))).variants;
+    assert.equal(bound.tdd.strict.branch, "skill/tdd-strict");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("prune：没绑过 → 404", async () => {
+  const { base, api } = await setup();
+  try {
+    const out = await api.call("POST", "/v1/skills/variant", { op: "prune", name: "tdd", id: "nope" });
+    assert.equal(out.status, 404);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("prune：远端有那条分支时，GitHub 上那条也删掉", async () => {
+  const { base, root, api } = await setup();
+  const origin = path.join(base, "origin.git");
+  try {
+    // 造一个 bare 远端，把 main 推上去 —— prune 的远端那一步才有东西可删。
+    await run("git", ["init", "-q", "--bare", origin]);
+    await run("git", ["-C", root, "remote", "add", "origin", origin]);
+    await run("git", ["-C", root, "push", "-q", "origin", "main"]);
+
+    await api.call("POST", "/v1/skills/variant", { op: "bind", name: "tdd", id: "strict" });
+    const tree = path.join(base, "nous-skill-tdd-strict");
+    // 变体的分支先推上去（就是面板上「发布」做的事）。
+    await run("git", ["-C", tree, "push", "-q", "-u", "origin", "skill/tdd-strict"]);
+    const remoteHas = await run("git", ["-C", origin, "rev-parse", "--verify", "refs/heads/skill/tdd-strict"])
+      .then(() => true)
+      .catch(() => false);
+    assert.equal(remoteHas, true);
+
+    const out = await api.call("POST", "/v1/skills/variant", { op: "prune", name: "tdd", id: "strict" });
+    assert.equal(out.status, 200);
+    assert.equal(out.body.worktree.branchDeleted, true);
+    assert.equal(out.body.worktree.remoteDeleted, true);
+    assert.equal(out.body.worktree.remoteError, "");
+
+    const remoteStill = await run("git", ["-C", origin, "rev-parse", "--verify", "refs/heads/skill/tdd-strict"])
+      .then(() => true)
+      .catch(() => false);
+    assert.equal(remoteStill, false, "远端那条也得删掉");
+    // 远端的 main 还在（主干永远不碰）。
+    assert.equal(
+      await run("git", ["-C", origin, "rev-parse", "--verify", "refs/heads/main"]).then(() => true).catch(() => false),
+      true,
+    );
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
