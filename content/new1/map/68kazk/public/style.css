@@ -492,6 +492,17 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
 .detail-row { display: flex; gap: 10px; align-items: baseline; font-size: 12px; }
 .detail-row-k { flex: none; width: 52px; color: var(--dim); white-space: nowrap; }
 .detail-row-v { min-width: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+/* 「上游有更新」：卡片左上角。这是这一页最该先看见的一件事，所以有底色不只是一个字。 */
+.badge-float.up-new {
+  /* 「39 条」在左上，这个让到右上 —— 两件事，别叠在一起。 */
+  left: auto; right: 9px;
+  background: var(--warn);
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 6px;
+}
+:root[data-theme="dark"] .badge-float.up-new { color: #1a1206; }
+
 /* 上游版本：跟认的不一样时那个箭头 —— 用 warn 色，别用红（不是错误，是「动了」）。 */
 .up-drift { color: var(--warn); }
 .up-drift:hover { text-decoration: none; }
@@ -952,3 +963,21 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   .create-actions { flex-wrap: wrap; }
   .create-actions > .mono { flex: 1 0 100%; margin-bottom: 4px; }
 }
+
+/* ── 变体弹层 ─────────────────────────────────────────────────────────────
+   用的是新建弹层那套骨架（`.create`），只多一块「这个变体现在怎么装」。 */
+
+.var-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.var-list:empty { display: none; }
+.var-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; background: var(--paper);
+}
+.var-row[data-bad="true"] { border-color: color-mix(in srgb, var(--bad) 40%, var(--line)); }
+.var-key { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.var-branch { font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+.var-state { font-size: 10.5px; color: var(--ok); }
+.var-state[data-tone="bad"] { color: var(--bad); }
+.var-err { flex-basis: 100%; font-size: 10.5px; color: var(--bad); line-height: 1.5; word-break: break-word; }
+.var-actions { margin-left: auto; display: flex; gap: 4px; }
+.var-actions .btn { padding: 2px 8px; font-size: 11px; }

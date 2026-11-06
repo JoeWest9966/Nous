@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>skills · Nous 技能</title>
-    <link rel="stylesheet" href="./style.css?v=7" />
+    <link rel="stylesheet" href="./style.css?v=9" />
     <script>
       // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
       if (!location.pathname.endsWith("/")) {
@@ -226,7 +226,30 @@
       </div>
     </form>
 
+    <!-- 变体：同一条技能的另一个可装载名字（`本名@id`）。正文在那条分支上，
+         这里只管「这台绑了谁」——跟扩展那边一个形状。 -->
+    <div class="danger-scrim" id="var-scrim" hidden></div>
+    <form class="create" id="var" hidden role="dialog" aria-modal="true" aria-labelledby="var-title">
+      <h2 id="var-title">变体</h2>
+      <p class="create-hint dim">
+        变体 = 同一条技能的<b>另一个可装载名字</b>（<span class="mono">本名@id</span>），正文在<b>它自己那条分支</b>上。
+        绑一条 = 给这台开一棵它的树；发布只推那条分支，主干一个字节不碰。
+      </p>
+      <div class="var-list" id="var-list"></div>
+      <label class="create-label" for="var-id">
+        <span>新变体 id <b>只进名字，不进目录名</b></span>
+        <input id="var-id" type="text" autocomplete="off" spellcheck="false" placeholder="strict" />
+      </label>
+      <p class="create-note" id="var-note"></p>
+      <p class="create-err" id="var-err" hidden></p>
+      <div class="create-actions">
+        <span class="dim small mono" id="var-where"></span>
+        <button class="btn" id="var-close" type="button">关闭</button>
+        <button class="btn btn-good" id="var-bind" type="submit">绑定</button>
+      </div>
+    </form>
+
     <div class="toast" id="toast" hidden></div>
-    <script type="module" src="./app.js?v=7"></script>
+    <script type="module" src="./app.js?v=9"></script>
   </body>
 </html>

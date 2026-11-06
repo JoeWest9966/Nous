@@ -196,11 +196,14 @@ export function createCategoryDebounce({
  * 发布 = 内容闸 + 重扫 + commit + push。成功后**必须重读这个文件**：
  * 基线跟着 HEAD 走了，不重读的话差异视图还在跟旧 HEAD 比（spec §6.3 第 4 条）。
  */
-export async function publishWithRefresh(api, { name, path } = {}) {
-  const result = await api.post("v1/skills/publish", {});
+export async function publishWithRefresh(api, { name, path, variant = null } = {}) {
+  // 带 `variant` = 发**那一棵树的**分支：服务端在变体自己的 checkout 上 commit + push，
+  // 主干一个字节都不碰。不带就是原来的「发整个技能仓」。
+  const result = await api.post("v1/skills/publish", variant ? { name, variant } : {});
   if (!path) return { result, file: null };
-  const file = await api.get(
-    `v1/skills/file?name=${encodeURIComponent(name)}&path=${encodeURIComponent(path)}`,
-  );
+  const query =
+    `v1/skills/file?name=${encodeURIComponent(name)}&path=${encodeURIComponent(path)}` +
+    (variant ? `&variant=${encodeURIComponent(variant)}` : "");
+  const file = await api.get(query);
   return { result, file };
 }

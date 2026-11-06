@@ -1157,11 +1157,21 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           const head = ready ? await upstream.resolveHead({ data: mirrors(), source, run: repo.run }) : null;
           // 采集到的那一版在人眼里叫什么（`v1.3.2` / `v1.3.2+`）。读镜像里缓存的 tag 表，不联网。
           const headVersion = head ? await upstream.describeVersion({ data: mirrors(), source, commit: head }) : {};
+          // 上次「检查更新」问到的远端（缓存，不联网）。没有就是 null。
+          const checked = ready ? await upstream.checkedOf({ data: mirrors(), source }) : null;
+          const remoteVersion = checked?.head
+            ? await upstream.describeVersion({ data: mirrors(), source, commit: checked.head })
+            : {};
           reported.push({
             ...source,
             mirror: ready ? "ready" : "missing",
             head,
             headVersion,
+            // 远端现在（上次检查的结果）+ 它是不是比我们认的新。
+            remote: checked ? { ...checked, version: remoteVersion } : null,
+            // 「上游更新了」只看一件事：远端 HEAD 跟**我们认的**不一样。
+            // （`drift` 是另一件事：镜像里的东西跟认的不一样。两个都摆，别混。）
+            newer: Boolean(checked?.head && source.version?.commit && checked.head !== source.version.commit),
             // 采集到的跟认的不一样 = 上游动了。前端只摆这个布尔，不自己比。
             drift: Boolean(head && source.version?.commit && head !== source.version.commit),
             // 本机那个目录：只装了技能（sparse checkout），复制路径给的就是它。
@@ -1226,6 +1236,54 @@ export async function handleSkills({ req, res, url, parts, root, skills, repo, d
           upstream.pinVersion({ root, data: mirrors(), source, run: repo.run, commit }),
         );
         return send(res, 200, { ok: true, source: source.name, version });
+      }
+
+      // 只问远端 refs，不拉内容。面板上「检查更新」按的就是这个。
+      if (at[1] === "check") {
+        if (method !== "POST") return send(res, 405, { error: "检查更新只有 POST" });
+        const body = await parseJsonBody(req);
+        const only = String(body.name ?? body.source ?? "").trim() || null;
+        const { sources } = await upstream.readSources(root);
+        const picked = only ? sources.filter((item) => item.name === only) : sources;
+        if (only && !picked.length) throw withStatus(new Error(`没有订阅「${only}」这个上游`), 400);
+        const out = [];
+        for (const source of picked) {
+          if (!(await upstream.hasMirror({ data: mirrors(), source }))) {
+            out.push({ name: source.name, ok: false, error: "还没拉过镜像 —— 先刷新" });
+            continue;
+          }
+          try {
+            const found = await upstream.checkUpstream({ data: mirrors(), source, run: repo.run });
+            out.push({
+              name: source.name,
+              ok: true,
+              head: found.head,
+              at: found.at,
+              version: found.version,
+              newer: Boolean(source.version?.commit && found.head !== source.version.commit),
+            });
+          } catch (error) {
+            out.push({ name: source.name, ok: false, error: errorLine(error) });
+          }
+        }
+        return send(res, 200, { ok: out.every((item) => item.ok), sources: out });
+      }
+
+      // 同步 = 拉下来 + 认这一版。一步，因为是同一个决定：「跟上游走」。
+      if (at[1] === "sync") {
+        if (method !== "POST") return send(res, 405, { error: "同步只有 POST" });
+        const body = await parseJsonBody(req);
+        const sourceName = String(body.source ?? body.name ?? "").trim();
+        const { sources } = await upstream.readSources(root);
+        const source = sources.find((item) => item.name === sourceName);
+        if (!source) throw withStatus(new Error(`没有订阅「${sourceName}」这个上游`), 400);
+        const head = await repo.serializeRepoWrite(root, async () => {
+          await upstream.fetchMirror({ data: mirrors(), source, run: repo.run });
+          const latest = await upstream.resolveHead({ data: mirrors(), source, run: repo.run });
+          await upstream.pinVersion({ root, data: mirrors(), source, run: repo.run, commit: latest });
+          return latest;
+        });
+        return send(res, 200, { ok: true, source: source.name, head, version: await upstream.describeVersion({ data: mirrors(), source, commit: head }) });
       }
 
       if (at[1] === "tree") {

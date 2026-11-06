@@ -11,7 +11,13 @@
 
 skill 从「上游编目的投影」变成「我们自己 git 仓库里的文件」。照 Nous 扩展（`/opt/Nous-extend` + 块 `vbe4pt`）那套：仓库是唯一真相，`qrd3wh` 是唯一写入口，面板是纯静态视图。
 
-**非目标**：上游编排 / 技能市场 / 技能搜索 / 从 GitHub 拉别人的技能 / 技能版本号 / 技能的「变体」。这些都不做，别顺手加。
+**非目标**：上游编排 / 技能市场 / 技能搜索 / 从 GitHub 拉别人的技能 / 技能版本号。这些都不做，别顺手加。
+
+> 2026-11 修订：**技能的「变体」从非目标里拿掉了**。当时把它划出去的理由是「复制一份新目录就完事」
+> （票 Nous-4 的 Fog 段），可那句话把两件事混成了一件：复制是**另一条技能**，变体是**同一条技能的
+> 另一个可装载名**。扩展那边（`vbe4pt` / `server.js` 的 `variantKey` + worktree + 本机绑定）证明这套
+> 是能做的，技能照搬了：分支 `skill/<本名>-<id>`、树开在仓的隔壁、绑定在 `data/skills.local.json`、
+> 接口按 `name` + `variant` 两个参数走。细节见 `content/new1/map/qrd3wh/AGENTS.md` 的「变体」一节。
 
 ---
 
@@ -399,9 +405,11 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 
 | 方法 · 路径 | 说明 |
 |---|---|
-| `GET /v1/skills/upstream` | `{sources:[{…, mirror:"ready"｜"missing", head, drift, dir, bytes}], entries:[…], errors:[{source,error}]}`。`head` 是镜像现在停的 commit，`drift` = `head !== version.commit`（**服务端算**，前端不自己比），`dir` 是本机能 `cd` 进去的目录，`bytes` 是它占的地方。**不联网**：镜像不在就报 `missing` |
+| `GET /v1/skills/upstream` | `{sources:[{…, mirror, head, headVersion, remote, newer, drift, dir, bytes}], entries:[…], errors:[{source,error}]}`。`head` 是镜像停的 commit，`remote` 是上次 `check` 问到的远端（`null` = 没查过），`newer` = `remote.head !== version.commit`（**上游更新了**），`drift` = `head !== version.commit`（**镜像里的东西跟认的不一样**）。两个都服务端算，前端不自己比。`dir` 能 `cd` 进去，`bytes` 是它占的地方。**不联网**：镜像不在就报 `missing` |
 | `POST /v1/skills/upstream/refresh` | `{name?}` → 唯一联网动作（clone/fetch）。逐个 source 各报 `ok/error`。**首拉顺手记一次 `version` 基线**，之后不再动它 |
 | `POST /v1/skills/upstream/pin` | `{source, commit?}` → 把 `version` 钉到镜像 HEAD（或给的 commit）。**这是唯一改 `version` 的入口** |
+| `POST /v1/skills/upstream/check` | `{name?}` → 只 `ls-remote` 问远端 refs（**不下载**），返回 `{head, version, newer}`，结果缓存在镜像的 `.git/nous-check.json` |
+| `POST /v1/skills/upstream/sync` | `{source}` → `fetch` + `pin` 一步。**这就是「更新到最新」**：拉下来并认这一版 |
 | `GET /v1/skills/upstream/files?source=&path=` | 文件清单：`{path, size, state}` + `adopted`。`state` 是逐文件跟本地比 git blob sha（`same` / `diff` / `missing`），**没取用过就没有意义** |
 | `GET /v1/skills/upstream/tree?source=` | `{head, files:[{path,size}]}`。**只有技能**：带 `SKILL.md` 的那些目录里的文件，路径已剥掉 `prefix`。仓里的 `README` / `.github` / `docs` 一条都不出现 |
 | `GET /v1/skills/upstream/file?source=&path=&file=` | `{text, size}`，从镜像 `cat-file` 读。**只读** —— 这条路上只有 GET，POST 是 405 |
@@ -459,12 +467,17 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 - 采集到的（`headVersion`）和认的（`version`）**都**给人类版本号 —— 不然两边一个 `v1.3.2`
   一个 `4ae2317`，看不出是不是同一版。
 
-### 12.3.2 两个版本，绝不合流
+### 12.3.2 三个版本，各说各的事
 
-| | 谁写的 | 谁改 | 存哪 | 意义 |
-|---|---|---|---|---|
-| `version` | **人** | 只有 `pin`（「记录这个版本」） | `sources.json`，进版本库 | 我认的是这一版 |
-| 镜像 HEAD | **采集** | 每次 `refresh` 都可能往前跑 | `data/upstream/<name>` 的 git | 上游现在长什么样 |
+| | 谁写的 | 谁改 | 存哪 | 意义 | 什么时候是它 |
+|---|---|---|---|---|---|
+| `version` | **人** | `pin` / `sync` | `sources.json`，进版本库 | 我认的是这一版 | 「版本」 |
+| 镜像 HEAD | **采集** | 每次 `refresh` | `data/upstream/<name>` 的 git | 我们手上有什么 | 「上游现在」 |
+| 远端 HEAD | **检查** | 每次 `check`（只读 refs） | `.git/nous-check.json`（缓存） | 上游此刻到底在哪 | 「上游最新」 |
+
+`newer`（上游更新了）只看远端 ≠ 认的。`drift`（镜像漂了）只看镜像 ≠ 认的。
+**两件事，两个布尔，别合并** —— 合并之后「上游有更新」和「你手上有新东西没认」会混成一句，
+面板上就分不清该按「更新到最新」还是「记录这个版本」。
 
 为什么要分开：`refresh` 是**读**，`pin` 是**决策**。让 `refresh` 顺手把 `version` 顶掉，
 「记录」就自己会跑 —— 人再也说不出「我认的是这一版」，也没法看着 `4ae2317 → 9f2c1ab`
@@ -474,6 +487,15 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 - 之后 `refresh` 只采集。`drift = true` 时卡片上是 `4ae2317 → 9f2c1ab`，浮层里一条
   琥珀提示 + 一个「记录这个版本」按钮。不按，它就一直是两行。
 - `pin` 之后 `drift` 立刻变 `false`，按钮收掉。写盘不提交 —— `version` 是内容，走发布。
+
+**同步（用户按的那条路）：**
+
+1. 「检查更新」→ `check`（只读 refs，毫秒级，不下载任何对象）→ 卡片右上角「上游有更新」+
+   底部 `v1.3.2+ → v1.4.0`。没检查过就没有这个角标 —— 我们不会偷偷联网。
+2. 「更新到最新」→ `sync` = `fetch` + `pin`。一个动作，因为是同一个决定：**跟上游走**。
+   拉完 `newer` 和 `drift` 同时归零。
+3. 「刷新（fetch）」仍然在 —— 那是「只想看看，不想认」：镜像更新，`version` 不动，
+   于是 `drift` 变成 `true`，浮层里出现「记录这个版本」。
 
 ### 12.4 `adopt` 的规矩
 
@@ -524,6 +546,6 @@ D1 不等 C：把 §6.2 的响应原样存成 `content/new1/map/68kazk/public/mo
 
 - 技能之间的依赖声明（`needs` 那套）。
 - 技能的版本号 / 上游 tag / 漂移比对。
-- 技能变体（同一技能多个可装载名）。
+- ~~技能变体（同一技能多个可装载名）~~ —— **已实现**（见 §0 的 2026-11 修订）。
 - 多用户 / 权限 / token。
 - 从别的仓库「导入」技能（要复制就 `cp -r`，然后自己 commit）。

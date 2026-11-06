@@ -244,6 +244,30 @@ provider 的提示词缓存还热着）。自己存一份 = 重造一个 fork �
 用 bare clone 缓存算版本号」。那套的第二真相（收据 + 缓存 + 编目快照三份会漂的账）就是它
 被删的原因 —— 收据格式、缓存目录、安装/卸载端点全没了，别照着老记忆写。
 
+### 变体：`本名@id` —— 同一条技能的另一个可装载名字
+
+照搬扩展那套（见上面「变体：`名称@变体` 就是一个注册名」），因为两边解决的是同一个问题：
+本体在 `main` 上，变体在**自己那条分支**上，一台机器可以同时绑好几个。
+
+**变体不是复制。** 复制（`duplicate`）是把整目录拷成**一条新技能**，名字换了、跟源没关系了；
+变体是**同一个 `name` 多一个可装载名**，正文在那条分支上。两条路都在，别拿一条当另一条。
+
+- **内容在哪**：分支 `skill/<本名>-<id>`，树开在仓的隔壁（`../nous-skill-<本名>-<id>`）。
+  不进仓里 —— 放进去 `publish` 会顺手把它推上去。
+- **谁记着「这台绑了谁」**：`data/skills.local.json` 的 `variants`（本机路径 + 分支，
+  跟 `extensions.local.json` 一个形状）。路径是本机的，提交上去就是垃圾。
+- **装载**：`createSkills({dir, variants})`；`Nous-extend/skills/index.js` 从每棵树里**只认本家那条**，
+  键拼成 `本名@id`（树里其它技能归本体，再装一遍就是撞名）。目录名仍然是本名 ——
+  `name === 目录名 === 会话键` 只在**键**上开了个口子，不在盘上开口子。
+- **接口按两个参数走**：`?name=tdd&variant=strict`，不拼成 `tdd@strict` 让服务端再拆。
+  `repoDir()` 认的是目录名，`@` 那一半只是「哪一棵树」；拼成一个键等于让路径层去理解会话键。
+- **文件面**：`files` / `file`（GET/PUT/DELETE）/ `mkdir` / `pending/diff` / `publish` 都认 `variant`；
+  差异基线取**那棵树自己的 HEAD**（拿主树比会显示成整篇重写）。
+- **解绑只摘记录**：树和分支都留着 —— 删字得是另一个显式动作，不能挂在解绑上。
+- **没发布的本体也能开变体**：分支从 HEAD 起会缺它，所以 `bind` 从工作区拷一份并提一笔起点
+  （不然 `worktree remove` 会因为 untracked 拒绝拆树）。
+- 变体跟**上游**没关系：上游是只读的一侧，变体是我们自己仓里的分支。
+
 ## 提示词模板：文件在 `/opt/Nous-prompts`，跟技能是兄弟但**单选**
 
 一条模板 = `<名>/PROMPT.md`（正文）+ `nous.json`（`{name, summary, category[]}`）。
@@ -283,6 +307,9 @@ DELETE /v1/skills/file            ?name=&path=[&recursive=1] → 删文件 / 删
 POST /v1/skills/create            {name, description, category[], group?} → 只落工作区，不提交
                                   group = `deprecated` 那种抽屉（一层），顺手建
 POST /v1/skills/publish           {message} → 闸 + 重扫 index.json + commit + push
+                                  带 {name, variant} = 只发**变体那条分支**（主干一个字节不碰）
+GET  /v1/skills/variant           ?name= → 这条技能绑了哪些变体 + 每条现在装得怎么样
+POST /v1/skills/variant           {op:"bind"|"unbind", name, id, branch?} → 开/摘一棵变体的树
 POST /v1/skills/archive           {name} → 挪进扁的 .archive/ 并提交；原址记进 nous.json.archiveOrigin
 POST /v1/skills/restore           {name} → 按 archiveOrigin 搬回原来的分组并提交
 POST /v1/skills/purge             {name} → 真删（只有这一条会真删）
@@ -295,6 +322,8 @@ GET  /v1/skills/sources           订阅了哪些上游（sources.json 是内容
 POST /v1/skills/sources           {sources} 整份替换，不提交
 GET  /v1/skills/upstream          {sources:[…mirror,head,drift,dir,bytes], entries:[…], errors[]}。**不联网**：镜像不在就报 missing
 POST /v1/skills/upstream/pin      {source,commit?} → 把「认的版本」钉到镜像 HEAD。**唯一改 version 的入口**
+POST /v1/skills/upstream/check    {name?} → 只 ls-remote 问远端，不下载；结果缓存 .git/nous-check.json
+POST /v1/skills/upstream/sync     {source} → fetch + pin 一步（面板上的「更新到最新」）
                                   版本号优先用上游 tag（v1.3.2 或 v1.3.2+），tag 表缓存在镜像的 .git/nous-tags.json
 POST /v1/skills/upstream/refresh  {name?} 唯一联网动作（clone / fetch）
 GET  /v1/skills/upstream/file     ?source=&path=&file= → {text, size}：从镜像 cat-file 读，**只读**

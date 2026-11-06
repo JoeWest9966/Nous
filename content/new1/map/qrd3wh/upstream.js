@@ -253,6 +253,57 @@ export const describeVersion = async ({ data, source, commit }) => {
   return behind ? { behind } : {};
 };
 
+// ── 检查更新（只问 refs，不拉内容）──────────────────────────────────────────
+//
+// 第三个版本：`version`（认的）、镜像 HEAD（采集到的）、**远端 HEAD**（上游真正的现在）。
+// 前两个都在本地，第三个只有联网才知道 —— 所以它是个显式动作（「检查更新」），
+// 结果缓存在镜像的 `.git/nous-check.json`，打开面板时读缓存、不联网。
+
+const CHECK_FILE = "nous-check.json";
+const checkPath = (dir) => path.join(dir, ".git", CHECK_FILE);
+
+/** 远端现在停在哪个 commit。`git ls-remote` 只读 refs，不下载对象。 */
+export const remoteHead = async ({ source, run }) => {
+  const out = (await run("git", ["ls-remote", source.url], { timeout: 60_000, maxBuffer: 8 << 20 })).stdout;
+  let head = null;
+  let fallback = null;
+  for (const line of out.split("\n")) {
+    const [sha, ref] = line.trim().split(/\s+/);
+    if (!sha || !ref) continue;
+    if (ref === "HEAD") head = sha;
+    if (ref === `refs/heads/${source.branch ?? ""}`) fallback = sha;
+    if (!fallback && ref.startsWith("refs/heads/")) fallback = sha;
+  }
+  const found = head ?? fallback;
+  if (!found) throw withStatus(new Error(`${source.name}: 远端一个 ref 都没读出来`), 400);
+  return found;
+};
+
+/**
+ * 检查上游有没有往前走：远端 HEAD 是多少、在人眼里是哪一版。
+ * 结果是**缓存**（`.git/nous-check.json`），面板靠它显示「上游有更新」。
+ */
+export const checkUpstream = async ({ data, source, run }) => {
+  const dir = mirrorPath(data, source.name);
+  // tag 表顺手更新 —— 「v1.3.3 出来了」跟「有新提交」是同一件事的两面。
+  await refreshTags({ dir, source, run }).catch(() => {});
+  const head = await remoteHead({ source, run });
+  const at = new Date().toISOString();
+  await writeFile(checkPath(dir), JSON.stringify({ head, at }, null, 2) + "\n", "utf8").catch(() => {});
+  return { head, at, version: await describeVersion({ data, source, commit: head }) };
+};
+
+/** 上次检查的结果（没有就是 `null`）—— `GET` 只读它，别联网。 */
+export const checkedOf = async ({ data, source }) => {
+  const dir = mirrorPath(data, source.name);
+  try {
+    const parsed = JSON.parse(await readFile(checkPath(dir), "utf8"));
+    return parsed?.head ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 // ── 镜像（缓存，不是事实）────────────────────────────────────────────────────
 
 export const mirrorPath = (data, name) => path.join(data, MIRROR_DIR, name);

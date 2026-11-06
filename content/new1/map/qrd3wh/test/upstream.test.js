@@ -567,3 +567,81 @@ test("一个 tag 都没有的仓：不编版本号，留给前端退回 sha", as
     await teardown(ctx.root, ctx.data);
   }
 });
+
+// ── 检查更新 / 同步 ────────────────────────────────────────────────────────
+//
+// 第三个版本：远端 HEAD。前两个（认的 / 镜像）都在本地，第三个只有联网才知道，
+// 所以它是显式动作（check），结果缓存起来给面板用。
+
+test("检查更新：远端往前走了就说 newer，缓存住给人看", async () => {
+  const upstreamRepo = await makeRepo({
+    files: { "skills/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n` },
+  });
+  await run("git", ["-C", upstreamRepo, "tag", "v1.0.0"]);
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    // 刚拉完：远端 == 认的
+    let out = await ctx.call("POST", "/v1/skills/upstream/check", { name: "matt" });
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.sources[0].newer, false);
+
+    // 上游又走了一步
+    await writeFile(path.join(upstreamRepo, "skills/x/extra.md"), "新文件\n");
+    await commitAll(upstreamRepo, "上游又加了一个文件");
+    const remote = await head(upstreamRepo);
+
+    out = await ctx.call("POST", "/v1/skills/upstream/check", { name: "matt" });
+    assert.equal(out.body.sources[0].newer, true);
+    assert.equal(out.body.sources[0].head, remote);
+
+    // 缓存住了 —— GET 不该联网，也不该丢这条
+    const list = await ctx.call("GET", "/v1/skills/upstream");
+    assert.equal(list.body.sources[0].remote.head, remote);
+    assert.equal(list.body.sources[0].newer, true);
+    // 镜像还停在原地（check 不下载任何东西）
+    assert.notEqual(list.body.sources[0].head, remote);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("同步：拉下来 + 认这一版，一步做完，newer 归零", async () => {
+  const upstreamRepo = await makeRepo({
+    files: { "skills/x/SKILL.md": `---\nname: x\ndescription: "x"\n---\n\n正文\n` },
+  });
+  const ctx = await setup({ sources: [{ name: "matt", url: upstreamRepo, prefix: "skills" }] });
+  try {
+    await ctx.call("POST", "/v1/skills/upstream/refresh", {});
+    await writeFile(path.join(upstreamRepo, "skills/x/extra.md"), "新文件\n");
+    await commitAll(upstreamRepo, "上游又加了一个文件");
+    const remote = await head(upstreamRepo);
+    await ctx.call("POST", "/v1/skills/upstream/check", { name: "matt" });
+
+    const out = await ctx.call("POST", "/v1/skills/upstream/sync", { source: "matt" });
+    assert.equal(out.status, 200, out.body?.error);
+    assert.equal(out.body.head, remote);
+
+    const list = await ctx.call("GET", "/v1/skills/upstream");
+    assert.equal(list.body.sources[0].head, remote);
+    assert.equal(list.body.sources[0].version.commit, remote);
+    assert.equal(list.body.sources[0].newer, false);
+    assert.equal(list.body.sources[0].drift, false);
+    // 新文件真的落到了工作区（同步 = 拉下来，不是只改个数）
+    assert.equal(await exists(path.join(ctx.data, "upstream", "matt", "skills", "x", "extra.md")), true);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});
+
+test("检查更新：没镜像就直说，不假装检查过", async () => {
+  const ctx = await setup({ sources: [{ name: "matt", url: "https://example.invalid/none.git" }] });
+  try {
+    const out = await ctx.call("POST", "/v1/skills/upstream/check", { name: "matt" });
+    assert.equal(out.status, 200);
+    assert.equal(out.body.sources[0].ok, false);
+    assert.match(out.body.sources[0].error, /先刷新/);
+  } finally {
+    await teardown(ctx.root, ctx.data);
+  }
+});

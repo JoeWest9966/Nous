@@ -91,6 +91,7 @@ const state = {
   query: "",
   creating: false, // 左栏「新建类别」的输入框开着
   duplicating: null, // 复制弹层开着的话，这里是源技能的名字
+  variant: null, // 变体弹层：{name, variants, loading, busy, error}
   createPrefix: "", // 「新建子类别」预填的 `工具/`
   renaming: null, // 正在原地改名的类别
   editing: null, // 正在输入类别的技能名（只住在详情里）
@@ -111,6 +112,22 @@ const state = {
 };
 
 const skillNow = (name) => (state.data?.skills ?? []).find((item) => item.name === name) ?? null;
+
+/**
+ * `code-review@strict` → `{family: "code-review", id: "strict"}`；本体就是 `{family, id: null}`。
+ *
+ * 变体在名册里的键是 `本名@id`（会话里存的就是它），但**接口按两个参数走**：
+ * `name=本名&variant=id`。跟扩展那边一笔不差 —— `repoDir()` 认的是目录名，`@` 那一半只是「哪棵树」。
+ */
+const VARIANT_SEP = "@";
+const splitSkillKey = (name) => {
+  const text = String(name ?? "");
+  const at = text.indexOf(VARIANT_SEP);
+  return at <= 0 ? { family: text, id: null } : { family: text.slice(0, at), id: text.slice(at + 1) };
+};
+
+/** 带变体的请求多一个参数：`variant=strict`。没有变体就原样返回（别多送一个空串）。 */
+const withVariant = (query, id) => (id ? `${query}&variant=${encodeURIComponent(id)}` : query);
 const categoryNames = () => state.view?.categoryNames ?? [];
 const catCount = (path) => state.view?.counts.get(path) ?? 0;
 
@@ -389,6 +406,12 @@ function openCardMenu(x, y, skill) {
   menuItem(menu, "看正文", "读 / 改 SKILL.md", () => void openEditor(skill));
   menuItem(menu, "类别", "在详情里勾", () => openDetail(skill.name, { editTags: true }));
 
+  // 变体：同一条技能的另一个可装载名字。本体才有这一项 —— 变体自己再开变体没有意义
+  // （要那样就该「独立成一个新技能」）。
+  if (!skill.variant) {
+    menuItem(menu, "变体…", "另一条分支，另一个名字", () => void openVariant(skill.name));
+  }
+
   menu.append(el("div", "ctx-sep"));
   // 复制 = 整目录拷成新的一条（`POST v1/skills/duplicate`）：正文、附件、类别、summary
   // 全跟着走，名字换成新的，出来是**未发布**。历史不带 —— 旧提交留在原来那条里。
@@ -573,6 +596,11 @@ function productCard(card) {
   if (skill.hidden) {
     const flag = el("span", "product-hidden", "不进提示词");
     flag.title = "disable-model-invocation：模型看不到它，只有人手动读";
+    title.append(flag);
+  }
+  if (skill.variant) {
+    const flag = el("span", "product-hidden", "变体");
+    flag.title = `${skill.variant.family} 的变体「${skill.variant.id}」：正文在 skill/${skill.variant.family}-${skill.variant.id} 上`;
     title.append(flag);
   }
 
@@ -1009,6 +1037,15 @@ function renderDetail() {
   dup.title = `整目录拷成另一条技能（POST v1/skills/duplicate）—— 历史不带，出来是未发布`;
   dup.onclick = () => openDuplicate(skill.name);
   acts.append(dup);
+  // 变体也必须在这儿有一扇门：卡上的 `⋯` 是快捷入口，进详情的人找不到就是没有。
+  // 变体自己不再开变体（要那样就该复制成一条新技能）。
+  if (!skill.variant) {
+    const variants = el("button", "btn btn-small", "变体…");
+    variants.type = "button";
+    variants.title = `同一条技能的另一个可装载名字（${skill.name}@id）：正文在它自己那条分支上，主干不碰`;
+    variants.onclick = () => void openVariant(skill.name);
+    acts.append(variants);
+  }
   host.append(acts);
 
   // ── 真话说在最前面：装载失败 ──────────────────────────────────────────
@@ -1048,6 +1085,16 @@ function renderDetail() {
   grid.append(text.node);
 
   const where = detailSection("仓库", "HEAD 里有没有");
+  // 变体：正文在它自己那条分支上，报的是那条分支的名字 —— 说成「已进 HEAD」会让人以为在主干上。
+  if (skill.variant) {
+    where.body.append(
+      detailRow(
+        "变体",
+        `${skill.variant.family}@${skill.variant.id}`,
+        `分支 skill/${skill.variant.family}-${skill.variant.id} · 树在仓的隔壁`,
+      ),
+    );
+  }
   where.body.append(detailRow("发布", skill.tracked === false ? "未发布 · HEAD 里没有" : "已进 HEAD"));
   where.body.append(detailRow("路径", skill.path ?? skill.name));
   where.body.append(detailRow("目录", skill.dir ?? skill.name));
@@ -1316,6 +1363,40 @@ async function refreshSource(name) {
   }
 }
 
+/** 问一句上游动没动（只读 refs，不拉内容）。结果服务端缓存起来，卡片靠它提示。 */
+async function checkSource(name) {
+  if (state.upstreamBusy) return;
+  state.upstreamBusy = `check:${name}`;
+  render();
+  try {
+    const out = await transport.post("v1/skills/upstream/check", { name });
+    const row = (out.sources ?? [])[0];
+    if (!row?.ok) throw new Error(row?.error ?? "检查失败");
+    toast(row.newer ? `上游更新了：${versionText(row.version) || row.head.slice(0, 7)}` : "已经是最新的了");
+  } catch (error) {
+    toast(`检查更新失败：${error.message}`, "bad");
+  } finally {
+    state.upstreamBusy = null;
+    await loadUpstream({ quiet: true });
+  }
+}
+
+/** 同步 = 拉下来 + 认这一版。一个动作，因为是同一个决定：「跟上游走」。 */
+async function syncSource(name) {
+  if (state.upstreamBusy) return;
+  state.upstreamBusy = `sync:${name}`;
+  render();
+  try {
+    const out = await transport.post("v1/skills/upstream/sync", { source: name });
+    toast(`已同步到 ${versionText(out.version) || String(out.head ?? "").slice(0, 7)}`);
+  } catch (error) {
+    toast(`同步失败：${error.message}`, "bad");
+  } finally {
+    state.upstreamBusy = null;
+    await loadUpstream({ quiet: true });
+  }
+}
+
 /**
  * 把「我们认的版本」钉到上游现在这一版。
  *
@@ -1413,7 +1494,11 @@ function openUpstreamMenu(x, y, source) {
   const mine = upstreamSummary(upstreamEntriesOf(source.name));
   menuHead(menu, source.name, `上游 · ${mine.total} 条技能 · 只读`);
   const first = menuItem(menu, "看正文", "技能的文件树 · 只读", () => void openUpstreamEditor(source));
-  menuItem(menu, "刷新", "git fetch（唯一联网动作）", () => void refreshSource(source.name));
+  menuItem(menu, "检查更新", "只问远端 refs，不下载", () => void checkSource(source.name));
+  if (source.newer) {
+    menuItem(menu, "更新到最新", `${versionText(source.remote?.version) ?? ""} · 拉下来 + 认这一版`, () => void syncSource(source.name));
+  }
+  menuItem(menu, "刷新", "git fetch（拉镜像，不认版本）", () => void refreshSource(source.name));
   if (source.drift) {
     menuItem(menu, "记录版本", `${source.head?.slice(0, 7) ?? ""} · 把现在这一版记下来`, () => void pinSourceVersion(source));
   }
@@ -1464,6 +1549,28 @@ function upstreamDetailBody(source) {
     }
     wrap.append(now);
   }
+
+  // 「上游最新」= 上次检查问到的远端。没有这项就是没检查过（我们不会偷偷联网）。
+  // 顺序按「越靠上越该先看」：认的 → 镜像现在 → 上游现在（最新）。
+  if (source.remote) {
+    const latest = detailRow(
+      "上游最新",
+      versionText(source.remote.version) || source.remote.head.slice(0, 7),
+      `上次检查：${new Date(source.remote.at).toLocaleString()}`,
+    );
+    latest.querySelector(".detail-row-v")?.classList.add("mono");
+    if (source.newer) latest.querySelector(".detail-row-v")?.classList.add("up-drift");
+    wrap.append(latest);
+    if (source.newer) {
+      wrap.append(
+        alertLine(
+          "warn",
+          "上游有更新",
+          "远端已经往前走了。按「更新到最新」= 拉下来 + 认这一版，一步做完；只想看看就按「刷新」，镜像会更新但认的版本不动。",
+        ),
+      );
+    }
+  }
   // 「本机到底存没存、存在哪、存了多大」是个人会问的问题，所以三句都直接答。
   // 路径那一行是可点的：点一下复制（就是「复制路径」给的那个东西）。
   if (source.mirror === "ready") {
@@ -1494,6 +1601,30 @@ function upstreamDetailBody(source) {
   read.title = "技能的文件树：带 SKILL.md 的目录 + 目录里的文件（只读）";
   read.onclick = () => void openUpstreamEditor(source);
   acts.append(read);
+
+  if (source.newer) {
+    const update = el(
+      "button",
+      "btn btn-small",
+      state.upstreamBusy === `sync:${source.name}` ? "同步中…" : "更新到最新",
+    );
+    update.type = "button";
+    update.title = "拉下来 + 把「认的版本」推到最新（写进 sources.json，走发布）";
+    update.disabled = Boolean(state.upstreamBusy);
+    update.onclick = () => void syncSource(source.name);
+    acts.append(update);
+  } else {
+    const check = el(
+      "button",
+      "btn btn-small",
+      state.upstreamBusy === `check:${source.name}` ? "检查中…" : "检查更新",
+    );
+    check.type = "button";
+    check.title = "问一句远端，不下载任何东西";
+    check.disabled = Boolean(state.upstreamBusy);
+    check.onclick = () => void checkSource(source.name);
+    acts.append(check);
+  }
 
   const sync = el("button", "btn btn-small", state.upstreamBusy === `fetch:${source.name}` ? "刷新中…" : "刷新（fetch）");
   sync.type = "button";
@@ -1722,6 +1853,12 @@ function upstreamRepoCard(source) {
   const visual = el("div", "visual");
   visual.append(el("span", "visual-mono", initialsOf(source.name)));
   visual.append(el("span", "badge-float dir", `${mine.total} 条`));
+  // 「上游更新了」是卡片上最该先看见的一件事 —— 左上角一个点 + 三个字。
+  if (source.newer) {
+    const fresh = el("span", "badge-float up-new", "上游有更新");
+    fresh.title = `远端已经是 ${versionText(source.remote?.version) || source.remote?.head?.slice(0, 7)}`;
+    visual.append(fresh);
+  }
   card.append(visual);
 
   const body = el("div", "product-body");
@@ -1750,9 +1887,17 @@ function upstreamRepoCard(source) {
   const sum = el("p", "product-sum mono");
   if (source.version?.commit) {
     sum.append(el("span", "", versionText(source.version)));
-    if (source.drift && source.head) {
-      const drift = el("span", "up-drift", ` → ${versionText(source.headVersion) || source.head.slice(0, 7)}`);
-      drift.title = "上游往前走了，我们认的还是左边这个 —— 浮层里可以记录新版本";
+    // 右箭头指「上游现在是哪一版」：有检查结果就用它，没有就看镜像漂到哪了。
+    const ahead = source.newer
+      ? versionText(source.remote?.version) || source.remote?.head?.slice(0, 7)
+      : source.drift
+        ? versionText(source.headVersion) || source.head?.slice(0, 7)
+        : "";
+    if (ahead) {
+      const drift = el("span", "up-drift", ` → ${ahead}`);
+      drift.title = source.newer
+        ? "上游已经有更新了 —— 打开卡片，按「更新到最新」"
+        : "镜像里的版本跟认的不一样 —— 浮层里可以记录新版本";
       sum.append(drift);
     }
   } else {
@@ -2065,8 +2210,13 @@ const editorDirty = () => Boolean(state.editor) && $("ed-text").value !== state.
 
 async function openEditor(skill, { path = null } = {}) {
   closeMenu();
+  const key = splitSkillKey(skill.name);
   state.editor = {
-    name: skill.name,
+    // `name` 永远是**本名**（接口按它找目录）；变体只多一个 `variant` 参数。
+    // 显示用的整串在 `display` 里 —— 页面上人要看的是 `code-review@strict`。
+    name: key.family,
+    variant: key.id,
+    display: skill.name,
     files: [],
     filesLoading: true,
     path: null,
@@ -2105,7 +2255,7 @@ async function openEditor(skill, { path = null } = {}) {
   renderEditorState();
 
   try {
-    const list = await transport.get(`v1/skills/files?name=${encodeURIComponent(skill.name)}`);
+    const list = await transport.get(withVariant(`v1/skills/files?name=${encodeURIComponent(key.family)}`, key.id));
     state.editor.files = list.files ?? [];
     state.editor.filesLoading = false;
     // 默认全展开：一进来就看见树，不用一层层点。
@@ -2416,7 +2566,7 @@ async function reloadEditorFiles() {
   const ed = state.editor;
   if (!ed) return;
   try {
-    const list = await transport.get(`v1/skills/files?name=${encodeURIComponent(ed.name)}`);
+    const list = await transport.get(withVariant(`v1/skills/files?name=${encodeURIComponent(ed.name)}`, ed.variant));
     ed.files = list.files ?? [];
     ed.filesLoading = false;
     for (const path of dirPaths(fileTree(ed.files))) ed.dirs.add(path);
@@ -2485,13 +2635,13 @@ async function submitNewEntry(event) {
   $("ed-new-ok").disabled = true;
   try {
     if (kind === "dir") {
-      await transport.post("v1/skills/mkdir", { name: ed.name, path: raw });
+      await transport.post("v1/skills/mkdir", { name: ed.name, path: raw, variant: ed.variant });
       await reloadEditorFiles();
       closeNewEntry();
       toast(`建了文件夹 ${raw}/`);
       return;
     }
-    await transport.put("v1/skills/file", { name: ed.name, path: raw, text: "" });
+    await transport.put("v1/skills/file", { name: ed.name, path: raw, text: "", variant: ed.variant });
     await reloadEditorFiles();
     closeNewEntry();
     if (editorDirty() && !confirm(`「${ed.path}」有没保存的改动，切过去会丢掉。继续？`)) return;
@@ -2510,7 +2660,8 @@ async function deleteEditorEntry(node) {
   if (!ed) return;
   const isDir = node.type === "dir";
   const query =
-    `name=${encodeURIComponent(ed.name)}&path=${encodeURIComponent(node.path)}` + (isDir ? "&recursive=1" : "");
+    withVariant(`name=${encodeURIComponent(ed.name)}&path=${encodeURIComponent(node.path)}`, ed.variant) +
+    (isDir ? "&recursive=1" : "");
   confirmName({
     title: isDir ? `删掉文件夹 ${node.path}/？` : `删掉 ${node.path}？`,
     hint: isDir
@@ -2600,7 +2751,7 @@ async function openEditorFile(path, { force = false } = {}) {
   if (!force && editorDirty() && !confirm(`「${ed.path}」有没保存的改动，切过去会丢掉。继续？`)) return;
   try {
     const file = await transport.get(
-      `v1/skills/file?name=${encodeURIComponent(ed.name)}&path=${encodeURIComponent(path)}`,
+      withVariant(`v1/skills/file?name=${encodeURIComponent(ed.name)}&path=${encodeURIComponent(path)}`, ed.variant),
     );
     ed.path = file.path;
     ed.text = file.text;
@@ -2612,7 +2763,7 @@ async function openEditorFile(path, { force = false } = {}) {
     const area = $("ed-text");
     area.disabled = false;
     area.value = file.text;
-    $("ed-path").textContent = `${ed.name}/${file.path}`;
+    $("ed-path").textContent = `${ed.display}/${file.path}`;
     ed.lineCount = file.text.split("\n").length;
     // 差异基线：对 HEAD。未跟踪的文件 before 是 null（整份算新增）。
     ed.baseText = null;
@@ -2662,7 +2813,10 @@ async function openUpstreamFile(path) {
 /** `GET /v1/skills/pending/diff?path=<name>/<相对路径>` 的 `before` 就是 HEAD 里那一版。 */
 async function loadBaseline(ed, path) {
   try {
-    const data = await transport.get(`v1/skills/pending/diff?path=${encodeURIComponent(`${ed.name}/${path}`)}`);
+    // 基线取的是**那棵树**（变体）的 HEAD，所以除了 path 还得说清是哪一棵。
+    const data = await transport.get(
+      withVariant(`v1/skills/pending/diff?path=${encodeURIComponent(`${ed.name}/${path}`)}`, ed.variant),
+    );
     if (state.editor !== ed || ed.path !== path) return;
     ed.baseText = data.before ?? null;
     ed.baseMissing = data.before == null;
@@ -2689,6 +2843,7 @@ async function saveEditorFile({ quiet = false } = {}) {
   try {
     const saved = await transport.put("v1/skills/file", {
       name: ed.name,
+      variant: ed.variant,
       path: ed.path,
       text,
       // base 是「我改的是哪一版」：别人先改了，服务端 409，别把对方的字盖掉。
@@ -2698,7 +2853,7 @@ async function saveEditorFile({ quiet = false } = {}) {
     ed.base = saved.etag;
     ed.conflict = false;
     ed.pending.add(ed.path);
-    if (!quiet) ed.notice = `已保存到磁盘：${ed.name}/${ed.path}（还没提交）`;
+    if (!quiet) ed.notice = `已保存到磁盘：${ed.display}/${ed.path}（还没提交）`;
     return true;
   } catch (error) {
     // 409 走自己的分支：不是「保存坏了」，是我手里这份 base 过期了 —— 重读再改。
@@ -2740,7 +2895,11 @@ async function publishEditor() {
     // 发布成功 = HEAD 变了：publishWithRefresh 会重读这个文件，base 换成新 etag，
     // 基线（pending/diff）也跟着重取 —— 否则差异视图还在跟旧 HEAD 比，永远不归零。
     const typed = $("ed-text").value;
-    const { result, file } = await publishWithRefresh(transport, { name: ed.name, path: ed.path });
+    const { result, file } = await publishWithRefresh(transport, {
+      name: ed.name,
+      path: ed.path,
+      variant: ed.variant,
+    });
     ed.pending.clear();
     if (file && ed.path) {
       ed.text = file.text;
@@ -3172,6 +3331,174 @@ async function submitCreate(event) {
   }
 }
 
+// ── 变体：绑 / 解绑 / 发那条分支 ────────────────────────────────────────────
+//
+// 变体**不是复制**：内容在它自己那条分支上，这里只管「这台绑了谁」。所以这一屏只有三件事：
+// 绑一条（开一棵树）、解绑（只摘记录，树和分支都留着）、发那一条分支（commit + push 到它自己那条）。
+//
+// 一条铁律：`name` 永远是**本名**，变体 id 单独送（`variant=`）。拼成 `本名@id` 再让服务端
+// 拆开，等于让路径那一层去理解会话键 —— 扩展那边踩过，别再来一次。
+
+async function openVariant(name) {
+  closeMenu();
+  const key = splitSkillKey(name);
+  state.variant = { name: key.family, variants: [], loading: true, busy: null, error: "" };
+  $("var-title").textContent = `变体 · ${key.family}`;
+  $("var-id").value = "";
+  $("var-err").hidden = true;
+  $("var-scrim").hidden = false;
+  $("var").hidden = false;
+  renderVariant();
+  $("var-id").focus();
+  await refreshVariant();
+}
+
+function closeVariant() {
+  state.variant = null;
+  $("var-scrim").hidden = true;
+  $("var").hidden = true;
+}
+
+async function refreshVariant() {
+  const layer = state.variant;
+  if (!layer) return;
+  try {
+    const data = await transport.get(`v1/skills/variant?name=${encodeURIComponent(layer.name)}`);
+    if (state.variant !== layer) return; // 弹层关掉了，别拿旧响应去画新的一层
+    layer.variants = data.variants ?? [];
+    layer.error = "";
+  } catch (error) {
+    layer.error = String(error?.message ?? error);
+  }
+  layer.loading = false;
+  renderVariant();
+}
+
+function renderVariant() {
+  const layer = state.variant;
+  if (!layer) return;
+  const box = $("var-list");
+  box.textContent = "";
+  if (layer.loading) box.append(el("div", "dim small", "读绑定…"));
+  else if (!layer.variants.length) box.append(el("div", "dim small", "这条技能还没绑过变体。"));
+
+  for (const item of layer.variants) {
+    const failed = item.skill?.load?.state === "failed";
+    const row = el("div", "var-row");
+    row.dataset.bad = String(failed);
+    row.append(el("span", "var-key", item.key));
+    row.append(el("span", "var-branch", item.branch ?? "（当前 HEAD）"));
+    const stateEl = el("span", "var-state", failed ? "装载失败" : "已装载");
+    stateEl.dataset.tone = failed ? "bad" : "ok";
+    row.append(stateEl);
+
+    const acts = el("div", "var-actions");
+    const edit = el("button", "btn", "改正文 ›");
+    edit.type = "button";
+    edit.title = `打开 ${item.key} 的文件树（读写的都是它那棵树）`;
+    edit.onclick = () => {
+      const skill = skillNow(item.key);
+      if (!skill) return toast(`名册里没有 ${item.key} —— 先重扫一下`, "bad");
+      closeVariant();
+      void openEditor(skill);
+    };
+    const pub = el("button", "btn", "发布");
+    pub.type = "button";
+    pub.title = `在它那棵树上 commit + push 到 ${item.branch ?? "它那条分支"}，主干不碰`;
+    pub.disabled = layer.busy !== null;
+    pub.onclick = () => void publishVariant(item);
+    const off = el("button", "btn btn-bad", "解绑");
+    off.type = "button";
+    off.title = "只摘这一台的绑定：树和分支都留着，随时能再绑回来";
+    off.disabled = layer.busy !== null;
+    off.onclick = () => void unbindVariant(item);
+    acts.append(edit, pub, off);
+    row.append(acts);
+
+    if (failed && item.skill?.load?.error) row.append(el("p", "var-err", item.skill.load.error));
+    box.append(row);
+  }
+
+  const id = $("var-id").value.trim();
+  $("var-bind").disabled = !id || layer.busy !== null;
+  $("var-bind").textContent = layer.busy === "bind" ? "绑…" : "绑定";
+  $("var-note").textContent = id
+    ? `会绑 ${layer.name}@${id}：分支 skill/${layer.name}-${id}，树开在仓的隔壁`
+    : "写个 id，比如 strict —— 只在名字里，目录名还是本名";
+  $("var-err").hidden = !layer.error;
+  $("var-err").textContent = layer.error ?? "";
+}
+
+async function submitBindVariant(event) {
+  event.preventDefault();
+  const layer = state.variant;
+  if (!layer || layer.busy) return;
+  const id = $("var-id").value.trim();
+  if (!id) return renderVariant();
+  layer.busy = "bind";
+  layer.error = "";
+  renderVariant();
+  try {
+    await transport.post("v1/skills/variant", { op: "bind", name: layer.name, id });
+    $("var-id").value = "";
+    await load({ quiet: true });
+    await refreshVariant();
+    toast(`绑了 ${layer.name}@${id} —— 会话里挑它就能用`);
+  } catch (error) {
+    layer.error = String(error?.message ?? error);
+    renderVariant();
+  } finally {
+    layer.busy = null;
+    renderVariant();
+  }
+}
+
+async function unbindVariant(item) {
+  const layer = state.variant;
+  if (!layer || layer.busy) return;
+  if (!confirm(`解绑 ${item.key}？\n\n只摘这一台的绑定：树（${item.root ?? "变体目录"}）和分支都还在，随时能再绑回来。`)) return;
+  layer.busy = `unbind:${item.id}`;
+  renderVariant();
+  try {
+    await transport.post("v1/skills/variant", { op: "unbind", name: layer.name, id: item.id });
+    await load({ quiet: true });
+    await refreshVariant();
+    toast(`解绑了 ${item.key} —— 树和分支都留着`);
+  } catch (error) {
+    layer.error = String(error?.message ?? error);
+    renderVariant();
+  } finally {
+    layer.busy = null;
+    renderVariant();
+  }
+}
+
+async function publishVariant(item) {
+  const layer = state.variant;
+  if (!layer || layer.busy) return;
+  layer.busy = `publish:${item.id}`;
+  renderVariant();
+  try {
+    // `variant` 给了就是「只发那一棵树」：服务端在它的 checkout 上 commit + push，
+    // 主干一个字节都不碰。不带 variant 才是发整个技能仓。
+    const result = await transport.post("v1/skills/publish", { name: layer.name, variant: item.id });
+    if (result.pushed === false && result.committed) {
+      toast(`已提交，但推送失败：${result.error ?? "看服务端"}`, "bad");
+    } else if (!result.committed) {
+      toast(`${item.key} 没有要发的东西`);
+    } else {
+      toast(`已发布 ${item.key} → ${result.branch}`);
+    }
+    await refreshVariant();
+  } catch (error) {
+    layer.error = String(error?.message ?? error);
+    renderVariant();
+  } finally {
+    layer.busy = null;
+    renderVariant();
+  }
+}
+
 // ── 绑定 ───────────────────────────────────────────────────────────────────
 
 // 顶栏那个「仓库读不了」的红 chip：只在 repo.error 时出现，常驻 DOM、靠 hidden 开关。
@@ -3207,6 +3534,10 @@ $("rescan").onclick = async () => {
   }
 };
 $("create-cancel").onclick = () => closeCreate();
+$("var-close").onclick = () => closeVariant();
+$("var-scrim").onclick = () => closeVariant();
+$("var").addEventListener("submit", submitBindVariant);
+$("var-id").addEventListener("input", renderVariant);
 $("create-scrim").onclick = () => closeCreate();
 $("create").addEventListener("submit", submitCreate);
 for (const id of ["create-name", "create-description", "create-cat", "create-group"]) {
@@ -3302,6 +3633,7 @@ addEventListener("keydown", (event) => {
     return;
   }
   if (!$("create").hidden) return closeCreate();
+  if (!$("var").hidden) return closeVariant();
   if (state.editor) {
     if (state.editor.mode === "diff") setEditorMode("edit");
     else closeEditor();
