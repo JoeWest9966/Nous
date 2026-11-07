@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#ededed" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Nous" />
+    <title>Nous</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+    <link rel="stylesheet" href="./app.css" />
+  </head>
+  <body data-view="list">
+    <!-- 首屏：会话列表 -->
+    <section class="page" id="page-list">
+      <header class="nav">
+        <span class="nav-side"></span>
+        <h1 class="nav-title">Nous</h1>
+        <span class="nav-side end">
+          <button class="nav-icon" data-todo="新建会话" aria-label="新建">＋</button>
+        </span>
+      </header>
+      <main class="scroller" id="sessions">
+        <div class="empty">加载中…</div>
+      </main>
+    </section>
+
+    <!-- Template：会话模板。数据是 qrd3wh 那段预设，形式是微信通讯录。 -->
+    <section class="page" id="page-templates" hidden>
+      <header class="nav">
+        <span class="nav-side"></span>
+        <h1 class="nav-title">Template</h1>
+        <span class="nav-side end"></span>
+      </header>
+      <form class="search" id="tpl-search">
+        <input
+          id="tpl-q"
+          type="search"
+          placeholder="搜索"
+          aria-label="搜索模板"
+          autocomplete="off"
+          spellcheck="false"
+          enterkeyhint="search"
+        />
+      </form>
+      <main class="scroller list" id="templates">
+        <div class="empty">加载中…</div>
+      </main>
+      <div class="index" id="tpl-index" aria-hidden="true"></div>
+    </section>
+
+    <!-- 会话 -->
+    <section class="page" id="page-thread" hidden>
+      <header class="nav">
+        <span class="nav-side">
+          <button class="nav-icon back" id="back" aria-label="返回">‹</button>
+        </span>
+        <h1 class="nav-title" id="thread-title">会话</h1>
+        <span class="nav-side end">
+          <button class="nav-icon" data-todo="会话设置" aria-label="更多">···</button>
+        </span>
+      </header>
+      <main class="scroller chat" id="messages"></main>
+      <form class="composer" id="composer">
+        <textarea
+          id="input"
+          rows="1"
+          enterkeyhint="send"
+          placeholder=""
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+        ></textarea>
+        <button type="submit" class="send" id="send">发送</button>
+      </form>
+    </section>
+
+    <!-- 底栏。第一个已经做了，剩下三个故意不画功能。 -->
+    <nav class="tabbar" id="tabbar" aria-label="主菜单">
+      <button class="tab on" data-tab="nous">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 3.2c-4.6 0-8.3 3.1-8.3 7 0 2.2 1.2 4.1 3.1 5.4l-.8 3 3.3-1.7c.9.2 1.8.3 2.7.3 4.6 0 8.3-3.1 8.3-7s-3.7-7-8.3-7z"
+          />
+        </svg>
+        <span>Nous</span>
+      </button>
+      <button class="tab" data-tab="templates">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4.6" y="3.4" width="13" height="17.2" rx="2.6" />
+          <path d="M8.4 3.4v17.2M11.4 9h3.4M11.4 13h3.4" />
+        </svg>
+        <span>Template</span>
+      </button>
+      <button class="tab" data-todo="发现">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.4" />
+          <path d="M15.6 8.4l-2 4.6-4.6 2 2-4.6z" />
+        </svg>
+        <span>未开发</span>
+      </button>
+      <button class="tab" data-todo="我">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="8.6" r="3.4" />
+          <path d="M5.4 19.6c.6-3.1 3.3-4.9 6.6-4.9s6 1.8 6.6 4.9" />
+        </svg>
+        <span>未开发</span>
+      </button>
+    </nav>
+
+    <div class="toast" id="toast" hidden></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

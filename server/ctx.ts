@@ -18,6 +18,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { BoardStore } from "./content.ts";
 import { adoptNode } from "./map.ts";
+import { publicOrigin } from "./origin.ts";
 import type { Node } from "../src/game.ts";
 
 const send = (res: ServerResponse, status: number, body: unknown): void => {
@@ -59,7 +60,7 @@ const findPath = (node: Node, id: string): Node[] | undefined => {
 };
 
 export type CtxOptions = {
-  /** 宿主自己的地址，块被搬走后靠它继续找得到邻居。 */
+  /** 外面看不出我们挂在哪儿时的兜底。 */
   origin: string;
 };
 
@@ -84,7 +85,8 @@ export function nousApi(store: BoardStore, opts: CtxOptions) {
         next();
         return;
       }
-      const host = req.headers.host ? `http://${req.headers.host}` : opts.origin;
+      // 反代终结了 TLS、剥掉了挂载前缀 —— 这两件事都只能从头上读，见 `origin.ts`。
+      const host = publicOrigin(req, opts.origin);
       const base = `${host}/p/${board}`;
       const mine = `${base}/${encodeURIComponent(self)}`;
 

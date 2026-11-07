@@ -1,0 +1,12 @@
+{
+  "name": "bjes6b",
+  "private": true,
+  "type": "module",
+  "description": "Nous-Use · 微信样子的 Nous 会话页：只做皮和 BFF，agent 全在 qrd3wh。",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
