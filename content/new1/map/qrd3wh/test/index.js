@@ -9,4 +9,5 @@ import "./catalog.test.js";
 import "./prompts-api.test.js";
 import "./presets.test.js";
 import "./presets-api.test.js";
+import "./scheduler.test.js";
 import "./upstream.test.js";

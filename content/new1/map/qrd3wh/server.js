@@ -126,6 +126,7 @@ import { handlePrompts } from "./prompts-api.js";
 import { handlePresets } from "./presets-api.js";
 import { createPresets, expandPresetSpec, presetContext, readSections } from "./presets.js";
 import { readTriggerCatalog } from "./triggers.js";
+import { createScheduler, runTriggerBinary } from "./scheduler.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -133,6 +134,8 @@ const ctx = BACKGROUND_CONTEXT;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4780);
 const DATA = process.env.NOUS_DATA ?? path.join(HERE, "data");
+const TRIGGER_ROOT = process.env.NOUS_TRIGGER ?? "/opt/Nous-Trigger";
+const TRIGGER_STATE_DIR = path.join(DATA, "trigger-state");
 const startedAt = Date.now();
 
 // ── 本地装卸：这一台的私事，跟仓库没关系 ───────────────────────────────────
@@ -1501,6 +1504,72 @@ const ultimateCtx = async () => {
     sessionsHas: (name) => Boolean(sessions?.has?.(String(name ?? ""))),
   };
 };
+
+// ── 调度器：fire 了起会话 ──────────────────────────────────────────────────
+//
+// 「手动跑」和「自动跑」走**同一条路**（launchCombo）—— 手动 = 跳过触发器直接起，
+// 自动 = 先问触发器 fire 不 fire。开会话这件事本身不能有两份实现。
+
+/**
+ * 起一条会话：照这条终极模板钉的会话模板（Session-Template 段）去开。
+ * `force` = 手动跑（不经过触发器）；调度器调它时 force 恒为 true（它已经 fire 过了）。
+ * 会话名带「触发器名」，让人一眼看出这条对话是哪个触发器开的。
+ */
+const launchCombo = async (combo, { force = true } = {}) => {
+  const session = String(combo?.session ?? "").trim();
+  if (!session) throw new Error(`终极模板「${combo.name}」没钉会话模板`);
+  const roster = presetsOf("Session-Template");
+  if (!roster?.has(session)) throw new Error(`会话模板「${session}」不在 Session-Template 里`);
+  const created = await createSessionFromBody(
+    {
+      preset: `${"Session-Template"}/${session}`,
+      name: `▶ ${combo.name}`,
+    },
+    ctx,
+  );
+  return { ...created, combo: combo.name, forced: force, trigger: combo.trigger ?? null };
+};
+
+/** 跑一个触发器二进制：产物在 `<触发器目录>/target/debug/<名>`。 */
+const runComboTrigger = async (combo) => {
+  const name = String(combo?.trigger ?? "");
+  const binary = path.join(TRIGGER_ROOT, name, "target", "debug", name);
+  try {
+    await stat(binary);
+  } catch {
+    return { fire: false, error: `触发器「${name}」没编译（去触发器页发布一次）` };
+  }
+  return runTriggerBinary({
+    binary,
+    params: combo.params ?? {},
+    now: Math.floor(Date.now() / 1000),
+    stateDir: TRIGGER_STATE_DIR,
+  });
+};
+
+/** 开着、要跑的终极模板（坏账和引用缺的不跑 —— launchCombo 会再拦一次）。 */
+const listEnabledCombos = async () => {
+  const roster = presetsOf("Ultimate-Template");
+  if (!roster) return [];
+  return roster
+    .list()
+    .filter((item) => !item.specError && item.spec?.enabled !== false && item.spec?.trigger && item.spec?.session)
+    .map((item) => ({
+      name: item.name,
+      trigger: item.spec.trigger,
+      params: item.spec.params ?? {},
+      session: item.spec.session,
+    }));
+};
+
+const scheduler = createScheduler({
+  listCombos: listEnabledCombos,
+  runTrigger: runComboTrigger,
+  launch: launchCombo,
+  onError: (combo, message) => {
+    console.error(`[scheduler] ${combo?.name ?? "?"}：${message}`);
+  },
+});
 // 老收据时代的补版本已经没了（技能没有版本号）。留着 `?.` 是因为：
 // 扩展仓可以比这块新或旧，缺一个方法不该让启动路径炸掉。
 void skills.backfill?.();
@@ -1770,6 +1839,123 @@ const sessionRoute = (parts) => {
   return { id: Number(parts[2]), rest: parts[3] ?? "", tail: parts.slice(4) };
 };
 
+  // 预设 + 手动建会话共用这一个函数。调度器（scheduler.js）也调它 ——
+  // 「fire 了起一条会话」跟「页面点一下起一条会话」是**同一条路**，不许有两份实现。
+  async function createSessionFromBody(body, ctx) {
+    // ── 预设打底 ────────────────────────────────────────────────────────────
+    // 三态，跟 template 一条纪律：字符串 = 用这条预设；null / 不传 = 手动创建（老路径，行为不变）。
+    // 预设里的字段是**初值不是裁决**：body 里显式给了的字段一个个覆盖它（hb7k3j 的 picker
+    // 就是靠这条「带着初值的手动创建」）。覆盖是个键一个键的 —— 整份替换会让
+    // 「只想改模型」把技能也顺手改掉。
+    const presetAsked = typeof body.preset === "string" ? body.preset.trim() : null;
+    // 段名是预设名的一部分（`Session-Template/weekly-report`）：两段可以各有一条同名预设，
+    // 光凭名字分不出是哪条。不带段名的按会话段处理 —— 那是这一页唯一的合法用途。
+    const presetRef = presetAsked && presetAsked.includes("/")
+      ? { section: presetAsked.slice(0, presetAsked.indexOf("/")), name: presetAsked.slice(presetAsked.indexOf("/") + 1) }
+      : presetAsked
+        ? { section: PRESET_SESSION_SECTION, name: presetAsked }
+        : null;
+    let presetBase = null;
+    if (presetRef) {
+      const roster = presetsOf(presetRef.section);
+      const item = roster?.get(presetRef.name) ?? null;
+      if (!item) return json(res, 400, { error: `没有这条预设：${presetRef.section}/${presetRef.name}` });
+      if (item.specError) {
+        return json(res, 400, { error: `预设「${presetRef.name}」自己写坏了：${item.specError}` });
+      }
+      presetBase = expandPresetSpec(item.spec);
+    }
+    const pick = (key) => (body[key] !== undefined ? body[key] : presetBase?.[key]);
+
+    const model = pick("model") ?? defaultModel;
+    // 档位在建会话的**同一个 commit** 里落定（AgentChange 的 thinkingLevel），
+    // 不是先建再 configure —— 后者中间那一下，第一条消息可能已经跑出去了。
+    const thinkingLevel = fitLevel(models.getModel(model.provider, model.modelId), pick("thinkingLevel"));
+    // 技能也在这个 commit 里落 —— 跟 thinkingLevel 一条纪律：先建再 configure，中间那一下
+    // 第一条消息可能已经跑出去了。没装的技能名直接丢（选了也不生效，不存一个幽灵）。
+    const askedSkills = pick("skills");
+    const wanted = [
+      ...new Set((Array.isArray(askedSkills) ? askedSkills : []).map(String)),
+    ].filter((name) => skills.has(name));
+    // 模板是**单值**，不是数组：一条会话最多一个 `prompt:<名>`。三态必须分清 ——
+    //   字符串 = 选它；null = 显式不要；不传 = 用仓库 settings.json 的默认值。
+    // 都归成「不传」的话，「不要」和「没说」会变成同一件事，页面上那句「无模板」就是假的。
+    // 预设里的 template 原样搬过来（`presets.js` 的 `expandPresetSpec` 只写「键在不在」），
+    // 所以 `template: null` 的预设照样是「明确不要」。
+    const asked = pick("template");
+    const wantedTemplate = asked === undefined ? await readDefaultTemplate() : asked === null ? null : String(asked).trim();
+    const template = wantedTemplate && prompts.has(wantedTemplate) ? wantedTemplate : null;
+    const askedExt = pick("extensions");
+    const wantedExt = [...new Set((Array.isArray(askedExt) ? askedExt : []).map(String))].filter((name) =>
+      registry.snapshot().installed().some((e) => e.name === name),
+    );
+    // 清单里的 `default: true` = 新会话默认选它。README 一直这么写着，但从来没人读它 ——
+    // 页面那个「默认」绿角标看的是下面这三个硬编码的名字，于是 nous.json 里那个字段
+    // 只是个装饰品（改了没反应，比没有更糟）。这里把它接上：只补「不是那三个」的，
+    // 重复 add 同一个扩展没意义。
+    // **只在「没人说」时补**：预设写了 extensions 就是说了（`[]` 也是说了），别替它加东西。
+    if (askedExt === undefined) {
+      const baseDefaults = [CodingTools.name, nousExtension.name, skills.extension.name, prompts.extension.name];
+      const installedNow = registry.snapshot().installed().map((e) => e.name);
+      for (const manifest of await readExtendCatalog().catch(() => [])) {
+        if (manifest.default !== true) continue;
+        if (baseDefaults.includes(manifest.name) || !installedNow.includes(manifest.name)) continue;
+        if (!wantedExt.includes(manifest.name)) wantedExt.push(manifest.name);
+      }
+    }
+    const created = await harness.createConversation(
+      {
+        ownership: { kind: "ownerless" },
+        agent: {
+          cwd: HERE,
+          model,
+          ...(thinkingLevel ? { thinkingLevel } : {}),
+          ...(() => {
+          const adds = [
+            ...(wanted.length ? wanted.map(skillExtension) : []),
+            ...(template ? [promptExtension(template)] : []),
+            ...(wantedExt.length ? wantedExt.map((n) => registry.snapshot().extension(n)) : []),
+          ];
+          return adds.length ? { extensions: { add: adds } } : {};
+        })(),
+        },
+      },
+      ctx,
+    );
+    if (body.name) await setName(created.id, String(body.name).slice(0, 120));
+    // 只读：`createConversation` 没有这个字段（它只认 model / thinkingLevel / extensions），
+    // 所以建完立刻 configure 一次。这不是「先建再配」那种坏味道 —— 那条纪律要防的是
+    // 「第一条消息已经跑出去了配置还没落」，而这里第一条消息还没发生（调用方拿到 201 才发）。
+    const askedReadOnly = pick("readOnly");
+    if (askedReadOnly === true) {
+      await created.configure({ modelTools: { remove: WRITE_TOOLS } }, ctx);
+    }
+    const agent = await created.agent(ctx);
+    return {
+      id: created.id,
+      name: (await names())[key(created.id)],
+      model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
+      thinkingLevel: agent.thinkingLevel ?? null,
+      skills: skillNamesOf(agent),
+      template: templateOf(agent),
+      extensions: extensionNamesOf(agent),
+      // 只读也是**生效值**：上面那次 configure 到底成没成，回给前端别让人猜。
+      readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
+      // 预设回的出处：这次是哪条预设开的（`null` = 手动创建的）。前端拿它显一条小标签。
+      preset: presetRef ? `${presetRef.section}/${presetRef.name}` : null,
+      missing: skills.missing(wanted),
+      // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有扩展」。
+      ...(() => {
+        const asked = [...new Set((Array.isArray(askedExt) ? askedExt : []).map(String))];
+        const gone = asked.filter((name) => !registry.snapshot().installed().some((e) => e.name === name));
+        return gone.length ? { missingExtensions: gone } : {};
+      })(),
+      // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有模板」。
+      ...(wantedTemplate && !template ? { missingTemplates: [wantedTemplate] } : {}),
+    };
+  }
+
+
 const route = async (req, res, url) => {
   const parts = stripPrefix(url.pathname.split("/").filter(Boolean));
 
@@ -1881,6 +2067,32 @@ const route = async (req, res, url) => {
     } catch (error) {
       // handlePrompts 自己写响应；走到这儿说明是它没接住的意外。
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
+  }
+
+  // 手动跑一条终极模板：**跳过触发器判断**，直接起一条会话。
+  // 这是「fire → 起会话」这条路的测试 / 手动入口 —— 跟调度器走同一个 launchCombo。
+  if (
+    req.method === "POST" &&
+    parts[0] === "v1" &&
+    parts[1] === "presets" &&
+    parts[2] === "Ultimate-Template" &&
+    parts[3] === "launch"
+  ) {
+    const body = JSON.parse((await readBody(req)) || "{}");
+    const name = String(body.name ?? "").trim();
+    const roster = presetsOf("Ultimate-Template");
+    const item = roster?.get(name) ?? null;
+    if (!item) return json(res, 404, { error: `没有这条终极模板：${name}` });
+    if (item.specError) return json(res, 400, { error: `这条自己写坏了：${item.specError}` });
+    try {
+      const launched = await launchCombo(
+        { name: item.name, trigger: item.spec?.trigger, params: item.spec?.params, session: item.spec?.session },
+        { force: true },
+      );
+      return json(res, 201, launched);
+    } catch (error) {
+      return json(res, 500, { error: String(error?.message ?? error) });
     }
   }
 
@@ -2346,119 +2558,9 @@ const route = async (req, res, url) => {
   }
 
   if (req.method === "POST" && parts[0] === "v1" && parts[1] === "sessions" && !parts[2]) {
-    const body = JSON.parse((await readBody(req)) || "{}");
-    // ── 预设打底 ────────────────────────────────────────────────────────────
-    // 三态，跟 template 一条纪律：字符串 = 用这条预设；null / 不传 = 手动创建（老路径，行为不变）。
-    // 预设里的字段是**初值不是裁决**：body 里显式给了的字段一个个覆盖它（hb7k3j 的 picker
-    // 就是靠这条「带着初值的手动创建」）。覆盖是个键一个键的 —— 整份替换会让
-    // 「只想改模型」把技能也顺手改掉。
-    const presetAsked = typeof body.preset === "string" ? body.preset.trim() : null;
-    // 段名是预设名的一部分（`Session-Template/weekly-report`）：两段可以各有一条同名预设，
-    // 光凭名字分不出是哪条。不带段名的按会话段处理 —— 那是这一页唯一的合法用途。
-    const presetRef = presetAsked && presetAsked.includes("/")
-      ? { section: presetAsked.slice(0, presetAsked.indexOf("/")), name: presetAsked.slice(presetAsked.indexOf("/") + 1) }
-      : presetAsked
-        ? { section: PRESET_SESSION_SECTION, name: presetAsked }
-        : null;
-    let presetBase = null;
-    if (presetRef) {
-      const roster = presetsOf(presetRef.section);
-      const item = roster?.get(presetRef.name) ?? null;
-      if (!item) return json(res, 400, { error: `没有这条预设：${presetRef.section}/${presetRef.name}` });
-      if (item.specError) {
-        return json(res, 400, { error: `预设「${presetRef.name}」自己写坏了：${item.specError}` });
-      }
-      presetBase = expandPresetSpec(item.spec);
-    }
-    const pick = (key) => (body[key] !== undefined ? body[key] : presetBase?.[key]);
-
-    const model = pick("model") ?? defaultModel;
-    // 档位在建会话的**同一个 commit** 里落定（AgentChange 的 thinkingLevel），
-    // 不是先建再 configure —— 后者中间那一下，第一条消息可能已经跑出去了。
-    const thinkingLevel = fitLevel(models.getModel(model.provider, model.modelId), pick("thinkingLevel"));
-    // 技能也在这个 commit 里落 —— 跟 thinkingLevel 一条纪律：先建再 configure，中间那一下
-    // 第一条消息可能已经跑出去了。没装的技能名直接丢（选了也不生效，不存一个幽灵）。
-    const askedSkills = pick("skills");
-    const wanted = [
-      ...new Set((Array.isArray(askedSkills) ? askedSkills : []).map(String)),
-    ].filter((name) => skills.has(name));
-    // 模板是**单值**，不是数组：一条会话最多一个 `prompt:<名>`。三态必须分清 ——
-    //   字符串 = 选它；null = 显式不要；不传 = 用仓库 settings.json 的默认值。
-    // 都归成「不传」的话，「不要」和「没说」会变成同一件事，页面上那句「无模板」就是假的。
-    // 预设里的 template 原样搬过来（`presets.js` 的 `expandPresetSpec` 只写「键在不在」），
-    // 所以 `template: null` 的预设照样是「明确不要」。
-    const asked = pick("template");
-    const wantedTemplate = asked === undefined ? await readDefaultTemplate() : asked === null ? null : String(asked).trim();
-    const template = wantedTemplate && prompts.has(wantedTemplate) ? wantedTemplate : null;
-    const askedExt = pick("extensions");
-    const wantedExt = [...new Set((Array.isArray(askedExt) ? askedExt : []).map(String))].filter((name) =>
-      registry.snapshot().installed().some((e) => e.name === name),
-    );
-    // 清单里的 `default: true` = 新会话默认选它。README 一直这么写着，但从来没人读它 ——
-    // 页面那个「默认」绿角标看的是下面这三个硬编码的名字，于是 nous.json 里那个字段
-    // 只是个装饰品（改了没反应，比没有更糟）。这里把它接上：只补「不是那三个」的，
-    // 重复 add 同一个扩展没意义。
-    // **只在「没人说」时补**：预设写了 extensions 就是说了（`[]` 也是说了），别替它加东西。
-    if (askedExt === undefined) {
-      const baseDefaults = [CodingTools.name, nousExtension.name, skills.extension.name, prompts.extension.name];
-      const installedNow = registry.snapshot().installed().map((e) => e.name);
-      for (const manifest of await readExtendCatalog().catch(() => [])) {
-        if (manifest.default !== true) continue;
-        if (baseDefaults.includes(manifest.name) || !installedNow.includes(manifest.name)) continue;
-        if (!wantedExt.includes(manifest.name)) wantedExt.push(manifest.name);
-      }
-    }
-    const created = await harness.createConversation(
-      {
-        ownership: { kind: "ownerless" },
-        agent: {
-          cwd: HERE,
-          model,
-          ...(thinkingLevel ? { thinkingLevel } : {}),
-          ...(() => {
-          const adds = [
-            ...(wanted.length ? wanted.map(skillExtension) : []),
-            ...(template ? [promptExtension(template)] : []),
-            ...(wantedExt.length ? wantedExt.map((n) => registry.snapshot().extension(n)) : []),
-          ];
-          return adds.length ? { extensions: { add: adds } } : {};
-        })(),
-        },
-      },
-      ctx,
-    );
-    if (body.name) await setName(created.id, String(body.name).slice(0, 120));
-    // 只读：`createConversation` 没有这个字段（它只认 model / thinkingLevel / extensions），
-    // 所以建完立刻 configure 一次。这不是「先建再配」那种坏味道 —— 那条纪律要防的是
-    // 「第一条消息已经跑出去了配置还没落」，而这里第一条消息还没发生（调用方拿到 201 才发）。
-    const askedReadOnly = pick("readOnly");
-    if (askedReadOnly === true) {
-      await created.configure({ modelTools: { remove: WRITE_TOOLS } }, ctx);
-    }
-    const agent = await created.agent(ctx);
-    return json(res, 201, {
-      id: created.id,
-      name: (await names())[key(created.id)],
-      model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
-      thinkingLevel: agent.thinkingLevel ?? null,
-      skills: skillNamesOf(agent),
-      template: templateOf(agent),
-      extensions: extensionNamesOf(agent),
-      // 只读也是**生效值**：上面那次 configure 到底成没成，回给前端别让人猜。
-      readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
-      // 预设回的出处：这次是哪条预设开的（`null` = 手动创建的）。前端拿它显一条小标签。
-      preset: presetRef ? `${presetRef.section}/${presetRef.name}` : null,
-      missing: skills.missing(wanted),
-      // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有扩展」。
-      ...(() => {
-        const asked = [...new Set((Array.isArray(askedExt) ? askedExt : []).map(String))];
-        const gone = asked.filter((name) => !registry.snapshot().installed().some((e) => e.name === name));
-        return gone.length ? { missingExtensions: gone } : {};
-      })(),
-      // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有模板」。
-      ...(wantedTemplate && !template ? { missingTemplates: [wantedTemplate] } : {}),
-    });
+    return json(res, 201, await createSessionFromBody(JSON.parse((await readBody(req)) || "{}"), ctx));
   }
+
 
   const session = sessionRoute(parts);
   if (session) {
@@ -2677,6 +2779,10 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(`[qrd3wh] 听 ${PORT} · 模型 ${defaultModel.provider}/${defaultModel.modelId}${faux ? "（假 provider）" : ""} · 数据 ${DATA}`);
+  // 调度器：每分钟跑一遍开着的触发器，fire 了起会话。先跑一拍 —— 开机就该赶上的
+  // 那一分钟别等下一个整点（single-shot 自己会判断「到没到点」）。
+  scheduler.start();
+  void scheduler.tick();
 });
 
 const shutdown = async () => {

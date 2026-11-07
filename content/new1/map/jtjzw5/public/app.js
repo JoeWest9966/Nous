@@ -283,6 +283,13 @@ const cardFor = (row) => {
   if (note) card.append(el("p", "card-note", note));
 
   const foot = el("div", "card-foot");
+  const run = el("button", "launch", "▶ 现在跑");
+  run.type = "button";
+  run.title = "跳过触发器判断，立刻起一条会话 —— 测这条组合本身对不对";
+  run.onclick = (event) => {
+    event.stopPropagation();
+    launchCombo(row, run);
+  };
   const edit = el("button", "launch", "改");
   edit.type = "button";
   edit.onclick = (event) => {
@@ -290,7 +297,7 @@ const cardFor = (row) => {
     openEditor(row);
   };
   const hint = el("span", "card-hint", row.state === "unpublished" ? "只在本地" : "");
-  foot.append(edit, hint);
+  foot.append(run, edit, hint);
   card.append(foot);
 
   const open = () => openDetail(row);
@@ -424,12 +431,16 @@ const renderDetail = (row) => {
 
   const foot = $("dt-foot");
   foot.innerHTML = "";
+  const run = el("button", "btn btn-go", "▶ 现在跑");
+  run.type = "button";
+  run.title = "跳过触发器判断，立刻起一条会话 —— 测这条组合本身对不对";
+  run.onclick = () => launchCombo(row, run);
   const edit = el("button", "btn btn-primary", "改");
   edit.type = "button";
   edit.onclick = () => openEditor(row);
   const close = el("button", "btn", "关闭");
   close.onclick = closeDetail;
-  foot.append(close, edit);
+  foot.append(close, run, edit);
 };
 
 const openDetail = (row) => {
@@ -692,6 +703,23 @@ const publishSection = async () => {
   } finally {
     button.disabled = false;
     button.textContent = "发布";
+  }
+};
+
+/**
+ * 手动跑一次：**跳过触发器判断**，直接起一条会话。
+ * 这是「fire → 起会话」这条路的测试 / 手动入口 —— 测的是参数、会话模板、展开对不对，
+ * 不是触发器「该不该 fire」（那是触发器自己的单测）。
+ */
+const launchCombo = async (row, button = null) => {
+  if (button) button.disabled = true;
+  try {
+    const result = await api.post("v1/presets/launch", { name: row.name });
+    toast(`已开一条会话：${result.name ?? result.id}`);
+  } catch (error) {
+    toast(`没开起来：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
   }
 };
 
