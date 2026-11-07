@@ -1,0 +1,15 @@
+{
+  "name": "Nous",
+  "short_name": "Nous",
+  "description": "微信样子的 Nous 会话页",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ededed",
+  "theme_color": "#ededed",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

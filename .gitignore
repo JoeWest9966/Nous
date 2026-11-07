@@ -45,3 +45,9 @@ content/new1/map/68kazk/data/
 !content/new1/map/3699b9/
 # jtjzw5（Ultimate-Template）：同一个仓的另一段（Ultimate-Template）的页，同样纯静态。
 !content/new1/map/jtjzw5/
+# bjes6b（Nous-Use）：微信样子的会话页，代码是人写的（BFF + 壳），进版本控制。
+# data/ 是运行时数据（pins.json 置顶表等），不进。
+# test/ 里那份 smoke 是另一个块（Template 页）的测试，误放这里 —— 先不随本次提交。
+!content/new1/map/bjes6b/
+content/new1/map/bjes6b/data/
+content/new1/map/bjes6b/test/
