@@ -653,8 +653,13 @@ export const deleteRepoPath = async (root, { name, rel, dir = null, label = "扩
   }
   return { name: clean, path: pathname, kind: info.isDirectory() ? "dir" : "file" };
 };
-/** 工作区里改了哪些文件（porcelain v1：前两位是状态，改名只认 `->` 右边那个）。 */
-export const gitChanges = async (root) => {
+/**
+ * 工作区里改了哪些文件（porcelain v1：前两位是状态，改名只认 `->` 右边那个）。
+ *
+ * `scope` = 只要这个目录底下的（`Session-Template`）—— 一个仓放两段时，段的改动不能
+ * 串到另一段去。**路径仍然相对仓根**：git 的口径只有一种，转换在调用方那一层做。
+ */
+export const gitChanges = async (root, { scope = null } = {}) => {
   // 别对整份输出 .trim()：第一行是 ` M path`，那个前导空格是状态列的一部分 ——
   // trim 掉再 slice(3) 会把路径首字母一起切掉（`categories.json` → `ategories.json`）。
   const porcelain = (await run("git", ["status", "--porcelain"], { cwd: root, timeout: 15_000 })).stdout.replace(/\n+$/, "");
@@ -671,7 +676,8 @@ export const gitChanges = async (root) => {
       }
       return { status: line.slice(0, 2), path: rel, ...(from ? { from } : {}) };
     })
-    .filter((item) => item.path);
+    .filter((item) => item.path)
+    .filter((item) => !scope || item.path === scope || item.path.startsWith(`${scope}/`));
 };
 
 /** HEAD 里有哪些顶层目录（「已发布」的判据，和卡片上的 tracked 同一个口径）。 */
@@ -725,11 +731,17 @@ export const trackedFile = async (root, rel) => {
   }
 };
 
-/** 仓库状态：有没有没提交的、领先/落后远端几步。 */
-export const repoState = async (root) => {
+/**
+ * 仓库状态：有没有没提交的、领先/落后远端几步。
+ *
+ * `dirty` 认 `scope`（这一段脏了没有），`ahead` / `behind` 永远是整个仓的 —— 历史是共用的，
+ * 硬按段拆「几个提交没推」只会得到一个人造的数字。
+ */
+export const repoState = async (root, { scope = null } = {}) => {
   const opts = { cwd: root, timeout: 15_000 };
   const head = (await run("git", ["rev-parse", "HEAD"], opts)).stdout.trim();
-  const dirty = (await run("git", ["status", "--porcelain"], opts)).stdout.trim().length > 0;
+  const dirty =
+    (await run("git", ["status", "--porcelain", ...(scope ? ["--", scope] : [])], opts)).stdout.trim().length > 0;
   let ahead = 0;
   let behind = 0;
   try {
@@ -799,8 +811,9 @@ export const pendingFileDiff = async (root, rel) => {
 };
 
 // index.json 是 categories.json 的生成物：只提交词表不提交索引，仓库当场自相矛盾。
-const isCategoryFile = (rel) =>
-  rel === "categories.json" || rel === "index.json" || rel.endsWith("nous.json");
+// 按**文件名**认，不按完整路径：分段仓里它们住在 `Session-Template/` 底下。
+const MANIFEST_FILES = new Set(["categories.json", "index.json", "nous.json", "preset.json", "ultimate.json"]);
+const isCategoryFile = (rel) => MANIFEST_FILES.has(path.posix.basename(rel));
 
 const EXT_CODE_RE = /\.(mjs|cjs|js)$/i;
 const fileKindOf = (rel) => (EXT_CODE_RE.test(rel) ? "code" : isCategoryFile(rel) ? "manifest" : "other");
@@ -820,20 +833,31 @@ const UNIT_ORDER = { extension: 0, skill: 0, prompt: 0, categories: 1, archive: 
 //
 // 单元是**一个目录**，不是文件：人想的是「把 123 发出去」，不是「提交 index.js」。
 // 文件级的勾选藏在展开里。另外「已提交没推」和「没提交」是两件事，这里分开给。
-export const pendingState = async (root, { unitKind = "extension" } = {}) => {
-  const changes = await gitChanges(root);
-  const state = await repoState(root);
-  const tracked = await trackedDirs(root);
+export const pendingState = async (root, { unitKind = "extension", scope = null } = {}) => {
+  // 段内相对路径：面板上写的是 `weekly-report`，不是 `Session-Template/weekly-report`。
+  // 只在进出 git 的那两处加回前缀（pathspec / 读文件），中间一律用段内口径。
+  const scoped = (rel) => (scope ? `${scope}/${rel}` : rel);
+  const changes = (await gitChanges(root, { scope })).map((item) => ({
+    ...item,
+    path: scope ? item.path.slice(scope.length + 1) : item.path,
+    ...(item.from ? { from: scope ? item.from.slice(scope.length + 1) : item.from } : {}),
+  }));
+  const state = await repoState(root, { scope });
+  const tracked = scope ? await trackedPaths(root) : await trackedDirs(root);
 
   // 行数口径和 git 一致：对 HEAD 比（暂存 + 未暂存都算）。未跟踪的文件 git diff 看不见，单独数。
   const numstat = new Map();
-  const trackedPaths = changes.filter((item) => !item.status.startsWith("??")).map((item) => item.path);
-  if (trackedPaths.length) {
-    const out = (await run("git", ["-C", root, "diff", "--numstat", "HEAD", "--", ...trackedPaths], { timeout: 30_000 }))
+  const changedTracked = changes.filter((item) => !item.status.startsWith("??")).map((item) => scoped(item.path));
+  if (changedTracked.length) {
+    const out = (await run("git", ["-C", root, "diff", "--numstat", "HEAD", "--", ...changedTracked], { timeout: 30_000 }))
       .stdout;
     for (const line of out.split("\n").filter(Boolean)) {
       const [adds, dels, ...rest] = line.split("\t");
-      numstat.set(rest.join("\t"), { added: adds === "-" ? 0 : Number(adds), removed: dels === "-" ? 0 : Number(dels) });
+      const rel = rest.join("\t");
+      numstat.set(scope ? rel.slice(scope.length + 1) : rel, {
+        added: adds === "-" ? 0 : Number(adds),
+        removed: dels === "-" ? 0 : Number(dels),
+      });
     }
   }
 
@@ -844,9 +868,9 @@ export const pendingState = async (root, { unitKind = "extension" } = {}) => {
     let lines = numstat.get(change.path) ?? { added: 0, removed: 0 };
     if (change.status.startsWith("??")) {
       // 整份文件都是新增。读不了 / 太大就记 0 —— 这个数只用来判断量级，不参与决策。
-      const info = await stat(path.join(root, change.path)).catch(() => null);
+      const info = await stat(path.join(root, scoped(change.path))).catch(() => null);
       if (info && info.size <= MAX_FILE_BYTES) {
-        const text = await readFile(path.join(root, change.path), "utf8").catch(() => "");
+        const text = await readFile(path.join(root, scoped(change.path)), "utf8").catch(() => "");
         lines = { added: text ? text.replace(/\n+$/, "").split("\n").length : 0, removed: 0 };
       }
     }
@@ -854,7 +878,7 @@ export const pendingState = async (root, { unitKind = "extension" } = {}) => {
       key,
       kind,
       name,
-      tracked: kind === unitKind ? tracked.has(name) : true,
+      tracked: kind === unitKind ? tracked.has(scoped(name)) : true,
       files: [],
       added: 0,
       removed: 0,
@@ -976,28 +1000,29 @@ export const moveOutOfArchive = async (root, name, { to = name } = {}) => {
  * index.json 里有哪些目录**不在 HEAD 里** —— 也就是「未发布」。它们合法地出现在
  * 工作区的 index.json 里，但**不该跟着自动提交走**。
  */
-const untrackedIndexNames = async (root) => {
+const UNITS_OF_INDEX = (doc) => doc.items ?? doc.extensions ?? doc.skills ?? [];
+
+const untrackedIndexNames = async (root, { scope = null } = {}) => {
   let entries = [];
   try {
-    const doc = JSON.parse(await readFile(path.join(root, "index.json"), "utf8"));
-    entries = doc.extensions ?? doc.skills ?? [];
+    const doc = JSON.parse(await readFile(path.join(root, scope ?? "", "index.json"), "utf8"));
+    entries = UNITS_OF_INDEX(doc);
   } catch {
     return [];
   }
   // 条目说的「住哪儿」是 `path`（`deprecated/demo`），老文件没有这个字段就是 `name`。
   const relOf = (item) => String(item.path ?? item.name);
   const tracked = await trackedPaths(root);
-  return entries.filter((item) => !tracked.has(relOf(item))).map(relOf);
+  return entries.filter((item) => !tracked.has(scope ? `${scope}/${relOf(item)}` : relOf(item))).map(relOf);
 };
 
 /** 把未发布的目录从 index.json 里摘掉（只动磁盘；提交完再重扫回去）。 */
-const pruneIndex = async (root, paths) => {
-  const indexFile = path.join(root, "index.json");
+const pruneIndex = async (root, paths, { scope = null } = {}) => {
+  const indexFile = path.join(root, scope ?? "", "index.json");
   const doc = JSON.parse(await readFile(indexFile, "utf8"));
-  const list = doc.extensions ?? doc.skills ?? [];
-  const kept = list.filter((item) => !paths.includes(String(item.path ?? item.name)));
-  const next = doc.extensions ? { ...doc, extensions: kept } : { ...doc, skills: kept };
-  await writeFile(indexFile, JSON.stringify(next, null, 2) + "\n", "utf8");
+  const kept = UNITS_OF_INDEX(doc).filter((item) => !paths.includes(String(item.path ?? item.name)));
+  const key = doc.items ? "items" : doc.extensions ? "extensions" : "skills";
+  await writeFile(indexFile, JSON.stringify({ ...doc, [key]: kept }, null, 2) + "\n", "utf8");
 };
 
 /**
@@ -1010,11 +1035,12 @@ const pruneIndex = async (root, paths) => {
 export const syncRepo = async (
   root,
   message,
-  { only = null, includeDeleted = false, paths = null, label = "扩展", tag = "extend" } = {},
+  { only = null, includeDeleted = false, paths = null, scope = null, label = "扩展", tag = "extend" } = {},
 ) => {
   const opts = { cwd: root, timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } };
   let committed = false;
-  const changes = await gitChanges(root);
+  // `scope` = 只提交这一段（一个仓放两段时的防火墙：另一段没写完的东西不许搭车）。
+  const changes = await gitChanges(root, { scope });
   // 「本地删了某个目录」必然让 tracked 文件变成 ` D`。这条过滤是「本地删除」和「发布」
   // 之间的防火墙：发布推的是工作区，不挡住的话，你删了 demo、隔天改一行点发布，
   // 删除就跟着上 GitHub。
@@ -1026,7 +1052,8 @@ export const syncRepo = async (
   );
   if (Array.isArray(paths)) {
     // 显式勾选：只碰这几条。没勾的一个字节都不提交 —— 这是「按目录选」的全部实现。
-    const want = new Set(paths.map((rel) => String(rel)));
+    // 勾选来的路径是**段内**口径，和 `changes` 的仓根口径差一个前缀。
+    const want = new Set(paths.map((rel) => (scope ? `${scope}/${String(rel)}` : String(rel))));
     targets = targets.filter((rel) => want.has(rel));
     // 代码改动要过语法闸：不走抽屉也能提交代码，代价就是这道检查。
     for (const rel of targets) {
@@ -1040,14 +1067,18 @@ export const syncRepo = async (
   // 所以提交前把不在 HEAD 里的条目从索引里摘掉，提交完再重扫回来（它会重新变脏，正是
   // 该有的样子）。谁进了这次提交，谁就有资格留在索引里。
   let skippedIndex = [];
-  if (targets.includes("index.json")) {
+  const indexRel = scope ? `${scope}/index.json` : "index.json";
+  if (targets.includes(indexRel)) {
     // 「谁进了这次提交，谁就有资格留在索引里」—— 按**路径前缀**比，不是按顶层目录：
     // 分组里的条目是 `deprecated/demo`，拿 `deprecated` 去比会把半截路径当成命中。
-    const touches = (target, item) => target === item || target.startsWith(`${item}/`);
-    const untracked = await untrackedIndexNames(root);
+    const touches = (target, item) => {
+      const full = scope ? `${scope}/${item}` : item;
+      return target === full || target.startsWith(`${full}/`);
+    };
+    const untracked = await untrackedIndexNames(root, { scope });
     const skip = untracked.filter((item) => !targets.some((target) => touches(target, item)));
     if (skip.length) {
-      await pruneIndex(root, skip);
+      await pruneIndex(root, skip, { scope });
       skippedIndex = skip;
     }
   }
@@ -1094,7 +1125,7 @@ export const syncRepo = async (
     const hash = committed
       ? (await run("git", ["-C", root, "rev-parse", "--short", "HEAD"], opts)).stdout.trim()
       : null;
-    const state = await repoState(root);
+    const state = await repoState(root, { scope });
     if (!state.ahead) return { committed, hash, files: targets, skippedIndex, ...state, pushed: null };
     try {
       await run("git", ["push"], opts);

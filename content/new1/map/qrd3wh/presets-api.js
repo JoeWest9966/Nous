@@ -1,4 +1,4 @@
-// `/v1/presets*` —— 会话预设私库的 HTTP 面。
+// `/v1/presets/<段>/*` —— 模板私库的 HTTP 面。**一个仓按段放**，每段一套端点、一套数据。
 //
 // 跟 `prompts-api.js` 是同一个模子（错误信封 / 串行锁 / `regenOrRollback` / 归档三件套 /
 // `pending` 四件套），差别只有三处语义：
@@ -13,9 +13,14 @@
 // 一条铁律：**仓库是唯一真相。** 这里不维护第二份名单、不读 `data/`、不联网。
 // 盘上有这个目录 = 这条存在；HEAD 里有这个目录 = 已发布。
 //
+// **段（section）是路径的第一段。** 目录名 = 段 ID = git 路径前缀 = URL 段：只有一份事实源。
+// 段的隔离靠三条：文件名操作收在 `<段>/` 里（`root` 就是段目录）、git 那边一律带 `scope`
+// （`Session-Template`），所以「在 Session 里点发布」碰不到 Ultimate 里没写完的东西。
+//
 // 约定（跟 prompts-api / skills-api 同一套）：
 //   · 统一错误信封 `{ error }` + 状态码：400 校验 / 409 冲突 / 404 不在 / 500 内部。
-//   · 每个写端点都在**本仓的**串行锁里（`serializeRepoWrite(root, …)`），写完 `presets.load()`。
+//   · 每个写端点都在**本仓的**串行锁里（`serializeRepoWrite(repoRoot, …)` —— 锁是整仓的，
+//     因为重扫索引是整仓的动作），写完 `presets.load()`。
 //     不 load 的话面板显示新预设、建会话时还看不见它。
 //   · `publish` = 形状闸 + 重扫 index.json + commit + push，一步；闸不过不动 index.json。
 
@@ -132,7 +137,8 @@ const gateMessage = (problems) => {
 
 // ── 词表 / 生成器 ───────────────────────────────────────────────────────────
 
-const presetsIndex = (repo, root) => () => repo.regenIndex(root, { required: false });
+// 生成器住在**仓根**（它按段扫，各写各的 `<段>/index.json`），不是段目录里。
+const presetsIndex = (repo, repoRoot) => () => repo.regenIndex(repoRoot, { required: false });
 
 // 预设仓**没有**受保护的类别：词表工具默认护着扩展仓的 Basics，所以每个调用点都得显式说
 // 「一个都不护」。
@@ -140,9 +146,9 @@ const NO_PROTECT = { protect: [] };
 
 // ── 公共拼装 ────────────────────────────────────────────────────────────────
 
-const commitOf = async (repo, root, result) => {
+const commitOf = async (repo, repoRoot, result) => {
   if (!result.committed) return null;
-  const info = await repo.lastCommitInfo(root);
+  const info = await repo.lastCommitInfo(repoRoot);
   return { hash: info.hash, subject: info.subject };
 };
 
@@ -155,14 +161,14 @@ const commitOf = async (repo, root, result) => {
  * `No configured push destination` —— 那句话对扩展仓是对的（它有 origin），对这一页
  * 就是假红。所以这里把它折成 `pushed: null` + `noRemote: true`，页面照实显示「只在本地」。
  */
-const writeResult = async (repo, root, result) => {
-  const remote = await repo.remoteUrl(root).catch(() => null);
+const writeResult = async (repo, repoRoot, result) => {
+  const remote = await repo.remoteUrl(repoRoot).catch(() => null);
   const noRemote = !remote && result.pushed === false;
   // `pushed` 三态：true 推了 / false 推挂了 / null 没东西可推（或本来就没远端）。
   const pushed = noRemote ? null : result.pushed === true ? true : result.pushed === false ? false : null;
   return {
     ok: pushed === false ? false : true,
-    commit: await commitOf(repo, root, result),
+    commit: await commitOf(repo, repoRoot, result),
     pushed,
     ...(noRemote ? { noRemote: true } : {}),
     ...(result.pushError && pushed === false ? { error: String(result.pushError).slice(0, 400) } : {}),
@@ -196,18 +202,20 @@ const ctxOf = (ctx) => (typeof ctx === "function" ? ctx() : (ctx ?? {}));
 
 // ── 各端点 ─────────────────────────────────────────────────────────────────
 
-const overview = async ({ repo, root, presets, ctx }) => {
+const overview = async ({ repo, repoRoot, section, root, presets, ctx }) => {
   let state = { head: null, dirty: false, ahead: 0, behind: 0 };
   let error = null;
   try {
-    state = await repo.repoState(root);
+    // `dirty` 只认这一段：另一段没写完不该让这一段的顶栏变脏（历史是共用的，ahead 是整仓的）。
+    state = await repo.repoState(repoRoot, { scope: section.id });
   } catch (caught) {
     // 仓库读不了要给页面一句话，不是 500 —— 白屏说不清「是仓库没了还是预设没了」。
     error = oneLine(caught);
   }
   const [remote, tracked, vocab, archived, roster] = await Promise.all([
-    repo.remoteUrl(root).catch(() => null),
-    repo.trackedDirs(root).catch(() => new Set()),
+    repo.remoteUrl(repoRoot).catch(() => null),
+    // 「已发布」的判据要**带段前缀**：HEAD 里叫 `Session-Template/weekly-report`。
+    repo.trackedPaths(repoRoot).catch(() => new Set()),
     repo.readCategories(root, NO_PROTECT).catch(() => []),
     // 归档条目的摘要住在 `preset.json`（不是 `nous.json`）—— 不给这个参数就会显示成「没有摘要」。
     repo.archivedEntries(root, { manifest: "preset.json" }).catch(() => []),
@@ -225,7 +233,7 @@ const overview = async ({ repo, root, presets, ctx }) => {
     spec: item.spec,
     // `specError` = 这条自己写坏了（JSON / 形状）。引用坏了不算 —— 那是「现在开不了」。
     specError: item.specError,
-    tracked: tracked.has ? tracked.has(item.name) : false,
+    tracked: tracked.has(`${section.id}/${item.name}`),
     dir: item.dir,
     resolved: item.specError ? null : resolveSpec(item.spec, resolvedCtx),
   }));
@@ -234,6 +242,8 @@ const overview = async ({ repo, root, presets, ctx }) => {
   const categories = repo.sortCategories([...vocab, ...roster.flatMap((item) => item.category ?? [])]);
 
   return {
+    section: section.id,
+    title: section.title,
     root,
     repo: { ...state, remote, error },
     presets: rows,
@@ -247,7 +257,7 @@ const overview = async ({ repo, root, presets, ctx }) => {
   };
 };
 
-const createPreset = async ({ repo, root, body, ctx }) => {
+const createPreset = async ({ repo, repoRoot, root, body, ctx }) => {
   const name = checkName(body.name);
   const summary = String(body.summary ?? "").trim();
   if (!summary) throw withStatus(new Error(`${name}: summary 不能空 —— 人靠这一行决定开不开它`), 400);
@@ -299,7 +309,7 @@ const createPreset = async ({ repo, root, body, ctx }) => {
     if (categories.length) await repo.writeCategories(root, [...beforeVocab, ...categories], NO_PROTECT);
     await rename(staging, path.join(root, name));
     landed = true;
-    await repo.regenIndex(root, { required: false });
+    await repo.regenIndex(repoRoot, { required: false });
   } catch (error) {
     if (landed) await rm(path.join(root, name), { recursive: true, force: true }).catch(() => {});
     await rm(staging, { recursive: true, force: true }).catch(() => {});
@@ -309,7 +319,7 @@ const createPreset = async ({ repo, root, body, ctx }) => {
   return { ok: true, name };
 };
 
-const archivePreset = async (repo, root, name) => {
+const archivePreset = async ({ repo, repoRoot, scope, root, name }) => {
   if (!(await stat(path.join(root, name)).catch(() => null))) {
     throw withStatus(new Error(`工作区里没有 ${name}/`), 404);
   }
@@ -317,35 +327,45 @@ const archivePreset = async (repo, root, name) => {
   try {
     // 未发布的也搬进 .archive/：那是「删掉的东西不真删」，只有 purge 才真没。
     await repo.moveIntoArchive(root, name);
-    await repo.regenIndex(root, { required: false });
-    return await repo.syncRepo(root, `preset: 归档 ${name}`, { includeDeleted: true, label: "预设", tag: "preset" });
+    await repo.regenIndex(repoRoot, { required: false });
+    return await repo.syncRepo(repoRoot, `session: 归档 ${name}`, {
+      includeDeleted: true,
+      scope,
+      label: "预设",
+      tag: "session",
+    });
   } catch (error) {
-    await repo.run("git", ["-C", root, "reset", "-q", "--", name, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
+    await repo
+      .run("git", ["-C", repoRoot, "reset", "-q", "--", `${scope}/${name}`, `${scope}/${repo.ARCHIVE_DIR}/${name}`])
+      .catch(() => {});
     await repo.moveDir(path.join(root, repo.ARCHIVE_DIR, name), path.join(root, name)).catch(() => {});
     await restoreIndex(snapshot);
     throw error.status ? error : withStatus(new Error(`归档失败，已回滚：${oneLine(error)}`), 400);
   }
 };
 
-const restorePreset = async (repo, root, name) => {
+const restorePreset = async ({ repo, repoRoot, scope, root, name }) => {
   const snapshot = await snapshotIndex(root);
   try {
     await repo.moveOutOfArchive(root, name);
-    await repo.regenIndex(root, { required: false });
-    return await repo.syncRepo(root, `preset: 从归档恢复 ${name}`, {
+    await repo.regenIndex(repoRoot, { required: false });
+    return await repo.syncRepo(repoRoot, `session: 从归档恢复 ${name}`, {
       includeDeleted: true,
+      scope,
       label: "预设",
-      tag: "preset",
+      tag: "session",
     });
   } catch (error) {
-    await repo.run("git", ["-C", root, "reset", "-q", "--", name, `${repo.ARCHIVE_DIR}/${name}`]).catch(() => {});
+    await repo
+      .run("git", ["-C", repoRoot, "reset", "-q", "--", `${scope}/${name}`, `${scope}/${repo.ARCHIVE_DIR}/${name}`])
+      .catch(() => {});
     await repo.moveDir(path.join(root, name), path.join(root, repo.ARCHIVE_DIR, name)).catch(() => {});
     await restoreIndex(snapshot);
     throw error.status ? error : withStatus(new Error(`恢复失败，已回滚：${oneLine(error)}`), 400);
   }
 };
 
-const purgePreset = async (repo, root, name) => {
+const purgePreset = async ({ repo, repoRoot, scope, root, name }) => {
   const rel = `${repo.ARCHIVE_DIR}/${name}`;
   const source = path.join(root, rel);
   const exists = await stat(source).catch(() => null);
@@ -360,10 +380,11 @@ const purgePreset = async (repo, root, name) => {
   try {
     if (exists && tracked) await repo.run("git", ["-C", root, "rm", "-r", "-f", "--", rel], { timeout: 30_000 });
     else if (exists) await rm(source, { recursive: true, force: true });
-    return await repo.syncRepo(root, `preset: 彻底删除 ${name}`, {
+    return await repo.syncRepo(repoRoot, `session: 彻底删除 ${name}`, {
       includeDeleted: true,
+      scope,
       label: "预设",
-      tag: "preset",
+      tag: "session",
     });
   } catch (error) {
     // 提交/推送挂了：文件已经没了，但 HEAD 里还有 —— 拿回来，别留半截的暂存删除。
@@ -378,26 +399,55 @@ const purgePreset = async (repo, root, name) => {
 // ── 路由 ────────────────────────────────────────────────────────────────────
 
 /**
- * 处理 `/v1/presets*`。`res` 由这里写，返回值没人看。
+ * 处理 `/v1/presets/<段>/*`。`res` 由这里写，返回值没人看。
  *
  * `repo` = `repo-tools.js` 的整包，每个函数都收 `root`。测试递同一包、换一个 `root` 就是另一个仓。
  * `ctx` = 一个**函数**（每次现造）：引用校验要的是此刻的进程状态，不是启动那一刻的快照。
+ *
+ * `sections` = 段清单（`presets.js` 的 `readSections`），`presetsOf(id)` = 那一段的名册。
+ * 段以外的路径一律 404：**没有「默认段」这种隐式状态** —— 拿不准是哪一段就说明调用方拼错了。
  */
-export async function handlePresets({ req, res, url, parts, root, presets, repo, ctx }) {
+export async function handlePresets({ req, res, url, parts, repoRoot, sections, presetsOf, repo, ctx }) {
   const method = req.method ?? "GET";
   const at = parts.slice(2);
 
   try {
     if (!at.length) {
-      if (method !== "GET") return send(res, 405, { error: "预设仓库只有 GET" });
-      return send(res, 200, await overview({ repo, root, presets, ctx }));
+      if (method !== "GET") return send(res, 405, { error: "模板仓只有 GET" });
+      // 仓的目录：每段几条、脏没脏。页面不该自己去猜有哪些段。
+      return send(res, 200, {
+        root: repoRoot,
+        sections: sections.map((section) => {
+          const roster = presetsOf(section.id);
+          return {
+            id: section.id,
+            title: section.title,
+            count: roster ? roster.list().length : null,
+          };
+        }),
+      });
     }
 
-    if (at[0] === "categories") {
+    // **段是第一段路径。** 认不出来就 404 —— 别猜、别退回默认段。
+    const section = sections.find((entry) => entry.id === at[0]) ?? null;
+    if (!section) return send(res, 404, { error: `没有这一段：${at[0]}` });
+    const presets = presetsOf(section.id);
+    if (!presets) return send(res, 503, { error: `这一段还没装好：${section.id}` });
+    // 文件名操作收在段目录里（`root`），git 操作一律仓根 + `scope`（`repoRoot` + 段 ID）。
+    const root = path.join(repoRoot, section.id);
+    const scope = section.id;
+    const route = at.slice(1);
+
+    if (!route.length) {
+      if (method !== "GET") return send(res, 405, { error: "预设仓库只有 GET" });
+      return send(res, 200, await overview({ repo, repoRoot, section, root, presets, ctx }));
+    }
+
+    if (route[0] === "categories") {
       if (method === "GET") return send(res, 200, { categories: await repo.readCategories(root, NO_PROTECT) });
       if (method !== "POST") return send(res, 405, { error: "类别词表只有 GET / POST" });
       const body = await parseJsonBody(req);
-      const result = await repo.serializeRepoWrite(root, () =>
+      const result = await repo.serializeRepoWrite(repoRoot, () =>
         repo.mutateCategories(
           root,
           { op: body.op, name: body.name, to: body.to },
@@ -413,11 +463,11 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
       });
     }
 
-    if (at[0] === "category") {
+    if (route[0] === "category") {
       if (method !== "POST") return send(res, 405, { error: "单条预设的类别只有 POST" });
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
-      await repo.serializeRepoWrite(root, () =>
+      await repo.serializeRepoWrite(repoRoot, () =>
         repo.setNodeCategories(root, name, body.category ?? [], {
           label: "预设",
           manifest: "preset.json",
@@ -435,14 +485,14 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
       });
     }
 
-    if (at[0] === "files") {
+    if (route[0] === "files") {
       if (method !== "GET") return send(res, 405, { error: "文件列表只有 GET" });
       const name = checkName(url.searchParams.get("name"));
       const files = await repo.listRepoFiles(root, name, { kinds: null, maxFiles: 200, label: "预设" });
       return send(res, 200, { name, files: files.map((file) => ({ path: file.path, size: file.size })) });
     }
 
-    if (at[0] === "file") {
+    if (route[0] === "file") {
       if (method === "GET") {
         const name = checkName(url.searchParams.get("name"));
         const rel = String(url.searchParams.get("path") ?? "");
@@ -464,7 +514,7 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
         const problems = shapeProblems(spec, { dirName: name, where: `${name}/preset.json` });
         if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
       }
-      const saved = await repo.serializeRepoWrite(root, () =>
+      const saved = await repo.serializeRepoWrite(repoRoot, () =>
         repo.writeRepoFile(root, {
           name,
           rel: body.path,
@@ -481,10 +531,10 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
       return send(res, 200, { etag: saved.etag });
     }
 
-    if (at[0] === "create") {
+    if (route[0] === "create") {
       if (method !== "POST") return send(res, 405, { error: "新建只有 POST" });
       const body = await parseJsonBody(req);
-      await repo.serializeRepoWrite(root, () => createPreset({ repo, root, body, ctx }));
+      await repo.serializeRepoWrite(repoRoot, () => createPreset({ repo, repoRoot, root, body, ctx }));
       const loadError = await reloadRoster(presets);
       const roster = presets.list();
       return send(res, 200, {
@@ -495,9 +545,9 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
     }
 
     // 两个只读端点：面板的编辑框靠它们做校验 / 画 chip。**只读，不写盘、不提交。**
-    if (at[0] === "validate" || at[0] === "resolve") {
+    if (route[0] === "validate" || route[0] === "resolve") {
       if (method !== "GET" && method !== "POST") {
-        return send(res, 405, { error: `${at[0]} 只有 GET / POST` });
+        return send(res, 405, { error: `${route[0]} 只有 GET / POST` });
       }
       const body = method === "POST" ? await parseJsonBody(req) : {};
       const byName = method === "GET" ? url.searchParams.get("name") : body.name;
@@ -518,25 +568,26 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
         throw withStatus(new Error("要么给 name，要么给 spec"), 400);
       }
       const out = validatePresetSpec(spec, ctxOf(ctx), { dirName });
-      if (at[0] === "resolve") {
+      if (route[0] === "resolve") {
         return send(res, 200, { ok: out.ok, errors: out.errors, warnings: out.warnings, resolved: out.resolved });
       }
       return send(res, 200, out);
     }
 
-    if (at[0] === "publish") {
+    if (route[0] === "publish") {
       if (method !== "POST") return send(res, 405, { error: "发布只有 POST" });
       const body = await parseJsonBody(req);
-      const result = await repo.serializeRepoWrite(root, async () => {
+      const result = await repo.serializeRepoWrite(repoRoot, async () => {
         const snapshot = await snapshotIndex(root);
         try {
           // 闸在最前面：不过就一个字节都不动（index.json 也不重扫，否则会留下「扫了一半」的假象）。
           const problems = await gateRepo(repo, root);
           if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
-          await repo.regenIndex(root, { required: false });
-          return await repo.syncRepo(root, String(body.message ?? "").trim() || "preset: 更新预设仓库", {
+          await repo.regenIndex(repoRoot, { required: false });
+          return await repo.syncRepo(repoRoot, String(body.message ?? "").trim() || "session: 更新预设仓库", {
+            scope,
             label: "预设",
-            tag: "preset",
+            tag: "session",
           });
         } catch (error) {
           await restoreIndex(snapshot);
@@ -549,58 +600,67 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
         warnings.push(`未发布（HEAD 里没有）的没跟着这次提交走：${result.skippedIndex.join("、")}`);
       }
       if (loadError) warnings.push(`已提交，但装载失败：${loadError}`);
-      return send(res, 200, { ...(await writeResult(repo, root, result)), warnings });
+      return send(res, 200, { ...(await writeResult(repo, repoRoot, result)), warnings });
     }
 
-    if (at[0] === "archive" || at[0] === "restore" || at[0] === "purge") {
+    if (route[0] === "archive" || route[0] === "restore" || route[0] === "purge") {
       if (method !== "POST") {
         return send(res, 405, {
-          error: `${{ archive: "归档", restore: "恢复", purge: "彻底删除" }[at[0]]}只有 POST`,
+          error: `${{ archive: "归档", restore: "恢复", purge: "彻底删除" }[route[0]]}只有 POST`,
         });
       }
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
-      const task = { archive: archivePreset, restore: restorePreset, purge: purgePreset }[at[0]];
-      const result = await repo.serializeRepoWrite(root, () => task(repo, root, name));
+      const task = { archive: archivePreset, restore: restorePreset, purge: purgePreset }[route[0]];
+      const result = await repo.serializeRepoWrite(repoRoot, () =>
+        task({ repo, repoRoot, scope, root, name }),
+      );
       await reloadRoster(presets);
-      return send(res, 200, { ...(await writeResult(repo, root, result)), name });
+      return send(res, 200, { ...(await writeResult(repo, repoRoot, result)), name });
     }
 
-    if (at[0] === "pending") {
+    if (route[0] === "pending") {
       if (method !== "GET") return send(res, 405, { error: "待同步清单只有 GET" });
-      if (at[1] === "diff") {
-        const diff = await repo.pendingFileDiff(root, url.searchParams.get("path"));
+      if (route[1] === "diff") {
+        const rel = String(url.searchParams.get("path") ?? "");
+        // git 只认仓根口径：`<段>/<文件>`。回给页面的 `path` 还原成段内口径。
+        const diff = await repo.pendingFileDiff(repoRoot, `${scope}/${rel}`);
         // `before: null` = HEAD 里从来没有过这个文件（未发布）；空串是「有，但内容是空的」。
-        const tracked = await repo.trackedFile(root, diff.path);
+        const tracked = await repo.trackedFile(repoRoot, `${scope}/${rel}`);
         return send(res, 200, {
-          path: diff.path,
+          path: rel,
           before: tracked ? diff.base : null,
           after: diff.missing ? null : diff.text,
         });
       }
-      if (at[1] === "commit") {
+      if (route[1] === "commit") {
         return send(res, 200, await repo.pendingCommit(root, url.searchParams.get("hash")));
       }
-      return send(res, 200, await repo.pendingState(root, { unitKind: "preset" }));
+      return send(res, 200, await repo.pendingState(repoRoot, { unitKind: "preset", scope }));
     }
 
-    if (at[0] === "sync") {
+    if (route[0] === "sync") {
       if (method !== "POST") return send(res, 405, { error: "同步只有 POST" });
       const body = await parseJsonBody(req);
       const paths = Array.isArray(body.paths) ? body.paths.map(String) : null;
-      const result = await repo.serializeRepoWrite(root, () =>
-        repo.syncRepo(root, String(body.message ?? "").trim() || null, { paths, label: "预设", tag: "preset" }),
+      const result = await repo.serializeRepoWrite(repoRoot, () =>
+        repo.syncRepo(repoRoot, String(body.message ?? "").trim() || null, {
+          paths,
+          scope,
+          label: "预设",
+          tag: "session",
+        }),
       );
       await reloadRoster(presets);
-      return send(res, 200, await writeResult(repo, root, result));
+      return send(res, 200, await writeResult(repo, repoRoot, result));
     }
 
-    if (at[0] === "reload") {
+    if (route[0] === "reload") {
       if (method !== "POST") return send(res, 405, { error: "重读只有 POST" });
       return send(
         res,
         200,
-        await repo.serializeRepoWrite(root, async () => {
+        await repo.serializeRepoWrite(repoRoot, async () => {
           const error = await reloadRoster(presets);
           const roster = presets.list();
           return error ? { ok: false, error, presets: roster } : { ok: true, presets: roster };
@@ -608,7 +668,7 @@ export async function handlePresets({ req, res, url, parts, root, presets, repo,
       );
     }
 
-    return send(res, 404, { error: "presets 没有这条路", path: at.join("/") });
+    return send(res, 404, { error: "presets 没有这条路", path: route.join("/") });
   } catch (error) {
     return fail(res, error);
   }

@@ -1,4 +1,4 @@
-// api.js —— 3699b9 的数据层：只跟 qrd3wh 的 `/v1/presets*` 说话。
+// api.js —— 3699b9 的数据层：只跟 qrd3wh 的 `/v1/presets/<段>/*` 说话。
 //
 // 这个文件里没有 DOM、没有 localStorage、没有副本 —— 所以能裸跑 `node --test`，
 // 也所以「仓库是唯一真相」在这一层是结构上成立的：页面除了内存里的响应，
@@ -99,6 +99,15 @@ export function siblingBase(ctx, id) {
  * @param {{ fetch?: typeof globalThis.fetch, self?: string }} options
  *   self = 这一页自己在宿主里的路径（`location.pathname`），只用来问 `__nous/ctx`。
  */
+/**
+ * 这一页管的是**哪一段**。`Nous-Template` 一个仓放两段（`Session-Template` /
+ * `Ultimate-Template`），段名是路径的第一段 —— 目录名 = 段 ID = git 路径 = URL 段，只有一份
+ * 事实源。所以这里不发明短名，原样写文件夹名。
+ *
+ * 这一页只碰 Session-Template：改 Ultra 的规则在 `jtjzw5` 那一页，两页不互相窜。
+ */
+export const SECTION = "Session-Template";
+
 export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}) {
   if (typeof doFetch !== "function") throw new TypeError("createApi 需要一个 fetch 函数");
 
@@ -110,9 +119,21 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
     return `${root}__nous/ctx`;
   };
 
+  // 段名在这里补齐，调用方一行都不用写：`v1/presets/file` → `v1/presets/Session-Template/file`。
+  // 集中一处的理由很实在 —— 段名写错了是全部端点一起 404，不会只坏一个页面角落。
+  const sectioned = (path) => {
+    const clean = String(path ?? "").replace(/^\/+/, "");
+    if (!clean.startsWith("v1/presets")) return clean;
+    const rest = clean.slice("v1/presets".length);
+    if (!rest || rest.startsWith("/") || rest.startsWith("?")) {
+      return `v1/presets/${SECTION}${rest}`;
+    }
+    return clean;
+  };
+
   const absolute = (path) => {
     if (!base) throw new ApiError("还没连上 qrd3wh", { code: "unconnected" });
-    return base + String(path ?? "").replace(/^\/+/, "");
+    return base + sectioned(path);
   };
 
   const request = (method) => async (path, body) => {

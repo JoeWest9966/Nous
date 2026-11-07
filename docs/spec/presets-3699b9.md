@@ -1,4 +1,4 @@
-# spec · 会话预设（preset）—— 块 3699b9 + 私仓 Nous-presets + qrd3wh 的 /v1/presets*
+# spec · 会话预设（preset）—— 块 3699b9 + 私仓 Nous-Template（`Session-Template` 段） + qrd3wh 的 /v1/presets*
 
 **这份是唯一的约定来源。** 别的票/文档只写「执行本 spec 第几节 + 自己的验收」，不复制这里的形状。
 改形状先改这里。
@@ -17,8 +17,8 @@
 技能在 `Nous-skills`，扩展在 `Nous-extend`，模型在编目。它只说「这次开会话，用这几个」。
 
 ```
-Nous-presets/<名>/preset.json   ←   引用（provider/modelId + 技能名 + 模板名 + 档位 + 只读）
-Nous-presets/index.mjs          ←   扫盘 + 形状校验 + 写索引（这个仓自包含，不 import 别人）
+Nous-Template/Session-Template/<名>/preset.json  ← 引用（provider/modelId + 技能名 + 模板名 + 档位 + 只读）
+Nous-Template/index.mjs         ←   扫盘（按段） + 形状校验 + 写索引（这个仓自包含，不 import 别人）
 qrd3wh/presets.js               ←   名册 + 引用校验 + 展开（纯模块，像 prompt-log.js）
 qrd3wh /v1/presets*             ←   唯一写入口 + 唯一校验口 + 建会话时的那次展开
 3699b9 3699b9/public/*          ←   纯静态视图：facet 树 + 卡网格 + 表单抽屉 + 启动
@@ -39,7 +39,7 @@ qrd3wh /v1/presets*             ←   唯一写入口 + 唯一校验口 + 建会
 |---|---|---|---|
 | **模板 template** | 一段**系统提示词正文**，整张贴进每轮 prompt | `Nous-prompts/<名>/PROMPT.md` | 模型 |
 | **技能 skill** | 一个**目录**，` | `Nous-skills/<名>/SKILL.md` | 模型 |
-| **预设 preset** | 一组**开会话的选择**，可以引用模板 | `Nous-presets/<名>/preset.json` | 人 + 建会话那一下 |
+| **预设 preset** | 一组**开会话的选择**，可以引用模板 | `Nous-Template/Session-Template/<名>/preset.json` | 人 + 建会话那一下 |
 
 三者关系：preset **引用** template / skill / model，永不复制正文。
 
@@ -132,10 +132,10 @@ qrd3wh /v1/presets*             ←   唯一写入口 + 唯一校验口 + 建会
 
 ---
 
-## 3. 仓：`/opt/Nous-presets` —— 专属私仓
+## 3. 仓：`/opt/Nous-Template` —— 专属私仓（按段，这一段在 `Session-Template/`）
 
 ```
-/opt/Nous-presets/
+/opt/Nous-Template/
 ├── index.json         生成物（`node index.mjs` 扫盘写出），别手改
 ├── index.mjs          扫盘 + 校验 + 写索引（同步、纯、不读环境变量）
 ├── categories.json    类别词表 {v:1, categories:[]} —— 存在的唯一理由：刚建、还没挂预设的类别不能看不见
@@ -196,7 +196,7 @@ checkout 单独跑，不 import 引擎。跟 `Nous-prompts/index.mjs` ↔ `promp
 ### 4.2 `qrd3wh/server.js` 接线（三处，逻辑零处）
 
 ```
-const PRESETS_ROOT = process.env.NOUS_PRESETS ?? "/opt/Nous-presets";
+const PRESETS_ROOT = process.env.NOUS_PRESETS ?? "/opt/Nous-Template";
 import { createPresets, presetContext } from "./presets.js";
 import { handlePresets } from "./presets-api.js";
 
@@ -335,7 +335,7 @@ const setOrigin = (conversationId, preset) =>
 |---|---|
 | 本块 | 发 `public/` + 在浏览器里画 |
 | `qrd3wh` | 唯一写入口 + 唯一校验口（`/v1/presets*`、`/v1/sessions`） |
-| `Nous-presets` 仓 | 唯一真相 |
+| `Nous-Template` 仓 | 唯一真相 |
 
 - 地址**只**从宿主 `__nous/ctx` 找 `qrd3wh`；这一块里一个 `/p/…` 都不拼。
 - `server.js` 直接拷 `6ysg01/server.js`：剥 `NOUS_SELF`、目录穿越 403、目录→`index.html`、`no-store`。
@@ -370,7 +370,7 @@ const setOrigin = (conversationId, preset) =>
 
 **顶栏**：`<board>/<id> · N 条`；右边 HEAD 短哈希 + 同步 chip（`已同步` / `待同步 N` / `推送中` /
 `失败` / `远端多 N 个` / `本地已删 N 条`）+ 重扫按钮。`repo.error` 有值时这一整行变红并显原文 ——
-git 失败要看得见，不是白屏。专属私仓的地址显在左栏底部一行灰字（`仓在 origin · github.com/JoeWest9966/Nous-presets`），
+git 失败要看得见，不是白屏。专属私仓的地址显在左栏底部一行灰字（`仓在 origin · github.com/JoeWest9966/Nous-Template`），
 点开可复制；**不给编辑入口**（§3）。
 
 **左栏类别**：缩进类别树（`/` 分段），每行带计数，底部「＋ 新建类别」。点一下筛选，父级筛出整枝
@@ -507,13 +507,13 @@ git 失败要看得见，不是白屏。专属私仓的地址显在左栏底部�
       └──────┬────────────────────────────────────────────────────────────────-┘
              │ 只走 HTTP，地址只从 __nous/ctx 来
              ▼
-   qrd3wh  GET /v1/presets ──── 读 /opt/Nous-presets（repo + 扫盘 + load 状态）
+   qrd3wh  GET /v1/presets ──── 读 /opt/Nous-Template（repo + 扫盘 + load 状态）
            POST /v1/presets/* ─ 串行锁 → 写盘 → regenIndex（不过就整体回滚）→ load()
            POST /v1/presets/publish ─ 闸 + commit + push
            POST /v1/presets/resolve ─ qrd3wh/presets.js 的同一份校验+展开
            POST /v1/sessions {preset} ─ 展开 → 同一个 commit 建会话
              ▲                                    │
-             └── /opt/Nous-presets（专属私仓，git）┘  新标签页打开 qrd3wh 会话
+             └── /opt/Nous-Template（专属私仓，git）┘  新标签页打开 qrd3wh 会话
 ```
 
 三条不许踩（前两条是从 6ysg01 抄来的，不是我发明的）：
@@ -531,7 +531,7 @@ git 失败要看得见，不是白屏。专属私仓的地址显在左栏底部�
 
 | 期 | 内容 | 依赖 | 独立可验收 |
 |---|---|---|---|
-| **p0** | 仓 `Nous-presets` + `qrd3wh/presets.js` + `qrd3wh/presets-api.js` + `POST /v1/sessions {preset}` | — | `curl` 全流程跑得通，有测试 |
+| **p0** | 仓 `Nous-Template`（`Session-Template` 段）+ `qrd3wh/presets.js` + `qrd3wh/presets-api.js` + `POST /v1/sessions {preset}` | — | `curl` 全流程跑得通，有测试 |
 | **p1** | 页面 `3699b9`：列表 / 类别 / 详情 / 编辑 / 新建 / 归档·恢复·彻底删除 / **启动** | p0 | 手工验收清单 §9 |
 | **p2** | 会话出处：`Sessions` 那份 doc 加 `origin` 表存 `preset`（§4.5），`GET /v1/sessions` 回它，`qrd3wh/index.html` + `pxbgng` 会话树上显小标签 | p0 | 单测 + 手看 |
 | **p3** | `hb7k3j` 的上下文域开「预设」picker：选中 → 调 `resolve` → **预填**四域的勾选（不替用户决定），Create 时带 `{preset, …被改过的字段}`。同时把 preset 里的 `template:"auto"` 换成真正的键缺席语义 | p0/p1 | hb7k3j 的验收单独写 |
@@ -575,7 +575,7 @@ p0/p1 的改动面只有 `qrd3wh/presets.js`（新）、`qrd3wh/presets-api.js`�
 ### 9.1 自动化（抄 6ysg01 的布局：只测纯逻辑，不测 DOM）
 
 ```
-/opt/Nous-presets/test/            index.mjs：扫盘、形状、非法 spec 进索引标坏账、词表并进索引
+/opt/Nous-Template/test/            index.mjs：扫盘、形状、非法 spec 进索引标坏账、词表并进索引
 qrd3wh/test/presets.test.js        shapeProblems / expandPresetSpec / resolveSpec 的三态矩阵（§2.2 那张表
                                    逐条）+ 引用失效不变成 shape 错误（那是「现在开不了」不是「写坏了」）
 qrd3wh/test/presets-api.test.js    错误信封、etag/409、create→publish 的 git 顺序、归档/恢复/purge
@@ -595,7 +595,7 @@ qrd3wh/test/presets-sessions.test.js  POST /v1/sessions {preset}：
 - [ ] 冷启动 `/p/new1/3699b9/` 直接出列表（不靠 hash 路由）
 - [ ] 断网 / 停掉 qrd3wh：页面给出「没找到会话引擎」那一行，不是白屏、不是空网格
 - [ ] 新建 → 卡片立刻出现且是**琥珀虚线**（未发布），仓里 HEAD 没有它
-- [ ] 发布 → 变实边，顶栏 chip 变「已同步」，`git -C /opt/Nous-presets log -1` 看得到那个 commit
+- [ ] 发布 → 变实边，顶栏 chip 变「已同步」，`git -C /opt/Nous-Template log -1` 看得到那个 commit
 - [ ] 编辑 JSON 写一个未知键 → 卡变 `failed` 红边 + 服务端原文；改对之后点「重扫」能活
 - [ ] 引用的模板删掉（在 6ysg01 那边删）→ 这边卡变 `invalid`，启动按钮 disabled，红字点名
 - [ ] 启动 → 新标签页打开 qrd3wh，会话按预设建好，确认框写的和会话里生效的**一字一样**
@@ -625,7 +625,7 @@ content/new1/map/3699b9/
     └── vendor/diff/       jsdiff 8 逐文件拷（MIT，无打包器）
 test/model.test.js, test/api.test.js, test/index.js(barrel)
 
-Nous-presets/              整个仓（git init，remote 用户自己配）—— 已经建好，含 4 条起步预设
+Nous-Template/             整个仓（private，origin 已配）—— 按段放，Session-Template 段含 4 条起步预设
 qrd3wh/                    presets.js（新，纯逻辑）+ presets-api.js（新，HTTP）+ server.js（三处接线）+ test/
 ```
 
@@ -636,7 +636,7 @@ presets-api.js 和新仓里）。`Nous-extend` / `Nous-prompts` / `Nous-skills` 
 
 ## 11. 开工前要先定的两件（其余我已经定了）
 
-1. **`Nous-presets` 的 remote 归谁。** 面板不碰（§3），但 `git init` 之后要么用户自己 `set-url`，
+1. **`Nous-Template` 的 remote。** 面板不碰（§3）；已经建好 private 仓并推过首条，
    要么部署脚本铺一次。归**用户自己**，并且页面在他没配时把顶栏 chip 显成「没有远端」而不是报错 ——
    本地单用户也是合法用法。
 2. **`extensions` 这一维要不要进第一版 UI。** 引擎支持（`body.extensions`），hb7k3j 也支持（按 family 折叠 + 变体）。

@@ -16,13 +16,16 @@ import { createPresets } from "../presets.js";
 import * as repo from "../repo-tools.js";
 import { CATEGORIES, cleanup, exists, head, makeRepo, makeReq, makeRes, showNames } from "./helpers.js";
 
-/** 预设仓的迷你生成器：跟 `Nous-presets/index.mjs` 同形状（扫盘、校验、写索引）。 */
+/** 模板仓的迷你生成器：跟 `Nous-Template/index.mjs` 同形状（按段扫盘、校验、写索引）。 */
 const PRESETS_MINI_INDEX = `import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = path.dirname(fileURLToPath(import.meta.url));
-const presets = [];
+const repoRoot = path.dirname(fileURLToPath(import.meta.url));
+// 按段扫：每段各写各的 index.json（跟真仓 index.mjs 同一个口径，只是只有一段）。
+const SECTION = "Session-Template";
+const root = path.join(repoRoot, SECTION);
+const items = [];
 for (const entry of await readdir(root, { withFileTypes: true })) {
   if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
   let raw;
@@ -46,12 +49,12 @@ for (const entry of await readdir(root, { withFileTypes: true })) {
     console.error(entry.name + ": summary 是空的");
     process.exit(1);
   }
-  presets.push({ name: entry.name, summary: spec.summary, category: spec.category ?? [] });
+  items.push({ name: entry.name, summary: spec.summary, category: spec.category ?? [] });
 }
-presets.sort((a, b) => a.name.localeCompare(b.name));
+items.sort((a, b) => a.name.localeCompare(b.name));
 await writeFile(
   path.join(root, "index.json"),
-  JSON.stringify({ v: 1, presets, categories: JSON.parse(await readFile(path.join(root, "categories.json"), "utf8")).categories }, null, 2) + "\\n",
+  JSON.stringify({ v: 1, section: SECTION, items, categories: JSON.parse(await readFile(path.join(root, "categories.json"), "utf8")).categories }, null, 2) + "\\n",
 );
 `;
 
@@ -62,9 +65,25 @@ const presetFiles = (name, spec = {}, { body = null } = {}) => ({
   ...(body ? { [`${name}/PRESET.md`]: body } : {}),
 });
 
+const SECTION = "Session-Template";
+const SECTIONS = JSON.stringify(
+  { v: 1, sections: [{ id: SECTION, title: "会话模板", manifest: "preset.json", checker: "preset" }] },
+  null,
+  2,
+);
+
+/**
+ * 造一个**按段**的临时仓：`sections.json` + `index.mjs` 在仓根，数据全在 `Session-Template/`。
+ * 传进来的相对路径（`one/preset.json`）自动落到段里 —— 测试正文只关心段内口径。
+ */
 const makePresetsRepo = async (files = {}) =>
   makeRepo({
-    files: { "categories.json": CATEGORIES, "index.mjs": PRESETS_MINI_INDEX, ...files },
+    files: {
+      "sections.json": SECTIONS,
+      "index.mjs": PRESETS_MINI_INDEX,
+      [`${SECTION}/categories.json`]: CATEGORIES,
+      ...Object.fromEntries(Object.entries(files).map(([rel, text]) => [`${SECTION}/${rel}`, text])),
+    },
   });
 
 /** 假的引用 ctx：两个技能、两条模板、两个扩展、一台模型（档位三档）。 */
@@ -78,23 +97,40 @@ const fakeCtx = () => ({
 });
 
 const setup = async (files = {}) => {
-  const root = await makePresetsRepo(files);
-  const presets = await createPresets({ dir: root });
-  return { root, presets };
+  const repoRoot = await makePresetsRepo(files);
+  const presets = await createPresets({ dir: path.join(repoRoot, SECTION) });
+  return { repoRoot, root: repoRoot, presets };
 };
 
-const api = (root, presets, ctx = fakeCtx) => ({
-  call: async (method, target, body) => {
-    const url = new URL(`http://block.local${target}`);
+const sections = [{ id: SECTION, title: "会话模板", manifest: "preset.json", checker: "preset" }];
+
+/**
+ * 调一次接口。测试正文写 `/v1/presets/file?…`，这里补上段名 —— 但**段名本身也要能测**，
+ * 所以给了 `raw: true` 就不补。
+ */
+const api = (repoRoot, presets, ctx = fakeCtx) => ({
+  call: async (method, target, body, { raw = false } = {}) => {
+    const full = raw || !target.startsWith("/v1/presets") ? target : target.replace("/v1/presets", `/v1/presets/${SECTION}`);
+    const url = new URL(`http://block.local${full}`);
     const parts = url.pathname.split("/").filter(Boolean);
     const req = makeReq(method, body);
     const { res, out } = makeRes();
-    await handlePresets({ req, res, url, parts, root, presets, repo, ctx });
+    await handlePresets({
+      req,
+      res,
+      url,
+      parts,
+      repoRoot,
+      sections,
+      presetsOf: (id) => (id === SECTION ? presets : null),
+      repo,
+      ctx,
+    });
     return { status: out.status, body: out.body, raw: out.text };
   },
 });
 
-const read = (root, relative) => readFile(path.join(root, relative), "utf8");
+const read = (root, relative) => readFile(path.join(root, SECTION, relative), "utf8");
 
 // ── 列表 ────────────────────────────────────────────────────────────────────
 
@@ -162,7 +198,7 @@ test("create：落盘 + 重扫索引 + 未发布（第一个正确状态就是�
     });
     assert.equal(made.status, 200);
     assert.equal(made.body.preset.name, "concise");
-    assert.equal(await exists(path.join(root, "concise", "preset.json")), true);
+    assert.equal(await exists(path.join(root, SECTION, "concise", "preset.json")), true);
 
     const spec = JSON.parse(await read(root, "concise/preset.json"));
     assert.deepEqual(spec, {
@@ -175,7 +211,7 @@ test("create：落盘 + 重扫索引 + 未发布（第一个正确状态就是�
     });
 
     const index = JSON.parse(await read(root, "index.json"));
-    assert.deepEqual(index.presets.map((item) => item.name), ["concise"]);
+    assert.deepEqual(index.items.map((item) => item.name), ["concise"]);
 
     // 还没提交：面板上该是琥珀色「未发布」。
     assert.equal((await call("GET", "/v1/presets")).body.presets[0].tracked, false);
@@ -394,7 +430,7 @@ test("publish：形状闸 → 重扫 → commit；坏的一条挡住整批，且
     assert.equal(ok.body.ok, true);
     assert.ok(ok.body.commit?.hash);
     const names = (await showNames(root, "HEAD")).map((line) => line.split("\t")[1]);
-    assert.ok(names.includes("bad/preset.json"));
+    assert.ok(names.includes(`${SECTION}/bad/preset.json`));
   } finally {
     await cleanup(root);
   }
@@ -406,19 +442,19 @@ test("archive → restore → purge：可逆的那两步留 git 历史，purge �
   try {
     await call("POST", "/v1/presets/publish", {});
     assert.equal((await call("POST", "/v1/presets/archive", { name: "temp" })).status, 200);
-    assert.equal(await exists(path.join(root, "temp")), false);
-    assert.equal(await exists(path.join(root, ".archive", "temp", "preset.json")), true);
+    assert.equal(await exists(path.join(root, SECTION, "temp")), false);
+    assert.equal(await exists(path.join(root, SECTION, ".archive", "temp", "preset.json")), true);
 
     const overview = await call("GET", "/v1/presets");
     assert.deepEqual(overview.body.archived.map((entry) => entry.name), ["temp"]);
     assert.equal(overview.body.presets.length, 0);
 
     assert.equal((await call("POST", "/v1/presets/restore", { name: "temp" })).status, 200);
-    assert.equal(await exists(path.join(root, "temp", "preset.json")), true);
+    assert.equal(await exists(path.join(root, SECTION, "temp", "preset.json")), true);
 
     await call("POST", "/v1/presets/archive", { name: "temp" });
     assert.equal((await call("POST", "/v1/presets/purge", { name: "temp" })).status, 200);
-    assert.equal(await exists(path.join(root, ".archive", "temp")), false);
+    assert.equal(await exists(path.join(root, SECTION, ".archive", "temp")), false);
   } finally {
     await cleanup(root);
   }
@@ -494,9 +530,9 @@ test("reload：命令行里直接改了盘 → 点重扫，名册立刻跟上", 
   const call = api(root, presets).call;
   try {
     const { mkdir, writeFile } = await import("node:fs/promises");
-    await mkdir(path.join(root, "handmade"));
+    await mkdir(path.join(root, SECTION, "handmade"));
     await writeFile(
-      path.join(root, "handmade", "preset.json"),
+      path.join(root, SECTION, "handmade", "preset.json"),
       JSON.stringify({ v: 1, name: "handmade", summary: "手写的", category: [] }),
     );
     const before = await call("GET", "/v1/presets");
@@ -518,5 +554,95 @@ test("未知路径 → 404 带路径（别拿一个 200 空对象糊过去）", 
     assert.equal(got.body.path, "nope");
   } finally {
     await cleanup(root);
+  }
+});
+
+// ── 分段：一个仓放两段，各管各的 ────────────────────────────────────────────
+//
+// 这组测的就是「共用」不会偷偷变成「共享状态」。仓里另加一个 Ultimate-Template（形状还没定，
+// 只是躺着），然后看 Session 的发布 / 待同步 / 脏标记会不会把它带走。
+
+const withSecondSection = async (files = {}) => {
+  const repoRoot = await makePresetsRepo(files);
+  const { writeTree, commitAll } = await import("./helpers.js");
+  await writeTree(repoRoot, "Ultimate-Template/categories.json", CATEGORIES);
+  // 第二段里放一个没写完的文件：它不该被第一段的发布碰。
+  await writeTree(repoRoot, "Ultimate-Template/.scratch.md", "还没写完\n");
+  await commitAll(repoRoot, "plus ultimate");
+  const presets = await createPresets({ dir: path.join(repoRoot, SECTION) });
+  return { repoRoot, presets };
+};
+
+const twoSections = [
+  { id: SECTION, title: "会话模板", manifest: "preset.json", checker: "preset" },
+  { id: "Ultimate-Template", title: "终极模板", manifest: "ultimate.json", checker: null },
+];
+
+test("GET /v1/presets：仓的目录（每段几条），段名从这里来", async () => {
+  const { repoRoot, presets } = await withSecondSection(presetFiles("one"));
+  try {
+    const url = new URL("http://block.local/v1/presets");
+    const { res, out } = makeRes();
+    await handlePresets({
+      req: makeReq("GET"),
+      res,
+      url,
+      parts: ["v1", "presets"],
+      repoRoot,
+      sections: twoSections,
+      presetsOf: (id) => (id === SECTION ? presets : null),
+      repo,
+      ctx: fakeCtx,
+    });
+    assert.equal(out.status, 200);
+    assert.deepEqual(
+      out.body.sections.map((section) => [section.id, section.count]),
+      [
+        [SECTION, 1],
+        ["Ultimate-Template", null], // 形状还没定 = 数不出来，不是 0
+      ],
+    );
+  } finally {
+    await cleanup(repoRoot);
+  }
+});
+
+test("没登记的段 → 404（不猜、不退回默认段）", async () => {
+  const { root, presets } = await setup(presetFiles("one"));
+  try {
+    const got = await api(root, presets).call("GET", "/v1/presets/Nope-Template", null, { raw: true });
+    assert.equal(got.status, 404);
+    assert.match(got.body.error, /没有这一段：Nope-Template/);
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("发布一段不会带走另一段没写完的文件（一个库最容易烂的地方）", async () => {
+  const { repoRoot, presets } = await withSecondSection(presetFiles("one"));
+  const call = api(repoRoot, presets).call;
+  try {
+    // 另一段留一条未提交的改动。
+    const { writeTree } = await import("./helpers.js");
+    await writeTree(repoRoot, "Ultimate-Template/notes.md", "草稿\n");
+
+    const made = await call("POST", "/v1/presets/publish", {});
+    assert.equal(made.status, 200);
+    const committed = (await showNames(repoRoot, "HEAD")).map((line) => line.split("\t")[1]);
+    // 这一段的索引跟着上去了……
+    assert.ok(committed.some((name) => name.startsWith(`${SECTION}/`)));
+    // ……另一段的两条脏文件一条都没进这次提交。
+    assert.equal(committed.includes("Ultimate-Template/notes.md"), false);
+    assert.equal(committed.includes("Ultimate-Template/.scratch.md"), false);
+
+    // 待同步清单也只报自己那段：这一段的发布刚做完，它就是干净的 ——
+    // 哪怕另一段这会儿有未提交的文件（`dirty` 必须是 false，否则「分开管理」是假的）。
+    const pending = await call("GET", "/v1/presets/pending");
+    assert.equal(pending.body.dirty, false);
+    assert.deepEqual(pending.body.units, []);
+    // 而整个仓是脏的（另一段那条没写完的）：脏不脏是两回事，别混成一个 chip。
+    assert.deepEqual((await repo.gitChanges(repoRoot)).map((item) => item.path), ["Ultimate-Template/notes.md"]);
+  } finally {
+    await cleanup(repoRoot);
   }
 });

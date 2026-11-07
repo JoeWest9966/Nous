@@ -68,7 +68,9 @@ const SKILLS_ROOT = process.env.NOUS_SKILLS ?? "/opt/Nous-skills";
 const PROMPTS_ROOT = process.env.NOUS_PROMPTS ?? "/opt/Nous-prompts";
 // 会话预设私库。一条预设 = `<名>/preset.json`（纯配置，引用别的命名空间）。
 // **不是扩展**：不进 registry、不建名牌、不进提示词 —— 所以它住在这块里（见 presets.js 头）。
-const PRESETS_ROOT = process.env.NOUS_PRESETS ?? "/opt/Nous-presets";
+const PRESETS_ROOT = process.env.NOUS_PRESETS ?? "/opt/Nous-Template";
+// 不带段名的 `preset` 落到这一段。两段都只认自己的名字 —— 没有「默认段」那种隐式状态。
+const PRESET_SESSION_SECTION = "Session-Template";
 // 扩展是造扩展的函数，宿主把 api 递进去 —— 它们不自己 import pi-durable（见仓库 README）。
 const api = { defineExtension, section };
 const { default: createNous } = await import(`${EXTEND}/nous/index.js`);
@@ -122,7 +124,7 @@ import { handleSkills } from "./skills-api.js";
 import * as upstream from "./upstream.js";
 import { handlePrompts } from "./prompts-api.js";
 import { handlePresets } from "./presets-api.js";
-import { createPresets, expandPresetSpec, presetContext } from "./presets.js";
+import { createPresets, expandPresetSpec, presetContext, readSections } from "./presets.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -1457,8 +1459,15 @@ registry.install(skills.extension);
 registry.install(prompts.extension);
 await skills.load();
 await prompts.load();
-// 预设只是个名册（无 registry 副作用、无渲染）。扫一次就够；每次写盘由端点自己 load()。
-const presets = await createPresets({ dir: PRESETS_ROOT });
+// 模板仓按**段**放（Session-Template / Ultimate-Template）：一段一个名册，各扫各的目录。
+// 名册只是个投影（无 registry 副作用、无渲染）。扫一次就够；每次写盘由端点自己 load()。
+const presetSections = await readSections(PRESETS_ROOT);
+const presetsBySection = new Map();
+for (const section of presetSections) {
+  if (!section.checker) continue; // 形状还没定的段：不装名册，端点会回「这一段还没装好」
+  presetsBySection.set(section.id, await createPresets({ dir: path.join(PRESETS_ROOT, section.id) }));
+}
+const presetsOf = (id) => presetsBySection.get(id) ?? null;
 /**
  * 引用校验 / 显示的 ctx。**每次现造** —— 它问的是此刻的进程状态（技能装了没、模型在不在
  * 编目里），不是启动那一刻的快照。面板、校验端点、建会话三处共用它，所以「面板说能跑」
@@ -1855,8 +1864,9 @@ const route = async (req, res, url) => {
         res,
         url,
         parts,
-        root: PRESETS_ROOT,
-        presets,
+        repoRoot: PRESETS_ROOT,
+        sections: presetSections,
+        presetsOf,
         repo,
         ctx: presetCtx,
       });
@@ -2301,11 +2311,21 @@ const route = async (req, res, url) => {
     // 就是靠这条「带着初值的手动创建」）。覆盖是个键一个键的 —— 整份替换会让
     // 「只想改模型」把技能也顺手改掉。
     const presetAsked = typeof body.preset === "string" ? body.preset.trim() : null;
+    // 段名是预设名的一部分（`Session-Template/weekly-report`）：两段可以各有一条同名预设，
+    // 光凭名字分不出是哪条。不带段名的按会话段处理 —— 那是这一页唯一的合法用途。
+    const presetRef = presetAsked && presetAsked.includes("/")
+      ? { section: presetAsked.slice(0, presetAsked.indexOf("/")), name: presetAsked.slice(presetAsked.indexOf("/") + 1) }
+      : presetAsked
+        ? { section: PRESET_SESSION_SECTION, name: presetAsked }
+        : null;
     let presetBase = null;
-    if (presetAsked) {
-      const item = presets.get(presetAsked);
-      if (!item) return json(res, 400, { error: `没有这条预设：${presetAsked}` });
-      if (item.specError) return json(res, 400, { error: `预设「${presetAsked}」自己写坏了：${item.specError}` });
+    if (presetRef) {
+      const roster = presetsOf(presetRef.section);
+      const item = roster?.get(presetRef.name) ?? null;
+      if (!item) return json(res, 400, { error: `没有这条预设：${presetRef.section}/${presetRef.name}` });
+      if (item.specError) {
+        return json(res, 400, { error: `预设「${presetRef.name}」自己写坏了：${item.specError}` });
+      }
       presetBase = expandPresetSpec(item.spec);
     }
     const pick = (key) => (body[key] !== undefined ? body[key] : presetBase?.[key]);
@@ -2385,7 +2405,7 @@ const route = async (req, res, url) => {
       // 只读也是**生效值**：上面那次 configure 到底成没成，回给前端别让人猜。
       readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       // 预设回的出处：这次是哪条预设开的（`null` = 手动创建的）。前端拿它显一条小标签。
-      preset: presetAsked || null,
+      preset: presetRef ? `${presetRef.section}/${presetRef.name}` : null,
       missing: skills.missing(wanted),
       // 勾了但没装 / 盘上刚删掉：说清楚，别静默降级成「没有扩展」。
       ...(() => {

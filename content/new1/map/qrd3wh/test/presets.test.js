@@ -1,6 +1,6 @@
 // `presets.js` 的行为 —— 纯逻辑，不起引擎、不碰 git。
 //
-// 这张「形状矩阵」跟 `Nous-presets/test/index.test.js` 里那张是**同一张**。两处实现
+// 这张「形状矩阵」跟 `Nous-Template/test/index.test.js` 里那张是**同一张**。两处实现
 // （那个仓要能单独 checkout、不许 import 引擎），靠这两张表互相咬住 —— 漂了会红。
 //
 // 最重要的一组是「三态」：`template` 缺席 / `null` / 字符串必须展开成**不同的东西**。
@@ -36,7 +36,7 @@ const fakeCtx = (over = {}) => ({
   ...over,
 });
 
-// ── 形状矩阵（与 Nous-presets/test/index.test.js 同一张）────────────────────
+// ── 形状矩阵（与 Nous-Template/test/index.test.js 同一张）────────────────────
 
 test("形状：最小可用的那一条过", () => {
   assert.deepEqual(shapeProblems(minimal("a"), { dirName: "a" }), []);

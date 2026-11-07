@@ -98,16 +98,17 @@ test("readJson：409 单独一个类（面板要能分辨「重读一下」和�
 test("get / post：地址拼在 qrd3wh 后面，POST 带 JSON body", async () => {
   const fetch = fakeFetch({
     "GET __nous/ctx": [200, CTX],
-    "GET v1/presets": [200, { presets: [] }],
-    "POST v1/presets/create": [200, { preset: { name: "a" } }],
+    "GET v1/presets/Session-Template": [200, { presets: [] }],
+    "POST v1/presets/Session-Template/create": [200, { preset: { name: "a" } }],
   });
   const api = createApi({ fetch, self: "/p/new1/3699b9/" });
   await api.connect();
   await api.get("v1/presets");
   await api.post("v1/presets/create", { name: "a" });
   const calls = fetch.calls.filter((call) => call.url.includes("v1/"));
-  assert.equal(calls[0].url, "/p/new1/qrd3wh/v1/presets");
-  assert.equal(calls[1].url, "/p/new1/qrd3wh/v1/presets/create");
+  // 段名由 api.js 补上：调用方只写 `v1/presets`，落到 `v1/presets/Session-Template`。
+  assert.equal(calls[0].url, "/p/new1/qrd3wh/v1/presets/Session-Template");
+  assert.equal(calls[1].url, "/p/new1/qrd3wh/v1/presets/Session-Template/create");
   assert.deepEqual(calls[1].body, { name: "a" });
 });
 
@@ -160,8 +161,8 @@ test("launchPreset：建会话失败就**不**开标签页（开了个空对话�
 test("publishWithRefresh：发布成功后重读那个文件（基线跟着 HEAD 走了）", async () => {
   const fetch = fakeFetch({
     "GET __nous/ctx": [200, CTX],
-    "POST v1/presets/publish": [200, { ok: true, pushed: null }],
-    "GET v1/presets/file": [200, { text: "{}", etag: "abc" }],
+    "POST v1/presets/Session-Template/publish": [200, { ok: true, pushed: null }],
+    "GET v1/presets/Session-Template/file": [200, { text: "{}", etag: "abc" }],
   });
   const api = createApi({ fetch, self: "/p/new1/3699b9/" });
   await api.connect();

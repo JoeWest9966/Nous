@@ -4,19 +4,23 @@
 它不装内容：正文在 `Nous-prompts`，技能在 `Nous-skills`，扩展在 `Nous-extend`，模型在编目。
 它只说「这次用这几个」—— 所以这一页上的每个 chip 都是一个**指向别处**的指针。
 
+**仓是分段的**：`Nous-Template` 一个仓放两段（`Session-Template` / `Ultimate-Template`），
+段名就是文件夹名，也是 URL 的第一段。这一页只碰 `Session-Template` —— 段名集中写死在
+`public/api.js` 的 `SECTION` 一处，调用方一行都不用管。另一段归 `jtjzw5`。
+
 兄弟块 `hb7k3j`（New-Manual）是**现场挑**一套配置；这一块是把那套存下来，下次点一下就开。
 
 ## 为什么只剩发静态文件
 
-数据不走这个进程。页面自己去问 `qrd3wh` 的 `GET /v1/presets`，地址从宿主的 `__nous/ctx`
+数据不走这个进程。页面自己去问 `qrd3wh` 的 `GET /v1/presets/Session-Template`，地址从宿主的 `__nous/ctx`
 里找 —— **这一块里不拼任何绝对路径，也不跑 git**。所以 `server.js` 只做一件事：把
 `public/` 发出去（剥 `NOUS_SELF`、目录穿越 403、目录 → `index.html`、`cache-control: no-store`）。
 
 | 谁 | 干什么 |
 |---|---|
 | 本块 | 发静态文件 + 在浏览器里画 |
-| `qrd3wh` | 唯一写入口 + **唯一校验口**（`/v1/presets*`、`POST /v1/sessions {preset}`） |
-| `Nous-presets` 仓 | 唯一真相：`<名>/preset.json`（+ 可选的 `PRESET.md`） |
+| `qrd3wh` | 唯一写入口 + **唯一校验口**（`/v1/presets/Session-Template/*`、`POST /v1/sessions {preset}`） |
+| `Nous-Template` 仓 | 唯一真相，这一段在 `Session-Template/<名>/preset.json`（+ 可选的 `PRESET.md`） |
 
 **这一块没有 `data/`、没有配置、没有 token、没有后端状态。** 要写 `NOUS_DATA` 的东西就说明它
 不该在这一页。

@@ -9,7 +9,8 @@
 // 它不建名牌、不进提示词、跑起来之后已经全部展开成别的东西了。塞进扩展仓只是多改一个仓，
 // 换不来任何东西。
 //
-// 一条预设（`Nous-presets/<名>/preset.json`）= 一组**引用**。这一层干两件别处干不了的事：
+// 一条预设（`Nous-Template/Session-Template/<名>/preset.json`）= 一组**引用**。这一层干两件
+// 别处干不了的事：
 //
 //   校验 —— 「引用的东西还活着吗」（技能还装着吗、模板还在吗、模型在编目里吗、档位在那台
 //            模型的档位表里吗）。盘上的 `index.mjs` 做不了，它没有 registry。
@@ -17,7 +18,8 @@
 //
 // 四条纪律：
 //
-//  1. **仓库是唯一真相，这里是投影。** 盘上有 `<名>/preset.json` = 有这条预设；删掉目录
+//  1. **仓库是唯一真相，这里是投影。** 一个仓按**段**放（Session-Template /
+//     Ultimate-Template），每段一个名册实例，各扫各的目录、各写各的索引。 盘上有 `<名>/preset.json` = 有这条预设；删掉目录
 //     下次扫盘就没了。不联网、不维护第二份名单、不缓存。
 //  2. **三态不许合并。** `template` 缺席 = 用仓库默认、`template: null` = 明确不要、
 //     字符串 = 用它。`skills` 缺席 = 服务端按默认、`[]` = 一个都不要。展开函数里一个
@@ -25,7 +27,7 @@
 //     不写默认值。
 //  3. **「引用失效」不是「写坏了」。** 前者是现在开不了（技能被卸了），后者是 JSON / 形状坏了。
 //     前者走 `resolve` 的红 chip、启动时进 `missing[]`；只有后者进 `specError`。
-//  4. **形状规则跟 `Nous-presets/index.mjs` 是同一套，两处存在。** 那个仓要能单独 checkout、
+//  4. **形状规则跟 `Nous-Template/index.mjs` 是同一套，两处存在。** 那个仓要能单独 checkout、
 //     单独跑（不许 import 引擎），所以要自己一份。跟 `Nous-prompts/index.mjs` ↔ `prompts-api.js`
 //     那一对同一个形状。两边各持一份同样的测试表，漂了会红。
 
@@ -58,7 +60,7 @@ const MAX_DESCRIPTION = 2000;
 const nonEmptyString = (value) => typeof value === "string" && value.trim().length > 0;
 export const oneLine = (error) => String(error?.message ?? error).split("\n")[0].slice(0, 400);
 
-// ── 形状校验：跟 Nous-presets/index.mjs 的 checkSpecShape 同一套规则 ─────────
+// ── 形状校验：跟 Nous-Template/index.mjs 的 checkSpecShape 同一套规则 ─────────
 
 /**
  * 一条 spec 的**形状**校验（不看引用）。返回 `string[]`，空 = 通过。
@@ -364,6 +366,37 @@ async function scan(dir) {
   }
   found.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return found;
+}
+
+/**
+ * 仓里的段清单（`sections.json`）。一个仓按段放：`Session-Template` / `Ultimate-Template`。
+ * **段 ID 就是文件夹名** —— 目录名 = git 路径 = URL 段 = 会话里的前缀，只有一份事实源。
+ *
+ * `checker: null` 的段（形状还没定）照样登记、照样出现在清单里：它只是现在装不了东西。
+ */
+export async function readSections(repoRoot) {
+  let raw;
+  try {
+    raw = await readFile(path.join(repoRoot, "sections.json"), "utf8");
+  } catch {
+    // 没有 sections.json = 老的单段仓（预设直接躺在仓根）。当成只有一段，段名空串。
+    return [{ id: "", title: "默认", manifest: "preset.json", checker: "preset" }];
+  }
+  const parsed = JSON.parse(raw);
+  if (parsed?.v !== 1) throw new Error(`sections.json 的 v 不对：要 1，收到 ${JSON.stringify(parsed?.v)}`);
+  if (!Array.isArray(parsed?.sections) || !parsed.sections.length) throw new Error("sections.json 缺 sections 数组");
+  return parsed.sections.map((entry) => {
+    const id = String(entry?.id ?? "").trim();
+    if (!id || id !== path.basename(id) || id.startsWith(".")) {
+      throw new Error(`sections.json 里的段 id「${id}」不合格：只能是文件夹名`);
+    }
+    return {
+      id,
+      title: String(entry.title ?? id),
+      manifest: String(entry.manifest ?? "preset.json"),
+      checker: entry.checker ?? null,
+    };
+  });
 }
 
 /**
