@@ -140,7 +140,7 @@ test("viewCounts / visibleViews：非零才出现，全部和已归档永远在"
 
 test("emptyHint：整段空 vs 这一档空，两句话", () => {
   assert.match(emptyHint({ total: 0, view: "all" }).title, /这一段还是空的/);
-  assert.match(emptyHint({ total: 3, view: "invalid", category: null }).title, /这一档 里没有/);
+  assert.match(emptyHint({ total: 3, view: "invalid", category: null }).title, /这一档里没有/);
   assert.match(emptyHint({ total: 3, view: "all", query: "abc" }).title, /搜「abc」/);
 });
 

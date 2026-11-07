@@ -35,7 +35,7 @@ export const splitRef = (ref) => {
 
 /**
  * 一条引用现在算不算数。`known` 是「那一段里现有哪些名字」——真数据从 qrd3wh 的
- * `resolved` 来，示例数据从 `demo.js` 来；**这一页不自己判断引用存在性**，只翻译结果。
+ * `resolved` 来；**这一页不自己判断引用存在性**，只翻译结果。
  */
 export const refState = (ref, known) => {
   if (!known) return "unknown";
@@ -230,11 +230,11 @@ export const emptyHint = ({ total, view, category, query }) => {
   if (!total) {
     return {
       title: "这一段还是空的",
-      body: "`Ultimate-Template/` 里还没有一条。`ultimate.json` 的形状定下来之后，第一条从这里开始。",
+      body: "Ultimate-Template/ 里还没有一条。ultimate.json 的形状定下来之后，第一条从这里开始。",
     };
   }
   const why = query ? `搜「${query}」` : category && view !== "all" ? `${category} · ${view}` : category || "这一档";
-  return { title: `${why} 里没有`, body: "换个筛选，或者点「全部」看这一段的全部。" };
+  return { title: `${why}里没有`, body: "换个筛选，或者点「全部」看这一段的全部。" };
 };
 
 /** 详情里「叠放顺序」那一节：每条引用带上它现在的状态，缺的直接点名。 */

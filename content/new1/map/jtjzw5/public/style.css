@@ -436,8 +436,8 @@ code { font-family: var(--mono); font-size: 11.5px; background: var(--wash); pad
   .toasts { bottom: calc(18px + env(safe-area-inset-bottom)); }
 }
 
-/* 示例数据 / 「这一段还没装好」的黄条。分段之后这一段可能**还不能装东西**，
-   那不是错误 —— 但页面上必须有一个人能看见的交代，不能拿假数据糊过去。 */
+/* 「这一段还没装好」的黄条。分段之后这一段可能**还不能装东西**，那不是错误 ——
+   但页面上必须有一个人能看见的交代。空着可以，假装有东西不行。 */
 .banner {
   flex: none; display: flex; align-items: center; gap: 8px;
   padding: 8px 20px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere;

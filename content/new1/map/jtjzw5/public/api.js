@@ -111,8 +111,8 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
     },
     get,
     /**
-     * 这一段的总览。503 = 这一段还没装好（形状未定），调用方拿它切示例数据 ——
-     * **但要明着说**，不能悄悄拿假数据糊过去。
+     * 这一段的总览。503 = 这一段还没装好（形状未定）—— 调用方把它原样摆出来，页面就空着。
+     * **不许拿假数据把它填满**：填满了人就会以为仓里有东西。
      */
     async overview() {
       return get("v1/presets");

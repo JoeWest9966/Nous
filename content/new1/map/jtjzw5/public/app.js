@@ -4,8 +4,8 @@
 // `ultimate.json` 的形状还没定（`sections.json` 里那段的 `checker` 是 `null`，引擎回 503），
 // 形状没定就先长出编辑器的结果，是写完就扔。
 //
-// 所以这一版要做好的只有一件事：**把一条终极模板长什么样说清楚** —— 叠了哪几条预设、
-// 钉的是哪条提示词、坏在哪儿、好的坏的分别什么脸色。
+// **没有任何示例数据。** 这一段现在就是空的，页面就画成空的 —— 顶上一条黄条说清为什么。
+// 拿假数据把页面填满，等于让人以为仓里有东西：那是这一页最不该犯的错。
 
 import { createApi, SectionNotReady } from "./api.js";
 import {
@@ -23,7 +23,6 @@ import {
   viewCounts,
   visibleViews,
 } from "./model.js";
-import { DEMO_KNOWN_PRESETS, DEMO_KNOWN_PROMPTS, DEMO_ULTIMATES } from "./demo.js";
 
 const $ = (id) => document.getElementById(id);
 const esc = (value) =>
@@ -43,7 +42,6 @@ const state = {
   categories: [],
   archived: [],
   repo: null,
-  demo: false,
   notice: null,
   view: "all",
   category: null,
@@ -72,23 +70,14 @@ const rowOfApi = (row) => {
   return { ...base, refs, state: cardState({ specError: base.specError, refs, tracked: base.tracked }) };
 };
 
-const rowOfDemo = (row) => {
-  const refs = refsOf(row, state.known);
-  return {
-    ...row,
-    refs,
-    state: cardState({ specError: row.specError, refs, tracked: row.tracked }),
-  };
-};
-
-const loadDemo = (notice) => {
-  state.demo = true;
+/** 这一段还装不了东西：**空着**画，顶上那条黄条是唯一的交代。 */
+const loadUnavailable = (notice) => {
   state.notice = notice;
-  state.known = { presets: DEMO_KNOWN_PRESETS, prompts: DEMO_KNOWN_PROMPTS };
-  state.rows = DEMO_ULTIMATES.map(rowOfDemo);
-  state.categories = sortCategories(state.rows.flatMap((row) => row.category ?? []));
+  state.rows = [];
+  state.categories = [];
   state.archived = [];
-  state.repo = { head: null, dirty: false, ahead: 0, behind: 0, remote: null, error: null };
+  state.known = { presets: null, prompts: null };
+  state.repo = null;
 };
 
 const load = async () => {
@@ -98,20 +87,16 @@ const load = async () => {
     // 无关的话（这一段其实是 503，不是没连上）。
     if (!api.base) await api.connect();
     const data = await api.overview();
-    state.demo = false;
     state.repo = data.repo ?? {};
     state.categories = data.categories ?? [];
     state.archived = data.archived ?? [];
     state.known = { presets: null, prompts: null };
     state.rows = (data.presets ?? []).map(rowOfApi);
   } catch (error) {
-    // 503 = 这一段还没装好（形状未定）。这不是错误，是「还没长出来」—— 用示例数据把皮画出来，
-    // 但顶栏那条黄条必须说清「这不是真的」。别的错误（没连上 / 引擎没了）照实报。
-    if (error instanceof SectionNotReady) {
-      loadDemo(`${error.message} —— 下面这些是示例数据，不是仓里的东西。形状定下来、这一段能装东西之后，它们就消失。`);
-    } else {
-      loadDemo(`问不到这一段：${error.message}`);
-    }
+    // 503 = 这一段还没装好（形状未定）。这不是错误，是「还没长出来」—— 页面空着，
+    // 黄条把引擎那句话原样摆出来。别的错误（没连上 / 块被删了）也照实报，一样空着。
+    if (error instanceof SectionNotReady) loadUnavailable(error.message);
+    else loadUnavailable(`问不到这一段：${error.message}`);
   }
   render();
 };
@@ -121,16 +106,17 @@ const load = async () => {
 const renderTop = () => {
   const remote = state.repo?.remote;
   $("crumb").textContent = `Nous-Template / Ultimate-Template`;
-  $("repo").textContent = state.demo
-    ? "示例数据 · 这一段还没有真条目"
-    : [state.repo?.head ? `HEAD ${String(state.repo.head).slice(0, 7)}` : null, remote ?? "没有远端（只在本地）"]
-        .filter(Boolean)
-        .join(" · ");
+  $("repo").textContent = [
+    state.repo?.head ? `HEAD ${String(state.repo.head).slice(0, 7)}` : null,
+    remote ?? (state.repo ? "没有远端（只在本地）" : null),
+  ]
+    .filter(Boolean)
+    .join(" · ") || "—";
   $("repo").dataset.drift = state.repo?.error ? "1" : "0";
   if (state.repo?.error) $("repo").textContent = state.repo.error;
 
-  const sync = state.demo
-    ? { text: "示例数据", dot: "wait" }
+  const sync = !state.repo
+    ? { text: "这一段还装不了东西", dot: "wait" }
     : state.repo?.dirty
       ? { text: "有未提交改动", dot: "wait" }
       : (state.repo?.ahead ?? 0) > 0
@@ -179,9 +165,7 @@ const renderRail = () => {
   }
 
   $("cat-count").textContent = String(tree.length);
-  $("rail-foot").textContent = state.demo
-    ? "示例数据的类别是编的 —— 真的从这里来。"
-    : "类别、索引、回收站都在这一段文件夹里，跟 Session-Template 那段不共享。";
+  $("rail-foot").textContent = "类别、索引、回收站都在这一段文件夹里，跟 Session-Template 那段不共享。";
 };
 
 const selectCategory = (name) => {
@@ -268,7 +252,7 @@ const cardFor = (row) => {
   launch.type = "button";
   launch.disabled = !canLaunch();
   launch.title = launchBlockedReason();
-  const hint = el("span", "card-hint", state.demo ? "示例" : row.state === "unpublished" ? "只在本地" : "");
+  const hint = el("span", "card-hint", row.state === "unpublished" ? "只在本地" : "");
   foot.append(launch, hint);
   card.append(foot);
 
@@ -385,7 +369,7 @@ const renderDetail = (row) => {
   const pairs = [
     ["段", "Ultimate-Template"],
     ["目录", `Nous-Template/Ultimate-Template/${row.name}/`],
-    ["状态", state.demo ? "示例数据（盘上没有这条）" : row.tracked === false ? "未发布（只在本地）" : "已发布"],
+    ["状态", row.tracked === false ? "未发布（只在本地）" : "已发布"],
   ];
   for (const [key, value] of pairs) kv.append(el("dt", "", key), el("dd", "", value));
   where.append(kv);

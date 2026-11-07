@@ -56,7 +56,7 @@ test("ctx：块数组 / 对象两种形状都认；找不到 qrd3wh 时说清是
   assert.equal(hostBase(CTX), "/p/new1/qrd3wh/");
 });
 
-test("503 = 这一段还没装好：折成 SectionNotReady，页面据此切示例数据", async () => {
+test("503 = 这一段还没装好：折成 SectionNotReady，页面据此空着画 + 挂黄条", async () => {
   const fetch = fakeFetch({
     "GET __nous/ctx": [200, CTX],
     "GET v1/presets/Ultimate-Template": [503, { error: "这一段还没装好：Ultimate-Template" }],
