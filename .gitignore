@@ -41,5 +41,7 @@ content/new1/map/68kazk/data/
 # 这一块没有 data/：数据全在 qrd3wh 和 Nous-prompts 仓里。
 !content/new1/map/6ysg01/
 # 3699b9（New-Template）：会话预设私库的管理页，代码是人写的 —— 进版本控制。
-# 这一块没有 data/：数据全在 qrd3wh 和 Nous-presets 仓里。
+# 这一块没有 data/：数据全在 qrd3wh 和 Nous-Template 仓里。
 !content/new1/map/3699b9/
+# jtjzw5（Ultimate-Template）：同一个仓的另一段（Ultimate-Template）的页，同样纯静态。
+!content/new1/map/jtjzw5/

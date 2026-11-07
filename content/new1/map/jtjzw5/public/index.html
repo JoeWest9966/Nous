@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" href="data:," />
+    <title>ultimate · Nous 终极模板</title>
+    <link rel="stylesheet" href="./style.css?v=1" />
+    <script>
+      // 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
+      if (!location.pathname.endsWith("/")) {
+        location.replace(location.pathname + "/" + location.search + location.hash);
+      }
+    </script>
+  </head>
+  <body>
+    <header class="top">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3.5 20.5 8v8L12 20.5 3.5 16V8z" />
+          <path d="M12 3.5v17M3.5 8l8.5 4.5L20.5 8" />
+        </svg>
+        <div class="titles">
+          <h1>终极模板</h1>
+          <p id="crumb">没连上</p>
+        </div>
+      </div>
+      <div class="top-right">
+        <span class="hint" id="repo" data-drift="0">—</span>
+        <button class="chip-status" id="sync" type="button" title="这一段的状态（点一下重新问 qrd3wh）">
+          <span class="dot" id="sync-dot" data-state=""></span><span id="sync-text">—</span>
+        </button>
+        <button class="btn btn-small" id="refresh" type="button" title="重新问一遍 qrd3wh（不写盘、不提交）">
+          重扫
+        </button>
+      </div>
+    </header>
+
+    <!-- 示例数据 / 这一段还没装好：一条黄条，明着说，不糊过去 -->
+    <div class="banner" id="banner" hidden></div>
+
+    <main class="layout">
+      <div class="rail-scrim" id="rail-scrim" hidden></div>
+      <aside class="rail" id="rail">
+        <div class="rail-head">
+          <h3>类别</h3>
+          <span class="facet-n" id="cat-count">—</span>
+        </div>
+        <div class="facets" id="facets"></div>
+        <p class="rail-foot dim small" id="rail-foot">—</p>
+      </aside>
+
+      <section class="main">
+        <div class="filters" id="filters" aria-label="筛选"></div>
+        <div class="toolbar">
+          <span class="result-count" id="result-count">—</span>
+          <div class="toolbar-right">
+            <button class="btn btn-small rail-toggle" id="rail-toggle" type="button" aria-expanded="false">类别</button>
+            <label class="search">
+              <input id="search" type="search" placeholder="搜名字 / 摘要 / 类别" autocomplete="off" />
+            </label>
+          </div>
+        </div>
+        <div class="scroll" id="scroll">
+          <div class="subhead" id="subhead" hidden></div>
+          <div class="grid" id="grid"></div>
+          <div class="empty" id="empty" hidden></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="dt-scrim" id="dt-scrim" hidden></div>
+    <aside class="dt" id="detail" role="dialog" aria-modal="true" aria-labelledby="dt-name" tabindex="-1" hidden>
+      <div class="dt-head">
+        <div class="dt-tile" id="dt-tile"></div>
+        <div class="dt-titles">
+          <div class="dt-title-row">
+            <h2 id="dt-name">—</h2>
+            <div class="badges" id="dt-badges"></div>
+          </div>
+          <p class="dt-meta dim small" id="dt-meta">—</p>
+        </div>
+        <button class="dt-x" id="dt-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div class="dt-body" id="dt-body"></div>
+      <div class="dt-foot" id="dt-foot"></div>
+    </aside>
+
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

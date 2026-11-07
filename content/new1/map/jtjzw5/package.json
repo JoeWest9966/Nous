@@ -1,0 +1,13 @@
+{
+  "name": "jtjzw5-ultimate-template",
+  "private": true,
+  "type": "module",
+  "description": "终极模板（Nous-Template/Ultimate-Template 段）的页面：只发静态文件。",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
