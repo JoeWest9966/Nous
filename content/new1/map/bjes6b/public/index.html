@@ -29,22 +29,37 @@
 
     <!-- Template：会话模板。数据是 qrd3wh 那段预设，形式是微信通讯录。 -->
     <section class="page" id="page-templates" hidden>
-      <header class="nav">
+      <header class="nav tpl-nav" id="tpl-nav">
         <span class="nav-side"></span>
         <h1 class="nav-title">Template</h1>
-        <span class="nav-side end"></span>
+        <span class="nav-side end">
+          <button class="nav-icon" id="tpl-open-search" aria-label="搜索">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="10" cy="10" r="6.4" />
+              <path d="M15 15l5 5" />
+            </svg>
+          </button>
+          <button class="nav-icon" data-todo="新建模板" aria-label="新建模板">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="10" cy="8.5" r="3.3" />
+              <path d="M3.5 19.5c0-3.8 3-6 6.5-6s6.5 2.2 6.5 6" />
+              <path d="M18.5 3v6M15.5 6h6" />
+            </svg>
+          </button>
+        </span>
+        <div class="search tpl-searchbar" id="tpl-searchbar" hidden>
+          <input
+            id="tpl-q"
+            type="search"
+            placeholder="搜索"
+            aria-label="搜索模板"
+            autocomplete="off"
+            spellcheck="false"
+            enterkeyhint="search"
+          />
+          <button type="button" class="search-cancel" id="tpl-cancel-search">取消</button>
+        </div>
       </header>
-      <form class="search" id="tpl-search">
-        <input
-          id="tpl-q"
-          type="search"
-          placeholder="搜索"
-          aria-label="搜索模板"
-          autocomplete="off"
-          spellcheck="false"
-          enterkeyhint="search"
-        />
-      </form>
       <main class="scroller list" id="templates">
         <div class="empty">加载中…</div>
       </main>

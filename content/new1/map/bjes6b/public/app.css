@@ -324,19 +324,30 @@ body {
   position: relative;
 }
 
-.search {
-  flex: none;
+/* 搜索不是常驻的：常态下导航栏只有「标题 + 右上角两个图标」，点放大镜才换成搜索条。
+   搜索条藏在这条 nav 里（grid 的第四个子元素），常态 display:none，searching 时前三样
+   全藏、它顶到整行。display:none 的元素不占 grid 格子，所以不会把 nav 撑成两行。 */
+.tpl-nav .search {
+  grid-column: 1 / -1;
+  display: none;
   position: relative;
-  padding: 8px 12px 10px;
-  background: var(--wx-bg);
+  align-items: center;
+}
+
+.tpl-nav.searching > .nav-side,
+.tpl-nav.searching > .nav-title {
+  display: none;
+}
+
+.tpl-nav.searching .search {
+  display: flex;
 }
 
 /* 放大镜画在字段里侧。引一个内联 SVG，不为一个图标多一个文件。 */
-.search::before {
+.tpl-nav .search::before {
   content: "";
   position: absolute;
-  left: 22px;
-  top: 17px;
+  left: 9px;
   width: 13px;
   height: 13px;
   pointer-events: none;
@@ -345,10 +356,11 @@ body {
   opacity: 0.75;
 }
 
-.search input {
-  width: 100%;
+.tpl-nav .search input {
+  flex: 1;
+  min-width: 0;
   height: 32px;
-  padding: 0 10px 0 30px;
+  padding: 0 8px 0 30px;
   border: 0;
   border-radius: 5px;
   background: #fff;
@@ -360,8 +372,29 @@ body {
   appearance: none;
 }
 
-.search input::-webkit-search-cancel-button {
+.tpl-nav .search input::-webkit-search-cancel-button {
   -webkit-appearance: none;
+}
+
+/* 微信那两个字：绿色、贴右。 */
+.search-cancel {
+  flex: none;
+  padding: 4px 2px 4px 10px;
+  font-size: 15px;
+  color: var(--wx-green);
+  background: none;
+  border: 0;
+}
+
+/* nav 右上角那两个图标是线框（放大镜 / 添加朋友），不是首屏那个实心文本「＋」。 */
+.nav-icon svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* 分组标题：滑到哪儿它钉在顶部（微信就是这一条把「通讯录」变成可读的）。 */

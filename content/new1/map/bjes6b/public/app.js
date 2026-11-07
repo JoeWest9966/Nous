@@ -857,6 +857,8 @@ const show = (view) => {
     if (on) node.setAttribute("aria-current", "page");
     else node.removeAttribute("aria-current");
   }
+  // 离开模板页就收掉搜索态：微信的搜索是另一个页，回来不该还停在搜索框上。
+  if (view !== "templates") closeTemplateSearch();
 };
 
 /* ── Template：会话模板，形式是微信通讯录 ────────────
@@ -1110,7 +1112,24 @@ $("#tabbar").addEventListener("click", (event) => {
   else location.hash = target;
 });
 
-$("#tpl-search").addEventListener("submit", (event) => event.preventDefault());
+/* 搜索不是常驻入口：常态只有右上角放大镜，点了才把导航栏换成搜索条 + 取消。 */
+const closeTemplateSearch = () => {
+  const nav = $("#tpl-nav");
+  if (!nav?.classList.contains("searching")) return;
+  nav.classList.remove("searching");
+  $("#tpl-searchbar").hidden = true;
+  queryEl.value = "";
+  tpl.q = "";
+  renderTemplates();
+};
+
+$("#tpl-open-search").addEventListener("click", () => {
+  $("#tpl-nav").classList.add("searching");
+  $("#tpl-searchbar").hidden = false;
+  queryEl.focus();
+});
+
+$("#tpl-cancel-search").addEventListener("click", closeTemplateSearch);
 
 queryEl.addEventListener("input", () => {
   tpl.q = queryEl.value ?? "";
