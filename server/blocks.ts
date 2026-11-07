@@ -32,6 +32,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BoardStore } from "./content.ts";
 import { adoptNode, hasNode } from "./map.ts";
+import { publicOrigin } from "./origin.ts";
 
 /** 等一个块把端口听起来的耐心。第一次 `npm start` 有时要先编译一遍。 */
 const BOOT_TIMEOUT = 20_000;
@@ -117,6 +118,7 @@ const start = async (
   folder: string,
   launch: Launch,
   origin: string,
+  local: string,
 ): Promise<Run | { error: string; logs: string }> => {
   const port = await freePort();
   // 不替块建 data/：宿主只告诉它路径（NOUS_DATA），要不要目录、什么时候建，块自己决定。
@@ -133,6 +135,10 @@ const start = async (
       PORT: String(port),
       NOUS_DATA: data,
       NOUS_ORIGIN: origin,
+      // 宿主**自己**听的那个地址，和外面看到的那个名字无关。块要打电话回家时用它：
+      // `NOUS_ORIGIN` 是「我是谁」（可能是个域名、可能是别人反代进来的名字），
+      // 回环地址才是「我在哪」。两个都给了，块自己挑得动。
+      NOUS_LOCAL_ORIGIN: local,
       NOUS_SELF: `/p/${key}`,
     },
   });
@@ -206,6 +212,7 @@ const acquire = async (
   folder: string,
   launch: Launch,
   origin: string,
+  local: string,
 ): Promise<Run | { error: string; logs: string }> => {
   const existing = runs.get(key);
   if (existing) {
@@ -219,7 +226,7 @@ const acquire = async (
   }
   const pending = booting.get(key);
   if (pending) return pending;
-  const p = start(key, folder, launch, origin).finally(() => booting.delete(key));
+  const p = start(key, folder, launch, origin, local).finally(() => booting.delete(key));
   booting.set(key, p);
   return p;
 };
@@ -288,7 +295,7 @@ const forward = (req: http.IncomingMessage, res: http.ServerResponse, run: Run, 
 export type BlocksOptions = {
   /** content/ 的绝对路径。 */
   root: string;
-  /** 宿主自己的地址，喂给块的 `NOUS_ORIGIN`。 */
+  /** 外面看不出我们挂在哪儿时的兜底（宿主自己听的那个地址）。 */
   origin: string;
 };
 
@@ -333,8 +340,11 @@ export function blocksApi(store: BoardStore, opts: BlocksOptions) {
 
       const prefix = `/p/${board}/${node}`;
       const key = `${board}/${node}`;
-      const origin = req.headers.host ? `http://${req.headers.host}` : opts.origin;
-      const run = await acquire(key, folder, launch, origin);
+      // 「我是谁」跟着请求走（可能是个外面才通的名字）；「我在哪」永远是宿主自己那个。
+      // 后面这个 `opts.origin` 才是块打电话回家该用的 —— 见 NOUS_LOCAL_ORIGIN。
+      // 协议 / 主机 / 挂载前缀都按反代说的算，见 `origin.ts`。
+      const origin = publicOrigin(req, opts.origin);
+      const run = await acquire(key, folder, launch, origin, opts.origin);
       if ("error" in run) {
         req.resume();
         res.writeHead(502, { "content-type": "text/html; charset=utf-8" });

@@ -9,6 +9,10 @@ Type=simple
 WorkingDirectory=/opt/Nous
 Environment=NODE_ENV=production
 Environment=NOUS_HOST=0.0.0.0
+# 反代把我们挂在子路径下时写这个（Tailscale serve: `--set-path=/nous`）。
+# 前缀在到达本进程之前就被剥掉了，也不保证有 `X-Forwarded-Prefix` —— 只能靠配置告诉它。
+# 没有前缀就删掉这行（块会拿 `http://localhost:4790` 当自己的地址）。
+Environment=NOUS_BASE=/nous
 ExecStart=/usr/bin/node /opt/Nous/node_modules/vite/bin/vite.js preview --host 0.0.0.0 --port 4790
 Restart=always
 RestartSec=3
