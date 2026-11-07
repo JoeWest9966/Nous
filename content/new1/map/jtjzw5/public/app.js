@@ -9,13 +9,16 @@
 
 import { createApi, SectionNotReady } from "./api.js";
 import {
-  canLaunch,
   cardState,
   chipRows,
+  draftProblems,
   emptyHint,
+  epochToLocalInput,
   facetTree,
   filterPresets,
-  launchBlockedReason,
+  formFields,
+  localInputToEpoch,
+  paramsOf,
   refsOf,
   sortCategories,
   stackOf,
@@ -47,7 +50,14 @@ const state = {
   category: null,
   query: "",
   selected: null,
+  // 引用存在性由引擎给（`resolved`），这一页只翻译。
   known: { presets: null, prompts: null },
+  /** 触发器表（引擎的投影）：name → { name, summary, params }。表单照它画。 */
+  triggers: new Map(),
+  /** 会话模板的名字（另一个段的名册）。 */
+  sessions: new Set(),
+  /** 正在编辑的草稿：null = 没在编辑。 */
+  draft: null,
 };
 
 // ── 数据 ────────────────────────────────────────────────────────────────────
@@ -60,14 +70,30 @@ const rowOfApi = (row) => {
     summary: row.summary ?? spec.summary ?? "",
     category: row.category ?? spec.category ?? [],
     description: spec.description ?? null,
-    presets: spec.presets,
-    prompt: spec.prompt,
-    readOnly: spec.readOnly,
+    trigger: spec.trigger ?? null,
+    params: spec.params ?? {},
+    session: spec.session ?? null,
+    enabled: spec.enabled !== false,
     tracked: row.tracked !== false,
     specError: row.specError ?? null,
   };
-  const refs = refsOf(base, state.known);
-  return { ...base, refs, state: cardState({ specError: base.specError, refs, tracked: base.tracked }) };
+  // 引擎的 `resolved` 说了算（它知道触发器表和会话模板名册）：这一页不自己判断引用在不在。
+  const resolved = row.resolved ?? null;
+  const refs = refsOf(base, {
+    triggers: new Set(resolved?.trigger?.state === "ok" ? [String(base.trigger)] : []),
+    sessions: new Set(resolved?.session?.state === "ok" ? [String(base.session)] : []),
+  });
+  const state_ = cardState({
+    specError: base.specError,
+    refs: resolved
+      ? [
+          { state: resolved.trigger?.state === "ok" ? "ok" : "missing", ref: base.trigger },
+          { state: resolved.session?.state === "ok" ? "ok" : "missing", ref: base.session },
+        ]
+      : refs,
+    tracked: base.tracked,
+  });
+  return { ...base, refs, resolved, state: state_ };
 };
 
 /** 这一段还装不了东西：**空着**画，顶上那条黄条是唯一的交代。 */
@@ -90,7 +116,16 @@ const load = async () => {
     state.repo = data.repo ?? {};
     state.categories = data.categories ?? [];
     state.archived = data.archived ?? [];
-    state.known = { presets: null, prompts: null };
+
+    // 触发器表 + 会话模板名册：**都要了才画得出手单**。
+    // 问不到就空着 —— 页面要说清「没有触发器可选」，而不是画一个空的表单让人猜。
+    const [triggers, sessions] = await Promise.all([
+      api.triggers().catch(() => ({ triggers: [] })),
+      api.overviewOf("Session-Template").catch(() => ({ presets: [] })),
+    ]);
+    state.triggers = new Map((triggers.triggers ?? []).map((item) => [item.name, item]));
+    state.sessions = new Set((sessions.presets ?? []).map((item) => item.name));
+
     state.rows = (data.presets ?? []).map(rowOfApi);
   } catch (error) {
     // 503 = 这一段还没装好（形状未定）。这不是错误，是「还没长出来」—— 页面空着，
@@ -248,12 +283,14 @@ const cardFor = (row) => {
   if (note) card.append(el("p", "card-note", note));
 
   const foot = el("div", "card-foot");
-  const launch = el("button", "launch", "▶ 启动");
-  launch.type = "button";
-  launch.disabled = !canLaunch();
-  launch.title = launchBlockedReason();
+  const edit = el("button", "launch", "改");
+  edit.type = "button";
+  edit.onclick = (event) => {
+    event.stopPropagation();
+    openEditor(row);
+  };
   const hint = el("span", "card-hint", row.state === "unpublished" ? "只在本地" : "");
-  foot.append(launch, hint);
+  foot.append(edit, hint);
   card.append(foot);
 
   const open = () => openDetail(row);
@@ -342,11 +379,11 @@ const renderDetail = (row) => {
     body.append(broken);
   }
 
-  // 叠放顺序：有顺序，所以是列表不是 chip。
-  const stack = section("叠放顺序（先叠的在前）");
+  // 引用：触发器（什么时候起）+ 会话模板（起什么）。
+  const stack = section("引用");
   const list = el("div", "ref-list");
   const items = stackOf(row, state.known);
-  if (!items.length) list.append(el("p", "dim small", "一条预设都不叠 —— 这条只是一层壳。"));
+  if (!items.length) list.append(el("p", "dim small", "还没挂触发器、也没钉会话模板。"));
   for (const item of items) {
     const line = el("div", "ref");
     line.dataset.state = item.state === "missing" ? "invalid" : "";
@@ -357,12 +394,22 @@ const renderDetail = (row) => {
   stack.append(list);
   body.append(stack);
 
-  // 提示词：三态在三行字里说清，不用一个「—」糊过去。
-  const prompt = section("提示词");
-  if (row.prompt === undefined) prompt.append(el("p", "prose dim", "没写 —— 跟随 Nous-prompts 的仓库默认"));
-  else if (row.prompt === null) prompt.append(el("p", "prose", "null —— 明确不要模板（跟「没说」不是一件事）"));
-  else prompt.append(el("p", "prose", String(row.prompt)));
-  body.append(prompt);
+  // 参数：照那个触发器自己的声明列出来（顺序也照它）。
+  const params = section("参数");
+  const schema = state.triggers.get(row.trigger)?.params ?? [];
+  const rows = paramsOf(row, schema);
+  if (!rows.length) {
+    params.append(el("p", "prose dim", "这个触发器不要参数。"));
+  } else {
+    const table = el("dl", "kv");
+    for (const param of rows) {
+      table.append(el("dt", "", param.name));
+      const value = param.value === undefined ? "（没填）" : String(param.value);
+      table.append(el("dd", "", param.state === "unknown" ? `${value} · 触发器里没这个参数了` : value));
+    }
+    params.append(table);
+  }
+  body.append(params);
 
   const where = section("仓库");
   const kv = el("dl", "kv");
@@ -377,13 +424,12 @@ const renderDetail = (row) => {
 
   const foot = $("dt-foot");
   foot.innerHTML = "";
-  const launch = el("button", canLaunch() ? "btn btn-go" : "btn", "▶ 启动");
-  launch.disabled = !canLaunch();
-  launch.title = launchBlockedReason();
+  const edit = el("button", "btn btn-primary", "改");
+  edit.type = "button";
+  edit.onclick = () => openEditor(row);
   const close = el("button", "btn", "关闭");
   close.onclick = closeDetail;
-  foot.append(close, launch);
-  if (!canLaunch()) foot.append(el("span", "dim small", "形状未定，展开还没接"));
+  foot.append(close, edit);
 };
 
 const openDetail = (row) => {
@@ -398,6 +444,302 @@ const closeDetail = () => {
   state.selected = null;
   $("detail").hidden = true;
   $("dt-scrim").hidden = true;
+};
+
+
+// ── 新建 / 编辑 ─────────────────────────────────────────────────────────────
+//
+// 一条终极模板 = **触发器 + 触发器的参数 + 一条会话模板**。
+// 三步都在这一个弹层里：选触发器 → 照它的声明填参数 → 选会话模板。
+//
+// **参数表单是照触发器的声明画出来的**，不是照触发器的名字：这一页里没有
+// `if (名字 === "single-shot")` 那种代码。新加一个触发器 = 它自己声明参数，
+// 这一页一个字节都不用改。
+
+const draftDefaults = () => ({
+  name: "",
+  summary: "",
+  trigger: "",
+  params: {},
+  session: "",
+  category: [],
+  enabled: true,
+});
+
+/** 打开编辑器。`row` 为 null = 新建。 */
+const openEditor = (row = null) => {
+  state.draft = row
+    ? {
+        name: row.name,
+        summary: row.summary ?? "",
+        trigger: row.trigger ?? "",
+        params: { ...(row.params ?? {}) },
+        session: row.session ?? "",
+        category: [...(row.category ?? [])],
+        enabled: row.enabled !== false,
+      }
+    : draftDefaults();
+  state.editing = row?.name ?? null;
+
+  $("edit-title").textContent = row ? `改 ${row.name}` : "新建终极模板";
+  $("edit-name").value = state.draft.name;
+  $("edit-summary").value = state.draft.summary;
+  $("edit-category").value = (state.draft.category ?? []).join(", ");
+  $("edit-enabled").checked = state.draft.enabled !== false;
+  $("edit-err").hidden = true;
+
+  // 类别候选：这一段的词表 + 用过的。
+  const cats = [...new Set([...(state.categories ?? []), ...state.rows.flatMap((entry) => entry.category ?? [])])];
+  $("edit-cats").innerHTML = "";
+  for (const name of cats) {
+    const option = el("option");
+    option.value = name;
+    $("edit-cats").append(option);
+  }
+
+  renderTriggerPicker();
+  renderSessionPicker();
+  renderParamFields();
+  refreshDraft();
+
+  $("edit-scrim").hidden = false;
+  $("edit").hidden = false;
+  $("edit-name").focus?.();
+};
+
+const closeEditor = () => {
+  state.draft = null;
+  state.editing = null;
+  $("edit-scrim").hidden = true;
+  $("edit").hidden = true;
+};
+
+/** 触发器：一排可点的条。**这一页不按名字写死任何一个** —— 列表来自引擎。 */
+const renderTriggerPicker = () => {
+  const box = $("edit-triggers");
+  box.innerHTML = "";
+  const triggers = [...state.triggers.values()];
+  if (!triggers.length) {
+    box.append(el("span", "picker-empty", "一个触发器都没有 —— 去触发器页建一个。"));
+    return;
+  }
+  for (const trigger of triggers) {
+    const button = el("button", "pick");
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(state.draft?.trigger === trigger.name));
+    button.append(el("span", "", trigger.name));
+    const params = (trigger.params ?? []).length;
+    button.append(el("span", "pick-sub", params ? `要 ${params} 个参数` : trigger.summary || "不要参数"));
+    button.onclick = () => {
+      state.draft.trigger = trigger.name;
+      // 换触发器 = 换参数表。旧参数留着只会变成「触发器里没这个参数了」。
+      state.draft.params = {};
+      renderTriggerPicker();
+      renderParamFields();
+      refreshDraft();
+    };
+    box.append(button);
+  }
+};
+
+/** 会话模板：同一段（Session-Template）的名册。 */
+const renderSessionPicker = () => {
+  const box = $("edit-sessions");
+  box.innerHTML = "";
+  if (!state.sessions.size) {
+    box.append(el("span", "picker-empty", "没有会话模板 —— 去会话模板页建一个。"));
+    return;
+  }
+  for (const name of state.sessions) {
+    const button = el("button", "pick");
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(state.draft?.session === name));
+    button.append(el("span", "", name));
+    button.onclick = () => {
+      state.draft.session = name;
+      renderSessionPicker();
+      refreshDraft();
+    };
+    box.append(button);
+  }
+};
+
+/** 参数表单：照触发器的声明画。**控件只看类型。** */
+const renderParamFields = () => {
+  const wrap = $("edit-params-wrap");
+  const box = $("edit-params");
+  box.innerHTML = "";
+  const trigger = state.triggers.get(state.draft?.trigger);
+  const fields = formFields(trigger);
+  wrap.hidden = fields.length === 0;
+  for (const field of fields) {
+    const label = el("label", "field");
+    label.append(el("span", "field-k", `${field.label}${field.required ? " *" : ""}`));
+    const current = state.draft.params[field.name];
+
+    let input;
+    if (field.control === "datetime") {
+      // epoch 在盘上是 UTC 秒；页面上人挑的是**本地时间** —— 挑的时候就得说清是哪一种。
+      input = el("input");
+      input.type = "datetime-local";
+      input.value = epochToLocalInput(current);
+      input.oninput = () => {
+        const epoch = localInputToEpoch(input.value);
+        if (epoch === null) delete state.draft.params[field.name];
+        else state.draft.params[field.name] = epoch;
+        refreshDraft();
+      };
+    } else if (field.control === "number") {
+      input = el("input");
+      input.type = "number";
+      input.value = current ?? "";
+      input.oninput = () => {
+        const value = Number(input.value);
+        if (input.value === "" || !Number.isFinite(value)) delete state.draft.params[field.name];
+        else state.draft.params[field.name] = value;
+        refreshDraft();
+      };
+    } else if (field.control === "checkbox") {
+      input = el("input");
+      input.type = "checkbox";
+      input.checked = current === true;
+      input.onchange = () => {
+        state.draft.params[field.name] = input.checked;
+        refreshDraft();
+      };
+      const row = el("label", "check");
+      row.append(input, el("span", "", field.label));
+      label.innerHTML = "";
+      label.append(row);
+    } else if (field.control === "select") {
+      input = el("select");
+      for (const option of field.options) {
+        const node = el("option");
+        node.value = option;
+        node.textContent = option;
+        input.append(node);
+      }
+      input.value = current ?? field.options[0] ?? "";
+      input.onchange = () => {
+        state.draft.params[field.name] = input.value;
+        refreshDraft();
+      };
+    } else if (field.control === "textarea") {
+      input = el("textarea");
+      input.rows = 3;
+      input.value = current ?? "";
+      input.oninput = () => {
+        state.draft.params[field.name] = input.value;
+        refreshDraft();
+      };
+    } else {
+      input = el("input");
+      input.type = "text";
+      input.value = current ?? "";
+      input.oninput = () => {
+        state.draft.params[field.name] = input.value;
+        refreshDraft();
+      };
+    }
+    if (field.control !== "checkbox") label.append(input);
+    if (field.help) label.append(el("span", "field-help", field.help));
+    box.append(label);
+  }
+};
+
+/** 表单状态 → 能不能存 + 还差什么。 */
+const refreshDraft = () => {
+  if (!state.draft) return;
+  state.draft.name = $("edit-name").value.trim();
+  state.draft.summary = $("edit-summary").value.trim();
+  state.draft.enabled = $("edit-enabled").checked;
+  state.draft.category = $("edit-category")
+    .value.split(/[,，]/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const problems = draftProblems(state.draft, { triggers: state.triggers, sessions: state.sessions });
+  $("edit-save").disabled = problems.length > 0;
+  const err = $("edit-err");
+  if (problems.length) {
+    err.hidden = false;
+    err.textContent = problems.join("；");
+  } else {
+    err.hidden = true;
+    err.textContent = "";
+  }
+  const hint = $("edit-hint");
+  hint.textContent = state.draft.trigger
+    ? `触发器「${state.draft.trigger}」的参数按它自己的声明填 —— 换触发器就换表单。`
+    : "先选一个触发器：它决定这条什么时候起。";
+};
+
+/**
+ * 发布这一段：校验 + 重扫索引 + commit + push。**走引擎** —— 这一页不跑 git。
+ * 发布的是**这一段**（Ultimate-Template/），另一段的东西一个字节都不带。
+ */
+const publishSection = async () => {
+  const button = $("publish");
+  button.disabled = true;
+  button.textContent = "发布中…";
+  try {
+    const result = await api.post("v1/presets/publish", { message: "ultimate: 更新终极模板" });
+    const warnings = (result.warnings ?? []).join("；");
+    toast(warnings ? `已发布，但：${warnings}` : "已发布");
+    await load();
+  } catch (error) {
+    toast(`发布失败：${error.message}`);
+  } finally {
+    button.disabled = false;
+    button.textContent = "发布";
+  }
+};
+
+/** 存。形状和引用都让引擎判 —— 这一页只拦明显不行的。 */
+const submitEditor = async (event) => {
+  event.preventDefault();
+  if (!state.draft) return;
+  const body = {
+    name: state.draft.name,
+    summary: state.draft.summary,
+    category: state.draft.category,
+    trigger: state.draft.trigger,
+    params: state.draft.params,
+    session: state.draft.session,
+    enabled: state.draft.enabled,
+    spec: {
+      v: 1,
+      name: state.draft.name,
+      summary: state.draft.summary,
+      category: state.draft.category,
+      trigger: state.draft.trigger,
+      params: state.draft.params,
+      session: state.draft.session,
+      enabled: state.draft.enabled,
+    },
+  };
+  $("edit-save").disabled = true;
+  try {
+    if (state.editing) {
+      // 改一条 = 整份写回去（清单文件是配置，不是散文：整份覆盖比打补丁诚实）。
+      await api.post("v1/presets/file", {
+        name: state.editing,
+        path: "ultimate.json",
+        text: `${JSON.stringify(body.spec, null, 2)}\n`,
+      });
+      toast(`已改 ${body.name} · 还没发布`);
+    } else {
+      await api.post("v1/presets/create", body);
+      toast(`已建 ${body.name} · 未发布`);
+    }
+    closeEditor();
+    await load();
+  } catch (error) {
+    $("edit-err").hidden = false;
+    $("edit-err").textContent = error.message;
+  } finally {
+    refreshDraft();
+  }
 };
 
 // ── 总装 ────────────────────────────────────────────────────────────────────
@@ -424,6 +766,15 @@ const bind = () => {
   $("refresh").onclick = () => {
     load().catch((error) => toast(error.message));
   };
+  $("new").onclick = () => openEditor(null);
+  $("publish").onclick = () => publishSection();
+  $("edit-cancel").onclick = closeEditor;
+  $("edit-scrim").onclick = closeEditor;
+  $("edit").addEventListener("submit", submitEditor);
+  for (const id of ["edit-name", "edit-summary", "edit-category"]) {
+    $(id).addEventListener("input", refreshDraft);
+  }
+  $("edit-enabled").addEventListener("change", refreshDraft);
   $("sync").onclick = () => {
     load().catch((error) => toast(error.message));
   };
@@ -446,6 +797,11 @@ const bind = () => {
   // Esc 只收一层：这一版只有详情那一层。
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
+    if (!$("edit").hidden) {
+      event.preventDefault();
+      closeEditor();
+      return;
+    }
     if (!$("detail").hidden) {
       event.preventDefault();
       closeDetail();

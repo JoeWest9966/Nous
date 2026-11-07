@@ -125,6 +125,7 @@ import * as upstream from "./upstream.js";
 import { handlePrompts } from "./prompts-api.js";
 import { handlePresets } from "./presets-api.js";
 import { createPresets, expandPresetSpec, presetContext, readSections } from "./presets.js";
+import { readTriggerCatalog } from "./triggers.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 
@@ -1465,7 +1466,14 @@ const presetSections = await readSections(PRESETS_ROOT);
 const presetsBySection = new Map();
 for (const section of presetSections) {
   if (!section.checker) continue; // 形状还没定的段：不装名册，端点会回「这一段还没装好」
-  presetsBySection.set(section.id, await createPresets({ dir: path.join(PRESETS_ROOT, section.id) }));
+  presetsBySection.set(
+    section.id,
+    await createPresets({
+      dir: path.join(PRESETS_ROOT, section.id),
+      manifest: section.manifest,
+      checker: section.checker,
+    }),
+  );
 }
 const presetsOf = (id) => presetsBySection.get(id) ?? null;
 /**
@@ -1474,6 +1482,25 @@ const presetsOf = (id) => presetsBySection.get(id) ?? null;
  * 和「真的能跑」是同一个判定。
  */
 const presetCtx = () => presetContext({ skills, prompts, registry, models, levelsOf, defaultModel });
+
+/**
+ * 触发器的投影（另一个仓）。**每次现读** —— 触发器是别人写的代码，它随时会变；
+ * 缓存一份 = 面板说「触发器在」，其实已经改名了。
+ */
+const triggerCatalog = async () => readTriggerCatalog();
+
+/**
+ * 终极模板（Ultimate-Template 段）要的 ctx：触发器表 + 会话模板名册。
+ * 会话模板是**另一个段**的名册 —— 终极模板引用它，所以这里得能问「那条会话模板还在吗」。
+ */
+const ultimateCtx = async () => {
+  const triggers = await triggerCatalog();
+  const sessions = presetsOf("Session-Template");
+  return {
+    triggers,
+    sessionsHas: (name) => Boolean(sessions?.has?.(String(name ?? ""))),
+  };
+};
 // 老收据时代的补版本已经没了（技能没有版本号）。留着 `?.` 是因为：
 // 扩展仓可以比这块新或旧，缺一个方法不该让启动路径炸掉。
 void skills.backfill?.();
@@ -1869,9 +1896,24 @@ const route = async (req, res, url) => {
         presetsOf,
         repo,
         ctx: presetCtx,
+        ultimateCtx,
       });
     } catch (error) {
       // handlePresets 自己写响应；走到这儿说明是它没接住的意外。
+      return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
+  }
+
+  // 触发器目录（只读）：终极模板要引用触发器、要照它的声明校验参数、要照它画表单。
+  // 真相在另一个仓（Nous-Trigger）的 index.json —— 这一层只是投影，不维护第二份名单。
+  if (parts[0] === "v1" && parts[1] === "triggers" && (req.method ?? "GET") === "GET") {
+    try {
+      const catalog = await triggerCatalog();
+      return json(res, 200, {
+        triggers: [...catalog.values()],
+        root: process.env.NOUS_TRIGGER ?? "/opt/Nous-Trigger",
+      });
+    } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
   }

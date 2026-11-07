@@ -27,7 +27,15 @@
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { resolveSpec, shapeProblems, oneLine, validatePresetSpec } from "./presets.js";
+import {
+  resolveSpec,
+  resolveUltimate,
+  shapeProblems,
+  oneLine,
+  ultimateReferenceProblems,
+  ultimateShapeProblems,
+  validatePresetSpec,
+} from "./presets.js";
 
 const withStatus = (error, status) => Object.assign(error, { status });
 
@@ -96,26 +104,37 @@ const checkName = (raw) => {
 
 // ── 内容闸 ─────────────────────────────────────────────────────────────────
 
-/** 一条预设的形状对不对（不看引用）。返回问题清单，空 = 能发布。 */
-export const checkPresetContent = async (root, name, dir = null) => {
+/**
+ * 一段自己的「形状」规矩：**清单文件名 + 校验器**都由段决定
+ * （`preset.json` / shapeProblems vs `ultimate.json` / ultimateShapeProblems）。
+ */
+const shapeKit = (section) => ({
+  manifest: section?.manifest ?? "preset.json",
+  check: section?.checker === "ultimate" ? ultimateShapeProblems : shapeProblems,
+});
+
+/** 一条东西的形状对不对（不看引用）。返回问题清单，空 = 能发布。 */
+export const checkPresetContent = async (root, name, dir = null, kit = null) => {
+  const { manifest, check } = kit ?? { manifest: "preset.json", check: shapeProblems };
   const home = dir ?? path.join(root, name);
   let raw;
   try {
-    raw = await readFile(path.join(home, "preset.json"), "utf8");
+    raw = await readFile(path.join(home, manifest), "utf8");
   } catch {
-    return [`${name}: 没有 preset.json`];
+    return [`${name}: 没有 ${manifest}`];
   }
   let spec;
   try {
     spec = JSON.parse(raw);
   } catch (error) {
-    return [`${name}: preset.json 不是合法 JSON（${oneLine(error)}）`];
+    return [`${name}: ${manifest} 不是合法 JSON（${oneLine(error)}）`];
   }
-  return shapeProblems(spec, { dirName: name, where: `${name}/preset.json` });
+  return check(spec, { dirName: name, where: `${name}/${manifest}` });
 };
 
-/** 仓库里所有带 preset.json 的目录 —— 内容闸扫这一圈（没有 preset.json 的目录静默跳过）。 */
-const gateRepo = async (repo, root) => {
+/** 仓库里所有带清单文件的目录 —— 内容闸扫这一圈（没有清单文件的目录静默跳过）。 */
+const gateRepo = async (repo, root, kit = null) => {
+  const { manifest } = kit ?? { manifest: "preset.json" };
   let dirs = [];
   try {
     dirs = await repo.listDirs(root);
@@ -124,8 +143,8 @@ const gateRepo = async (repo, root) => {
   }
   const problems = [];
   for (const dir of dirs) {
-    if (!(await stat(path.join(root, dir, "preset.json")).catch(() => null))) continue;
-    problems.push(...(await checkPresetContent(root, dir)));
+    if (!(await stat(path.join(root, dir, manifest)).catch(() => null))) continue;
+    problems.push(...(await checkPresetContent(root, dir, null, kit)));
   }
   return problems;
 };
@@ -202,7 +221,9 @@ const ctxOf = (ctx) => (typeof ctx === "function" ? ctx() : (ctx ?? {}));
 
 // ── 各端点 ─────────────────────────────────────────────────────────────────
 
-const overview = async ({ repo, repoRoot, section, root, presets, ctx }) => {
+const overview = async ({ repo, repoRoot, section, root, presets, ctx, ultimateCtx }) => {
+  const kit = shapeKit(section);
+  const isUltimate = section.checker === "ultimate";
   let state = { head: null, dirty: false, ahead: 0, behind: 0 };
   let error = null;
   try {
@@ -217,14 +238,16 @@ const overview = async ({ repo, repoRoot, section, root, presets, ctx }) => {
     // 「已发布」的判据要**带段前缀**：HEAD 里叫 `Session-Template/weekly-report`。
     repo.trackedPaths(repoRoot).catch(() => new Set()),
     repo.readCategories(root, NO_PROTECT).catch(() => []),
-    // 归档条目的摘要住在 `preset.json`（不是 `nous.json`）—— 不给这个参数就会显示成「没有摘要」。
-    repo.archivedEntries(root, { manifest: "preset.json" }).catch(() => []),
+    // 归档条目的摘要住在**那一段的清单文件**里（不是 `nous.json`）—— 不给这个参数就会显示成「没有摘要」。
+    repo.archivedEntries(root, { manifest: kit.manifest }).catch(() => []),
     Promise.resolve().then(() => presets.list()).catch(() => []),
   ]);
 
   // 引用校验用的是**此刻**的进程状态 —— 跟「启动」那一下走同一个 `presets.js`，
   // 所以面板说红的就是启动会失败的那条。
   const resolvedCtx = ctxOf(ctx);
+  // 终极模板要问**另一个段**的名册（会话模板在 Session-Template 段里）+ 触发器表。
+  const ultimate = isUltimate ? await ultimateCtx?.() : null;
   const rows = roster.map((item) => ({
     name: item.name,
     summary: item.summary,
@@ -235,7 +258,11 @@ const overview = async ({ repo, repoRoot, section, root, presets, ctx }) => {
     specError: item.specError,
     tracked: tracked.has(`${section.id}/${item.name}`),
     dir: item.dir,
-    resolved: item.specError ? null : resolveSpec(item.spec, resolvedCtx),
+    resolved: item.specError
+      ? null
+      : isUltimate
+        ? resolveUltimate(item.spec, ultimate ?? {})
+        : resolveSpec(item.spec, resolvedCtx),
   }));
 
   // 真相是**两份取并集**：词表里的（可能有零计数的空类别）+ 每条预设自己挂着的。
@@ -257,7 +284,8 @@ const overview = async ({ repo, repoRoot, section, root, presets, ctx }) => {
   };
 };
 
-const createPreset = async ({ repo, repoRoot, root, body, ctx }) => {
+const createPreset = async ({ repo, repoRoot, root, body, ctx, section, ultimateCtx }) => {
+  const kit = shapeKit(section);
   const name = checkName(body.name);
   const summary = String(body.summary ?? "").trim();
   if (!summary) throw withStatus(new Error(`${name}: summary 不能空 —— 人靠这一行决定开不开它`), 400);
@@ -278,6 +306,19 @@ const createPreset = async ({ repo, repoRoot, root, body, ctx }) => {
   spec.name = name;
   spec.summary = summary;
   spec.category = categories;
+  // 终极模板的三个字段（触发器 / 参数 / 会话模板）。**不在这儿校验引用** ——
+  // 引用要问触发器表和另一个段的名册，那是引擎的事；这里只管形状。
+  if (section?.checker === "ultimate") {
+    const trigger = String(body.trigger ?? "").trim();
+    const session = String(body.session ?? "").trim();
+    if (!trigger) throw withStatus(new Error(`${name}: 得选一个触发器 —— 没有触发器就没有「什么时候」`), 400);
+    if (!session) throw withStatus(new Error(`${name}: 得选一条会话模板 —— 触发器只管「什么时候」`), 400);
+    spec.trigger = trigger;
+    spec.session = session;
+    const params = body.params && typeof body.params === "object" && !Array.isArray(body.params) ? body.params : {};
+    spec.params = params;
+    spec.enabled = body.enabled !== false;
+  }
   if (body.description !== undefined) spec.description = String(body.description ?? "");
   if (body.from === "device") {
     const device = ctxOf(ctx)?.deviceModel ?? null;
@@ -285,8 +326,16 @@ const createPreset = async ({ repo, repoRoot, root, body, ctx }) => {
   }
 
   // 先自己过一遍闸：一条建出来就 `specError` 的预设，等于让人工去猜哪里写错了。
-  const problems = shapeProblems(spec, { dirName: name, where: `${name}/preset.json` });
+  const problems = kit.check(spec, { dirName: name, where: `${name}/${kit.manifest}` });
   if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
+
+  // 终极模板还得过**引用**闸：触发器还在吗、参数跟它的声明对得上吗、会话模板还在吗。
+  // 存一条引用已经坏掉的行 = 造一条红卡 —— 那一行从落地那一刻就红着，没人能修（它本来就该在落地前被拦）。
+  if (section?.checker === "ultimate") {
+    const uctx = (await ultimateCtx?.()) ?? {};
+    const reference = ultimateReferenceProblems(spec, uctx);
+    if (reference.length) throw withStatus(new Error(gateMessage(reference)), 400);
+  }
 
   if (await stat(path.join(root, name)).catch(() => null)) {
     throw withStatus(new Error(`${name}/ 已经在了 —— 换个名字，或者直接去改它`), 400);
@@ -301,7 +350,7 @@ const createPreset = async ({ repo, repoRoot, root, body, ctx }) => {
   await mkdir(staging, { recursive: false });
   let landed = false;
   try {
-    await writeFile(path.join(staging, "preset.json"), JSON.stringify(spec, null, 2) + "\n", "utf8");
+    await writeFile(path.join(staging, kit.manifest), JSON.stringify(spec, null, 2) + "\n", "utf8");
     // `body` 是给人看的说明书（PRESET.md），**永不进提示词**。给了才落。
     if (typeof body.body === "string" && body.body.trim()) {
       await writeFile(path.join(staging, "PRESET.md"), body.body, "utf8");
@@ -407,7 +456,7 @@ const purgePreset = async ({ repo, repoRoot, scope, root, name }) => {
  * `sections` = 段清单（`presets.js` 的 `readSections`），`presetsOf(id)` = 那一段的名册。
  * 段以外的路径一律 404：**没有「默认段」这种隐式状态** —— 拿不准是哪一段就说明调用方拼错了。
  */
-export async function handlePresets({ req, res, url, parts, repoRoot, sections, presetsOf, repo, ctx }) {
+export async function handlePresets({ req, res, url, parts, repoRoot, sections, presetsOf, repo, ctx, ultimateCtx }) {
   const method = req.method ?? "GET";
   const at = parts.slice(2);
 
@@ -437,10 +486,12 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
     const root = path.join(repoRoot, section.id);
     const scope = section.id;
     const route = at.slice(1);
+    const kit = shapeKit(section);
+    const isUltimate = section.checker === "ultimate";
 
     if (!route.length) {
       if (method !== "GET") return send(res, 405, { error: "预设仓库只有 GET" });
-      return send(res, 200, await overview({ repo, repoRoot, section, root, presets, ctx }));
+      return send(res, 200, await overview({ repo, repoRoot, section, root, presets, ctx, ultimateCtx }));
     }
 
     if (route[0] === "categories") {
@@ -470,7 +521,7 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
       await repo.serializeRepoWrite(repoRoot, () =>
         repo.setNodeCategories(root, name, body.category ?? [], {
           label: "预设",
-          manifest: "preset.json",
+          manifest: kit.manifest,
           index: presetsIndex(repo, root),
           ...NO_PROTECT,
         }),
@@ -502,17 +553,22 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
       if (method !== "PUT") return send(res, 405, { error: "文件只有 GET / PUT" });
       const body = await parseJsonBody(req);
       const name = checkName(body.name);
-      // 写 `preset.json` 时**先过形状闸**：写坏了就不是「未保存」，而是这条预设当场失效。
+      // 写**那一段的清单文件**时先过形状闸：写坏了就不是「未保存」，而是这条当场失效。
       // 别的文件（PRESET.md）不闸 —— 说明书怎么写都不影响它能不能跑。
-      if (String(body.path ?? "") === "preset.json") {
+      if (String(body.path ?? "") === kit.manifest) {
         let spec;
         try {
           spec = JSON.parse(String(body.text ?? ""));
         } catch (error) {
-          throw withStatus(new Error(`preset.json 不是合法 JSON：${oneLine(error)}`), 400);
+          throw withStatus(new Error(`${kit.manifest} 不是合法 JSON：${oneLine(error)}`), 400);
         }
-        const problems = shapeProblems(spec, { dirName: name, where: `${name}/preset.json` });
+        const problems = kit.check(spec, { dirName: name, where: `${name}/${kit.manifest}` });
         if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
+        // 终极模板：引用也得对 —— 改坏一条去写坏引用，跟新建写坏一样是当场拦。
+        if (isUltimate) {
+          const reference = ultimateReferenceProblems(spec, (await ultimateCtx?.()) ?? {});
+          if (reference.length) throw withStatus(new Error(gateMessage(reference)), 400);
+        }
       }
       const saved = await repo.serializeRepoWrite(repoRoot, () =>
         repo.writeRepoFile(root, {
@@ -534,7 +590,9 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
     if (route[0] === "create") {
       if (method !== "POST") return send(res, 405, { error: "新建只有 POST" });
       const body = await parseJsonBody(req);
-      await repo.serializeRepoWrite(repoRoot, () => createPreset({ repo, repoRoot, root, body, ctx }));
+      await repo.serializeRepoWrite(repoRoot, () =>
+        createPreset({ repo, repoRoot, root, body, ctx, section, ultimateCtx }),
+      );
       const loadError = await reloadRoster(presets);
       const roster = presets.list();
       return send(res, 200, {
@@ -567,6 +625,20 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
       } else {
         throw withStatus(new Error("要么给 name，要么给 spec"), 400);
       }
+      if (isUltimate) {
+        // 终极模板：形状（本地那张表）+ 引用（触发器表 + 会话模板名册）。
+        const shape = ultimateShapeProblems(spec, { dirName, where: `${name ?? "ultimate.json"}/${kit.manifest}` });
+        if (shape.length) {
+          return send(res, 200, { ok: false, errors: shape, warnings: [], spec: null, resolved: null });
+        }
+        const uctx = (await ultimateCtx?.()) ?? {};
+        const errors = ultimateReferenceProblems(spec, uctx);
+        const resolved = resolveUltimate(spec, uctx);
+        if (route[0] === "resolve") {
+          return send(res, 200, { ok: errors.length === 0, errors, warnings: [], resolved });
+        }
+        return send(res, 200, { ok: errors.length === 0, errors, warnings: [], spec, resolved });
+      }
       const out = validatePresetSpec(spec, ctxOf(ctx), { dirName });
       if (route[0] === "resolve") {
         return send(res, 200, { ok: out.ok, errors: out.errors, warnings: out.warnings, resolved: out.resolved });
@@ -581,7 +653,7 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
         const snapshot = await snapshotIndex(root);
         try {
           // 闸在最前面：不过就一个字节都不动（index.json 也不重扫，否则会留下「扫了一半」的假象）。
-          const problems = await gateRepo(repo, root);
+          const problems = await gateRepo(repo, root, kit);
           if (problems.length) throw withStatus(new Error(gateMessage(problems)), 400);
           await repo.regenIndex(repoRoot, { required: false });
           return await repo.syncRepo(repoRoot, String(body.message ?? "").trim() || "session: 更新预设仓库", {

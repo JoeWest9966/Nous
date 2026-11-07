@@ -96,6 +96,23 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
     return readJson(await doFetch(base + sectioned(path), { headers: { accept: "application/json" } }));
   };
 
+  const getRaw = async (path) => {
+    if (!base) throw new ApiError("还没连上 qrd3wh", { code: "unconnected" });
+    const clean = String(path ?? "").replace(/^\/+/, "");
+    return readJson(await doFetch(base + clean, { headers: { accept: "application/json" } }));
+  };
+
+  const post = async (path, body) => {
+    if (!base) throw new ApiError("还没连上 qrd3wh", { code: "unconnected" });
+    return readJson(
+      await doFetch(base + sectioned(path), {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(body ?? {}),
+      }),
+    );
+  };
+
   return {
     get base() {
       return base;
@@ -103,6 +120,7 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
     get ctx() {
       return ctx;
     },
+    post,
     /** 问宿主「qrd3wh 在哪」。 */
     async connect() {
       ctx = await readJson(await doFetch(ctxUrl()));
@@ -116,6 +134,22 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
      */
     async overview() {
       return get("v1/presets");
+    },
+    /**
+     * **别的段**的总览 —— 这一段要引用会话模板（Session-Template 段），那就得能问那一段。
+     * 段名是路径的第一段：这里显式换掉，不靠调用方自己拼。
+     */
+    async overviewOf(sectionId) {
+      // 走 getRaw：**不能**经过 sectioned() —— 它会把「这一页的段」拼到任何 v1/presets 前面，
+      // 问别的段就变成了问「这一段底下的那个段」。
+      return getRaw(`v1/presets/${sectionId}`);
+    },
+    /**
+     * 触发器目录（另一个仓的投影，引擎给的）：终极模板要引用触发器、要照它的声明
+     * 画参数表单。**这一页不自己读 Nous-Trigger** —— 那是引擎的事。
+     */
+    async triggers() {
+      return getRaw("v1/triggers");
     },
   };
 }

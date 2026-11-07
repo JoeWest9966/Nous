@@ -19,7 +19,10 @@ import {
   presetContext,
   referenceProblems,
   resolveSpec,
+  resolveUltimate,
   shapeProblems,
+  ultimateReferenceProblems,
+  ultimateShapeProblems,
   validatePresetSpec,
 } from "../presets.js";
 
@@ -365,4 +368,138 @@ test("扫盘：summary / category 进名册（面板卡片画的是这几个字�
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// ── 终极模板：形状矩阵 + 引用 ──────────────────────────────────────────────
+//
+// 跟 `Nous-Template/test/index.test.js` 里那张是**同一张** —— 两处实现（仓不 import 引擎），
+// 靠这两张表互相咬住。
+
+const ultimate = (name, extra = {}) => ({
+  v: 1,
+  name,
+  summary: `${name} 的一句话`,
+  category: [],
+  trigger: "single-shot",
+  params: { epoch: 1800000060 },
+  session: "weekly-report",
+  ...extra,
+});
+
+/** 假触发器表：只有一个 single-shot，要一个必填的 epoch。 */
+const fakeTriggers = () =>
+  new Map([
+    [
+      "single-shot",
+      {
+        name: "single-shot",
+        summary: "只在那分钟里发起一次",
+        version: "0.1.0",
+        params: [{ name: "epoch", type: "epoch", label: "什么时候", required: true }],
+      },
+    ],
+  ]);
+
+const fakeUltimateCtx = (over = {}) => ({
+  triggers: fakeTriggers(),
+  sessionsHas: (name) => ["weekly-report", "deep-dive"].includes(name),
+  ...over,
+});
+
+test("终极模板：形状 —— 最小可用的那一条过", () => {
+  assert.deepEqual(ultimateShapeProblems(ultimate("a"), { dirName: "a" }), []);
+});
+
+test("终极模板：形状 —— 未知键必须报错", () => {
+  assert.equal(ultimateShapeProblems({ ...ultimate("a"), triggr: "x" }, { dirName: "a" }).length, 1);
+});
+
+test("终极模板：形状 —— trigger / session 必填", () => {
+  assert.equal(ultimateShapeProblems({ ...ultimate("a"), trigger: "" }, { dirName: "a" }).length, 1);
+  assert.equal(ultimateShapeProblems({ ...ultimate("a"), session: "" }, { dirName: "a" }).length, 1);
+});
+
+test("终极模板：形状 —— params 得是对象，值只能是字符串 / 数字 / 布尔", () => {
+  assert.equal(ultimateShapeProblems({ ...ultimate("a"), params: [] }, { dirName: "a" }).length, 1);
+  assert.equal(ultimateShapeProblems({ ...ultimate("a"), params: { at: {} } }, { dirName: "a" }).length, 1);
+});
+
+test("终极模板：形状 —— name 必须等于目录名", () => {
+  assert.equal(ultimateShapeProblems(ultimate("a"), { dirName: "b" }).length, 1);
+});
+
+test("终极模板：引用 —— 触发器不在 / 会话模板不在 → 报出来", () => {
+  const missing = ultimateReferenceProblems(ultimate("a"), fakeUltimateCtx());
+  assert.deepEqual(missing, []);
+
+  const noTrigger = ultimateReferenceProblems(
+    ultimate("a", { trigger: "ghost" }),
+    fakeUltimateCtx(),
+  );
+  assert.equal(noTrigger.length, 1);
+  assert.match(noTrigger[0], /ghost/);
+
+  const noSession = ultimateReferenceProblems(
+    ultimate("a", { session: "ghost" }),
+    fakeUltimateCtx(),
+  );
+  assert.equal(noSession.length, 1);
+  assert.match(noSession[0], /ghost/);
+});
+
+test("终极模板：引用 —— 必填参数没给 → 报出来", () => {
+  const errors = ultimateReferenceProblems(ultimate("a", { params: {} }), fakeUltimateCtx());
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /epoch/);
+});
+
+test("终极模板：引用 —— 参数类型不对 → 报出来（epoch 得是 UTC 秒）", () => {
+  const errors = ultimateReferenceProblems(
+    ultimate("a", { params: { epoch: "1800000060" } }),
+    fakeUltimateCtx(),
+  );
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /epoch/);
+});
+
+test("终极模板：引用 —— 参数名对不上了 → 报出来（触发器改了声明，这条得改）", () => {
+  // 两个错都说：必填的 epoch 没了（旧名），还多了一个触发器不认的 at。
+  const errors = ultimateReferenceProblems(
+    ultimate("a", { params: { at: 1800000060 } }),
+    fakeUltimateCtx(),
+  );
+  assert.equal(errors.length, 2);
+  assert.ok(errors.some((line) => /没有参数「at」/.test(line)));
+  assert.ok(errors.some((line) => /epoch/.test(line)));
+});
+
+test("终极模板：resolve —— 三样东西各自的状态", () => {
+  const resolved = resolveUltimate(ultimate("a"), fakeUltimateCtx());
+  assert.equal(resolved.trigger.state, "ok");
+  assert.equal(resolved.session.state, "ok");
+  assert.equal(resolved.trigger.params.length, 1);
+  assert.equal(resolved.trigger.params[0].state, "ok");
+
+  const broken = resolveUltimate(
+    ultimate("a", { trigger: "ghost", session: "ghost" }),
+    fakeUltimateCtx(),
+  );
+  assert.equal(broken.trigger.state, "invalid");
+  assert.equal(broken.session.state, "invalid");
+});
+
+test("终极模板：resolve —— 缺可选参数 = 跟随默认，不是错", () => {
+  const ctx = fakeUltimateCtx({
+    triggers: new Map([
+      [
+        "single-shot",
+        {
+          name: "single-shot",
+          params: [{ name: "epoch", type: "epoch", required: false }],
+        },
+      ],
+    ]),
+  });
+  const resolved = resolveUltimate(ultimate("a", { params: {} }), ctx);
+  assert.equal(resolved.trigger.params[0].state, "default");
 });

@@ -12,8 +12,37 @@
 //  3. **「没选」有三种长相。** 一条 ultimate 里 `prompt` 缺席 = 跟随默认、`null` = 明确不要、
 //     字符串 = 用它。chip 上写「默认」和「无」两句话，不是都写「—」。
 
-/** 提案中的键表。改这里 = 改契约，`sections.json` 的 checker 得跟着一起改。 */
-export const ULTIMATE_KEYS = ["v", "name", "summary", "category", "description", "presets", "prompt", "readOnly"];
+/**
+ * 键表。**已经定下来了**（跟 `Nous-Template/index.mjs` 和 `qrd3wh/presets.js` 同一份契约）：
+ * 一条 = 触发器 + 触发器的参数 + 一条会话模板。
+ */
+export const ULTIMATE_KEYS = [
+  "v",
+  "name",
+  "summary",
+  "category",
+  "description",
+  "trigger",
+  "params",
+  "session",
+  "enabled",
+];
+
+/**
+ * 参数类型 → 页面画什么控件。**这是「类型 → 控件」的映射，不是「触发器 → 表单」的映射。**
+ *
+ * 关键的一条：**这里没有触发器的名字。** 页面上永远不写 `if (名字 === "single-shot")` ——
+ * 那样每加一个触发器就要改一次页面，而且两份代码迟早对不上。加类型是「说清楚了才加」的决定，
+ * 给某个触发器开后门不是。
+ */
+export const FIELD_OF = {
+  epoch: { control: "datetime", label: "日期时间" },
+  number: { control: "number", label: "数字" },
+  string: { control: "text", label: "文本" },
+  text: { control: "textarea", label: "长文本" },
+  boolean: { control: "checkbox", label: "开关" },
+  select: { control: "select", label: "下拉" },
+};
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -42,23 +71,86 @@ export const refState = (ref, known) => {
   return known.has(String(ref ?? "")) ? "ok" : "missing";
 };
 
-/** 一条 ultimate 引用的全部东西（顺序有意义：叠放顺序就是执行顺序）。 */
+/**
+ * 一条 ultimate 引用的两样东西：触发器（什么时候起）、会话模板（起什么）。
+ *
+ * 状态由**引擎**给（`resolved`）：这一页不自己判断引用在不在 —— 它一判断就有两份规则。
+ * 这里只把引擎的结果翻译成能画的东西。
+ */
 export const refsOf = (ultimate, known = {}) => {
-  const presets = Array.isArray(ultimate?.presets) ? ultimate.presets : [];
-  const refs = presets.map((ref) => ({
-    kind: "preset",
-    ref: String(ref),
-    state: refState(ref, known.presets),
-  }));
-  const prompt = ultimate?.prompt;
-  if (prompt !== undefined) {
+  const refs = [];
+  const trigger = ultimate?.trigger;
+  if (trigger !== undefined && trigger !== null) {
     refs.push({
-      kind: "prompt",
-      ref: prompt === null ? null : String(prompt),
-      state: prompt === null ? "none" : refState(prompt, known.prompts),
+      kind: "trigger",
+      ref: String(trigger),
+      state: known.triggers ? (known.triggers.has(String(trigger)) ? "ok" : "missing") : "unknown",
+    });
+  }
+  const session = ultimate?.session;
+  if (session !== undefined && session !== null) {
+    refs.push({
+      kind: "session",
+      ref: String(session),
+      state: known.sessions ? (known.sessions.has(String(session)) ? "ok" : "missing") : "unknown",
     });
   }
   return refs;
+};
+
+/** 参数按触发器的声明排一遍（没声明的排最后）。页面上照这个顺序画。 */
+export const paramsOf = (ultimate, schema = []) => {
+  const given = ultimate?.params ?? {};
+  const known = new Set(Object.keys(given));
+  const rows = schema.map((param) => ({
+    name: param.name,
+    label: param.label ?? param.name,
+    type: param.type,
+    required: param.required === true,
+    help: param.help ?? "",
+    options: Array.isArray(param.options) ? param.options : [],
+    value: given[param.name],
+    state: given[param.name] === undefined ? (param.required ? "missing" : "default") : "ok",
+  }));
+  for (const key of known) {
+    if (schema.some((param) => param.name === key)) continue;
+    // 触发器改了参数名，这条还留着旧的 —— 单独一行标出来，别混在正常的参数里。
+    rows.push({
+      name: key,
+      label: key,
+      type: "string",
+      required: false,
+      help: "触发器里没有这个参数了",
+      options: [],
+      value: given[key],
+      state: "unknown",
+    });
+  }
+  return rows;
+};
+
+/**
+ * 表单模型：照触发器的参数声明，列出这一页要画哪些字段。
+ *
+ * **页面照着它画，不照着触发器的名字画。** 新加一个触发器 = 它自己声明参数，
+ * 页面一个字节都不用改。
+ */
+export const formFields = (trigger) => {
+  const schema = Array.isArray(trigger?.params) ? trigger.params : [];
+  return schema.map((param) => {
+    const field = FIELD_OF[param.type] ?? FIELD_OF.string;
+    return {
+      name: param.name,
+      label: param.label ?? param.name,
+      type: param.type,
+      control: field.control,
+      typeLabel: field.label,
+      required: param.required === true,
+      help: param.help ?? "",
+      options: Array.isArray(param.options) ? param.options : [],
+      default: param.default,
+    };
+  });
 };
 
 // ── 卡状态 ──────────────────────────────────────────────────────────────────
@@ -94,43 +186,60 @@ export const launchBlockedReason = () =>
 export const chipRows = (ultimate, known = {}) => {
   const refs = refsOf(ultimate, known);
   const chips = [];
-  const presetRefs = refs.filter((ref) => ref.kind === "preset");
-  const missingPresets = presetRefs.filter((ref) => ref.state === "missing");
+  const params = ultimate?.params ?? {};
 
-  if (!Array.isArray(ultimate?.presets)) {
-    chips.push({ kind: "presets", state: "default", text: "预设 默认", title: "这一条没有 presets 键" });
-  } else if (presetRefs.length === 0) {
-    chips.push({ kind: "presets", state: "none", text: "预设 无", title: "一条预设都不叠" });
-  } else if (missingPresets.length) {
+  const triggerChip = refs.find((ref) => ref.kind === "trigger");
+  if (!triggerChip) {
+    chips.push({ kind: "trigger", state: "default", text: "触发器 未选", title: "这一条还没挂触发器" });
+  } else if (triggerChip.state === "missing") {
     chips.push({
-      kind: "presets",
+      kind: "trigger",
       state: "bad",
-      text: `预设 ${presetRefs.length} 条 · ${missingPresets.length} 条不在`,
-      title: missingPresets.map((ref) => `缺：${ref.ref}`).join("\n"),
+      text: `触发器 不在`,
+      title: `Nous-Trigger 里没有：${triggerChip.ref}`,
     });
   } else {
     chips.push({
-      kind: "presets",
+      kind: "trigger",
       state: "ok",
-      text: `预设 ${presetRefs.length} 条`,
-      title: presetRefs.map((ref, index) => `${index + 1}. ${ref.ref}`).join("\n"),
+      text: `触发器 ${triggerChip.ref}`,
+      title: `什么时候起：${triggerChip.ref}`,
     });
   }
 
-  const promptChip = refs.find((ref) => ref.kind === "prompt");
-  if (!promptChip) {
-    chips.push({ kind: "prompt", state: "default", text: "提示词 默认", title: "没写 prompt：跟随仓库默认模板" });
-  } else if (promptChip.state === "none") {
-    chips.push({ kind: "prompt", state: "none", text: "提示词 无", title: "prompt: null —— 明确不要模板" });
-  } else if (promptChip.state === "missing") {
-    chips.push({ kind: "prompt", state: "bad", text: "提示词 不在", title: `Nous-prompts 里没有：${promptChip.ref}` });
+  const count = Object.keys(params).length;
+  chips.push({
+    kind: "params",
+    state: count ? "ok" : "default",
+    text: count ? `参数 ${count} 个` : "参数 无",
+    title: count
+      ? Object.entries(params)
+          .map(([key, value]) => `${key} = ${String(value)}`)
+          .join("\n")
+      : "没填参数",
+  });
+
+  const sessionChip = refs.find((ref) => ref.kind === "session");
+  if (!sessionChip) {
+    chips.push({ kind: "session", state: "default", text: "会话 未选", title: "这一条还没钉会话模板" });
+  } else if (sessionChip.state === "missing") {
+    chips.push({
+      kind: "session",
+      state: "bad",
+      text: "会话 不在",
+      title: `Session-Template 里没有：${sessionChip.ref}`,
+    });
   } else {
-    // 三个分支都得带「提示词」这三个字：只写一个裸名字，人得先猜这是模板还是预设。
-    chips.push({ kind: "prompt", state: "ok", text: `提示词 ${promptChip.ref}`, title: `提示词模板：${promptChip.ref}` });
+    chips.push({
+      kind: "session",
+      state: "ok",
+      text: `会话 ${sessionChip.ref}`,
+      title: `起什么对话：${sessionChip.ref}`,
+    });
   }
 
-  if (ultimate?.readOnly === true) {
-    chips.push({ kind: "readOnly", state: "ok", text: "只读", title: "写工具被摘掉了，不只是提示词里说一句" });
+  if (ultimate?.enabled === false) {
+    chips.push({ kind: "enabled", state: "none", text: "已停", title: "enabled: false —— 这条现在不触发" });
   }
 
   return chips;
@@ -237,11 +346,88 @@ export const emptyHint = ({ total, view, category, query }) => {
   return { title: `${why}里没有`, body: "换个筛选，或者点「全部」看这一段的全部。" };
 };
 
-/** 详情里「叠放顺序」那一节：每条引用带上它现在的状态，缺的直接点名。 */
+/** 详情里「引用」那一节：触发器 + 会话模板，各自的状态，缺的直接点名。 */
 export const stackOf = (ultimate, known = {}) =>
-  refsOf(ultimate, known)
-    .filter((ref) => ref.kind === "preset")
-    .map((ref, index) => ({ ...ref, order: index + 1, ...splitRef(ref.ref) }));
+  refsOf(ultimate, known).map((ref, index) => ({ ...ref, order: index + 1, ...splitRef(ref.ref) }));
+
+// ── 新建 / 编辑：表单的判断 ─────────────────────────────────────────────────
+
+/**
+ * 一条终极模板现在**能不能存**。返回问题清单，空 = 能存。
+ *
+ * 这里只做**页面能自己判断的事**：必填有没有填、名字合不合格、类型对不对。
+ * 引用在不在（触发器还在吗、会话模板还在吗）**归引擎** —— 页面说不准，
+ * 硬说就成了第二份规则。存下去之后引擎会再判一遍，那时才是准的。
+ */
+export const draftProblems = (draft, { triggers = new Map(), sessions = new Set() } = {}) => {
+  const problems = [];
+  const name = String(draft?.name ?? "").trim();
+  if (!name) problems.push("缺名字");
+  else if (!nameLooksValid(name)) problems.push("名字不合格：小写字母 / 数字开头，只留 . _ -");
+  if (!String(draft?.summary ?? "").trim()) problems.push("缺一句话说明");
+
+  const trigger = String(draft?.trigger ?? "").trim();
+  if (!trigger) problems.push("还没选触发器");
+  else if (triggers.size && !triggers.has(trigger)) problems.push(`触发器「${trigger}」不在 Nous-Trigger 里`);
+
+  const session = String(draft?.session ?? "").trim();
+  if (!session) problems.push("还没选会话模板");
+  else if (sessions.size && !sessions.has(session)) problems.push(`会话模板「${session}」不在 Session-Template 里`);
+
+  // 参数：照那个触发器自己的声明逐个看。
+  const schema = triggers.get(trigger)?.params ?? [];
+  const given = draft?.params ?? {};
+  for (const param of schema) {
+    const value = given[param.name];
+    if (value === undefined || value === "") {
+      if (param.required) problems.push(`触发器要参数「${param.name}」，还没填`);
+      continue;
+    }
+    const problem = valueProblem(param, value);
+    if (problem) problems.push(`参数「${param.name}」${problem}`);
+  }
+  return problems;
+};
+
+/** 一个参数值对这个声明合不合格。返回一句话（空 = 合格）。跟引擎那份同一套规矩。 */
+export const valueProblem = (param, value) => {
+  switch (param.type) {
+    case "epoch":
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return "得是 UTC 秒（正整数）";
+      return "";
+    case "number":
+      if (typeof value !== "number" || !Number.isFinite(value)) return "得是数字";
+      return "";
+    case "boolean":
+      return typeof value === "boolean" ? "" : "得是 true / false";
+    case "select":
+      if (typeof value !== "string") return "得是字符串";
+      if (Array.isArray(param.options) && !param.options.includes(value)) return `只能是 ${param.options.join(" / ")}`;
+      return "";
+    case "text":
+    case "string":
+    default:
+      return typeof value === "string" ? "" : "得是字符串";
+  }
+};
+
+/** UTC 秒 → 本地时间（`datetime-local` 输入框要的格式：`YYYY-MM-DDTHH:mm`）。 */
+export const epochToLocalInput = (epoch) => {
+  if (typeof epoch !== "number" || !Number.isFinite(epoch)) return "";
+  const date = new Date(epoch * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+/** `datetime-local` 的值 → UTC 秒。**按本地时区解释** —— 人挑的是本地时间。 */
+export const localInputToEpoch = (value) => {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const parsed = new Date(text);
+  const time = parsed.getTime();
+  if (!Number.isFinite(time)) return null;
+  return Math.floor(time / 1000);
+};
 
 /** 字母砖的色相：名字 hash，同一条永远同一个颜色。 */
 export const tileStyle = (name) => {

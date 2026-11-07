@@ -34,6 +34,161 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
+/**
+ * 终极模板的键表。一条 = **触发器 + 触发器的参数 + 一条会话模板**。
+ *
+ * 跟会话预设不是一套形状：预设钉「开会话时用什么」，终极模板钉「什么时候起、起什么」。
+ * 形状规则跟 `Nous-Template/index.mjs` 的 `checkUltimateShape` 是同一套 —— 两处各持一份。
+ */
+export const ULTIMATE_KEYS = [
+  "v",
+  "name",
+  "summary",
+  "category",
+  "description",
+  "trigger",
+  "params",
+  "session",
+  "enabled",
+];
+
+/** 终极模板的形状校验（不看引用）。返回 `string[]`，空 = 通过。 */
+export function ultimateShapeProblems(raw, { dirName = null, where = "ultimate.json" } = {}) {
+  const problems = [];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [`${where} 得是一个对象`];
+
+  for (const key of Object.keys(raw)) {
+    if (!ULTIMATE_KEYS.includes(key)) {
+      problems.push(`${where} 里有不认识的键「${key}」—— 不忽略它（拼错的键等于那条设置没生效）`);
+    }
+  }
+  if (raw.v !== 1) problems.push(`${where} 的 v 得是 1，收到 ${JSON.stringify(raw.v)}`);
+
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  if (dirName) {
+    if (name && name !== dirName) problems.push(`${where} 的 name 是「${name}」—— 必须等于目录名「${dirName}」`);
+  } else if (!name) {
+    problems.push(`${where} 缺 name`);
+  }
+  if (name) {
+    if (!NAME_RE.test(name)) problems.push(`${where} 的 name「${name}」不合格：小写字母 / 数字开头，只留 . _ -`);
+    if (name.length > MAX_NAME) problems.push(`${where} 的 name 太长（最多 ${MAX_NAME} 字）`);
+  }
+
+  const summary = typeof raw.summary === "string" ? raw.summary.trim() : "";
+  if (!summary) problems.push(`${where} 的 summary 为空 —— 人靠这一行决定开不开它`);
+  else if (summary.length > MAX_SUMMARY) problems.push(`${where} 的 summary 太长（最多 ${MAX_SUMMARY} 字）`);
+
+  if (raw.description !== undefined) {
+    if (typeof raw.description !== "string") problems.push(`${where} 的 description 得是字符串`);
+    else if (raw.description.length > MAX_DESCRIPTION) {
+      problems.push(`${where} 的 description 太长（最多 ${MAX_DESCRIPTION} 字）`);
+    }
+  }
+
+  if (!Array.isArray(raw.category)) {
+    problems.push(`${where} 缺 category 数组（没有就写 []）`);
+  } else if (raw.category.some((entry) => typeof entry !== "string")) {
+    problems.push(`${where} 的 category 得是字符串数组`);
+  }
+
+  if (!nonEmptyString(raw.trigger)) problems.push(`${where} 缺 trigger —— 这条得挂在某个触发器上`);
+  if (!raw.params || typeof raw.params !== "object" || Array.isArray(raw.params)) {
+    problems.push(`${where} 的 params 得是一个对象（键是参数名，值是参数值）`);
+  } else {
+    for (const [key, value] of Object.entries(raw.params)) {
+      if (!/^[a-z0-9][a-z0-9_-]*$/.test(key)) {
+        problems.push(`${where} 的参数名「${key}」不合格：小写字母 / 数字开头，只留 _ -`);
+      }
+      if (!["string", "number", "boolean"].includes(typeof value)) {
+        problems.push(`${where} 的参数「${key}」的值得是字符串 / 数字 / 布尔`);
+      }
+    }
+  }
+  if (!nonEmptyString(raw.session)) {
+    problems.push(`${where} 缺 session —— 得钉一条会话模板（Session-Template 段里的名字）`);
+  }
+  if (raw.enabled !== undefined && typeof raw.enabled !== "boolean") {
+    problems.push(`${where} 的 enabled 得是 true / false`);
+  }
+
+  return problems;
+}
+
+/**
+ * 触发器的**参数类型**。跟 `Nous-Trigger` 那边 `index.mjs` 校验的词汇表同一份 ——
+ * 那边是写，这边是读，两处各持一份，漂了会红。
+ */
+export const PARAM_TYPES = ["epoch", "number", "string", "text", "boolean", "select"];
+
+/** 一个参数值对这个声明合不合格。返回一句话（空 = 合格）。 */
+export function paramValueProblem(param, value) {
+  switch (param.type) {
+    case "epoch":
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return "得是 UTC 秒（正整数）";
+      return "";
+    case "number":
+      if (typeof value !== "number" || !Number.isFinite(value)) return "得是数字";
+      return "";
+    case "boolean":
+      return typeof value === "boolean" ? "" : "得是 true / false";
+    case "select":
+      if (typeof value !== "string") return "得是字符串";
+      if (Array.isArray(param.options) && !param.options.includes(value)) {
+        return `只能是 ${param.options.join(" / ")}`;
+      }
+      return "";
+    case "text":
+    case "string":
+    default:
+      return typeof value === "string" ? "" : "得是字符串";
+  }
+}
+
+/**
+ * 终极模板的**引用**校验：触发器还在吗、参数跟它的声明对得上吗、会话模板还在吗。
+ *
+ * 这一层**只有引擎做得了**：触发器的参数声明在另一个仓（Nous-Trigger）里，
+ * 仓自己的 index.mjs 读不到 —— 它只查形状。
+ *
+ * @param {object} spec 形状已通过的一条 ultimate
+ * @param {{ triggers?: Map<string, object>, sessionsHas?: Function }} ctx
+ */
+export function ultimateReferenceProblems(spec, ctx = {}) {
+  const errors = [];
+  const { triggers, sessionsHas } = ctx;
+
+  const trigger = triggers?.get?.(String(spec.trigger ?? ""));
+  if (triggers && !trigger) {
+    errors.push(`触发器「${spec.trigger}」不在 Nous-Trigger 里`);
+  } else if (trigger) {
+    // 参数对不对得上那个触发器自己的声明 —— **值域在触发器那边定，不在页面定**。
+    const schema = Array.isArray(trigger.params) ? trigger.params : [];
+    const given = spec.params ?? {};
+    for (const param of schema) {
+      const value = given[param.name];
+      if (value === undefined) {
+        if (param.required) errors.push(`触发器「${spec.trigger}」要参数「${param.name}」，这条没给`);
+        continue;
+      }
+      const problem = paramValueProblem(param, value);
+      if (problem) errors.push(`参数「${param.name}」：${problem}`);
+    }
+    for (const key of Object.keys(given)) {
+      if (!schema.some((param) => param.name === key)) {
+        // 触发器改了参数名，这条还留着旧的 —— 报出来，让人去改**它**（不是这条）。
+        errors.push(`触发器「${spec.trigger}」没有参数「${key}」了 —— 参数名变了，这条得改`);
+      }
+    }
+  }
+
+  if (sessionsHas && !sessionsHas(spec.session)) {
+    errors.push(`会话模板「${spec.session}」不在 Session-Template 里`);
+  }
+
+  return errors;
+}
+
 /** 思考档的**顺序**（往上找、再往下找都靠它）。跟 pi-ai 的档位表同一份，别另立一套。 */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -217,6 +372,57 @@ export function expandPresetSpec(spec) {
 }
 
 /**
+ * 终极模板的 resolve：这条现在还成立吗。**面板不许自己算** —— 它一算就有两份规则。
+ *
+ * 三样东西各自的状态：
+ *   触发器 —— 在不在 Nous-Trigger 里（不在 = 引用失效）
+ *   参数   —— 跟触发器的声明对不对得上（参数名变了 = 引用失效）
+ *   会话   —— 在不在 Session-Template 里（不在 = 引用失效）
+ *
+ * 形状坏了的这条不 resolve（那是 failed，不是 invalid）。
+ */
+export function resolveUltimate(spec, ctx = {}) {
+  const { triggers, sessionsHas } = ctx;
+  const trigger = triggers?.get?.(String(spec.trigger ?? "")) ?? null;
+  const schema = Array.isArray(trigger?.params) ? trigger.params : [];
+  const given = spec.params ?? {};
+
+  const params = schema.map((param) => {
+    const value = given[param.name];
+    if (value === undefined) {
+      return { name: param.name, state: param.required ? "missing" : "default", value: null, label: param.label ?? param.name };
+    }
+    const problem = paramValueProblem(param, value);
+    return {
+      name: param.name,
+      state: problem ? "invalid" : "ok",
+      value,
+      label: param.label ?? param.name,
+      problem,
+    };
+  });
+  // 参数名对不上了（触发器改了声明）—— 跟「值不合格」分开说：那是去改**触发器**。
+  const unknown = Object.keys(given).filter((key) => !schema.some((param) => param.name === key));
+
+  return {
+    name: spec.name ?? null,
+    trigger: {
+      state: trigger ? "ok" : "invalid",
+      ref: spec.trigger ?? null,
+      value: trigger?.summary ?? null,
+      version: trigger?.version ?? null,
+      params,
+      unknown,
+    },
+    session: {
+      state: sessionsHas && !sessionsHas(spec.session) ? "invalid" : "ok",
+      ref: spec.session ?? null,
+    },
+    enabled: spec.enabled !== false,
+  };
+}
+
+/**
  * 面板要的那份「这条预设实际会跑成什么」。**面板不许自己算** —— 它一算就有两份规则。
  *
  * 状态只有三种：`ok` / `auto`（只有 model 有）/ `invalid`。
@@ -316,7 +522,7 @@ function categoryOf(spec) {
  * 只认目录、跳过点开头（`.archive/` 天然不进）；没有 `preset.json` 的目录静默跳过
  * （可能是只写了一篇 PRESET.md 的笔记）；有 `preset.json` 但坏了 → `specError`，留着不扔。
  */
-async function scan(dir) {
+async function scan(dir, { manifest = "preset.json", check = shapeProblems } = {}) {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -332,9 +538,9 @@ async function scan(dir) {
     const presetDir = path.join(dir, entry.name);
     let raw;
     try {
-      raw = await readFile(path.join(presetDir, "preset.json"), "utf8");
+      raw = await readFile(path.join(presetDir, manifest), "utf8");
     } catch {
-      continue; // 没有 preset.json：不是一条预设
+      continue; // 没有清单文件：不是这一段的一条
     }
 
     let spec = null;
@@ -342,12 +548,12 @@ async function scan(dir) {
     try {
       spec = JSON.parse(raw);
     } catch (error) {
-      specError = `preset.json 不是合法 JSON：${oneLine(error)}`;
+      specError = `${manifest} 不是合法 JSON：${oneLine(error)}`;
     }
     if (!specError) {
       // 形状不过 = 这条不生效。**引用不过不算**：引用的东西可能只是这会儿没装，
       // 那是「现在开不了」不是「这条写坏了」—— 后者进 specError，前者由 resolve 报红。
-      const problems = shapeProblems(spec, { dirName: entry.name, where: `${entry.name}/preset.json` });
+      const problems = check(spec, { dirName: entry.name, where: `${entry.name}/${manifest}` });
       if (problems.length) specError = problems.join("；");
     }
     if (specError && !spec) spec = {};
@@ -404,12 +610,15 @@ export async function readSections(repoRoot) {
  *
  * @param {{ dir: string }} options
  */
-export async function createPresets({ dir }) {
+export async function createPresets({ dir, manifest = "preset.json", checker = "preset" }) {
   /** @type {Map<string, object>} */
   const roster = new Map();
 
+  // 形状校验器按段选：会话预设用 shapeProblems，终极模板用 ultimateShapeProblems。
+  const check = checker === "ultimate" ? ultimateShapeProblems : shapeProblems;
+
   const load = async () => {
-    const found = await scan(dir);
+    const found = await scan(dir, { manifest, check });
     roster.clear();
     for (const item of found) roster.set(item.name, item);
     return [...roster.values()];

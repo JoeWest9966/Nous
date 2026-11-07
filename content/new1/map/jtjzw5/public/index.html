@@ -55,6 +55,12 @@
         <div class="toolbar">
           <span class="result-count" id="result-count">—</span>
           <div class="toolbar-right">
+            <button class="btn btn-small btn-new" id="new" type="button" title="新建一条终极模板（触发器 + 参数 + 会话模板）">
+              <span aria-hidden="true">＋</span>新建
+            </button>
+            <button class="btn btn-small" id="publish" type="button" title="校验 + 重扫索引 + commit + push（这一段里没发布的一起走）">
+              发布
+            </button>
             <button class="btn btn-small rail-toggle" id="rail-toggle" type="button" aria-expanded="false">类别</button>
             <label class="search">
               <input id="search" type="search" placeholder="搜名字 / 摘要 / 类别" autocomplete="off" />
@@ -85,6 +91,58 @@
       <div class="dt-body" id="dt-body"></div>
       <div class="dt-foot" id="dt-foot"></div>
     </aside>
+
+    <!-- 新建 / 编辑：一条终极模板 = 触发器 + 它的参数 + 一条会话模板。
+         参数表单是**照触发器自己的声明画出来的** —— 页面不认识任何触发器的名字。 -->
+    <div class="sheet-scrim" id="edit-scrim" hidden></div>
+    <form class="sheet" id="edit" hidden role="dialog" aria-modal="true" aria-labelledby="edit-title">
+      <h2 id="edit-title">新建终极模板</h2>
+      <p class="sheet-hint dim" id="edit-hint">—</p>
+
+      <div class="sheet-body">
+        <label class="field">
+          <span class="field-k">名字 <i class="dim">建完就改不了 —— 目录名就是它</i></span>
+          <input id="edit-name" type="text" autocomplete="off" spellcheck="false" placeholder="morning-review" />
+        </label>
+
+        <label class="field">
+          <span class="field-k">一句话说明 <i class="dim">卡片上就靠它认人</i></span>
+          <input id="edit-summary" type="text" autocomplete="off" maxlength="200" placeholder="每天第一条会话时起一条复盘" />
+        </label>
+
+        <div class="field">
+          <span class="field-k">触发器 <i class="dim">什么时候起</i></span>
+          <div class="picker" id="edit-triggers"></div>
+        </div>
+
+        <div class="field" id="edit-params-wrap" hidden>
+          <span class="field-k">参数 <i class="dim">照那个触发器自己声明的填</i></span>
+          <div class="fields" id="edit-params"></div>
+        </div>
+
+        <div class="field">
+          <span class="field-k">会话模板 <i class="dim">起什么对话</i></span>
+          <div class="picker" id="edit-sessions"></div>
+        </div>
+
+        <label class="field">
+          <span class="field-k">类别 <i class="dim">可空 = 未分类；多个用 / 分层</i></span>
+          <input id="edit-category" type="text" autocomplete="off" list="edit-cats" placeholder="日常/复盘" />
+          <datalist id="edit-cats"></datalist>
+        </label>
+
+        <label class="check">
+          <input id="edit-enabled" type="checkbox" checked />
+          <span>开着 <i class="dim">关掉 = 这条现在不触发</i></span>
+        </label>
+      </div>
+
+      <p class="sheet-err" id="edit-err" hidden></p>
+      <div class="sheet-foot">
+        <button class="btn" id="edit-cancel" type="button">取消</button>
+        <button class="btn btn-primary" id="edit-save" type="submit" disabled>存</button>
+      </div>
+    </form>
 
     <div class="toasts" id="toasts" aria-live="polite"></div>
 
