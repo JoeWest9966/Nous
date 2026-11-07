@@ -685,6 +685,13 @@ function productCard(trigger) {
   rust.append(el("span", "pmeta-k", "Rust"));
   rust.append(el("span", "pmeta-v", trigger.tracked === false ? "未进 HEAD" : "已进 HEAD"));
   foot.append(rust);
+  const params = Array.isArray(trigger.params) ? trigger.params : [];
+  if (params.length) {
+    const need = el("span", "pmeta");
+    need.append(el("span", "pmeta-k", "参数"));
+    need.append(el("span", "pmeta-v", String(params.length)));
+    foot.append(need);
+  }
   if (trigger.dirty) {
     const changed = el("span", "pmeta");
     changed.append(el("span", "pmeta-k", "改动"));
@@ -803,6 +810,21 @@ function renderDetail() {
   list.body.append(detailRow("目录", trigger.name, "目录名 = 清单 name = 身份"));
   list.body.append(detailRow("语言", "Rust · 独立项目"));
   grid.append(list.node);
+
+  const params = Array.isArray(trigger.params) ? trigger.params : [];
+  if (params.length) {
+    const sec = detailSection("参数", `${params.length} 个 · 装配时填`);
+    for (const param of params) {
+      const shape = param.type === "select" ? `单选：${(param.options ?? []).join(" / ")}` : param.type;
+      const row = detailRow(
+        param.name,
+        `${param.label ?? shape}${param.required ? " · 必填" : ""}`,
+        param.help ?? `${param.name}（${shape}）`,
+      );
+      sec.body.append(row);
+    }
+    grid.append(sec.node);
+  }
 
   const where = detailSection("仓库", "HEAD 里有没有");
   where.body.append(detailRow("发布", trigger.tracked === false ? "未发布 · HEAD 里没有" : "已进 HEAD"));

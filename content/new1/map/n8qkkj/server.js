@@ -84,6 +84,27 @@ function serializeWrite(task) {
 
 const sha = (text) => createHash("sha256").update(text).digest("hex").slice(0, 12);
 
+/**
+ * `git add -A -- <paths>`，但只喂**真的存在**的路径。
+ *
+ * 踩过：归档时先 `git mv <name> .archive/<name>`，再 add 的时候 `<name>/` 已经不在了 ——
+ * 一个匹配不到的 pathspec 会让整条 add 以 128 退出，**一个字节都不进去**，而 `git commit -- <paths>`
+ * 又带不上 untracked 文件，于是那份账本（.archive/archived.json）连着三次都没进仓库。
+ * 已经被 mv / 删掉的路径本来也不需要 add：mv 自己就把两边 staged 了。
+ */
+async function stage(...rels) {
+  const present = [];
+  for (const rel of rels) {
+    try {
+      await stat(path.join(REPO, rel));
+      present.push(rel);
+    } catch {
+      // 不在了就算了 —— 它的删除/移动早就在 index 里了。
+    }
+  }
+  if (present.length) await git("add", "-A", "--", ...present);
+}
+
 /** 目录名就是身份，所以名字只许这一套字符：能当目录名、能当二进制名。 */
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -172,6 +193,8 @@ async function readTrigger(name, { tracked, dirty }) {
     summary: manifest?.summary ?? "",
     category: Array.isArray(manifest?.category) ? manifest.category.filter(Boolean) : [],
     binary: manifest?.binary ?? name,
+    // 参数声明：装配台照它画表单，详情页照它说「这个触发器要人填什么」。
+    params: Array.isArray(manifest?.params) ? manifest.params : [],
     tracked,
     dirty: Boolean(dirty),
     dirtyFiles: dirty?.length ?? 0,
@@ -369,19 +392,22 @@ async function createTrigger({ name, summary, category }) {
       "",
     ].join("\n"),
   );
-  // 骨架必须是个**能编过**的程序：建完立刻点发布也不能红。契约写在注释里，
-  // 因为「打一行 JSON 给 Nous」这件事，只有这份模板能告诉写它的人。
+  // 骨架必须是个**能编过**的程序：建完立刻点发布也不能红。契约写在注释里 ——
+  // 「stdin 一行 JSON 进、stdout 一行 JSON 出」这件事，只有这份模板能告诉写它的人。
   await writeFile(
     path.join(dir, "src", "main.rs"),
     [
       `//! ${SUMMARY(summary)}`,
       "//!",
-      "//! 触发器的契约：判断条件由你自己拿主意；决定要起一条会话时，往 stdout 打**一行 JSON**：",
-      '//!   {"trigger":"' + name + '","template":"…","prompt":"…"}',
-      "//! 没触发就什么都不打、退出码 0 —— 「这次不触发」是正常结果，不是错误。",
+      "//! 契约（见仓库 README）：",
+      '//!   stdin  一行 JSON：{"now":<epoch 秒>, "params":{…}}',
+      '//!   stdout 一行 JSON：{"fire":true|false,"reason":"…","data":{…}}',
+      "//!   退出码 0 = 正常（fire 真假都算）；非 0 = 出错。",
+      "//!",
+      "//! 触发器只回答「现在该不该发起」—— 起什么样的对话是模板的事，别在这里写模板名。",
       "",
       "fn main() {",
-      '    println!(r#"{{"trigger":"' + name + '","template":"default","prompt":""}}"#);',
+      '    println!(r#"{{"fire":false,"reason":"还没写条件"}}"#);',
       "}",
       "",
     ].join("\n"),
@@ -391,6 +417,8 @@ async function createTrigger({ name, summary, category }) {
     version: "0.1.0",
     summary: summary || "（还没写说明）",
     category: (category ?? []).map((label) => String(label).trim()).filter(Boolean),
+    // 参数声明留个空数组：装配台看这个字段决定要不要画表单。
+    params: [],
   });
 
   await rescanIndex();
@@ -418,7 +446,7 @@ async function publishTrigger(name) {
   await rescanIndex();
 
   // 只动这一个：`<name>/` 底下的全部 + index.json。别人的脏文件一个都不许卷进来。
-  await git("add", "-A", "--", `${name}/`, "index.json");
+  await stage(`${name}/`, "index.json");
   const staged = await git("diff", "--cached", "--name-only");
   if (!staged.out.trim()) {
     const state = await repoState();
@@ -459,7 +487,7 @@ async function syncMeta() {
     return { committed: false, pushed: false, ahead: state.ahead, behind: state.behind };
   }
   await rescanIndex();
-  await git("add", "--", ...candidates);
+  await stage(...candidates);
   const staged = await git("diff", "--cached", "--name-only");
   if (!staged.out.trim()) {
     const state = await repoState();
@@ -502,8 +530,8 @@ async function archiveTrigger(name) {
   else await rename(dir, path.join(REPO, ARCHIVE, name));
 
   await rescanIndex();
-  await git("add", "-A", "--", `${name}/`, `${ARCHIVE}/`, "index.json");
-  await git("commit", "-m", `archive(${name}): 移出仓库`, "--", `${name}/`, `${ARCHIVE}/`, "index.json");
+  await stage(`${ARCHIVE}/`, "index.json");
+  await git("commit", "-m", `archive(${name}): 移出仓库`, "--", `${ARCHIVE}/`, "index.json");
   const push = await git("push");
   return {
     dropped: !tracked,
@@ -523,7 +551,7 @@ async function restoreTrigger(name) {
   delete log[name];
   await writeJsonFile(path.join(REPO, ARCHIVE_LOG), log);
   await rescanIndex();
-  await git("add", "-A", "--", `${name}/`, `${ARCHIVE}/`, "index.json");
+  await stage(`${name}/`, `${ARCHIVE}/`, "index.json");
   await git("commit", "-m", `restore(${name}): 从归档搬回来`, "--", `${name}/`, `${ARCHIVE}/`, "index.json");
   const push = await git("push");
   return { pushed: push.code === 0, pushError: push.code === 0 ? "" : (push.err || push.out).trim(), at: to };
@@ -538,7 +566,7 @@ async function purgeTrigger(name) {
   const log = await readJsonFile(path.join(REPO, ARCHIVE_LOG), {});
   delete log[name];
   await writeJsonFile(path.join(REPO, ARCHIVE_LOG), log);
-  await git("add", "-A", "--", `${ARCHIVE}/`);
+  await stage(`${ARCHIVE}/`);
   await git("commit", "-m", `purge(${name}): 从归档里彻底删除`, "--", `${ARCHIVE}/`);
   const push = await git("push");
   return { pushed: push.code === 0, pushError: push.code === 0 ? "" : (push.err || push.out).trim() };
