@@ -205,6 +205,7 @@ export const PRESET_KEYS = [
   "extensions",
   "template",
   "readOnly",
+  "cwd",
 ];
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -295,6 +296,11 @@ export function shapeProblems(raw, { dirName = null, where = "preset.json" } = {
 
   if (raw.readOnly !== undefined && typeof raw.readOnly !== "boolean") {
     problems.push(`${where} 的 readOnly 得是 true / false`);
+  }
+
+  // cwd 三态跟 template 一样：键在且是字符串 = 钉死路径；键在且是 null = 显式不要；键不在 = 跟随默认。
+  if (raw.cwd !== undefined && raw.cwd !== null && !nonEmptyString(raw.cwd)) {
+    problems.push(`${where} 的 cwd 得是绝对路径字符串，或者 null（明确用缺省）`);
   }
 
   return problems;
@@ -479,6 +485,14 @@ export function resolveSpec(spec, ctx = {}) {
             mode: "picked",
           };
 
+  // cwd 三态跟 template 一条纪律：键不写 = 跟随默认，null = 显式不要，字符串 = 钉死路径。
+  // 路径是机器相关的，这里不验存在 —— 只在建会话那一刻由 qrd3wh 验，不存在就 400。
+  const cwd = !("cwd" in spec)
+    ? { state: "ok", ref: null, value: null, mode: "default" }
+    : spec.cwd === null
+      ? { state: "ok", ref: null, value: null, mode: "none" }
+      : { state: "ok", ref: spec.cwd, value: spec.cwd, mode: "picked" };
+
   return {
     name: spec.name ?? null,
     model,
@@ -487,7 +501,8 @@ export function resolveSpec(spec, ctx = {}) {
     extensions: extensionRows,
     template,
     readOnly: spec.readOnly === true,
-    // 「键在不在」的五个事实，给面板画 chip 用（`默认` / `都不要` / `N 条`）。
+    cwd,
+    // 「键在不在」的六个事实，给面板画 chip 用（`默认` / `都不要` / `N 条`）。
     absence: {
       skills: spec.skills === undefined,
       extensions: spec.extensions === undefined,
@@ -495,6 +510,7 @@ export function resolveSpec(spec, ctx = {}) {
       model: spec.model === undefined,
       thinkingLevel: spec.thinkingLevel === undefined,
       readOnly: spec.readOnly === undefined,
+      cwd: !("cwd" in spec),
     },
   };
 }

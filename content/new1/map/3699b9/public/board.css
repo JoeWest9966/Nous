@@ -79,7 +79,7 @@ svg.frame .cliff { fill: none; stroke: var(--line); stroke-width: 2; stroke-line
 /* 中央椭圆：这条 preset 从这里落子（启动 / 保存） */
 .hub {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
-  width: clamp(250px, 32%, 620px); height: clamp(170px, 27%, 330px);
+  width: clamp(250px, 32%, 620px); height: clamp(200px, 28%, 340px);
   border-radius: 50%; background: var(--panel); border: 1px dashed var(--border);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: .7vmin; text-align: center; padding: 3% 9%;
@@ -155,6 +155,22 @@ svg.frame .cliff { fill: none; stroke: var(--line); stroke-width: 2; stroke-line
 .bsheet.has-rail { width: min(880px, 94vw); }
 
 .blist { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 1vmin 1.2vmin .6vmin; display: flex; flex-direction: column; gap: .3vmin; }
+
+/* 目录浏览器：点一下进一层，不勾选（跟清单同 skin，语义是导航不是多选） */
+.bdir {
+  display: grid; grid-template-columns: auto 1fr; gap: .9em; align-items: center; width: 100%;
+  padding: .55em .8em; text-align: left; cursor: pointer;
+  background: none; border: 1px solid transparent; border-radius: var(--radius); color: var(--fg);
+  font-family: var(--font);
+  transition: background .12s ease, border-color .12s ease;
+}
+.bdir:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.bdir:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.bdir[aria-selected="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.bdir-ico { width: 1.1em; text-align: center; color: var(--muted); font-family: var(--mono); }
+.bdir-name { font-family: var(--mono); font-size: clamp(11px, 1.5vmin, 13.5px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 中央 pill 里的路径太长会撑破椭圆，截断留给 title 看全名 */
+#b-dir-id { max-width: 26vmin; }
 
 .brail {
   min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
@@ -305,7 +321,7 @@ svg.frame .cliff { fill: none; stroke: var(--line); stroke-width: 2; stroke-line
 /* 盘面在 720px 的抽屉里：竖屏下椭圆收小，域的标题往外侧推 */
 @media (max-height: 720px) {
   .region { padding: 7% 5% 3%; }
-  .hub { width: min(84%, 320px); height: clamp(148px, 26vh, 230px); padding: 0 8%; gap: .4vmin; }
+  .hub { width: min(84%, 320px); height: clamp(170px, 26vh, 240px); padding: 0 8%; gap: .4vmin; }
   .hub .sub { margin-bottom: .4vmin; }
 }
 @media (max-width: 640px) { .bsheet { width: 96vw; } }

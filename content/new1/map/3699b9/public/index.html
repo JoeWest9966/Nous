@@ -185,6 +185,10 @@
             <div class="hub">
               <h1 id="b-name">—</h1>
               <div class="sub" id="b-hub-sub">—</div>
+              <button class="node" id="b-dir" type="button" title="这条 preset 的工作目录（跟随默认 / 无 / 钉路径）">
+                <span class="id" id="b-dir-id">—</span>
+                <span class="tag" id="b-dir-tag">browse ›</span>
+              </button>
               <div class="hub-btns">
                 <button class="node cta" id="b-save" type="button" title="保存到磁盘（Ctrl/⌘+S）—— 不提交">保存</button>
                 <button class="node cta primary" id="b-publish" type="button" title="校验 + commit + push">发布</button>
@@ -311,6 +315,26 @@
         <div class="bfoot">
           <span class="hint" id="b-ext-hint">—</span>
           <button class="bdone" id="b-ext-done" type="button">完成 ›</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bscrim" id="b-dir-scrim" hidden>
+      <div class="bsheet" role="dialog" aria-modal="true" aria-label="选择工作目录">
+        <div class="bshead">
+          <b>工作目录</b>
+          <input type="text" id="b-dq" placeholder="/path/to/project" spellcheck="false" autocomplete="off" />
+          <button class="node" id="b-dgo" type="button">Go</button>
+        </div>
+        <div class="bmodes" id="b-dir-modes">
+          <button class="bmode" type="button" data-mode="default" aria-pressed="false" title="preset.json 里不写 cwd —— 开会话时用块缺省">跟随默认</button>
+          <button class="bmode" type="button" data-mode="none" aria-pressed="false" title="cwd: null —— 明确用缺省">不要</button>
+          <button class="bmode" type="button" data-mode="picked" aria-pressed="false" title="钉死下面选中的路径">钉路径</button>
+        </div>
+        <div class="blist" id="b-dir-list"></div>
+        <div class="bfoot">
+          <span class="hint" id="b-dir-hint">—</span>
+          <button class="bdone" id="b-dir-done" type="button">完成 ›</button>
         </div>
       </div>
     </div>

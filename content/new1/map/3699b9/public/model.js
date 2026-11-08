@@ -265,6 +265,20 @@ export function chipRows(preset) {
     rows.push({ key: "template", label: "模板", text: template.value ?? template.ref, state: "ok" });
   }
 
+  const cwd = resolved.cwd ?? { mode: "default" };
+  if (cwd.mode === "picked") {
+    rows.push({
+      key: "cwd",
+      label: "路径",
+      text: cwd.value === "/" ? "/" : (lastSegment(cwd.value ?? "") || cwd.value),
+      state: "ok",
+    });
+  } else if (cwd.mode === "none") {
+    rows.push({ key: "cwd", label: "路径", text: "无", state: "none" });
+  } else {
+    rows.push({ key: "cwd", label: "路径", text: "默认", state: "default" });
+  }
+
   if (resolved.readOnly) rows.push({ key: "readOnly", label: "只读", text: "是", state: "none" });
 
   return rows;
@@ -281,6 +295,7 @@ export function launchWarnings(preset) {
   const notes = [];
   if (resolved.model?.state === "auto") notes.push("模型跟随设备默认");
   if (resolved.template?.mode === "default") notes.push("模板跟随仓库默认");
+  if (resolved.cwd?.mode === "default") notes.push("工作目录用块缺省");
   if (resolved.absence?.thinkingLevel && resolved.model?.state === "ok") notes.push("档位用引擎缺省 off");
   return { missingSkills, missingExtensions, missingTemplate, notes };
 }
@@ -336,6 +351,8 @@ export function draftFromText(text) {
   // `template: "auto"` 是「跟随默认」的别名（hb7k3j 的 picker 用的），表单里归到 default。
   const templateMode =
     !("template" in base) || base.template === "auto" ? "default" : base.template === null ? "none" : "picked";
+  // cwd 三态跟 template 一条纪律：键不写 = 跟随默认，null = 显式不要，字符串 = 钉死路径。
+  const cwdMode = !("cwd" in base) ? "default" : base.cwd === null ? "none" : "picked";
   return {
     broken: !ok,
     summary: base.summary ?? "",
@@ -349,6 +366,8 @@ export function draftFromText(text) {
     extensions: [...(base.extensions ?? [])],
     templateMode,
     template: typeof base.template === "string" && base.template !== "auto" ? base.template : "",
+    cwdMode,
+    cwd: typeof base.cwd === "string" ? base.cwd : "",
     readOnly: base.readOnly === true,
   };
 }
@@ -377,6 +396,8 @@ export function specFromDraft(draft, name) {
   else if (draft.extMode === "none") spec.extensions = [];
   if (draft.templateMode === "picked" && draft.template) spec.template = draft.template;
   else if (draft.templateMode === "none") spec.template = null;
+  if (draft.cwdMode === "picked" && draft.cwd) spec.cwd = draft.cwd;
+  else if (draft.cwdMode === "none") spec.cwd = null;
   if (draft.readOnly) spec.readOnly = true;
   return spec;
 }

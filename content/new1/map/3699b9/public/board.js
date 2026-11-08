@@ -82,17 +82,24 @@ export function createBoard(deps) {
 
   const cur = () => draft() ?? {};
 
+  // 目录浏览器状态（函数在下面，状态在这儿 —— load() 要写 dirStart）
+  let dirSeq = 0;        // 只认最后一次请求，切目录竞态时旧回复别乱涂屏
+  let dirStart = null;   // 服务端 startDirs[0]（浏览器首页）
+  let dirCur = "";       // 当前浏览到的目录（规范绝对路径）
+
   // ── 名册装载 ─────────────────────────────────────────────────────────────
   async function load() {
     if (loaded) return;
     loaded = true;
     try {
-      const [sk, pr, ex, ctx] = await Promise.all([
+      const [sk, pr, ex, ctx, dev] = await Promise.all([
         api.get("v1/skills").catch(() => null),
         api.get("v1/prompts").catch(() => null),
         api.get("v1/extensions").catch(() => null),
         api.get("__nous/ctx").catch(() => null),
+        api.get("v1/device").catch(() => null),
       ]);
+      dirStart = dev?.startDirs?.[0] ?? null;
       if (sk) {
         skills = (sk.skills ?? []).filter((s) => s.load?.state === "ok" && !s.hidden);
         // 技能那边**不剔 Basics**：扩展剔是因为它有「默认勾 Basics」这条规则，技能没有。
@@ -203,6 +210,10 @@ export function createBoard(deps) {
     $("b-ro-tag").textContent = d.readOnly ? "on ›" : "off ›";
     $("b-readonly").setAttribute("aria-pressed", String(!!d.readOnly));
 
+    // 工作目录：三态（跟随默认 / 无 / 钉路径）
+    $("b-dir-id").textContent = d.cwdMode === "picked" ? shortDir(d.cwd) : d.cwdMode === "none" ? "none" : "default";
+    $("b-dir-tag").textContent = d.cwdMode === "picked" ? "change ›" : "browse ›";
+
     // 中央
     const dirty = deps.isDirty?.() ?? false;
     $("b-hub-sub").textContent = dirty ? "unsaved · save first" : "saved · publish to commit";
@@ -226,7 +237,7 @@ export function createBoard(deps) {
     scrim.classList.remove("on");
     setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 160 : 260);
   };
-  const openScrims = () => ["b-ext-scrim", "b-tmpl-scrim", "b-skill-scrim", "b-model-scrim"].filter((id) => !$(id).hidden);
+  const openScrims = () => ["b-dir-scrim", "b-ext-scrim", "b-tmpl-scrim", "b-skill-scrim", "b-model-scrim"].filter((id) => !$(id).hidden);
 
   const openModel = (from) => {
     $("b-mq").value = "";
@@ -257,6 +268,104 @@ export function createBoard(deps) {
       ($("b-ext-list").querySelector(".brow") ?? $("b-ext-done")).focus();
     });
   };
+
+  // ── 工作目录：跟 hb7k3j 同一套目录浏览器，多了「跟随默认」这一态 ──
+  const shortDir = (p) => {
+    if (!p) return "—";
+    if (p === "/") return "/";
+    return p.replace(/\/+$/, "").split("/").pop() || "/";
+  };
+
+  const browseDir = async (p) => {
+    const mine = ++dirSeq;
+    $("b-dir-hint").textContent = "…";
+    try {
+      const listing = await api.get(`v1/fs/dirs?path=${encodeURIComponent(p ?? "")}`);
+      if (mine !== dirSeq) return;
+      dirCur = listing.path || "";
+      $("b-dq").value = dirCur;
+      renderDirRows(listing);
+      $("b-dir-hint").textContent = "—";
+    } catch (error) {
+      if (mine !== dirSeq) return;
+      $("b-dir-hint").textContent = String(error?.message ?? error);
+    }
+  };
+
+  const renderDirRows = (listing) => {
+    const list = $("b-dir-list");
+    list.textContent = "";
+    const add = (ico, name, path) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "bdir";
+      b.setAttribute("aria-selected", String(path === dirCur && path !== ""));
+      b.title = path;
+      const i = document.createElement("span");
+      i.className = "bdir-ico";
+      i.textContent = ico;
+      const n = document.createElement("span");
+      n.className = "bdir-name";
+      n.textContent = name;
+      b.append(i, n);
+      b.onclick = () => browseDir(path);
+      list.append(b);
+    };
+    add("⌂", "Start dirs", "");
+    if (listing.parent) add("↑", "..", listing.parent);
+    if (!(listing.dirs?.length)) {
+      const hint = document.createElement("div");
+      hint.className = "mnone";
+      hint.textContent = "No subdirectories.";
+      list.append(hint);
+      return;
+    }
+    for (const d of listing.dirs) add("▸", d.name, d.path);
+  };
+
+  const renderDirModes = () => {
+    const mode = cur().cwdMode ?? "default";
+    for (const b of $("b-dir-modes").querySelectorAll(".bmode")) {
+      b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+    }
+  };
+
+  const openDir = (from) => {
+    renderDirModes();
+    openSheet("b-dir-scrim", from, () => {
+      const d = cur();
+      dirCur = d.cwdMode === "picked" && d.cwd ? d.cwd : (dirStart ?? "");
+      $("b-dq").value = dirCur;
+      browseDir(dirCur);
+      $("b-dq").focus();
+    });
+  };
+  const closeDir = () => closeSheet("b-dir-scrim");
+
+  $("b-dgo").onclick = () => browseDir($("b-dq").value.trim());
+  $("b-dq").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); browseDir($("b-dq").value.trim()); }
+  });
+  $("b-dir-done").onclick = async () => {
+    const v = $("b-dq").value.trim();
+    if (v && v !== dirCur) await browseDir(v);
+    const d = cur();
+    if (d.cwdMode === "picked") d.cwd = dirCur || v || dirStart || "";
+    onChange();
+    render();
+    closeDir();
+  };
+  $("b-dir-modes").addEventListener("click", (e) => {
+    const chip = e.target.closest?.(".bmode");
+    if (!chip) return;
+    const d = cur();
+    d.cwdMode = chip.dataset.mode;
+    if (chip.dataset.mode !== "picked") d.cwd = "";
+    else if (!d.cwd && dirStart) d.cwd = dirStart;
+    onChange();
+    render();
+    renderDirModes();
+  });
 
   // ── 模型语法图（跟 hb7k3j 同一张铁路图，只是多了「缺省」那一档）──────────
   function drawRule(name, items, cx0, cx1, top) {
@@ -903,6 +1012,7 @@ export function createBoard(deps) {
     const btn = e.target.closest?.(".node");
     if (!btn) return;
     if (btn.id === "b-model") openModel(btn);
+    else if (btn.id === "b-dir") openDir(btn);
     else if (btn.id === "b-skills") openSkills(btn);
     else if (btn.id === "b-tmpl") openTmpl(btn);
     else if (btn.id === "b-ext") openExt(btn);
@@ -916,7 +1026,7 @@ export function createBoard(deps) {
   });
 
   // ── 事件：弹窗 ───────────────────────────────────────────────────────────
-  for (const id of ["b-model-scrim", "b-skill-scrim", "b-tmpl-scrim", "b-ext-scrim"]) {
+  for (const id of ["b-model-scrim", "b-skill-scrim", "b-tmpl-scrim", "b-ext-scrim", "b-dir-scrim"]) {
     $(id).addEventListener("click", (e) => {
       if (e.target === $(id)) closeSheet(id);
     });
