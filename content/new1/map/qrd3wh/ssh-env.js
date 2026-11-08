@@ -30,7 +30,13 @@ import { ExecutionError, FileError, StreamDecoder, err, ok } from "@earendil-wor
 
 // ── shell 引用 ────────────────────────────────────────────────────────────────
 // POSIX 单引号：`'` → `'\''`。任何字符串都能安全塞进 sh -c 的单引号里。
-const shq = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
+// 唯一例外：`~` 要留给远端 shell 展开成 home（单引号会把它框死），换成 `$HOME`。
+const shq = (s) => {
+  const t = String(s);
+  if (t === "~") return "$HOME";
+  if (t.startsWith("~/")) return `$HOME${shq(t.slice(1))}`;
+  return `'${t.replace(/'/g, "'\\''")}'`;
+};
 
 // ── 远程命令原语 ──────────────────────────────────────────────────────────────
 

@@ -10,12 +10,13 @@
 //   POST /v1/selection                {id} 或 {id:null}
 //   GET  /v1/models                   编目里登记过的模型（含档位表、窗口、输出上限）
 //   POST /v1/catalog/refresh          重拉编目（换了密钥 / 编目里加了供应商之后用）
-//   GET  /v1/fs/dirs?path=           目录浏览器：空 = start dirs；给路径 = 列它的子目录
-//   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、cwd、最后一句）
-//   POST /v1/sessions                 {name, model, thinkingLevel, skills, template, cwd} → 新对话
+//   GET  /v1/fs/dirs?path=           目录浏览器：空 = start dirs；给路径 = 列它的子目录（?machine= 列那台机器的）
+//   GET  /v1/machines                 机器编目（从 vq0f03 读，缓存 60s；?fresh=1 重拉）
+//   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、cwd、机器、最后一句）
+//   POST /v1/sessions                 {name, model, thinkingLevel, skills, template, cwd, machine} → 新对话
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
-//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template, cwd} 只读 = 不给会写的工具
+//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template, cwd, machine} 只读 = 不给会写的工具
 //   GET  /v1/skills                   技能仓库全景（repo 状态 + list() + archived + 类别）
 //   …                                全套 /v1/skills* 在 skills-api.js（见那个文件的头）
 //   GET  /v1/prompts                  模板私库全景（repo 状态 + list() + archived + 类别 + 默认值）
@@ -129,6 +130,8 @@ import { createPresets, expandPresetSpec, presetContext, readSections } from "./
 import { readTriggerCatalog } from "./triggers.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+// 多服务器：远端会话的 bash/文件读写走这个 —— ExecutionEnv 接口翻译成 ssh 命令。
+import { SshExecutionEnv } from "./ssh-env.js";
 
 const ctx = BACKGROUND_CONTEXT;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -142,6 +145,72 @@ const START_DIRS = (process.env.NOUS_START_DIRS ?? path.dirname(HERE))
   .filter(Boolean);
 const HOME = process.env.HOME ?? "";
 const startedAt = Date.now();
+
+// ── 机器编目：从 vq0f03 读，不自己读 nw-panel ──────────────────────────────
+//
+// vq0f03 是「机器编目」那块（id 固定）。它已经有 /api/catalog（机器 + 注解），
+// 这里只取 ssh 目标（name/user/port/ips），**不碰密钥** —— 密钥是宿主机 ~/.ssh 的事
+// （vq0f03 的 /ssh 端点自己写着「密钥、known_hosts、跳板都不在编目里」）。
+//
+// 地址两个来源：默认走宿主 `__nous/ctx` 找 vq0f03；`NOUS_VPS_BASE` 可以指死
+// （测试 / 远程部署时用，跟 NW_BASE 一个道理）。
+const MACHINES_BLOCK_ID = "vq0f03";
+const MACHINES_TTL_MS = 60_000;
+let machinesState = { at: 0, machines: [], error: null };
+
+const fetchMachineCatalog = async () => {
+  let base = process.env.NOUS_VPS_BASE;
+  if (!base) {
+    const origin = process.env.NOUS_ORIGIN ?? "http://127.0.0.1";
+    const self = process.env.NOUS_SELF ?? "/";
+    const ctxUrl = `${origin}${self.endsWith("/") ? self : self + "/"}__nous/ctx`;
+    const ctxRes = await fetch(ctxUrl);
+    if (!ctxRes.ok) throw new Error(`__nous/ctx ${ctxRes.status}`);
+    const ctxDoc = await ctxRes.json();
+    const blocks = Array.isArray(ctxDoc.blocks)
+      ? ctxDoc.blocks
+      : Object.entries(ctxDoc.blocks ?? {}).map(([id, b]) => ({ id, ...(b ?? {}) }));
+    const vps = blocks.find((b) => b?.id === MACHINES_BLOCK_ID);
+    if (!vps?.url) throw new Error(`__nous/ctx 里没有 ${MACHINES_BLOCK_ID}`);
+    base = vps.url;
+  }
+  base = String(base).replace(/\/+$/, "");
+  const res = await fetch(`${base}/api/catalog`);
+  if (!res.ok) throw new Error(`vq0f03 编目 ${res.status}`);
+  const body = await res.json();
+  const raw = body?.data?.machines ?? body?.machines ?? [];
+  return raw
+    .filter((m) => m?.name)
+    .map((m) => {
+      const ips = (m.ips ?? []).map((i) => ({ addr: String(i?.addr ?? ""), label: String(i?.label ?? "") })).filter((i) => i.addr);
+      return {
+        name: String(m.name),
+        user: m.user ?? "root",
+        port: Number(m.port) || 22,
+        ips,
+        addr: ips[0]?.addr ?? "",
+        note: m.note ?? "",
+        tags: m.tags ?? [],
+      };
+    });
+};
+
+/** 读编目（默认走缓存；`fresh` 强制重拉）。挂掉时回上一份 + error，不把旧清单扔掉。 */
+const machines = async (fresh = false) => {
+  const now = Date.now();
+  if (!fresh && machinesState.at && now - machinesState.at < MACHINES_TTL_MS) return machinesState;
+  try {
+    machinesState = { at: now, machines: await fetchMachineCatalog(), error: null };
+  } catch (error) {
+    machinesState = { at: now, machines: machinesState.machines, error: String(error?.message ?? error) };
+  }
+  return machinesState;
+};
+
+const resolveMachine = async (name) => {
+  const { machines: list } = await machines();
+  return list.find((m) => m.name === name) ?? null;
+};
 
 // ── 本地装卸：这一台的私事，跟仓库没关系 ───────────────────────────────────
 //
@@ -1198,7 +1267,7 @@ const Sessions = defineDoc({
   kind: "qrd3wh.sessions",
   version: 1,
   scope: "session",
-  initial: () => ({ names: {} }),
+  initial: () => ({ names: {}, machines: {} }),
   // 这张表很小、改得也不勤：每次都给一份完整 base，别攒 delta。
   checkpointWhen: () => true,
 });
@@ -1662,7 +1731,18 @@ const harness = await Harness.open(
   {
     models,
     registry,
-    env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? HERE }),
+    // 会话在哪台机器上跑：机器名从 Sessions 文档的 machines 边表来（AgentState 没有位置）。
+    // 找不到 / 机器不在编目 → 退回本机，并记一行，别静默成「照常」。
+    env: async ({ cwd, conversationId }) => {
+      const machineName = (await machinesOf())[key(conversationId)];
+      if (!machineName) return new NodeExecutionEnv({ cwd: cwd ?? HERE });
+      const machine = await resolveMachine(machineName);
+      if (!machine?.addr) {
+        console.error(`[machine] 会话 ${conversationId} 指着机器 ${machineName}，但编目里没有它 —— 退回本机`);
+        return new NodeExecutionEnv({ cwd: cwd ?? HERE });
+      }
+      return new SshExecutionEnv({ cwd: cwd ?? "~", host: machine });
+    },
     // 默认选择只放**真扩展**：空名牌（skill:<名>）装了但不默认选 —— 否则每条新会话
     // 一出生就吃 38 条描述，progressive disclosure 当场作废。
     settings: { extensions: [CodingTools, nousExtension, skills.extension, prompts.extension] },
@@ -1678,10 +1758,20 @@ const harness = await Harness.open(
 
 const names = async () => (await harness.snapshot(Sessions, ctx))?.names ?? {};
 
+const machinesOf = async () => (await harness.snapshot(Sessions, ctx))?.machines ?? {};
+
 const setName = (conversationId, name) =>
   harness.commit(async (tx) => {
     const doc = await tx.doc(Sessions);
     doc.names[key(conversationId)] = name;
+  }, ctx);
+
+/** 会话在哪台机器上跑：`null` / 不写 = 本机，字符串 = 机器名。跟 names 一样住 Sessions 文档。 */
+const setMachine = (conversationId, machine) =>
+  harness.commit(async (tx) => {
+    const doc = await tx.doc(Sessions);
+    if (machine === null || machine === undefined) delete doc.machines[key(conversationId)];
+    else doc.machines[key(conversationId)] = machine;
   }, ctx);
 
 /** 每个会话在忙什么：inspect() 一次拿全，别按会话一个个问。 */
@@ -1698,7 +1788,7 @@ const busyMap = async () => {
 
 const tree = async () => {
   const page = await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx);
-  const [namesNow, busy] = await Promise.all([names(), busyMap()]);
+  const [namesNow, machinesNow, busy] = await Promise.all([names(), machinesOf(), busyMap()]);
   const nodes = [];
   for (const record of page.items) {
     const conversation = await harness.conversation(record.id, ctx);
@@ -1712,6 +1802,7 @@ const tree = async () => {
       id: record.id,
       name: namesNow[key(record.id)] ?? `对话 ${record.id}`,
       cwd: agent.cwd ?? null,
+      machine: machinesNow[key(record.id)] ?? null,
       parent: record.parent ? { id: record.parent.conversationId, at: record.parent.at } : null,
       owner: record.owner ? record.owner.taskId : null,
       model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
@@ -1797,6 +1888,40 @@ const resolveCwd = async (p) => {
   return real;
 };
 
+/** 校验远端机器的 cwd：realpath 后必须是个存在的目录。返回那台机器上的规范绝对路径。 */
+const resolveRemoteCwd = async (machine, p) => {
+  const env = new SshExecutionEnv({ cwd: "~", host: machine });
+  const canon = await env.canonicalPath(String(p).trim() || "~", ctx);
+  if (!canon.ok) {
+    throw withStatus(new Error(`cwd 必须是「${machine.name}」上一个存在的文件夹：${p}`), 400);
+  }
+  const info = await env.fileInfo(canon.value, ctx);
+  if (!info.ok || info.value.kind !== "directory") {
+    throw withStatus(new Error(`cwd 必须是「${machine.name}」上一个存在的文件夹：${p}`), 400);
+  }
+  return canon.value;
+};
+
+/** 远端目录浏览器：`path` 空 = 那台机器的 home；否则列那台机器某个目录的子目录。 */
+const browseRemoteDirs = async (machine, p) => {
+  const env = new SshExecutionEnv({ cwd: "~", host: machine });
+  const target = String(p).trim() || "~";
+  const canon = await env.canonicalPath(target, ctx);
+  if (!canon.ok) throw withStatus(new Error(`不是目录：${p || "~"}`), 400);
+  const listed = await env.listDir(canon.value, ctx);
+  if (!listed.ok) throw withStatus(new Error(`不是目录：${p || "~"}`), 400);
+  const dirs = listed.value
+    .filter((e) => e.kind === "directory" && !e.name.startsWith(".") && e.name !== "node_modules")
+    .map((e) => ({ name: e.name, path: e.path }));
+  dirs.sort((a, b) => a.name.localeCompare(b.name));
+  const parent = path.posix.dirname(canon.value);
+  return {
+    path: canon.value,
+    parent: parent !== canon.value ? parent : undefined,
+    dirs: dirs.slice(0, 500),
+  };
+};
+
 const device = async () => ({
   self: process.env.NOUS_SELF ?? "/",
   origin: process.env.NOUS_ORIGIN ?? null,
@@ -1844,9 +1969,20 @@ const route = async (req, res, url) => {
   if (req.method === "GET" && parts[0] === "healthz") return json(res, 200, { ok: true });
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "device") return json(res, 200, await device());
 
+  if (req.method === "GET" && parts[0] === "v1" && parts[1] === "machines") {
+    return json(res, 200, await machines(Boolean(url.searchParams.get("fresh"))));
+  }
+
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "fs" && parts[2] === "dirs") {
     try {
-      return json(res, 200, await browseDirs(String(url.searchParams.get("path") ?? "")));
+      const machineName = String(url.searchParams.get("machine") ?? "").trim();
+      const p = String(url.searchParams.get("path") ?? "");
+      if (machineName) {
+        const machine = await resolveMachine(machineName);
+        if (!machine) return json(res, 400, { error: `没有这台机器：${machineName}` });
+        return json(res, 200, await browseRemoteDirs(machine, p));
+      }
+      return json(res, 200, await browseDirs(p));
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
@@ -2435,6 +2571,15 @@ const route = async (req, res, url) => {
     }
     const pick = (key) => (body[key] !== undefined ? body[key] : presetBase?.[key]);
 
+    // machine：body 显式给 > 预设给的。`null` / 不传 = 本机；字符串 = 机器名。
+    // 机器不在编目就 400 —— 跟「引用失效」一条纪律（预设可以钉一台别处没有的机器）。
+    const askedMachine = pick("machine");
+    let machine = null;
+    if (askedMachine) {
+      machine = await resolveMachine(String(askedMachine).trim());
+      if (!machine) return json(res, 400, { error: `没有这台机器：${askedMachine}` });
+    }
+
     const model = pick("model") ?? defaultModel;
     // 档位在建会话的**同一个 commit** 里落定（AgentChange 的 thinkingLevel），
     // 不是先建再 configure —— 后者中间那一下，第一条消息可能已经跑出去了。
@@ -2459,10 +2604,13 @@ const route = async (req, res, url) => {
     );
     // cwd：body 显式给 > 预设给的 > 块自己的目录。预设可以带绝对路径，但那可能是
     // 别台机器上的 —— 这里不替它猜，不存在就 400 说清楚（跟「引用失效」一条纪律）。
+    // 选了机器的话，cwd 是**那台机器**上的路径，校验也跑在那边（realpath + 是目录）。
     const askedCwd = pick("cwd");
     let cwd;
     try {
-      cwd = askedCwd ? await resolveCwd(askedCwd) : HERE;
+      cwd = machine
+        ? await resolveRemoteCwd(machine, askedCwd ?? "~")
+        : askedCwd ? await resolveCwd(askedCwd) : HERE;
     } catch (error) {
       return json(res, error.status ?? 400, { error: String(error?.message ?? error) });
     }
@@ -2500,6 +2648,7 @@ const route = async (req, res, url) => {
       ctx,
     );
     if (body.name) await setName(created.id, String(body.name).slice(0, 120));
+    if (machine) await setMachine(created.id, machine.name);
     // 只读：`createConversation` 没有这个字段（它只认 model / thinkingLevel / extensions），
     // 所以建完立刻 configure 一次。这不是「先建再配」那种坏味道 —— 那条纪律要防的是
     // 「第一条消息已经跑出去了配置还没落」，而这里第一条消息还没发生（调用方拿到 201 才发）。
@@ -2512,6 +2661,7 @@ const route = async (req, res, url) => {
       id: created.id,
       name: (await names())[key(created.id)],
       cwd: agent.cwd ?? null,
+      machine: machine?.name ?? null,
       model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
       thinkingLevel: agent.thinkingLevel ?? null,
       skills: skillNamesOf(agent),
@@ -2613,11 +2763,37 @@ const route = async (req, res, url) => {
           );
         }
       }
+      // machine：`null` = 回本机，字符串 = 换机器（机器得在编目里）。改了机器，cwd 跟着重验。
+      if (body.machine !== undefined) {
+        if (body.machine === null) {
+          await setMachine(id, null);
+        } else {
+          const wanted = String(body.machine).trim();
+          if (!wanted) {
+            await setMachine(id, null);
+          } else {
+            const found = await resolveMachine(wanted);
+            if (!found) return json(res, 400, { error: `没有这台机器：${wanted}` });
+            await setMachine(id, found.name);
+          }
+        }
+      }
       // cwd 可以换（AgentChange 支持）：`null` = 清回缺省，字符串 = 换掉。
+      // 换了机器之后，cwd 是**那台机器**上的路径，校验也跑在那边（realpath + 是目录）。
       if (body.cwd !== undefined) {
         try {
-          const wanted =
-            body.cwd === null ? null : String(body.cwd).trim() ? await resolveCwd(body.cwd) : null;
+          const machineName = (await machinesOf())[key(id)] ?? null;
+          const target = machineName ? await resolveMachine(machineName) : null;
+          let wanted;
+          if (body.cwd === null) {
+            wanted = null;
+          } else if (!String(body.cwd).trim()) {
+            wanted = null;
+          } else if (target) {
+            wanted = await resolveRemoteCwd(target, body.cwd);
+          } else {
+            wanted = await resolveCwd(body.cwd);
+          }
           await conversation.configure({ cwd: wanted }, ctx);
         } catch (error) {
           return json(res, error.status ?? 400, { error: String(error?.message ?? error) });
@@ -2633,6 +2809,7 @@ const route = async (req, res, url) => {
         template: templateOf(agent),
         extensions: extensionNamesOf(agent),
         cwd: agent.cwd ?? null,
+        machine: (await machinesOf())[key(id)] ?? null,
         readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       });
     }
