@@ -206,6 +206,7 @@ export const PRESET_KEYS = [
   "template",
   "readOnly",
   "cwd",
+  "machine",
 ];
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/;
@@ -302,6 +303,10 @@ export function shapeProblems(raw, { dirName = null, where = "preset.json" } = {
   if (raw.cwd !== undefined && raw.cwd !== null && !nonEmptyString(raw.cwd)) {
     problems.push(`${where} 的 cwd 得是绝对路径字符串，或者 null（明确用缺省）`);
   }
+  // machine 同样三态：字符串 = 钉死机器；null = 明确用本机；键不在 = 跟随默认。
+  if (raw.machine !== undefined && raw.machine !== null && !nonEmptyString(raw.machine)) {
+    problems.push(`${where} 的 machine 得是机器名字符串，或者 null（明确用本机）`);
+  }
 
   return problems;
 }
@@ -377,6 +382,8 @@ export function expandPresetSpec(spec) {
   // cwd 可选：缺席 = 用块缺省；null = 显式不要（同 template 三态）。绝对路径在
   // 别台机器上可能不存在 —— 只在建会话那一刻校验，这里只透传。
   if (spec.cwd !== undefined) out.cwd = spec.cwd;
+  // machine 同三态：缺席 = 跟随默认；null = 明确本机；字符串 = 钉死机器名。
+  if (spec.machine !== undefined) out.machine = spec.machine;
   return out;
 }
 
@@ -493,6 +500,14 @@ export function resolveSpec(spec, ctx = {}) {
       ? { state: "ok", ref: null, value: null, mode: "none" }
       : { state: "ok", ref: spec.cwd, value: spec.cwd, mode: "picked" };
 
+  // machine 三态同 cwd：键不写 = 跟随默认，null = 明确本机，字符串 = 钉死机器。
+  // 机器在不在编目里也是机器相关的 —— 只在建会话那一刻验，不存在就 400。
+  const machine = !("machine" in spec)
+    ? { state: "ok", ref: null, value: null, mode: "default" }
+    : spec.machine === null
+      ? { state: "ok", ref: null, value: null, mode: "none" }
+      : { state: "ok", ref: spec.machine, value: spec.machine, mode: "picked" };
+
   return {
     name: spec.name ?? null,
     model,
@@ -502,6 +517,7 @@ export function resolveSpec(spec, ctx = {}) {
     template,
     readOnly: spec.readOnly === true,
     cwd,
+    machine,
     // 「键在不在」的六个事实，给面板画 chip 用（`默认` / `都不要` / `N 条`）。
     absence: {
       skills: spec.skills === undefined,
@@ -511,6 +527,7 @@ export function resolveSpec(spec, ctx = {}) {
       thinkingLevel: spec.thinkingLevel === undefined,
       readOnly: spec.readOnly === undefined,
       cwd: !("cwd" in spec),
+      machine: !("machine" in spec),
     },
   };
 }

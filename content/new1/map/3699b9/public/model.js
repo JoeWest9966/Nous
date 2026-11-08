@@ -279,6 +279,15 @@ export function chipRows(preset) {
     rows.push({ key: "cwd", label: "路径", text: "默认", state: "default" });
   }
 
+  const machine = resolved.machine ?? { mode: "default" };
+  if (machine.mode === "picked") {
+    rows.push({ key: "machine", label: "机器", text: machine.value ?? "?", state: "ok" });
+  } else if (machine.mode === "none") {
+    rows.push({ key: "machine", label: "机器", text: "本机", state: "none" });
+  } else {
+    rows.push({ key: "machine", label: "机器", text: "默认", state: "default" });
+  }
+
   if (resolved.readOnly) rows.push({ key: "readOnly", label: "只读", text: "是", state: "none" });
 
   return rows;
@@ -353,6 +362,8 @@ export function draftFromText(text) {
     !("template" in base) || base.template === "auto" ? "default" : base.template === null ? "none" : "picked";
   // cwd 三态跟 template 一条纪律：键不写 = 跟随默认，null = 显式不要，字符串 = 钉死路径。
   const cwdMode = !("cwd" in base) ? "default" : base.cwd === null ? "none" : "picked";
+  // machine 同三态：键不写 = 跟随默认，null = 明确本机，字符串 = 钉死机器名。
+  const machineMode = !("machine" in base) ? "default" : base.machine === null ? "none" : "picked";
   return {
     broken: !ok,
     summary: base.summary ?? "",
@@ -368,6 +379,8 @@ export function draftFromText(text) {
     template: typeof base.template === "string" && base.template !== "auto" ? base.template : "",
     cwdMode,
     cwd: typeof base.cwd === "string" ? base.cwd : "",
+    machineMode,
+    machine: typeof base.machine === "string" ? base.machine : "",
     readOnly: base.readOnly === true,
   };
 }
@@ -398,6 +411,8 @@ export function specFromDraft(draft, name) {
   else if (draft.templateMode === "none") spec.template = null;
   if (draft.cwdMode === "picked" && draft.cwd) spec.cwd = draft.cwd;
   else if (draft.cwdMode === "none") spec.cwd = null;
+  if (draft.machineMode === "picked" && draft.machine) spec.machine = draft.machine;
+  else if (draft.machineMode === "none") spec.machine = null;
   if (draft.readOnly) spec.readOnly = true;
   return spec;
 }

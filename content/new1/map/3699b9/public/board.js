@@ -214,6 +214,10 @@ export function createBoard(deps) {
     $("b-dir-id").textContent = d.cwdMode === "picked" ? shortDir(d.cwd) : d.cwdMode === "none" ? "none" : "default";
     $("b-dir-tag").textContent = d.cwdMode === "picked" ? "change ›" : "browse ›";
 
+    // 机器：三态（跟随默认 / 本机 / 钉机器）
+    $("b-machine-id").textContent = d.machineMode === "picked" ? d.machine : d.machineMode === "none" ? "本机" : "default";
+    $("b-machine-tag").textContent = d.machineMode === "picked" ? "change ›" : "browse ›";
+
     // 中央
     const dirty = deps.isDirty?.() ?? false;
     $("b-hub-sub").textContent = dirty ? "unsaved · save first" : "saved · publish to commit";
@@ -237,7 +241,7 @@ export function createBoard(deps) {
     scrim.classList.remove("on");
     setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 160 : 260);
   };
-  const openScrims = () => ["b-dir-scrim", "b-ext-scrim", "b-tmpl-scrim", "b-skill-scrim", "b-model-scrim"].filter((id) => !$(id).hidden);
+  const openScrims = () => ["b-machine-scrim", "b-dir-scrim", "b-ext-scrim", "b-tmpl-scrim", "b-skill-scrim", "b-model-scrim"].filter((id) => !$(id).hidden);
 
   const openModel = (from) => {
     $("b-mq").value = "";
@@ -365,6 +369,107 @@ export function createBoard(deps) {
     onChange();
     render();
     renderDirModes();
+  });
+
+  // ── 机器：三态（跟随默认 / 本机 / 钉机器）。清单只在「钉机器」时有用 ──
+  let machineList = [];
+  let machineSeq = 0;
+
+  const fetchMachines = async () => {
+    const mine = ++machineSeq;
+    $("b-machine-hint").textContent = "…";
+    try {
+      const data = await api.get("v1/machines");
+      if (mine !== machineSeq) return;
+      machineList = data.machines ?? [];
+      renderMachineRows();
+      $("b-machine-hint").textContent = data.error ? String(data.error) : "—";
+    } catch (error) {
+      if (mine !== machineSeq) return;
+      $("b-machine-hint").textContent = String(error?.message ?? error);
+    }
+  };
+
+  const renderMachineRows = () => {
+    const list = $("b-machine-list");
+    list.textContent = "";
+    const d = cur();
+    const add = (name, sub, picked) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "bdir";
+      b.setAttribute("aria-selected", String(picked));
+      b.title = sub;
+      const i = document.createElement("span");
+      i.className = "bdir-ico";
+      i.textContent = picked ? "✓" : "▸";
+      const n = document.createElement("span");
+      n.className = "bdir-name";
+      n.textContent = name;
+      const s = document.createElement("span");
+      s.className = "bdir-name";
+      s.style.color = "var(--muted)";
+      s.style.fontSize = "clamp(9.5px,1.25vmin,11px)";
+      s.textContent = sub;
+      const wrap = document.createElement("span");
+      wrap.style.display = "flex";
+      wrap.style.flexDirection = "column";
+      wrap.style.gap = ".15em";
+      wrap.append(n, s);
+      b.append(i, wrap);
+      b.onclick = () => {
+        const curDraft = cur();
+        curDraft.machineMode = "picked";
+        curDraft.machine = name;
+        onChange();
+        render();
+        renderMachineRows();
+        renderMachineModes();
+      };
+      list.append(b);
+    };
+    for (const m of machineList) {
+      add(m.name, `${m.user}@${m.addr}:${m.port}`, d.machineMode === "picked" && d.machine === m.name);
+    }
+    if (!machineList.length) {
+      const hint = document.createElement("div");
+      hint.className = "mnone";
+      hint.textContent = "No machines in catalog.";
+      list.append(hint);
+    }
+  };
+
+  const renderMachineModes = () => {
+    const mode = cur().machineMode ?? "default";
+    for (const b of $("b-machine-modes").querySelectorAll(".bmode")) {
+      b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
+    }
+  };
+
+  const openMachine = (from) => {
+    renderMachineModes();
+    renderMachineRows();
+    openSheet("b-machine-scrim", from, () => {
+      fetchMachines();
+    });
+  };
+  const closeMachine = () => closeSheet("b-machine-scrim");
+
+  $("b-machine-done").onclick = () => {
+    onChange();
+    render();
+    closeMachine();
+  };
+  $("b-machine-modes").addEventListener("click", (e) => {
+    const chip = e.target.closest?.(".bmode");
+    if (!chip) return;
+    const d = cur();
+    d.machineMode = chip.dataset.mode;
+    if (chip.dataset.mode !== "picked") d.machine = "";
+    onChange();
+    render();
+    renderMachineModes();
+    renderMachineRows();
   });
 
   // ── 模型语法图（跟 hb7k3j 同一张铁路图，只是多了「缺省」那一档）──────────
@@ -1013,6 +1118,7 @@ export function createBoard(deps) {
     if (!btn) return;
     if (btn.id === "b-model") openModel(btn);
     else if (btn.id === "b-dir") openDir(btn);
+    else if (btn.id === "b-machine") openMachine(btn);
     else if (btn.id === "b-skills") openSkills(btn);
     else if (btn.id === "b-tmpl") openTmpl(btn);
     else if (btn.id === "b-ext") openExt(btn);
@@ -1026,7 +1132,7 @@ export function createBoard(deps) {
   });
 
   // ── 事件：弹窗 ───────────────────────────────────────────────────────────
-  for (const id of ["b-model-scrim", "b-skill-scrim", "b-tmpl-scrim", "b-ext-scrim", "b-dir-scrim"]) {
+  for (const id of ["b-model-scrim", "b-skill-scrim", "b-tmpl-scrim", "b-ext-scrim", "b-dir-scrim", "b-machine-scrim"]) {
     $(id).addEventListener("click", (e) => {
       if (e.target === $(id)) closeSheet(id);
     });

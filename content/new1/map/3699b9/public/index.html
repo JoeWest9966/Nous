@@ -185,6 +185,10 @@
             <div class="hub">
               <h1 id="b-name">—</h1>
               <div class="sub" id="b-hub-sub">—</div>
+              <button class="node" id="b-machine" type="button" title="这条 preset 跑在哪台机器上（跟随默认 / 本机 / 钉机器）">
+                <span class="id" id="b-machine-id">—</span>
+                <span class="tag" id="b-machine-tag">browse ›</span>
+              </button>
               <button class="node" id="b-dir" type="button" title="这条 preset 的工作目录（跟随默认 / 无 / 钉路径）">
                 <span class="id" id="b-dir-id">—</span>
                 <span class="tag" id="b-dir-tag">browse ›</span>
@@ -335,6 +339,22 @@
         <div class="bfoot">
           <span class="hint" id="b-dir-hint">—</span>
           <button class="bdone" id="b-dir-done" type="button">完成 ›</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="bscrim" id="b-machine-scrim" hidden>
+      <div class="bsheet" role="dialog" aria-modal="true" aria-label="选择机器">
+        <div class="bshead"><b>机器</b></div>
+        <div class="bmodes" id="b-machine-modes">
+          <button class="bmode" type="button" data-mode="default" aria-pressed="false" title="preset.json 里不写 machine —— 开会话时用缺省">跟随默认</button>
+          <button class="bmode" type="button" data-mode="none" aria-pressed="false" title="machine: null —— 明确用本机">本机</button>
+          <button class="bmode" type="button" data-mode="picked" aria-pressed="false" title="钉死下面选中的机器">钉机器</button>
+        </div>
+        <div class="blist" id="b-machine-list"></div>
+        <div class="bfoot">
+          <span class="hint" id="b-machine-hint">—</span>
+          <button class="bdone" id="b-machine-done" type="button">完成 ›</button>
         </div>
       </div>
     </div>
