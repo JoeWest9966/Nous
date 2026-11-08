@@ -10,11 +10,12 @@
 //   POST /v1/selection                {id} 或 {id:null}
 //   GET  /v1/models                   编目里登记过的模型（含档位表、窗口、输出上限）
 //   POST /v1/catalog/refresh          重拉编目（换了密钥 / 编目里加了供应商之后用）
-//   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、最后一句）
-//   POST /v1/sessions                 {name, model, thinkingLevel, skills, template} → 新对话
+//   GET  /v1/fs/dirs?path=           目录浏览器：空 = start dirs；给路径 = 列它的子目录
+//   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、cwd、最后一句）
+//   POST /v1/sessions                 {name, model, thinkingLevel, skills, template, cwd} → 新对话
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
-//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template} 只读 = 不给会写的工具
+//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template, cwd} 只读 = 不给会写的工具
 //   GET  /v1/skills                   技能仓库全景（repo 状态 + list() + archived + 类别）
 //   …                                全套 /v1/skills* 在 skills-api.js（见那个文件的头）
 //   GET  /v1/prompts                  模板私库全景（repo 状态 + list() + archived + 类别 + 默认值）
@@ -43,7 +44,7 @@
 //
 // 所有地址都写相对的：宿主把 /p/<board>/<id>/ 反代进来。
 
-import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -133,6 +134,13 @@ const ctx = BACKGROUND_CONTEXT;
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4780);
 const DATA = process.env.NOUS_DATA ?? path.join(HERE, "data");
+// 目录浏览器的「首页」：NOUS_START_DIRS（冒号分隔），缺省 = 这一盘的 map 根（所有块）。
+// 不是沙箱 —— 浏览器有「..」能到根、能手输绝对路径，这只是打开时落在哪。
+const START_DIRS = (process.env.NOUS_START_DIRS ?? path.dirname(HERE))
+  .split(":")
+  .map((p) => p.trim())
+  .filter(Boolean);
+const HOME = process.env.HOME ?? "";
 const startedAt = Date.now();
 
 // ── 本地装卸：这一台的私事，跟仓库没关系 ───────────────────────────────────
@@ -1703,6 +1711,7 @@ const tree = async () => {
     nodes.push({
       id: record.id,
       name: namesNow[key(record.id)] ?? `对话 ${record.id}`,
+      cwd: agent.cwd ?? null,
       parent: record.parent ? { id: record.parent.conversationId, at: record.parent.at } : null,
       owner: record.owner ? record.owner.taskId : null,
       model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
@@ -1743,6 +1752,51 @@ const readBody = (req) =>
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const expandHome = (p) => (p === "~" ? HOME : p.startsWith("~/") ? path.join(HOME, p.slice(2)) : p);
+
+/** 目录浏览器：`path` 空 = 列出 start dirs；否则列某个目录的子目录。 */
+const browseDirs = async (p) => {
+  if (!p) {
+    const dirs = [];
+    for (const root of START_DIRS) {
+      try {
+        dirs.push({ name: root, path: await realpath(root) });
+      } catch {
+        // start dir 没了就当它没有，别让整张列表 500。
+      }
+    }
+    return { path: "", dirs };
+  }
+  const expanded = expandHome(p);
+  let real;
+  try {
+    real = await realpath(path.resolve(expanded));
+    if (!(await stat(real)).isDirectory()) throw Error();
+  } catch {
+    throw withStatus(new Error(`不是目录：${p}`), 400);
+  }
+  const dirs = [];
+  for (const entry of await readdir(real, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+    dirs.push({ name: entry.name, path: path.join(real, entry.name) });
+  }
+  dirs.sort((a, b) => a.name.localeCompare(b.name));
+  return { path: real, parent: path.dirname(real) !== real ? path.dirname(real) : undefined, dirs: dirs.slice(0, 500) };
+};
+
+/** 校验会话的 cwd：展开 ~，realpath 后必须是个存在的目录。返回规范绝对路径。 */
+const resolveCwd = async (p) => {
+  const expanded = expandHome(String(p).trim());
+  let real;
+  try {
+    real = await realpath(path.resolve(START_DIRS[0] ?? HERE, expanded));
+    if (!(await stat(real)).isDirectory()) throw Error();
+  } catch {
+    throw withStatus(new Error(`cwd 必须是这台机器上一个存在的文件夹：${p}`), 400);
+  }
+  return real;
+};
+
 const device = async () => ({
   self: process.env.NOUS_SELF ?? "/",
   origin: process.env.NOUS_ORIGIN ?? null,
@@ -1751,6 +1805,7 @@ const device = async () => ({
   model: defaultModel,
   faux,
   data: DATA,
+  startDirs: START_DIRS,
   catalog: { base: catalog.base, at: catalog.at, error: catalog.error, providers: catalog.installed.length },
   available: (await models.getAvailable()).slice(0, 60).map((m) => `${m.provider}/${m.id}`),
 });
@@ -1788,6 +1843,14 @@ const route = async (req, res, url) => {
 
   if (req.method === "GET" && parts[0] === "healthz") return json(res, 200, { ok: true });
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "device") return json(res, 200, await device());
+
+  if (req.method === "GET" && parts[0] === "v1" && parts[1] === "fs" && parts[2] === "dirs") {
+    try {
+      return json(res, 200, await browseDirs(String(url.searchParams.get("path") ?? "")));
+    } catch (error) {
+      return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
+  }
 
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "models") {
     // 只报「这台机器真能打的」：models.json 里配了的 + 环境里配好凭据的。
@@ -2394,6 +2457,15 @@ const route = async (req, res, url) => {
     const wantedExt = [...new Set((Array.isArray(askedExt) ? askedExt : []).map(String))].filter((name) =>
       registry.snapshot().installed().some((e) => e.name === name),
     );
+    // cwd：body 显式给 > 预设给的 > 块自己的目录。预设可以带绝对路径，但那可能是
+    // 别台机器上的 —— 这里不替它猜，不存在就 400 说清楚（跟「引用失效」一条纪律）。
+    const askedCwd = pick("cwd");
+    let cwd;
+    try {
+      cwd = askedCwd ? await resolveCwd(askedCwd) : HERE;
+    } catch (error) {
+      return json(res, error.status ?? 400, { error: String(error?.message ?? error) });
+    }
     // 清单里的 `default: true` = 新会话默认选它。README 一直这么写着，但从来没人读它 ——
     // 页面那个「默认」绿角标看的是下面这三个硬编码的名字，于是 nous.json 里那个字段
     // 只是个装饰品（改了没反应，比没有更糟）。这里把它接上：只补「不是那三个」的，
@@ -2412,7 +2484,7 @@ const route = async (req, res, url) => {
       {
         ownership: { kind: "ownerless" },
         agent: {
-          cwd: HERE,
+          cwd,
           model,
           ...(thinkingLevel ? { thinkingLevel } : {}),
           ...(() => {
@@ -2439,6 +2511,7 @@ const route = async (req, res, url) => {
     return json(res, 201, {
       id: created.id,
       name: (await names())[key(created.id)],
+      cwd: agent.cwd ?? null,
       model: agent.model ? `${agent.model.provider}/${agent.model.modelId}` : null,
       thinkingLevel: agent.thinkingLevel ?? null,
       skills: skillNamesOf(agent),
@@ -2540,6 +2613,16 @@ const route = async (req, res, url) => {
           );
         }
       }
+      // cwd 可以换（AgentChange 支持）：`null` = 清回缺省，字符串 = 换掉。
+      if (body.cwd !== undefined) {
+        try {
+          const wanted =
+            body.cwd === null ? null : String(body.cwd).trim() ? await resolveCwd(body.cwd) : null;
+          await conversation.configure({ cwd: wanted }, ctx);
+        } catch (error) {
+          return json(res, error.status ?? 400, { error: String(error?.message ?? error) });
+        }
+      }
       // 回的是**生效值**，不是请求值：前端拿它重画，面板和真相就不会分叉。
       const agent = await conversation.agent(ctx);
       return json(res, 200, {
@@ -2549,6 +2632,7 @@ const route = async (req, res, url) => {
         skills: skillNamesOf(agent),
         template: templateOf(agent),
         extensions: extensionNamesOf(agent),
+        cwd: agent.cwd ?? null,
         readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       });
     }

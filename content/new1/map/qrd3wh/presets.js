@@ -368,6 +368,9 @@ export function expandPresetSpec(spec) {
   if (spec.extensions !== undefined) out.extensions = [...spec.extensions];
   if ("template" in spec && spec.template !== "auto") out.template = spec.template;
   if (spec.readOnly !== undefined) out.readOnly = spec.readOnly;
+  // cwd 可选：缺席 = 用块缺省；null = 显式不要（同 template 三态）。绝对路径在
+  // 别台机器上可能不存在 —— 只在建会话那一刻校验，这里只透传。
+  if (spec.cwd !== undefined) out.cwd = spec.cwd;
   return out;
 }
 

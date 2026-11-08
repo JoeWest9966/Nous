@@ -77,7 +77,7 @@
 
   /* ── 中央 confusion 椭圆 ── */
   .hub { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); z-index:2;
-         width:clamp(250px, 32%, 620px); height:clamp(170px, 27%, 330px);
+         width:clamp(250px, 32%, 620px); height:clamp(200px, 28%, 340px);
          border-radius:50%; background:var(--panel); border:1px dashed var(--border);
          display:flex; flex-direction:column; align-items:center; justify-content:center;
          gap:.7vmin; text-align:center; padding:3% 9%; }
@@ -169,6 +169,24 @@
   .skill-desc { color:var(--muted); font-size:clamp(10px,1.35vmin,12.5px); line-height:1.45; margin-top:.15em;
                 display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .skill-meta { display:block; color:var(--faint); font-family:var(--mono); font-size:clamp(9px,1.2vmin,11px); margin-top:.25em; }
+  /* ── 目录浏览器：点一下进一层，不勾选（跟技能清单同 skin，语义是导航不是多选）── */
+  .dirs { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain;
+          padding:1vmin 1.2vmin .6vmin; display:flex; flex-direction:column; gap:.3vmin; }
+  .dir-row { display:grid; grid-template-columns:auto 1fr; gap:.9em; align-items:center; width:100%;
+             padding:.55em .8em; text-align:left; cursor:pointer;
+             background:none; border:1px solid transparent; border-radius:var(--radius);
+             color:var(--fg); font-family:var(--font);
+             transition:background .12s ease, border-color .12s ease; }
+  .dir-row:hover { background:color-mix(in srgb, var(--accent) 7%, transparent); }
+  .dir-row:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+  .dir-row[aria-selected="true"] { border-color:var(--accent);
+                                    background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .dir-ico { width:1.1em; text-align:center; color:var(--muted); font-family:var(--mono); }
+  .dir-name { font-family:var(--mono); font-size:clamp(11px,1.5vmin,13.5px);
+              overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dir-empty { color:var(--muted); font-size:clamp(10px,1.4vmin,12.5px); padding:2.4vmin 1.2vmin; text-align:center; }
+  /* 中央 pill 里的路径太长会撑破椭圆，截断留给 title 看全名 */
+  #dir-id { max-width:26vmin; }
   /* ── 类别：顶部只放**系统视图**，人自己建的类别在右栏 ──
      分工抄 vbe4pt：栏里混着「全部 / 未分类」，「我自己建了什么」就看不出来了；
      反过来把自定义类别摊到顶栏，一百个扩展时那行胶囊会滚成一条没头的带子。
@@ -280,7 +298,7 @@
     .region { padding:6% 3%; }
     .r1, .r2 { justify-content:flex-start; padding-top:9%; }
     .r4, .r3 { justify-content:flex-end; padding-bottom:9%; }
-    .hub { width:min(84%, 320px); height:clamp(148px, 24vh, 230px); padding:0 8%; gap:.4vmin; }
+    .hub { width:min(84%, 320px); height:clamp(170px, 26vh, 240px); padding:0 8%; gap:.4vmin; }
     .hub input { max-width:none; width:100%; }
     .hub .sub { margin-bottom:.4vmin; }
   }
@@ -365,6 +383,10 @@
       <h1>New chat</h1>
       <div class="sub" id="hub-sub">Disorder · pick a model</div>
       <input type="text" id="name" placeholder="Name · blank → Chat 1" maxlength="120" autocomplete="off">
+      <button class="node" id="pickdir" disabled title="这条对话的工作目录">
+        <span class="id" id="dir-id">—</span>
+        <span class="tag" id="dir-tag">browse ›</span>
+      </button>
       <button class="node cta" id="create" disabled>Create</button>
       <span id="flash"></span>
     </div>
@@ -452,6 +474,21 @@
   </div>
 </div>
 
+<div class="scrim" id="scrim5" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择工作目录">
+    <div class="shead">
+      <b>工作目录</b>
+      <input type="text" id="dq" placeholder="/path/to/project" spellcheck="false" autocomplete="off">
+      <button class="node" id="dgo" type="button">Go</button>
+    </div>
+    <div class="dirs" id="dirList"></div>
+    <div class="dfoot skillfoot">
+      <span id="dirHint">—</span>
+      <button class="done" id="dirDone" type="button">完成 ›</button>
+    </div>
+  </div>
+</div>
+
 <div id="errbox"></div>
 
 <div class="scrim" id="scrim" hidden>
@@ -517,6 +554,14 @@ let defaultModel = null;
 let picked = null;
 const fmt = (m) => `${m.provider}/${m.modelId}`;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ── 工作目录：点中央 pill 弹目录浏览器，选完 Create 带上 cwd ──
+//   浏览在 qrd3wh 进程里做（/v1/fs/dirs），这里只收发路径字符串 —— 将来 qrd3wh
+//   跑在远程机器上，这一页一行不用改，列的就是那台机器的目录。
+let dirStart = null;   // 浏览器首页（服务端 startDirs[0]）
+let dirCur = null;     // 当前浏览到的目录（规范绝对路径）
+let dirSel = null;     // 选中的目录（Create 时发出）
+let dirSeq = 0;        // 只认最后一次请求，切目录竞态时旧回复别乱涂屏
 
 // ── 弹窗开合：从触发点长出，Esc / 点 scrim 原路收回 ──
 const openSheet = (from) => {
@@ -619,14 +664,114 @@ $("skillDone").onclick = closeCtx;
 $("tmplDone").onclick = closeTmpl;
 $("extDone").onclick = closeExt;
 
+// ── 目录浏览器：浏览、渲染、提交 ──
+const shortDir = (p) => {
+  if (!p) return "—";
+  if (p === "/") return "/";
+  return p.replace(/\/+$/, "").split("/").pop() || "/";
+};
+
+const browseDir = async (p) => {
+  const mine = ++dirSeq;
+  $("dirHint").textContent = "…";
+  try {
+    const listing = await api(`v1/fs/dirs?path=${encodeURIComponent(p ?? "")}`);
+    if (mine !== dirSeq) return;
+    dirCur = listing.path || "";
+    $("dq").value = dirCur;
+    renderDirRows(listing);
+    $("dirHint").textContent = "—";
+  } catch (error) {
+    if (mine !== dirSeq) return;
+    $("dirHint").textContent = String(error.message ?? error);
+  }
+};
+
+const renderDirRows = (listing) => {
+  const list = $("dirList");
+  list.textContent = "";
+  const add = (ico, name, path) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "dir-row";
+    b.setAttribute("aria-selected", String(path === dirCur && path !== ""));
+    b.title = path;
+    const i = document.createElement("span");
+    i.className = "dir-ico";
+    i.textContent = ico;
+    const n = document.createElement("span");
+    n.className = "dir-name";
+    n.textContent = name;
+    b.append(i, n);
+    b.onclick = () => browseDir(path);
+    list.append(b);
+  };
+  add("⌂", "Start dirs", "");
+  if (listing.parent) add("↑", "..", listing.parent);
+  if (!(listing.dirs?.length)) {
+    const hint = document.createElement("div");
+    hint.className = "dir-empty";
+    hint.textContent = "No subdirectories.";
+    list.append(hint);
+    return;
+  }
+  for (const d of listing.dirs) add("▸", d.name, d.path);
+};
+
+const renderDir = () => {
+  if (dirSel) {
+    $("dir-id").textContent = shortDir(dirSel);
+    $("dir-tag").textContent = "change ›";
+  } else {
+    $("dir-id").textContent = "—";
+    $("dir-tag").textContent = "browse ›";
+  }
+  $("pickdir").title = dirSel ?? "";
+  updateHub();
+};
+
+const openDir = (from) => {
+  const scrim = $("scrim5");
+  if (from && !reduceMotion) {
+    const r = from.getBoundingClientRect();
+    scrim.querySelector(".sheet").style.transformOrigin = `${r.left + r.width / 2}px ${r.top + r.height / 2}px`;
+  }
+  scrim.hidden = false;
+  requestAnimationFrame(() => scrim.classList.add("on"));
+  // 回到上次选中的地方，不是每次重开都从首页开始。
+  dirCur = dirSel ?? dirStart ?? "";
+  browseDir(dirCur);
+  $("dq").focus();
+};
+const closeDir = () => {
+  const scrim = $("scrim5");
+  scrim.classList.remove("on");
+  setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
+};
+
+$("pickdir").onclick = (e) => openDir(e.currentTarget);
+$("scrim5").onclick = (e) => { if (e.target === $("scrim5")) closeDir(); };
+$("dgo").onclick = () => browseDir($("dq").value.trim());
+$("dq").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); browseDir($("dq").value.trim()); }
+});
+$("dirDone").onclick = async () => {
+  const v = $("dq").value.trim();
+  if (v && v !== dirCur) await browseDir(v);
+  dirSel = dirCur || dirStart || null;
+  renderDir();
+  closeDir();
+};
+
 // Esc 收**最上面那一层**，不是「写死 scrim2」。层数已经四层了（模型 / 技能 / 模板 / 扩展），
 // 写死一个的话另外三个按 Esc 只会响一声。
 addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  const top = ["scrim4", "scrim3", "scrim2", "scrim"].find((id) => !$(id).hidden);
+  const top = ["scrim5", "scrim4", "scrim3", "scrim2", "scrim"].find((id) => !$(id).hidden);
   if (!top) return;
   e.preventDefault();
-  if (top === "scrim4") closeTmpl();
+  if (top === "scrim5") closeDir();
+  else if (top === "scrim4") closeTmpl();
   else if (top === "scrim3") closeExt();
   else if (top === "scrim2") closeCtx();
   else closeSheet();
@@ -1818,11 +1963,12 @@ const renderCurrent = () => {
 const updateHub = () => {
   $("create").disabled = !picked || !tag;
   $("choose").disabled = !models.length;
+  $("pickdir").disabled = !tag;
   // 中央那行是**状态**不是文案：跟四栏一样，只说现在差什么。
   $("hub-sub").textContent = !tag
     ? "Disorder · no backend"
     : picked
-      ? "Disorder · ready"
+      ? `Disorder · ready${dirSel ? ` · ${shortDir(dirSel)}` : ""}`
       : "Disorder · pick a model";
 };
 
@@ -1846,6 +1992,7 @@ async function commit() {
       // 扩展：装了什么就发什么（全勾 = 发全部）。空数组也是有效值 —— 表示“一个都不要”，
       // 不能省掉，省掉服务端会按默认全开。
       ...(extFamilies.length ? { extensions: [...pickedExtensions] } : {}),
+      ...(dirSel ? { cwd: dirSel } : {}),
       ...(name ? { name } : {}),
     });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
@@ -1860,7 +2007,8 @@ async function commit() {
     if (skipped.length) $("errbox").innerHTML = `<div class="err">这些没装，已跳过 —— ${esc(skipped.join("；"))}</div>`;
     const got = (created.skills ?? []).length;
     $("flash").textContent = `✓ chat ${created.id} created${levelsOfPick().length > 1 ? ` · thinking ${thinking}` : ""}`
-      + (got ? ` · skills ${got}` : "") + ` · prompt ${created.template ?? "none"}`;
+      + (got ? ` · skills ${got}` : "") + ` · prompt ${created.template ?? "none"}`
+      + (created.cwd ? ` · ${shortDir(created.cwd)}` : "");
     $("name").value = "";
     defaultModel = picked;
     renderCurrent();
@@ -1881,6 +2029,14 @@ if (tag) {
     $("state").textContent = models.length ? `${models.length} 款可用` : "";
   } catch (error) {
     $("errbox").innerHTML = `<div class="err">拿不到模型清单：${String(error.message ?? error)}</div>`;
+  }
+  // 工作目录的首页：问 qrd3wh 要 startDirs（缺省 = board map 根）。
+  try {
+    const dev = await api("v1/device");
+    dirStart = dev.startDirs?.[0] ?? null;
+    if (dirStart) { dirSel = dirStart; dirCur = dirStart; }
+  } catch (error) {
+    console.warn("start dirs 拿不到：", error);
   }
   // 上下文域要用的：已装技能。单独一个 try —— 编目挂了不该把模型清单一起拖下水
   // （两件事，修的地方也不一样）。拿不到就当没装，节点点开里面会说清楚。
@@ -1971,7 +2127,7 @@ if (tag) {
 renderCurrent();
 renderCtx();
 renderExt();
-updateHub();
+renderDir();
 </script>
 </body>
 </html>
