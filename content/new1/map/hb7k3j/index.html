@@ -187,6 +187,7 @@
   .dir-empty { color:var(--muted); font-size:clamp(10px,1.4vmin,12.5px); padding:2.4vmin 1.2vmin; text-align:center; }
   /* 中央 pill 里的路径太长会撑破椭圆，截断留给 title 看全名 */
   #dir-id { max-width:26vmin; }
+  #machine-id { max-width:26vmin; }
   /* ── 类别：顶部只放**系统视图**，人自己建的类别在右栏 ──
      分工抄 vbe4pt：栏里混着「全部 / 未分类」，「我自己建了什么」就看不出来了；
      反过来把自定义类别摊到顶栏，一百个扩展时那行胶囊会滚成一条没头的带子。
@@ -383,6 +384,10 @@
       <h1>New chat</h1>
       <div class="sub" id="hub-sub">Disorder · pick a model</div>
       <input type="text" id="name" placeholder="Name · blank → Chat 1" maxlength="120" autocomplete="off">
+      <button class="node" id="pickmachine" disabled title="这条对话跑在哪台机器上（默认本机）">
+        <span class="id" id="machine-id">本机</span>
+        <span class="tag" id="machine-tag">change ›</span>
+      </button>
       <button class="node" id="pickdir" disabled title="这条对话的工作目录">
         <span class="id" id="dir-id">—</span>
         <span class="tag" id="dir-tag">browse ›</span>
@@ -489,6 +494,17 @@
   </div>
 </div>
 
+<div class="scrim" id="scrim6" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-label="选择机器">
+    <div class="shead"><b>机器</b></div>
+    <div class="dirs" id="machineList"></div>
+    <div class="dfoot skillfoot">
+      <span id="machineHint">—</span>
+      <button class="done" id="machineDone" type="button">完成 ›</button>
+    </div>
+  </div>
+</div>
+
 <div id="errbox"></div>
 
 <div class="scrim" id="scrim" hidden>
@@ -562,6 +578,10 @@ let dirStart = null;   // 浏览器首页（服务端 startDirs[0]）
 let dirCur = null;     // 当前浏览到的目录（规范绝对路径）
 let dirSel = null;     // 选中的目录（Create 时发出）
 let dirSeq = 0;        // 只认最后一次请求，切目录竞态时旧回复别乱涂屏
+
+// ── 机器：会话跑在哪台机器上。null = 本机。选机器后目录跟着切成那台的 ──
+let machines = [];     // /v1/machines 的清单
+let machineSel = null; // 选中的机器名（null = 本机）
 
 // ── 弹窗开合：从触发点长出，Esc / 点 scrim 原路收回 ──
 const openSheet = (from) => {
@@ -675,7 +695,8 @@ const browseDir = async (p) => {
   const mine = ++dirSeq;
   $("dirHint").textContent = "…";
   try {
-    const listing = await api(`v1/fs/dirs?path=${encodeURIComponent(p ?? "")}`);
+    const machine = machineSel ? `&machine=${encodeURIComponent(machineSel)}` : "";
+    const listing = await api(`v1/fs/dirs?path=${encodeURIComponent(p ?? "")}${machine}`);
     if (mine !== dirSeq) return;
     dirCur = listing.path || "";
     $("dq").value = dirCur;
@@ -706,7 +727,7 @@ const renderDirRows = (listing) => {
     b.onclick = () => browseDir(path);
     list.append(b);
   };
-  add("⌂", "Start dirs", "");
+  add("⌂", machineSel ? "Home" : "Start dirs", "");
   if (listing.parent) add("↑", "..", listing.parent);
   if (!(listing.dirs?.length)) {
     const hint = document.createElement("div");
@@ -728,6 +749,79 @@ const renderDir = () => {
   }
   $("pickdir").title = dirSel ?? "";
   updateHub();
+};
+
+// ── 机器清单：本机 + 编目里的机器，单选，点了「完成」收回 ──
+let machinePick = null; // 弹窗里的临时选择，点「完成」才落到 machineSel
+
+const renderMachineList = () => {
+  const list = $("machineList");
+  list.textContent = "";
+  const add = (id, name, sub) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "dir-row";
+    b.setAttribute("aria-selected", String(machinePick === id));
+    b.title = sub ?? name;
+    const i = document.createElement("span");
+    i.className = "dir-ico";
+    i.textContent = machinePick === id ? "✓" : "";
+    const n = document.createElement("span");
+    n.className = "dir-name";
+    n.textContent = name;
+    const s = document.createElement("span");
+    s.className = "dir-name";
+    s.style.color = "var(--muted)";
+    s.style.fontSize = "clamp(9.5px,1.25vmin,11px)";
+    s.textContent = sub ?? "";
+    const wrap = document.createElement("span");
+    wrap.style.display = "flex";
+    wrap.style.flexDirection = "column";
+    wrap.style.gap = ".15em";
+    wrap.append(n, s);
+    b.append(i, wrap);
+    b.onclick = () => { machinePick = id; renderMachineList(); };
+    list.append(b);
+  };
+  add(null, "本机", "this machine");
+  for (const m of machines) add(m.name, m.name, `${m.user}@${m.addr}:${m.port}`);
+};
+
+const renderMachinePill = () => {
+  $("machine-id").textContent = machineSel ?? "本机";
+  $("machine-tag").textContent = machineSel ? "change ›" : "change ›";
+  $("pickmachine").title = machineSel ?? "本机";
+  updateHub();
+};
+
+const openMachine = (from) => {
+  const scrim = $("scrim6");
+  if (from && !reduceMotion) {
+    const r = from.getBoundingClientRect();
+    scrim.querySelector(".sheet").style.transformOrigin = `${r.left + r.width / 2}px ${r.top + r.height / 2}px`;
+  }
+  scrim.hidden = false;
+  requestAnimationFrame(() => scrim.classList.add("on"));
+  machinePick = machineSel;
+  renderMachineList();
+};
+const closeMachine = () => {
+  const scrim = $("scrim6");
+  scrim.classList.remove("on");
+  setTimeout(() => { scrim.hidden = true; }, reduceMotion ? 200 : 320);
+};
+
+$("pickmachine").onclick = (e) => openMachine(e.currentTarget);
+$("scrim6").onclick = (e) => { if (e.target === $("scrim6")) closeMachine(); };
+$("machineDone").onclick = () => {
+  if (machinePick !== machineSel) {
+    machineSel = machinePick;
+    // 换了机器，目录跟着作废 —— 一台机器上的路径在另一台上没意义。
+    dirSel = null;
+    renderDir();
+    renderMachinePill();
+  }
+  closeMachine();
 };
 
 const openDir = (from) => {
@@ -758,7 +852,7 @@ $("dq").addEventListener("keydown", (e) => {
 $("dirDone").onclick = async () => {
   const v = $("dq").value.trim();
   if (v && v !== dirCur) await browseDir(v);
-  dirSel = dirCur || dirStart || null;
+  dirSel = dirCur || (machineSel ? null : dirStart) || null;
   renderDir();
   closeDir();
 };
@@ -767,10 +861,11 @@ $("dirDone").onclick = async () => {
 // 写死一个的话另外三个按 Esc 只会响一声。
 addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  const top = ["scrim5", "scrim4", "scrim3", "scrim2", "scrim"].find((id) => !$(id).hidden);
+  const top = ["scrim6", "scrim5", "scrim4", "scrim3", "scrim2", "scrim"].find((id) => !$(id).hidden);
   if (!top) return;
   e.preventDefault();
-  if (top === "scrim5") closeDir();
+  if (top === "scrim6") closeMachine();
+  else if (top === "scrim5") closeDir();
   else if (top === "scrim4") closeTmpl();
   else if (top === "scrim3") closeExt();
   else if (top === "scrim2") closeCtx();
@@ -1964,11 +2059,12 @@ const updateHub = () => {
   $("create").disabled = !picked || !tag;
   $("choose").disabled = !models.length;
   $("pickdir").disabled = !tag;
+  $("pickmachine").disabled = !tag;
   // 中央那行是**状态**不是文案：跟四栏一样，只说现在差什么。
   $("hub-sub").textContent = !tag
     ? "Disorder · no backend"
     : picked
-      ? `Disorder · ready${dirSel ? ` · ${shortDir(dirSel)}` : ""}`
+      ? `Disorder · ready${machineSel ? ` · ${machineSel}` : ""}${dirSel ? ` · ${shortDir(dirSel)}` : ""}`
       : "Disorder · pick a model";
 };
 
@@ -1993,6 +2089,7 @@ async function commit() {
       // 不能省掉，省掉服务端会按默认全开。
       ...(extFamilies.length ? { extensions: [...pickedExtensions] } : {}),
       ...(dirSel ? { cwd: dirSel } : {}),
+      ...(machineSel ? { machine: machineSel } : {}),
       ...(name ? { name } : {}),
     });
     await post(tag.url + "/v1/selection", { id: created.id });   // 盘上那只眼睛跟着切过去
@@ -2008,6 +2105,7 @@ async function commit() {
     const got = (created.skills ?? []).length;
     $("flash").textContent = `✓ chat ${created.id} created${levelsOfPick().length > 1 ? ` · thinking ${thinking}` : ""}`
       + (got ? ` · skills ${got}` : "") + ` · prompt ${created.template ?? "none"}`
+      + (created.machine ? ` · ${created.machine}` : "")
       + (created.cwd ? ` · ${shortDir(created.cwd)}` : "");
     $("name").value = "";
     defaultModel = picked;
@@ -2037,6 +2135,14 @@ if (tag) {
     if (dirStart) { dirSel = dirStart; dirCur = dirStart; }
   } catch (error) {
     console.warn("start dirs 拿不到：", error);
+  }
+  // 机器编目：会话能跑在哪台机器上（默认本机）。编目挂了不该把上面的拖下水。
+  try {
+    const list = await api("v1/machines");
+    machines = list.machines ?? [];
+    if (list.error) console.warn("机器编目带 error：", list.error);
+  } catch (error) {
+    console.warn("机器清单拿不到：", error);
   }
   // 上下文域要用的：已装技能。单独一个 try —— 编目挂了不该把模型清单一起拖下水
   // （两件事，修的地方也不一样）。拿不到就当没装，节点点开里面会说清楚。
@@ -2128,6 +2234,7 @@ renderCurrent();
 renderCtx();
 renderExt();
 renderDir();
+renderMachinePill();
 </script>
 </body>
 </html>
