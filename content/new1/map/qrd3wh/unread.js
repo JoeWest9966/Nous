@@ -9,24 +9,21 @@
 // - 有水位 → 未读 = 「水位之后还有几条」，由 durable 那边数（我们只传水位）。
 //
 // 水位只进不退：拿一个更小的「最新 id」回来（fork 出来的新会话、回滚）不许把水位往回拨。
+//
+// 落盘那台机器在 datafile.js（跟 updatedAt 那张表共用一份）。
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { openDataFile } from "./datafile.js";
 
 const FILE_VERSION = 1;
 
-const read = async (file) => {
-  try {
-    const saved = JSON.parse(await readFile(file, "utf8"));
-    const table = {};
-    for (const [id, mark] of Object.entries(saved?.marks ?? {})) {
-      if (!Number.isFinite(mark?.lastReadId)) continue;
-      table[id] = { lastReadId: mark.lastReadId, readAt: Number.isFinite(mark.readAt) ? mark.readAt : null };
-    }
-    return table;
-  } catch {
-    return {};
+/** 盘上那份表：`{ "<会话 id>": { lastReadId, readAt } }`。读不懂的条目丢掉。 */
+const parse = (saved) => {
+  const table = {};
+  for (const [id, mark] of Object.entries(saved?.marks ?? {})) {
+    if (!Number.isFinite(mark?.lastReadId)) continue;
+    table[id] = { lastReadId: mark.lastReadId, readAt: Number.isFinite(mark.readAt) ? mark.readAt : null };
   }
+  return table;
 };
 
 /**
@@ -35,41 +32,12 @@ const read = async (file) => {
  * @param entries durable 那一半：`latest(id)` 最新 EntryId、`countAfter(id, afterId)` 之后有几条
  */
 export const openUnread = async (file, { now = Date.now, entries } = {}) => {
-  const table = await read(file);
-  let timer = null;
-  let writing = null;
-  let dirty = false;
-
-  const write = async () => {
-    if (!dirty) return;
-    dirty = false;
-    const text = JSON.stringify({ v: FILE_VERSION, marks: table }, null, 2) + "\n";
-    const tmp = `${file}.tmp`;
-    await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(tmp, text);
-    await rename(tmp, file);
-  };
-
-  const flush = async () => {
-    if (timer) {
-      clearTimeout(timer);
-      timer = null;
-    }
-    writing = writing ?? write().finally(() => (writing = null));
-    await writing;
-    if (dirty) await flush();
-  };
-
-  // 水位一次只动几笔（标记已读、种一条），攒一小会儿再写，别每个请求 fsync 一次。
-  const schedule = () => {
-    dirty = true;
-    if (timer) return;
-    timer = setTimeout(() => {
-      timer = null;
-      void flush().catch((error) => console.error("[unread] 落盘失败", error));
-    }, 500);
-    timer.unref?.();
-  };
+  const { table, touch, flush } = await openDataFile(file, {
+    version: FILE_VERSION,
+    field: "marks",
+    parse,
+    tag: "unread",
+  });
 
   const key = (id) => String(id);
 
@@ -83,7 +51,7 @@ export const openUnread = async (file, { now = Date.now, entries } = {}) => {
     const latest = await entries.latest(id);
     if (latest === null) return false;
     table[key(id)] = { lastReadId: latest, readAt: null };
-    schedule();
+    touch();
     return true;
   };
 
@@ -96,7 +64,7 @@ export const openUnread = async (file, { now = Date.now, entries } = {}) => {
   const begin = (id) => {
     if (table[key(id)]) return false;
     table[key(id)] = { lastReadId: 0, readAt: null };
-    schedule();
+    touch();
     return true;
   };
 
@@ -130,10 +98,11 @@ export const openUnread = async (file, { now = Date.now, entries } = {}) => {
       // 拿更小的 latest 回来（回滚 / fork）也不许把水位往回拨。
       const lastReadId = prev && (latest === null || prev.lastReadId > latest) ? prev.lastReadId : latest;
       table[key(id)] = { lastReadId: lastReadId ?? prev?.lastReadId ?? 0, readAt };
-      schedule();
+      touch();
       return { id: Number(id), readAt, unread: 0 };
     },
 
+    /** 把攒着的写下去（测试和关停用）。 */
     flush,
   };
 };
