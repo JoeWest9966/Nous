@@ -84,11 +84,6 @@ export const openUnread = async (file, { now = Date.now, entries } = {}) => {
     return true;
   };
 
-  const ensure = async (id) => {
-    await seed(id);
-    return table[key(id)] ?? null;
-  };
-
   return {
     /** 原样给出水位；没有就是 null。 */
     watermark: (id) => table[key(id)] ?? null,
@@ -96,9 +91,14 @@ export const openUnread = async (file, { now = Date.now, entries } = {}) => {
     /** 种水位（启动时给老会话补、首次见面时顺手补）。幂等：已有的不动。 */
     seed,
 
-    /** { unread, readAt }。没有水位 = 0 条未读（顺手种下一条水位）。 */
+    /**
+     * { unread, readAt }。没有水位 = `{ unread: 0, readAt: null }`。
+     *
+     * **只读**：不顺手种。`GET /v1/unread` 拿它算，读端点不许有落盘副作用；
+     * 种水位是启动时那次（老会话）和新会话出生时（种 0）的事。
+     */
     unreadOf: async (id) => {
-      const mark = await ensure(id);
+      const mark = table[key(id)] ?? null;
       if (!mark) return { unread: 0, readAt: null };
       return { unread: await entries.countAfter(id, mark.lastReadId), readAt: mark.readAt };
     },

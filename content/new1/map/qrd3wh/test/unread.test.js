@@ -8,7 +8,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -23,20 +23,39 @@ const fakeEntries = (table) => ({
   countAfter: (id, afterId) => (table[id] ?? []).filter((entryId) => entryId > afterId).length,
 });
 
+const exists = (file) => stat(file).then(() => true, () => false);
+
 const clock = (start = 1_700_000_000_000) => {
   let t = start;
   return () => t++;
 };
 
-test("unread：没水位的会话是 0 条未读、readAt 是 null，并顺手种在「当时最新」上", async () => {
+test("unread：问未读不写盘 —— 没水位的会话回 0 条未读，水位照旧是 null", async () => {
+  const dir = await tmp();
+  const file = path.join(dir, "read.json");
+  try {
+    const marks = await openUnread(file, { now: clock(), entries: fakeEntries({ 14: [401, 402, 458] }) });
+
+    // 老会话不该一开张就 458 条未读 —— 但这也不该靠「顺手种一条水位」来躲。
+    assert.deepEqual(await marks.unreadOf(14), { unread: 0, readAt: null });
+    // 读端点不许有落盘副作用：水位没被顺手种下，盘上连文件都没有。
+    assert.equal(marks.watermark(14), null);
+    await marks.flush();
+    assert.equal(await exists(file), false);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("unread：种子种在「当时最新」，不是 0 —— 否则下一条消息进来会算出几百条未读", async () => {
   const dir = await tmp();
   try {
-    const entries = fakeEntries({ 14: [401, 402, 458] });
-    const marks = await openUnread(path.join(dir, "read.json"), { now: clock(), entries });
+    const marks = await openUnread(path.join(dir, "read.json"), {
+      now: clock(),
+      entries: fakeEntries({ 14: [401, 402, 458] }),
+    });
 
-    // 老会话不该一开张就 458 条未读。
-    assert.deepEqual(await marks.unreadOf(14), { unread: 0, readAt: null });
-    // 种下去的水位是「当时最新」，不是 0 —— 否则下一条消息进来会算出 459 条。
+    assert.equal(await marks.seed(14), true);
     assert.deepEqual(marks.watermark(14), { lastReadId: 458, readAt: null });
   } finally {
     await cleanup(dir);
@@ -50,6 +69,7 @@ test("unread：新 entry 进来才算未读，markRead 之后归零并记下读�
     const entries = fakeEntries(table);
     const marks = await openUnread(path.join(dir, "read.json"), { now: clock(), entries });
     await marks.seed(14); // 水位 458
+    assert.deepEqual(marks.watermark(14), { lastReadId: 458, readAt: null });
 
     table[14].push(459, 460);
     assert.deepEqual(await marks.unreadOf(14), { unread: 2, readAt: null });
