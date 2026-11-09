@@ -25,10 +25,15 @@
 ```
 { id, name, parent: {id, at} | null, owner, model: "provider/modelId",
   thinkingLevel, thinkingLevels: string[], skills: string[], template: string|null,
-  readOnly: bool, busy, last: {id, kind, text} | null }
+  readOnly: bool, busy, updatedAt: number | null, last: {id, kind, text} | null }
 ```
 
-我们依赖：`id` `name` `parent` `model` `thinkingLevel` `readOnly` `busy` `last`。
+我们依赖：`id` `name` `parent` `model` `thinkingLevel` `readOnly` `busy` `updatedAt` `last`。
+
+- `updatedAt` 是这条会话**最后一次落库**的时刻，epoch **毫秒**（跟 `mtimeMs` 对齐），可能是 `null`。
+  `null` 不是 bug：引擎只记「自己看着它写的那些」，重启前没记过的老会话就是空的 ——
+  宁可空，也别拿文件 mtime 之类冒充（拷贝一份盘会让每条会话都变成「刚刚」）。
+  同一个会话每进一条新 entry 它一定变大，**显示相对年龄（5m / 3h / 2d）就用它**，别用 `last.id` 假装时间。
 
 - `parent != null` = 这是一条 **fork 分支**。bjes6b 手机端把它全滤掉，只认主线。
   桌面端要不要显示分支是产品决定，别在客户端里猜 —— 真要做 fork 走 `POST /v1/sessions/:id/fork`。
@@ -108,6 +113,30 @@ body `{ content, requestId?, waitMs?, whenBusy? }`。
 `{ id }` 或 `{ id: null }` —— 「现在盯着哪个对话」。桌面端三栏同屏时，左栏高亮当前会话就用它，
 **别为左栏开 N 条 SSE**。SSE 只连当前会话，其余靠 `GET /v1/sessions` 低频轮询。
 
+### GET /v1/unread
+
+每条会话的未读数，**平铺的 map**，一个会话一个键（**没有 `items` 包一层**）：
+
+```
+{ "14": { unread: 3, readAt: 1794212000000 }, "2": { unread: 0, readAt: null }, ... }
+```
+
+我们依赖：`unread` `readAt`。
+
+- `unread` 是引擎按「EntryId 水位之后还有几条」数好的，**客户端不自己数**（数不出对的：
+  条数会被 fork / compaction 弄错，水位不会）。
+- `readAt` 是上次标已读的时刻（epoch ms），可能为 `null` —— 那是引擎种的水位
+  （老会话开张时不算未读），不是「读到过」。
+- 覆盖**所有**会话；没有水位的会话给 `{ unread: 0, readAt: null }`。
+
+### POST /v1/read/:id
+
+把这条会话标成读到最新，body 空。回 `{ id, readAt, unread: 0 }`。
+
+- 不存在的会话 → 404 `{ error }`；只有 `POST`，别的动词 → 405。
+- 客户端离开会话 / 用户正在看这条会话时打它；水位只进不退（引擎那边钉住了）。
+- **别自己推水位**，也别把「已读」写本地就完事 —— 引擎才是水位的事实源，重装客户端不该丢未读。
+
 ### GET /v1/presets/:section
 
 模板（通讯录）那一页的数据。`section` 写死 `Session-Template`。
@@ -140,5 +169,9 @@ body `{ content, requestId?, waitMs?, whenBusy? }`。
 | SSE 事件改名 / `changes[]` 换结构 | 气泡不更新，流式死掉，症状是「能发出去但一个字不出来」 |
 | `requestId` 幂等被去掉 | 重发会答两遍 |
 | `/v1/selection` 语义变 | 三栏高亮错位 |
+| 删 `updatedAt` / 单位换成秒 | 列表时间全空，或者每条都显示成 1970 |
+| `/v1/unread` 改回 `{items:[]}` / 改成数组 | 未读角标全灭（形状对不上） |
+| `unread` 改成客户端自己数 | 水位退化成条数，fork 之后未读数永久错位 |
+| `POST /v1/read/:id` 语义变（不再推到最新） | 未读点了不消，或者一次点掉不该消的 |
 
 所以：启动时打 `GET /v1/device` 记引擎版本，About 里显示，出问题先对版本。
