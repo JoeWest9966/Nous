@@ -11,6 +11,7 @@
 ```
 GET    /api/vps                 nw/vps-ls.v1        { machines[] }
 GET    /api/vps/<name>/secret    vq0f03/vps-secret.v1 { name, kind, key }  ← 只转**密钥型**；只打回环面板
+POST   /api/vps/<name>/bootstrap-key  vq0f03/vps-bootstrap.v1 { name, kind:"key", fingerprint, action }
 POST   /api/vps                 nw/vps-register.v1  {name, ips[{label,addr}], user?, port, note?, tags?, password? | keyFile{name,content(base64)}}
 PUT    /api/vps/<name>          同上，凭证留空 = 保留旧的（= 重新登记）
 DELETE /api/vps/<name>          nw/vps-rm.v1
@@ -41,6 +42,7 @@ DELETE /api/vps/<name>/tags/<tag>
 | `GET /api/vps/<name>` | 一台（带注解） |
 | `GET /api/vps/<name>/ssh` | 连它的命令（现拼，不存盘） |
 | `GET /api/vps/<name>/secret` | 那台机器的凭据本体。**只转密钥型**：密码型回 409 并说明要装公钥。上游那条在回环面板上（`X-NW-Reveal: 1`，`NW_SECRET_BASE` 默认 `http://127.0.0.1:18080`），远程门里没有 |
+| `POST /api/vps/<name>/bootstrap-key` | 密码型 → 密钥型，**一次性**。现生一对 ed25519 → 用密码把公钥追进目标机的 `authorized_keys` → 用新私钥**验通** → `PUT` 覆盖登记（只给 `keyFile`，上游的凭证闸会把密码清掉）。密码不进 argv / 日志 / 响应：走 `SSH_ASKPASS` + `SSH_ASKPASS_REQUIRE=force`。验不通就不登记 |
 | `POST /api/vps` | 登记（代理 POST） |
 | `PUT /api/vps/<name>` | 覆盖登记（凭证留空 = 保留旧的） |
 | `DELETE /api/vps/<name>` | 从编目里删掉 |

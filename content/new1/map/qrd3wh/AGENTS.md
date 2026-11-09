@@ -399,13 +399,19 @@ qrd3wh ──GET /api/vps/<名>/secret──> vq0f03 ──(X-NW-Reveal: 1)─�
 
 - **只做密钥型。** 密码型回 400/409 并说「先装公钥」——不引 `sshpass`、不换 `ssh2`
   （那条会同时丢掉宿主 `~/.ssh` 的跳板 / known_hosts / ControlMaster）。
+  密码型→密钥型的唯一入口是 `vq0f03` 的 `POST /api/vps/<名>/bootstrap-key`（面板上那个
+  「装公钥」按钮）：密码只用一次，用一个的目的就是把它自己变成密钥型，然后编目里的密码就没了。
 - **拿不到密钥就不静默跑本机。** 会话里退回本机要记一行 `[machine]`；用户显式选了机器
   （目录浏览 / cwd 校验）就直接 400。跑错机器比报错难查得多。
 - 三个已经踩过的地雷，改 `ssh-env.js` 先看这三行：路径一律 `node:path/posix`（宿主可能是
   Windows）、文件原语一律 `LC_ALL=C`（`stat -c %F` 是按 locale 翻译的）、
   `cwd` 是 `~` 时相对路径直接拼 `~/x`（不能过 `resolve`，那会掺进本地进程 cwd）。
-- 代价提前说：**每次文件操作一条 ssh 连接**，`watch` 明确 `not_supported`（调用方自己 walk），
-  所以远端会话天生比本机慢。要救就上 ControlMaster，不是加缓存。
+- 代价提前说：`watch` 明确 `not_supported`（调用方自己 walk，远端没有可靠的 fs 事件）。
+- **连接是复用的**（ControlMaster=auto：socket 在 0700 临时目录，按 `用户_地址_端口` 分开，
+  `ControlPersist=120`）。不设的话每条命令一次完整握手 —— 实测到 9996696（tailnet/DERP）：
+  首连 7.1s、之后**每次仍然 4.6s**；设了之后 0.53s/次（8 次串行 39.5s → 7.9s）。
+  再往下压不是加缓存，是减少往返次数。Win32-OpenSSH 没有 mux，Windows 宿主默认关，
+  `NOUS_SSH_MUX=0` 也能手动关。
 
 ## 不做什么
 
