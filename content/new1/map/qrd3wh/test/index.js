@@ -10,3 +10,6 @@ import "./prompts-api.test.js";
 import "./presets.test.js";
 import "./presets-api.test.js";
 import "./upstream.test.js";
+import "./activity.test.js";
+import "./pages.test.js";
+import "./unread.test.js";
