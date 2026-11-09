@@ -14,7 +14,8 @@
 // 边界（跟 NodeExecutionEnv 的差别，都是刻意为之）：
 //   · `watch` 返回 not_supported —— 远端没有可靠的 fs 事件，pi-durable 自己写着「旧远端 daemon
 //     就用 not_supported，调用方退回到自己的 walk」。
-//   · 流式 reader 在 open 时把整个文件/目录读进内存 —— 每次操作一个新 ssh 连接，不做持久连接。
+//   · 流式 reader 在 open 时把整个文件/目录读进内存；**连接是复用的**（ControlMaster，
+//     见下面的「连接复用」一节）：不复用的话每条命令一次完整握手，实测 4.6 秒。
 //     大文件会占内存，但工具调用读的是代码文件，不是 iso。真遇到大文件再加分块。
 //
 // 凭据（`key`）：只在构造时过一手 —— 写进 `mkdtemp` 建的 0700 临时目录里一个 0600 的文件，
@@ -29,7 +30,7 @@
 // 所以这条链是通的。
 
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 // 路径一律用 **posix**：这些是**远端**路径，不能借宿主的路径语义。
 // 用 `node:path` 的话，宿主一旦是 Windows，`resolve("/a","b")` 就变成 `C:\\a\\b` ——
@@ -57,6 +58,62 @@ function materializeKey(key) {
   return file;
 }
 
+// ── 连接复用（ControlMaster）───────────────────────────────────────────────
+// 每次操作 spawn 一条 ssh。不复用的话，每条命令都要一次完整的 TCP + 握手 + 认证 ——
+// 实测到 9996696（tailnet 走 DERP）：首连 7.1s，之后**每次仍然 4.6s**。一次远端会话
+// 里几十个文件操作就是几分钟白等，比远端本身慢得多。
+//
+// `ControlMaster=auto`：第一条连接自己变成后台 master，socket 留在 0700 的临时目录；
+// 后面的 ssh 走这条 socket，只开一个 channel（毫秒级）。socket 路径按
+// `用户_地址_端口` 分开 —— 不同机器、不同账号是不同身份，绝不能共用一条。
+//
+// `ControlPersist=120`：最后一次用完再活 2 分钟。agent 的节奏是「一串操作 + 想一想」，
+// 2 分钟盖得住，又不至于把 master 挂一整天。
+//
+// 退出时只删临时目录，不做同步等待 —— 在 exit 钩子里同步等 ssh 会把退出卡住。
+// socket 没了，master 到点（ControlPersist）自己退，残留的进程不会去打开任何东西。
+//
+// Win32-OpenSSH 没有 mux，所以 Windows 宿主默认关；要关也用 `NOUS_SSH_MUX=0`。
+const MUX_DIR = (() => {
+  // 上一个进程被 SIGKILL 掉的残留：master 到点（ControlPersist）自己退，但目录没人删。
+  // 超过一小时的一律扫掉 —— 只碰我们自己的前缀，不猜别人的东西。
+  try {
+    for (const name of readdirSync(tmpdir())) {
+      if (!name.startsWith("nous-mux-")) continue;
+      const dir = join(tmpdir(), name);
+      if (Date.now() - statSync(dir).mtimeMs > 3_600_000) rmSync(dir, { recursive: true, force: true });
+    }
+  } catch {}
+  try {
+    return mkdtempSync(join(tmpdir(), "nous-mux-"));
+  } catch {
+    return "";
+  }
+})();
+const MUX_IDLE = 120;
+const MUX_ENABLED = process.platform !== "win32" && process.env.NOUS_SSH_MUX !== "0" && MUX_DIR !== "";
+process.once("exit", () => {
+  if (!MUX_DIR) return;
+  try { rmSync(MUX_DIR, { recursive: true, force: true }); } catch {}
+});
+
+/** 一台机器一条 master。名字里带 user：同一台地址上的不同账号是不同身份。 */
+const muxPath = (host) =>
+  join(MUX_DIR, `${host.user ?? "root"}_${String(host.addr).replace(/[^A-Za-z0-9.-]/g, "_")}_${host.port ?? 22}.sock`);
+
+/** 主动关掉这台机器的 master（cleanup 用）。失败无所谓：`ControlPersist` 是兜底。 */
+function closeMux(host) {
+  if (!MUX_ENABLED) return;
+  try {
+    const child = spawn("ssh", ["-o", `ControlPath=${muxPath(host)}`, "-O", "exit", `${host.user ?? "root"}@${host.addr}`], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.on("error", () => {});
+    child.unref();
+  } catch {}
+}
+
 // ── shell 引用 ────────────────────────────────────────────────────────────────
 // POSIX 单引号：`'` → `'\''`。任何字符串都能安全塞进 sh -c 的单引号里。
 // 唯一例外：`~` 要留给远端 shell 展开成 home（单引号会把它框死），换成 `$HOME`。
@@ -70,13 +127,15 @@ const shq = (s) => {
 // ── 远程命令原语 ──────────────────────────────────────────────────────────────
 
 /** 一台机器的 ssh 目标。addr 用 IP/tailnet 名，user/port 从编目来。
- *  `host.keyPath` 有值时用它当唯一身份（IdentitiesOnly），否则全靠宿主 `~/.ssh`。 */
+ *  `host.keyPath` 有值时用它当唯一身份（IdentitiesOnly），否则全靠宿主 `~/.ssh`。
+ *  连接复用见上面那节；`host` 不带 mux 字段也能跑（关掉复用时的样子）。 */
 export const sshHostArgs = (host) => [
   "-p", String(host.port ?? 22),
   "-o", "BatchMode=yes",
   "-o", "ConnectTimeout=10",
   "-o", "StrictHostKeyChecking=accept-new",
   ...(host.keyPath ? ["-i", host.keyPath, "-o", "IdentitiesOnly=yes"] : []),
+  ...(MUX_ENABLED ? ["-o", "ControlMaster=auto", "-o", `ControlPath=${muxPath(host)}`, "-o", `ControlPersist=${MUX_IDLE}`] : []),
   `${host.user ?? "root"}@${host.addr}`,
 ];
 
@@ -472,6 +531,9 @@ export class SshExecutionEnv {
   }
 
   async cleanup(_context) {
+    // 先把 master 关掉：新开的 channel 会拿到一个已经不在的 socket，比让它们
+    // 静默落到次优路径上强。
+    if (this.host) closeMux(this.host);
     for (const pid of this.activeChildren) {
       try { process.kill(pid, "SIGKILL"); } catch {}
     }
