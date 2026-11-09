@@ -7,6 +7,7 @@
 //
 //   GET    /api/vps                      nw/vps-ls.v1      { machines[] }
 //   POST   /api/vps                      nw/vps-register.v1 {name, ips[{label,addr}], user?, password?|keyFile{name,content}, port, note?, tags?}
+//   GET    /api/vps/<name>/secret         nw/vps-get.v1     凭证本体（password 或 key）—— 只打**回环面板**
 //   PUT    /api/vps/<name>               同上，凭证留空 = 保留旧凭证（= 「重新登记」）
 //   DELETE /api/vps/<name>               nw/vps-rm.v1
 //   GET    /api/tags                     nw/tag-ls.v1      { tags[{name, refs[{kind,id}]}] }
@@ -36,6 +37,10 @@ const DATA = process.env.NOUS_DATA ?? path.join(HERE, "data");
 const LEDGER = path.join(DATA, "vps.json");
 const PORT = Number(process.env.PORT ?? 4782);
 const NW = (process.env.NW_BASE ?? "https://j1900.tail8d0018.ts.net:8443").replace(/\/+$/, "");
+
+// 凭据只在一处：上游的**回环面板**（Nous-Warehouse routes.go：远程门缺省不注册 secret 表项，
+// 回环面板恒注册）。所以这一跳不走 NW（那是远程门），走回环。
+const SECRET_BASE = (process.env.NW_SECRET_BASE ?? "http://127.0.0.1:18080").replace(/\/+$/, "");
 
 const READ_TTL = 60_000;
 const PROBE_TTL = 30_000;
@@ -358,6 +363,33 @@ const bundle = async (fresh = false) => {
 // 只放行上游那 5 条写路由。放一个「method + path 由前端给」的通用转发，
 // 就等于把整个 nw 面板的写面挂在 tailnet 上，还是用这个块的地址。
 
+// ── 凭据：唯一一条能读出本体的路 ──────────────────────────────────────
+//
+// 上游把它放在回环面板上、还要一个防 CSRF 的头（`X-NW-Reveal: 1`，不带就 400）：
+// 地址栏一贴、别的页面一个 `<img src=...>` 都拿不到。这里不拆那道门，只是**如实转一手**，
+// 给同一台主机上的块（qrd3wh 的远端会话）用。
+//
+// 三条纪律，改这段先读：
+//   1. 只拷两个字段（kind / key），**原信封的其它字段一律不转** —— 少转一份就少一份会漂的东西；
+//   2. 不进缓存、不进日志、不调 error/onLine 把内容拼进错误；
+//   3. 机器得先在上游编目里（白名单就是编目），否则 404。
+const reveal = async (name) => {
+  try {
+    const res = await fetch(`${SECRET_BASE}/api/vps/${encodeURIComponent(name)}/secret`, {
+      headers: { accept: "application/json", "X-NW-Reveal": "1" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const body = await res.json().catch(() => null);
+    const data = body?.data ?? null;
+    if (!res.ok || body?.ok === false || !data) {
+      return { ok: false, status: res.status, kind: data?.kind ?? null, key: null, errors: (body?.errors ?? []).map(oneLine) };
+    }
+    return { ok: true, status: res.status, kind: data.kind ?? null, key: data.key ?? null, errors: [] };
+  } catch (error) {
+    return { ok: false, status: 0, kind: null, key: null, errors: [`回环面板不可达：${String(error?.message ?? error)}`] };
+  }
+};
+
 const write = async (method, upstreamPath, payload) => {
   const t0 = performance.now();
   try {
@@ -498,6 +530,7 @@ const ENDPOINTS = [
   ["GET", "/api/vps?fresh=1", "机器清单"],
   ["GET", "/api/vps/<name>", "一台（带注解）"],
   ["GET", "/api/vps/<name>/ssh", "连它的命令（现拼，不存盘）"],
+  ["GET", "/api/vps/<name>/secret", "那台机器的凭据本体（只打回环面板；调用方自己负责不落盘）"],
   ["POST", "/api/vps", "登记：{name, ips[{label,addr}], user?, port, note?, tags?, password?|keyFile{name,content}}"],
   ["PUT", "/api/vps/<name>", "覆盖登记；凭证留空 = 保留旧的"],
   ["DELETE", "/api/vps/<name>", "从编目里删掉这台"],
@@ -562,6 +595,28 @@ const route = async (req, res, url) => {
         if (!machine) {
           return json(res, 404, envelope(404, schema("vps"), { known: r.data.machines.map((m) => m.name) }, { errors: [`编目里没有 ${name2}`] }));
         }
+        if (c === "secret") {
+          const s = await reveal(name2);
+          if (!s.ok) {
+            const code = s.status === 400 || s.status === 404 ? s.status : 503;
+            return json(res, code, envelope(code, schema("vps-secret"), { machine: machine.name }, {
+              errors: s.errors.length ? s.errors : [`拿不到 ${name2} 的凭据（status=${s.status}）`],
+            }));
+          }
+          if (!s.key) {
+            // 密码型：本体存在，但这块只说密钥型 —— 说清楚比给一个说不清的真的强。
+            return json(res, 409, envelope(409, schema("vps-secret"), { machine: machine.name, kind: s.kind }, {
+              errors: [`${name2} 是密码型（kind=${s.kind}），这里只转密钥型；要远端会话，先在它上面装公钥`],
+            }));
+          }
+          return json(res, 200, envelope(200, schema("vps-secret"), {
+            name: machine.name,
+            kind: s.kind ?? "key",
+            key: s.key,
+            caveat: "明文 PEM。调用方自己负责：不落块的文件夹、不进日志、用完删。",
+          }));
+        }
+
         if (c === "ssh") {
           return json(
             res,

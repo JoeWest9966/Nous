@@ -158,23 +158,25 @@ const MACHINES_BLOCK_ID = "vq0f03";
 const MACHINES_TTL_MS = 60_000;
 let machinesState = { at: 0, machines: [], error: null };
 
+/** vq0f03 的地址：宿主 `__nous/ctx` 现找；`NOUS_VPS_BASE` 可以指死（测试 / 远程部署时用）。 */
+const vpsBase = async () => {
+  if (process.env.NOUS_VPS_BASE) return String(process.env.NOUS_VPS_BASE).replace(/\/+$/, "");
+  const origin = process.env.NOUS_ORIGIN ?? "http://127.0.0.1";
+  const self = process.env.NOUS_SELF ?? "/";
+  const ctxUrl = `${origin}${self.endsWith("/") ? self : self + "/"}__nous/ctx`;
+  const ctxRes = await fetch(ctxUrl);
+  if (!ctxRes.ok) throw new Error(`__nous/ctx ${ctxRes.status}`);
+  const ctxDoc = await ctxRes.json();
+  const blocks = Array.isArray(ctxDoc.blocks)
+    ? ctxDoc.blocks
+    : Object.entries(ctxDoc.blocks ?? {}).map(([id, b]) => ({ id, ...(b ?? {}) }));
+  const vps = blocks.find((b) => b?.id === MACHINES_BLOCK_ID);
+  if (!vps?.url) throw new Error(`__nous/ctx 里没有 ${MACHINES_BLOCK_ID}`);
+  return String(vps.url).replace(/\/+$/, "");
+};
+
 const fetchMachineCatalog = async () => {
-  let base = process.env.NOUS_VPS_BASE;
-  if (!base) {
-    const origin = process.env.NOUS_ORIGIN ?? "http://127.0.0.1";
-    const self = process.env.NOUS_SELF ?? "/";
-    const ctxUrl = `${origin}${self.endsWith("/") ? self : self + "/"}__nous/ctx`;
-    const ctxRes = await fetch(ctxUrl);
-    if (!ctxRes.ok) throw new Error(`__nous/ctx ${ctxRes.status}`);
-    const ctxDoc = await ctxRes.json();
-    const blocks = Array.isArray(ctxDoc.blocks)
-      ? ctxDoc.blocks
-      : Object.entries(ctxDoc.blocks ?? {}).map(([id, b]) => ({ id, ...(b ?? {}) }));
-    const vps = blocks.find((b) => b?.id === MACHINES_BLOCK_ID);
-    if (!vps?.url) throw new Error(`__nous/ctx 里没有 ${MACHINES_BLOCK_ID}`);
-    base = vps.url;
-  }
-  base = String(base).replace(/\/+$/, "");
+  const base = await vpsBase();
   const res = await fetch(`${base}/api/catalog`);
   if (!res.ok) throw new Error(`vq0f03 编目 ${res.status}`);
   const body = await res.json();
@@ -210,6 +212,43 @@ const machines = async (fresh = false) => {
 const resolveMachine = async (name) => {
   const { machines: list } = await machines();
   return list.find((m) => m.name === name) ?? null;
+};
+
+// ── 凭据：只在内存里过一手 ────────────────────────────────────────────────
+// 从 vq0f03 的 `/api/vps/<名>/secret` 取（那条只在**回环面板**上有，远程门默认 404）。
+// 回来的是明文 PEM：**不落块的文件夹、不进日志、不进审计**，只有 ssh 要的 0600 临时文件。
+// 密码型（kind=password）一律当「没有密钥」—— 得先在目标机装好公钥，见 AGENTS.md。
+const SECRET_TTL_MS = 60_000;
+const secrets = new Map(); // name -> { at, key }
+
+const machineSecret = async (name, { fresh = false } = {}) => {
+  const hit = secrets.get(name);
+  if (!fresh && hit && Date.now() - hit.at < SECRET_TTL_MS) return hit.key;
+  let base;
+  try {
+    base = await vpsBase();
+  } catch (error) {
+    console.error(`[machine] 拿不到 vq0f03 的地址：${String(error?.message ?? error)}`);
+    return null;
+  }
+  const res = await fetch(`${base}/api/vps/${encodeURIComponent(name)}/secret`);
+  const body = await res.json().catch(() => null);
+  const key = body?.data?.key;
+  if (!key) {
+    // 密码型 / 上游挂了：都不是错，只是这台机器用不了远端。凭据一律不回显。
+    console.error(`[machine] ${name} 拿不到密钥（status=${res.status} kind=${body?.data?.kind ?? "?"}）`);
+    secrets.delete(name);
+    return null;
+  }
+  secrets.set(name, { at: Date.now(), key });
+  return key;
+};
+
+/** 给一台机器造 ExecutionEnv。拿不到密钥就报错 —— 静默跑在本机比报错难查得多。 */
+const envForMachine = async (machine, cwd) => {
+  const secretKey = await machineSecret(machine.name);
+  if (!secretKey) throw withStatus(new Error(`「${machine.name}」的凭据里没有可用的密钥（密码型还不支持，先给那台机器装公钥）`), 400);
+  return new SshExecutionEnv({ cwd: cwd ?? "~", host: machine, key: secretKey });
 };
 
 // ── 本地装卸：这一台的私事，跟仓库没关系 ───────────────────────────────────
@@ -1741,7 +1780,14 @@ const harness = await Harness.open(
         console.error(`[machine] 会话 ${conversationId} 指着机器 ${machineName}，但编目里没有它 —— 退回本机`);
         return new NodeExecutionEnv({ cwd: cwd ?? HERE });
       }
-      return new SshExecutionEnv({ cwd: cwd ?? "~", host: machine });
+      // 名字不能叫 `key` —— 边表那个 `key()` 就在同一个作用域里，
+      // `const key` 会把它遮住并把自己关进 TDZ（踩过：Cannot access 'key' before initialization）。
+      const secretKey = await machineSecret(machineName);
+      if (!secretKey) {
+        console.error(`[machine] 会话 ${conversationId} 指着 ${machineName}，但拿不到密钥 —— 退回本机`);
+        return new NodeExecutionEnv({ cwd: cwd ?? HERE });
+      }
+      return new SshExecutionEnv({ cwd: cwd ?? "~", host: machine, key: secretKey });
     },
     // 默认选择只放**真扩展**：空名牌（skill:<名>）装了但不默认选 —— 否则每条新会话
     // 一出生就吃 38 条描述，progressive disclosure 当场作废。
@@ -1770,6 +1816,9 @@ const setName = (conversationId, name) =>
 const setMachine = (conversationId, machine) =>
   harness.commit(async (tx) => {
     const doc = await tx.doc(Sessions);
+    // 老盘的 Sessions 文档里根本没这个键（`initial` 只对新文档生效）——
+    // 直接赋值就是 `Cannot set properties of undefined`，而且只有「选机器开会话」会踩。
+    doc.machines ??= {};
     if (machine === null || machine === undefined) delete doc.machines[key(conversationId)];
     else doc.machines[key(conversationId)] = machine;
   }, ctx);
@@ -1890,7 +1939,7 @@ const resolveCwd = async (p) => {
 
 /** 校验远端机器的 cwd：realpath 后必须是个存在的目录。返回那台机器上的规范绝对路径。 */
 const resolveRemoteCwd = async (machine, p) => {
-  const env = new SshExecutionEnv({ cwd: "~", host: machine });
+  const env = await envForMachine(machine, "~");
   const canon = await env.canonicalPath(String(p).trim() || "~", ctx);
   if (!canon.ok) {
     throw withStatus(new Error(`cwd 必须是「${machine.name}」上一个存在的文件夹：${p}`), 400);
@@ -1904,7 +1953,7 @@ const resolveRemoteCwd = async (machine, p) => {
 
 /** 远端目录浏览器：`path` 空 = 那台机器的 home；否则列那台机器某个目录的子目录。 */
 const browseRemoteDirs = async (machine, p) => {
-  const env = new SshExecutionEnv({ cwd: "~", host: machine });
+  const env = await envForMachine(machine, "~");
   const target = String(p).trim() || "~";
   const canon = await env.canonicalPath(target, ctx);
   if (!canon.ok) throw withStatus(new Error(`不是目录：${p || "~"}`), 400);

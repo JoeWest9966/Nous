@@ -384,10 +384,35 @@ system          { sections, tools, scanned, truncated }  回放后此刻生效�
 - **没跑过的会话，回放就是空的**，而且这是对的：段还没被渲染过，库里就没东西可回放。
   `scanned` 一栏就是为了让人能分辨「空」和「没读到」。
 
+## 远端会话（会话跑在另一台机器上）
+
+会话在哪台机器 = Sessions 文档的 `machines` 边表（`setMachine`），不在 AgentState 里 ——
+跟置顶一样，「位置」是一条边，不是状态字段。
+
+凭据的走法，照着抄，别自己发明：
+
+```
+qrd3wh ──GET /api/vps/<名>/secret──> vq0f03 ──(X-NW-Reveal: 1)──> 回环面板
+         回来只有 { kind, key }（明文 PEM）
+         └─> 内存 + mkdtemp 的 0600 临时文件 ──> ssh -i ──> 用完删
+```
+
+- **只做密钥型。** 密码型回 400/409 并说「先装公钥」——不引 `sshpass`、不换 `ssh2`
+  （那条会同时丢掉宿主 `~/.ssh` 的跳板 / known_hosts / ControlMaster）。
+- **拿不到密钥就不静默跑本机。** 会话里退回本机要记一行 `[machine]`；用户显式选了机器
+  （目录浏览 / cwd 校验）就直接 400。跑错机器比报错难查得多。
+- 三个已经踩过的地雷，改 `ssh-env.js` 先看这三行：路径一律 `node:path/posix`（宿主可能是
+  Windows）、文件原语一律 `LC_ALL=C`（`stat -c %F` 是按 locale 翻译的）、
+  `cwd` 是 `~` 时相对路径直接拼 `~/x`（不能过 `resolve`，那会掺进本地进程 cwd）。
+- 代价提前说：**每次文件操作一条 ssh 连接**，`watch` 明确 `not_supported`（调用方自己 walk），
+  所以远端会话天生比本机慢。要救就上 ControlMaster，不是加缓存。
+
 ## 不做什么
 
 - 不读 `~/.pi/agent/models.json` —— 那是 pi CLI 的配置，跟 Nous 无关。
 - 不把密钥写进 `data/` —— 那目录会被 `cp -r` 带走，而块目录不该装秘密。
+- 不把远端机器的凭据写进任何文件：只在内存里过一手，落盘只有 `mkdtemp` 那个 0600 的临时文件，
+  并且不进日志、不进审计、不进错误文本。`content/` 整盘在**公开仓库**里。
 - 不按 id 猜 `reasoning` / 上下文窗口。宁可少一档思考，不要连着 400。
 - 不读本机任何 `skills.json` / `~/.pi/agent/skills` —— 技能只认 `/opt/Nous-skills` 那份仓库，
   别的地方出现的技能清单都会漂。

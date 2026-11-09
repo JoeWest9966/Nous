@@ -17,6 +17,10 @@
 //   · 流式 reader 在 open 时把整个文件/目录读进内存 —— 每次操作一个新 ssh 连接，不做持久连接。
 //     大文件会占内存，但工具调用读的是代码文件，不是 iso。真遇到大文件再加分块。
 //
+// 凭据（`key`）：只在构造时过一手 —— 写进 `mkdtemp` 建的 0700 临时目录里一个 0600 的文件，
+// 交给 `ssh -i`，`cleanup()` / 进程退出时整个目录删掉。**不落块的文件夹、不进日志。**
+// `key` 缺省时行为跟以前一模一样（全靠宿主 ~/.ssh）。
+//
 // 这个文件不 import pi-durable（跟 Nous-extend 扩展同一规矩）：只 import 它的**类型**以外的
 // `env/index.js` 里的 ok/err/ExecutionError/FileError/StreamDecoder —— 那些是纯函数，不是宿主能力。
 // 等一下 —— 为了不在 qrd3wh 里再实现一遍 Result/FileError，这里直接 import 运行时：
@@ -25,8 +29,33 @@
 // 所以这条链是通的。
 
 import { spawn } from "node:child_process";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+// 路径一律用 **posix**：这些是**远端**路径，不能借宿主的路径语义。
+// 用 `node:path` 的话，宿主一旦是 Windows，`resolve("/a","b")` 就变成 `C:\\a\\b` ——
+// 每个文件操作都静默错。块是「只要 Node 就能跑」的，这条不能赌。
+import { basename, isAbsolute, join, resolve } from "node:path/posix";
 import { ExecutionError, FileError, StreamDecoder, err, ok } from "@earendil-works/pi-durable/env";
+
+// ── 临时密钥文件 ──────────────────────────────────────────────────────────────
+// 装着 key 的目录，进程退出时兜底清一遍（cleanup 不一定被调到）。
+const KEY_DIRS = new Set();
+process.once("exit", () => {
+  for (const dir of KEY_DIRS) {
+    try { rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+/** 把明文 PEM 写成 0600 的临时文件，返回路径。目录 0700，进程退出即删。 */
+function materializeKey(key) {
+  const dir = mkdtempSync(join(tmpdir(), "nous-ssh-"));
+  KEY_DIRS.add(dir);
+  const file = join(dir, "id");
+  // mode 只在**创建**时生效，而 ssh 死磕权限位，所以再 chmod 一次掩住。
+  writeFileSync(file, key.endsWith("\n") ? key : `${key}\n`, { mode: 0o600 });
+  chmodSync(file, 0o600);
+  return file;
+}
 
 // ── shell 引用 ────────────────────────────────────────────────────────────────
 // POSIX 单引号：`'` → `'\''`。任何字符串都能安全塞进 sh -c 的单引号里。
@@ -40,19 +69,24 @@ const shq = (s) => {
 
 // ── 远程命令原语 ──────────────────────────────────────────────────────────────
 
-/** 一台机器的 ssh 目标。addr 用 IP/tailnet 名，user/port 从编目来。 */
+/** 一台机器的 ssh 目标。addr 用 IP/tailnet 名，user/port 从编目来。
+ *  `host.keyPath` 有值时用它当唯一身份（IdentitiesOnly），否则全靠宿主 `~/.ssh`。 */
 export const sshHostArgs = (host) => [
   "-p", String(host.port ?? 22),
   "-o", "BatchMode=yes",
   "-o", "ConnectTimeout=10",
   "-o", "StrictHostKeyChecking=accept-new",
+  ...(host.keyPath ? ["-i", host.keyPath, "-o", "IdentitiesOnly=yes"] : []),
   `${host.user ?? "root"}@${host.addr}`,
 ];
 
-/** 跑一条远端命令，stdout/stderr 整块收回来。文件操作用的，不流式。 */
+/** 跑一条远端命令，stdout/stderr 整块收回来。文件操作用的，不流式。
+ *  强制 `LC_ALL=C`：`stat -c %F` 的输出是**按 locale 翻译**的（中文 locale 下是「普通文件」），
+ *  错误措辞也会跟着变，`remoteFileError` 就分不出 not_found。C 之下只认一份措辞。
+ *  `exec` 不走这里 —— 那是用户/agent 自己的命令，不该改它的 locale。 */
 function runRemote(host, command, { stdin } = {}) {
   return new Promise((resolve) => {
-    const args = [...sshHostArgs(host), command];
+    const args = [...sshHostArgs(host), `LC_ALL=C ${command}`];
     let child;
     try {
       child = spawn("ssh", args, {
@@ -95,7 +129,12 @@ function remoteFileError(status, stderr, path) {
 const resolveRemotePath = (cwd, p) => {
   const s = String(p ?? "");
   if (s === "~" || s.startsWith("~/")) return s;
-  return isAbsolute(s) ? resolve(s) : resolve(cwd, s);
+  if (isAbsolute(s)) return resolve(s); // 纯归一化，不掺本地 cwd
+  // cwd 是 `~` 时**不能**进 resolve：`resolve("~","x")` 会拼出「本地进程 cwd + /~/x」，
+  // 远端根本不存在那个路径。`~` 只能在远端展开，所以直接拼成 `~/x` 交出去。
+  const base = String(cwd ?? "~");
+  if (base === "~" || base.startsWith("~/")) return join(base, s);
+  return resolve(base, s);
 };
 
 // ── 环境本体 ──────────────────────────────────────────────────────────────────
@@ -107,9 +146,11 @@ export class SshExecutionEnv {
   host;
   activeChildren = new Set();
 
-  constructor({ cwd, host }) {
+  constructor({ cwd, host, key }) {
     this.cwd = cwd ?? "~";
-    this.host = host;
+    // key 折进 host.keyPath —— sshHostArgs 只收一个参数，不用改十几处调用点。
+    // 密钥内容不进 this，只留临时文件路径。
+    this.host = key ? { ...host, keyPath: materializeKey(key) } : host;
     this.id = `ssh:${host.addr}:${host.port ?? 22}`;
   }
 
@@ -435,6 +476,13 @@ export class SshExecutionEnv {
       try { process.kill(pid, "SIGKILL"); } catch {}
     }
     this.activeChildren.clear();
+    // 临时密钥文件跟着环境一起走。
+    const keyPath = this.host?.keyPath;
+    if (keyPath) {
+      const dir = keyPath.replace(/[\\/][^\\/]+$/, "");
+      KEY_DIRS.delete(dir);
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
   }
 }
 
