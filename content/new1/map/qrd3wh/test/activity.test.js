@@ -38,3 +38,41 @@ test("activity：没记过的会话是 null，记一次之后就是那个时刻"
     await cleanup(dir);
   }
 });
+
+test("activity：写下去的，重新开一个实例还读得回来", async () => {
+  const dir = await tmp();
+  const file = path.join(dir, "activity.json");
+  try {
+    const first = await openActivity(file, { now: () => 1_700_000_000_000, flushMs: 5 });
+    first.note(14);
+    await first.flush();
+
+    // 换个实例 = 重启：内存里那张表没了，只剩盘上那份。
+    const second = await openActivity(file, { now: () => 1_700_000_999_999, flushMs: 5 });
+    assert.equal(second.at(14), 1_700_000_000_000);
+    assert.equal(second.at(15), null);
+  } finally {
+    await cleanup(dir);
+  }
+});
+
+test("activity：攒着写 —— 连着 note 不落盘，flush 之后才落，且落的是最后那个值", async () => {
+  const dir = await tmp();
+  const file = path.join(dir, "activity.json");
+  try {
+    let clock = 1_700_000_000_000;
+    // flushMs 给很长：这个测试要自己控制落盘时机，不等计时器。
+    const activity = await openActivity(file, { now: () => clock++, flushMs: 60_000 });
+    activity.note(14);
+    activity.note(14);
+    activity.note(14);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(await stat(file).then(() => true, () => false), false);
+
+    await activity.flush();
+    const reread = await openActivity(file, { flushMs: 60_000 });
+    assert.equal(reread.at(14), 1_700_000_000_002);
+  } finally {
+    await cleanup(dir);
+  }
+});

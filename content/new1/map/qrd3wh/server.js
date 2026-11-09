@@ -12,7 +12,9 @@
 //   POST /v1/catalog/refresh          重拉编目（换了密钥 / 编目里加了供应商之后用）
 //   GET  /v1/fs/dirs?path=           目录浏览器：空 = start dirs；给路径 = 列它的子目录（?machine= 列那台机器的）
 //   GET  /v1/machines                 机器编目（从 vq0f03 读，缓存 60s；?fresh=1 重拉）
-//   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、cwd、机器、最后一句）
+//   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、cwd、机器、最后一句、最后写库时刻）
+//   GET  /v1/unread                   每个会话的未读数 + 上次读的时刻（平铺的 map，引擎算好）
+//   POST /v1/read/:id                 把这个会话标成读到最新
 //   POST /v1/sessions                 {name, model, thinkingLevel, skills, template, cwd, machine} → 新对话
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
@@ -58,6 +60,8 @@ import { contentText } from "@earendil-works/pi-ai/utils/text";
 import { AssistantEntry, Harness, createRegistry, defineDoc, defineExtension, section, watchEvents } from "@earendil-works/pi-durable";
 import { CodingTools, createBashTool, createEditTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { installCatalog } from "./catalog.js";
+import { openActivity } from "./activity.js";
+import { openUnread } from "./unread.js";
 // 自研扩展的**源码不在这棵树里** —— 在 Nous-extend 仓库的本地副本（`NOUS_EXTEND`）。
 // 块里只留两件事：去哪儿拿（下面这两行）+ 钉着哪个 commit（extensions.lock.json）。
 // 用动态 import 是因为路径得能配；静态 import 只能写字面量，一换机器就炸。
@@ -1756,6 +1760,49 @@ const harness = await Harness.open(
   ctx,
 );
 
+// ── 时间与未读 ───────────────────────────────────────────────────────────
+//
+// durable 里没有 wall-clock（EntryRecord 没时间，agent.sqlite 也没时间列），所以：
+// - updatedAt 只能靠每条 entry 落库时顺手记一刻（activity.js）；
+// - 未读只能靠「读到哪个 EntryId」比出来（unread.js）。
+// 两张表都落 data/，跟这一盘一起被拷走 —— 不落仓库根，也不进 sqlite。
+
+const activity = await openActivity(path.join(DATA, "activity.json"));
+
+/** 这条会话最新的 entry id。没有会话 / 没有 entry = null。 */
+const latestEntryId = async (id) => {
+  const conversation = await harness.conversation(id, ctx);
+  if (!conversation) return null;
+  const page = await conversation.entries({}, 1, undefined, ctx);
+  return page.items[0]?.id ?? null;
+};
+
+/** 水位之后还有几条。minEntryId 是**包含**的下界，所以从水位 + 1 开始扫。 */
+const countEntriesAfter = async (id, afterId) => {
+  const conversation = await harness.conversation(id, ctx);
+  if (!conversation || !Number.isFinite(afterId)) return 0;
+  let count = 0;
+  let cursor;
+  for (;;) {
+    const page = await conversation.entries({ minEntryId: afterId + 1 }, 200, cursor, ctx);
+    count += page.items.length;
+    if (page.next === undefined) break;
+    cursor = page.next;
+  }
+  return count;
+};
+
+const unread = await openUnread(path.join(DATA, "read.json"), {
+  entries: { latest: latestEntryId, countAfter: countEntriesAfter },
+});
+
+// 每条 entry 落库 = 这条会话动过。监听器不许阻塞、不许调 Session API —— 这里只记一刻。
+harness.subscribeCommits((publication) => {
+  for (const change of publication.changes) {
+    if (change.type === "entry") activity.note(change.value.conversationId);
+  }
+});
+
 const names = async () => (await harness.snapshot(Sessions, ctx))?.names ?? {};
 
 const machinesOf = async () => (await harness.snapshot(Sessions, ctx))?.machines ?? {};
@@ -1816,6 +1863,9 @@ const tree = async () => {
       template: templateOf(agent),
       readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       busy: busy.get(key(record.id)) ?? null,
+      // 这条会话最后一次落库的时刻（epoch ms）。没记过就是 null —— 宁可空，也不拿文件的
+      // mtime 之类冒充（拷一份盘就能让每条会话都变成「刚刚」）。
+      updatedAt: activity.at(record.id),
       last: last.items[0] ? { id: last.items[0].id, kind: last.items[0].kind, text: textOfEntry(last.items[0]) } : null,
     });
   }
@@ -2544,6 +2594,24 @@ const route = async (req, res, url) => {
     return json(res, 200, { items: await tree() });
   }
 
+  // 未读：**平铺的 map**，一条会话一个键，不套 items（客户端照这个形状读）。
+  // 数由引擎算 —— 客户端只显示，不自己数。
+  if (req.method === "GET" && parts[0] === "v1" && parts[1] === "unread" && !parts[2]) {
+    const records = (await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx)).items;
+    const body = {};
+    for (const record of records) body[record.id] = await unread.unreadOf(record.id);
+    return json(res, 200, body);
+  }
+
+  // 读到哪 = 把水位推到这条会话当前最新，回 { id, readAt, unread: 0 }。
+  if (parts[0] === "v1" && parts[1] === "read") {
+    if (req.method !== "POST") return json(res, 405, { error: "read 只有 POST" });
+    const id = Number(parts[2]);
+    if (!parts[2] || !Number.isFinite(id)) return json(res, 400, { error: "read 后面得跟会话号" });
+    if (!(await harness.conversation(id, ctx))) return json(res, 404, { error: "没有这个会话", id });
+    return json(res, 200, await unread.markRead(id));
+  }
+
   if (req.method === "POST" && parts[0] === "v1" && parts[1] === "sessions" && !parts[2]) {
     const body = JSON.parse((await readBody(req)) || "{}");
     // ── 预设打底 ────────────────────────────────────────────────────────────
@@ -2940,8 +3008,21 @@ server.listen(PORT, () => {
   console.log(`[qrd3wh] 听 ${PORT} · 模型 ${defaultModel.provider}/${defaultModel.modelId}${faux ? "（假 provider）" : ""} · 数据 ${DATA}`);
 });
 
+// 老会话的未读水位补一次：种在「当时最新」，之后进来的才算未读。
+// 不补也能用（第一次问未读时会顺手补），但先补好，客户端拿到的第一份 /v1/unread 就是全 0
+// 而不是一片空白。放 listen 之后、不挡启动 —— 几百条会话要挨个问一遍最新 id。
+const seedWatermarks = async () => {
+  const records = (await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx)).items;
+  let seeded = 0;
+  for (const record of records) if (await unread.seed(record.id)) seeded += 1;
+  if (seeded) console.log(`[qrd3wh] 未读水位补了 ${seeded} 条会话`);
+};
+void seedWatermarks().catch((error) => console.error("[unread] 补水位失败", error));
+
 const shutdown = async () => {
   server.close();
+  // 攒着没写的时刻/水位先落下，再关库。
+  await Promise.allSettled([activity.flush(), unread.flush()]);
   await harness.close(ctx).catch(() => {});
   process.exit(0);
 };
