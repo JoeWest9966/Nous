@@ -61,6 +61,7 @@ import { AssistantEntry, Harness, createRegistry, defineDoc, defineExtension, se
 import { CodingTools, createBashTool, createEditTool, createWriteTool } from "@earendil-works/pi-durable/tools";
 import { installCatalog } from "./catalog.js";
 import { openActivity } from "./activity.js";
+import { collectPages } from "./pages.js";
 import { openUnread } from "./unread.js";
 // 自研扩展的**源码不在这棵树里** —— 在 Nous-extend 仓库的本地副本（`NOUS_EXTEND`）。
 // 块里只留两件事：去哪儿拿（下面这两行）+ 钉着哪个 commit（extensions.lock.json）。
@@ -2597,7 +2598,10 @@ const route = async (req, res, url) => {
   // 未读：**平铺的 map**，一条会话一个键，不套 items（客户端照这个形状读）。
   // 数由引擎算 —— 客户端只显示，不自己数。
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "unread" && !parts[2]) {
-    const records = (await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx)).items;
+    // 翻完所有页：一页 200 条，会话过了 200 条只看第一页就是静默漏掉未读。
+    const records = await collectPages((cursor) =>
+      harness.commit((tx) => tx.scanConversations({}, 200, cursor), ctx),
+    );
     const body = {};
     for (const record of records) body[record.id] = await unread.unreadOf(record.id);
     return json(res, 200, body);
@@ -3009,10 +3013,13 @@ server.listen(PORT, () => {
 });
 
 // 老会话的未读水位补一次：种在「当时最新」，之后进来的才算未读。
-// 不补也能用（第一次问未读时会顺手补），但先补好，客户端拿到的第一份 /v1/unread 就是全 0
-// 而不是一片空白。放 listen 之后、不挡启动 —— 几百条会话要挨个问一遍最新 id。
+// 不补也能用（没有水位的会话老实回 0 条未读），但先补好，客户端拿到的第一份 /v1/unread
+// 就是全 0，而不是要等谁先发一条消息。放 listen 之后、不挡启动 —— 几百条会话要挨个问
+// 一遍最新 id，而且是翻完所有页（一页 200 条）。
 const seedWatermarks = async () => {
-  const records = (await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx)).items;
+  const records = await collectPages((cursor) =>
+    harness.commit((tx) => tx.scanConversations({}, 200, cursor), ctx),
+  );
   let seeded = 0;
   for (const record of records) if (await unread.seed(record.id)) seeded += 1;
   if (seeded) console.log(`[qrd3wh] 未读水位补了 ${seeded} 条会话`);
