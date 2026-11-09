@@ -348,7 +348,9 @@ POST /v1/prompts/archive|restore|purge {name}
 GET  /v1/prompts/pending          待同步清单（一个模板 = 一个单元）
 POST /v1/prompts/sync             {message, paths?}
 POST /v1/prompts/reload           重扫名册
-GET  /v1/sessions                 会话树
+GET  /v1/sessions                 会话树（每条带 updatedAt：最后落库时刻，可能 null）
+GET  /v1/unread                   每个会话的未读数（平铺 map，引擎算好）
+POST /v1/read/:id                 标成读到最新 → { id, readAt, unread: 0 }
 POST /v1/sessions                 {name, model, thinkingLevel, skills, template}
 POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template}
 POST /v1/sessions/:id/messages    {content, requestId?, waitMs?}
