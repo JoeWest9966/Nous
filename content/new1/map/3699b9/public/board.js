@@ -284,7 +284,10 @@ export function createBoard(deps) {
     const mine = ++dirSeq;
     $("b-dir-hint").textContent = "…";
     try {
-      const listing = await api.get(`v1/fs/dirs?path=${encodeURIComponent(p ?? "")}`);
+      const d = cur();
+      // 钉了机器就列那台的目录，否则列本机 —— 跟 hb7k3j 一条纪律。
+      const machine = d.machineMode === "picked" && d.machine ? `&machine=${encodeURIComponent(d.machine)}` : "";
+      const listing = await api.get(`v1/fs/dirs?path=${encodeURIComponent(p ?? "")}${machine}`);
       if (mine !== dirSeq) return;
       dirCur = listing.path || "";
       $("b-dq").value = dirCur;
@@ -315,7 +318,9 @@ export function createBoard(deps) {
       b.onclick = () => browseDir(path);
       list.append(b);
     };
-    add("⌂", "Start dirs", "");
+    const d = cur();
+    const remote = d.machineMode === "picked" && d.machine;
+    add("⌂", remote ? "Home" : "Start dirs", "");
     if (listing.parent) add("↑", "..", listing.parent);
     if (!(listing.dirs?.length)) {
       const hint = document.createElement("div");
@@ -338,7 +343,9 @@ export function createBoard(deps) {
     renderDirModes();
     openSheet("b-dir-scrim", from, () => {
       const d = cur();
-      dirCur = d.cwdMode === "picked" && d.cwd ? d.cwd : (dirStart ?? "");
+      const remote = d.machineMode === "picked" && d.machine;
+      // 钉了机器：回到上次选中的远端路径；否则从远端 home（空 path）开始。
+      dirCur = d.cwdMode === "picked" && d.cwd ? d.cwd : (remote ? "" : (dirStart ?? ""));
       $("b-dq").value = dirCur;
       browseDir(dirCur);
       $("b-dq").focus();
@@ -421,6 +428,9 @@ export function createBoard(deps) {
         const curDraft = cur();
         curDraft.machineMode = "picked";
         curDraft.machine = name;
+        // 换了机器，路径跟着作废 —— 一台机器上的路径在另一台上没意义。
+        curDraft.cwdMode = "default";
+        curDraft.cwd = "";
         onChange();
         render();
         renderMachineRows();
@@ -464,8 +474,11 @@ export function createBoard(deps) {
     const chip = e.target.closest?.(".bmode");
     if (!chip) return;
     const d = cur();
+    const prevMode = d.machineMode;
     d.machineMode = chip.dataset.mode;
     if (chip.dataset.mode !== "picked") d.machine = "";
+    // 机器语境变了，路径跟着作废（除非只是原地重选同一档）。
+    if (d.machineMode !== prevMode) { d.cwdMode = "default"; d.cwd = ""; }
     onChange();
     render();
     renderMachineModes();

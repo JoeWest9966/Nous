@@ -49,3 +49,6 @@ content/new1/map/68kazk/data/
 # data/ 是运行时数据（pins.json 置顶表等），不进。
 !content/new1/map/bjes6b/
 content/new1/map/bjes6b/data/
+# pxbgng（session-List）：会话列表视图。机器标签是多服务器的一部分 —— 进版本控制。
+# 没有 data/：纯静态视图，数据全从 qrd3wh 的 /v1/sessions 来。
+!content/new1/map/pxbgng/
