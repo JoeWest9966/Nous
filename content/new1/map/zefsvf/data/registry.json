@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "note": "服务台账：tailscaled 说「谁在、IP 是什么」，这一份说「哪个端口值得点、怎么连、挂了怎么重启」。手写的，机器只负责按这里的 (node, port) 探活。加一条 = 往 entries 里加一个对象。doc = 给 agent 读的那份说明的绝对路径（页面「skill」按钮复制的就是它）。",
+  "entries": [
+    {
+      "id": "warehouse",
+      "name": "Nous Warehouse",
+      "kind": "nw 面板 + REST 面",
+      "node": "100.126.95.105",
+      "port": 8443,
+      "url": "https://j1900.tail8d0018.ts.net:8443",
+      "doc": "/opt/Nous/content/new1/map/zefsvf/warehouse.md",
+      "scheme": "https（tailscale serve 终止 TLS，Let's Encrypt 证书，tailnet only）",
+      "auth": "无 token —— tailnet 本身是边界。funnel 全关，没有一条路通天网",
+      "facts": [
+        { "k": "API base", "v": "https://j1900.tail8d0018.ts.net:8443/api  ·  /api/health 是免认证握手段" },
+        { "k": "面板本体", "v": "nw-panel 只听 127.0.0.1:18080（它拒绝绑非回环地址，所以对外永远经过 serve/闸）" },
+        { "k": "备用入口", "v": "http://100.126.95.105:8080 —— panel-gate，要 bearer token；token 在 j1900:/etc/panel-gate.env" },
+        { "k": "局域网", "v": "192.168.1.7:8080 已关（地址还在，端口不监听）" },
+        { "k": "数据仓", "v": "j1900:/opt/Data-001（vps / 订阅 / 标签 / 模型 / github 50 条 repo / 2 个配方）" },
+        { "k": "引擎", "v": "j1900:/opt/Nous-Warehouse —— git master；nw 与 nw-panel 在仓根" },
+        { "k": "进程", "v": "systemd: nw-panel.service + panel-gate.service（enabled, Restart=always）" },
+        { "k": "重启", "v": "ssh root@100.126.95.105 'systemctl restart nw-panel panel-gate'" },
+        { "k": "文档", "v": "https://github.com/JoeWest9966/Nous-Warehouse/tree/master/docs —— docs/api/README.md（契约）· endpoints.md（逐端点）· schemas.md（data 形状）· docs/cli/reference.md（19 个命令组）" }
+      ],
+      "caveats": [
+        "2026-10-29 前的故障：--root 指向不存在的 /opt/Nous-Warehouse/Data-001，所有端点安静地回空数组（200 + 空，不是 404）—— 查「面板一片空」先看 root",
+        "nw 的 nw --version 恒为 0.2.0，版本号不告诉你二进制新旧；加端点不改文档 CI 会红，靠它比靠版本号可靠"
+      ]
+    }
+  ]
+}

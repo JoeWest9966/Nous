@@ -1,0 +1,12 @@
+{
+  "name": "zefsvf",
+  "private": true,
+  "type": "module",
+  "description": "tailnet 面板：这台机器眼里的所有设备、它们的 IP、直连还是中继。",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

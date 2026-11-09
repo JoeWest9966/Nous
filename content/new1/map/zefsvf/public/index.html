@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>tailnet · 拓扑</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="shell" id="shell">
+      <div class="col">
+        <header class="bar">
+          <div class="brand">
+            <span class="brand-dot"></span>
+            <span class="brand-name">tailnet</span>
+          </div>
+
+          <div class="count" id="count">—</div>
+          <div class="net" id="net"></div>
+
+          <div class="grow"></div>
+
+          <label class="search">
+            <input id="q" type="search" placeholder="host / IP / tag" autocomplete="off" spellcheck="false" />
+            <kbd>/</kbd>
+          </label>
+
+          <button class="btn" id="ping-all" title="按顺序 ping 所有在线设备">全部 ping</button>
+          <button class="btn icon" id="refresh" title="刷新（R）">↻</button>
+          <span class="stamp" id="stamp"></span>
+        </header>
+
+        <div class="banner" id="banner" hidden></div>
+
+        <main class="stage">
+          <div class="stage-head">
+            <h1>网络拓扑</h1>
+            <span class="stage-hint" id="hint"></span>
+          </div>
+
+          <div class="map-wrap" id="map-wrap">
+            <svg id="map" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="tailnet 拓扑图"></svg>
+          </div>
+
+          <div class="legend">
+            <span class="lg"><i class="sw on"></i>在线</span>
+            <span class="lg"><i class="sw off"></i>离线</span>
+            <span class="lg"><i class="sw me"></i>本机</span>
+            <span class="lg"><i class="sw svc"></i>服务 VIP</span>
+            <span class="lg"><i class="sw reg"></i>台账</span>
+            <span class="lg sep"><i class="ln direct"></i>直连</span>
+            <span class="lg"><i class="ln derp"></i>DERP</span>
+            <span class="lg"><i class="ln bad"></i>不通</span>
+          </div>
+
+          <footer class="foot">
+            <span id="foot-counts"></span>
+            <span class="foot-hint">点方块看细节 · 线是关系，数字要 ping 了才有</span>
+          </footer>
+        </main>
+      </div>
+
+      <aside class="inspector" id="inspector" hidden aria-label="详情">
+        <div class="ins-head">
+          <span class="ins-icon" id="ins-icon"></span>
+          <div class="ins-title">
+            <b id="ins-name"></b>
+            <span id="ins-sub"></span>
+          </div>
+          <button class="ins-close" id="ins-close" aria-label="关闭">×</button>
+        </div>
+        <div class="ins-body" id="ins-body"></div>
+      </aside>
+    </div>
+
+    <div class="sheet-backdrop" id="backdrop" hidden></div>
+    <div class="toast" id="toast" hidden></div>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

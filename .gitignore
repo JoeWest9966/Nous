@@ -11,44 +11,8 @@ dist/
 
 content/*/*.tmp
 
-# content/ 是运行时数据，不是源码：
-# 块的删除语义在 map/.gone/ 里，git 再存一份就是第二个撤销系统 ——
-# 每次 checkout / stash 都会把删掉的块复活，跟坟场打架。备份用 tar/rsync。
-#
-# 写 content/* 而不是 content/ 是为了下面那两个例外能生效：git 不会穿过
-# 被忽略的父目录，想反白一个子路径，得逐层把父目录先放回来。
-content/*
-# 例外：这一轮人写的块代码进版本控制（别的块仍然全是运行时数据）。
-!content/new1/
-content/new1/*
-!content/new1/map/
-content/new1/map/*
-!content/new1/map/k5411g/
-!content/new1/map/hb7k3j/
-# qrd3wh 的代码也是人写的(session 引擎 + 编目适配),data/ 仍然不进(运行时数据)。
-!content/new1/map/qrd3wh/
-content/new1/map/qrd3wh/data/
-# vbe4pt 同理:扩展管理器的代码是人写的,data/(注册表 + 库 + 快照)是运行时数据。
-!content/new1/map/vbe4pt/
-content/new1/map/vbe4pt/data/
-# n8qkkj(触发器清单)同理:页面 + 它自己的后端都是人写的,没有运行时数据要留。
-!content/new1/map/n8qkkj/
-# 68kazk 这一轮也要进版本控制（面板从 ~1400 行的编目店面重写成 vbe4pt 的孪生）：
-# 逐层反白，data/ 仍然不进（运行时数据）。
-!content/new1/map/68kazk/
-content/new1/map/68kazk/data/
-# 6ysg01（Session-Template）：提示词模板私库的管理页，代码是人写的 —— 进版本控制。
-# 这一块没有 data/：数据全在 qrd3wh 和 Nous-prompts 仓里。
-!content/new1/map/6ysg01/
-# 3699b9（New-Template）：会话预设私库的管理页，代码是人写的 —— 进版本控制。
-# 这一块没有 data/：数据全在 qrd3wh 和 Nous-Template 仓里。
-!content/new1/map/3699b9/
-# jtjzw5（Ultimate-Template）：同一个仓的另一段（Ultimate-Template）的页，同样纯静态。
-!content/new1/map/jtjzw5/
-# bjes6b（Nous-Use）：微信样子的会话页，代码是人写的（BFF + 壳），进版本控制。
-# data/ 是运行时数据（pins.json 置顶表等），不进。
-!content/new1/map/bjes6b/
-content/new1/map/bjes6b/data/
-# pxbgng（session-List）：会话列表视图。机器标签是多服务器的一部分 —— 进版本控制。
-# 没有 data/：纯静态视图，数据全从 qrd3wh 的 /v1/sessions 来。
-!content/new1/map/pxbgng/
+# content/ 整盘都在版本控制里（2024-11 起不再把运行时数据排除在外）：
+# clone 下来就是完整盘面 —— tree.json、log.json、锁、块代码和数据全在。
+# 只排除可再生的：嵌套 .git（块自己 git init 的历史不并入主仓）、node_modules、
+# dist（构建产物）、*.log（audit.log 等带 IP 的活日志，见顶部全局规则）。
+content/**/.git/

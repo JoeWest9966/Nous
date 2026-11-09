@@ -1,0 +1,16 @@
+[package]
+name = "nous-engine"
+description = "qrd3wh `/v1/*` 的哑客户端：只做类型 + 转发，不认业务规则"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
+thiserror.workspace = true
+url.workspace = true
+bytes.workspace = true

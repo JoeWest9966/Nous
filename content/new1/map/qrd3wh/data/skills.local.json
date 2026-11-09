@@ -1,0 +1,15 @@
+{
+  "_about": [
+    "本机绑了哪些技能变体。`root` / `branch` 是本机路径和分支，**不该被提交**。",
+    "变体不是复制：内容在那条分支上（跟着仓库走），这里只记「这台把它 checkout 在哪」。"
+  ],
+  "v": 1,
+  "variants": {
+    "code-review": {
+      "123": {
+        "root": "/opt/nous-skill-code-review-123",
+        "branch": "skill/code-review-123"
+      }
+    }
+  }
+}

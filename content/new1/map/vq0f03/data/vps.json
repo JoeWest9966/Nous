@@ -1,0 +1,131 @@
+{
+  "v": 1,
+  "note": "这一份只写上游没有的东西：这台机器是干嘛的、还有哪些坑。名字 / 备注 / 用户 / 端口 / IP 一律不抄 —— 那些活在 j1900:/opt/Data-001/vps/vps.json，抄一遍就是两份事实源。键是 name，和 /api/vps 返回的 name 对齐；上游多一台这里没写的小机器，API 会照常列出来并标 documented:false。",
+  "source": {
+    "project": "Nous-Warehouse",
+    "doc": "/opt/Nous/content/new1/map/zefsvf/warehouse.md",
+    "base": "https://j1900.tail8d0018.ts.net:8443",
+    "catalog": "j1900:/opt/Data-001/vps/vps.json",
+    "schema": "nw/vps-ls.v1",
+    "auth": "无 token —— tailnet 本身是边界。备用入口 http://100.126.95.105:8080 要 bearer token（j1900:/etc/panel-gate.env）"
+  },
+  "domains": [
+    {
+      "path": "/api/vps",
+      "schema": "nw/vps-ls.v1",
+      "what": "本块的唯一上游。data.machines[] 的形状：name / note / user / port / ips[{addr,label}]"
+    },
+    {
+      "path": "/api/health",
+      "schema": "—",
+      "what": "免认证握手段，回 {ok,service:\"nw-panel\"}。探「面板活没活」用它，别用 /api/vps —— 后者回空也可能是 --root 指错"
+    },
+    {
+      "path": "/api/subscription",
+      "schema": "nw/subscription-ls.v1",
+      "what": "相邻领域：机场订阅（client / expires / daysLeft）。不是 vps，别混进这台机器的编目里"
+    }
+  ],
+  "machines": {
+    "xy": {
+      "role": "面板里唯一一条 vps，公网可达的 Debian 12 测试机。它是「怎么从外面进一台机器」这条链的样本，不是生产机。",
+      "tags": [
+        "公网",
+        "debian12",
+        "ssh"
+      ],
+      "facts": [
+        {
+          "k": "登录",
+          "v": "root@66.154.127.165，22 端口，只有一个公网地址（label 就是「公网」）"
+        },
+        {
+          "k": "实测",
+          "v": "TCP 22 通，个位数毫秒（实测 2ms），SSH banner 是 OpenSSH_9.2p1 Debian-2+deb12u5 —— Debian 12 bookworm"
+        },
+        {
+          "k": "没有的东西",
+          "v": "编目里没有到期日、没有指纹、没有 key、没有 tailnet 地址。nw 只存 name/note/user/port/ips，别指望从 API 查到续费哪天"
+        },
+        {
+          "k": "和 j1900 的区别",
+          "v": "j1900 在 tailnet 里（100.126.95.105，另有 MagicDNS 名），这台不在 —— 它只有公网 22，进它靠端口+密钥，不靠 tailnet"
+        }
+      ],
+      "caveats": [
+        "面板「vps 一片空」九成不是机器没了：nw-panel 的 --root 指错时，nw 的语义是空数组 + rc 0，面板回 200 + 空列表而不是 404。先看 root，再看机器（warehouse.md 坑 1）",
+        "66.154.127.165 没有 PTR（实测 ENOTFOUND），所以它的日志里只会出现 IP；别拿反解当身份",
+        "它背后是同一个 nw-panel，nw --version 恒为 0.2.0，版本号不告诉你二进制新旧 —— 加过的端点物理上可能不存在（warehouse.md 坑 2）"
+      ]
+    },
+    "j1900": {
+      "role": "tailnet 上的小主机，也是这套控制台的上游自己：nw-panel 和 panel-gate 都跑在它身上，数据仓 /opt/Data-001 也在这儿。",
+      "tags": [
+        "tailscale",
+        "nw-panel",
+        "debian"
+      ],
+      "facts": [
+        {
+          "k": "登录",
+          "v": "root@100.126.95.105:22，密码登录（编目里那条 password 是明文，见上游 #194）"
+        },
+        {
+          "k": "跑着什么",
+          "v": "nw-panel --addr 127.0.0.1:18080 + panel-gate 100.126.95.105:8080；重启：systemctl restart nw-panel panel-gate"
+        },
+        {
+          "k": "写一次要多久",
+          "v": "命令行 nw vps register 实测 100 秒上下：先 SSH 连线测试，写完 vps.json 还要 git commit / push 进数据仓。等不到就再点一次 = 撞写锁 409"
+        },
+        {
+          "k": "它自己也在编目里",
+          "v": "删掉这一条不会让面板停 —— 面板跑在它上面，编目只是编目"
+        }
+      ],
+      "caveats": [
+        "它是上游。上游挂了这个块就没有数据可看（503 + 原因），这时候别怀疑机器没了",
+        "100.126.95.105 是 tailnet 地址，tailscale 没起来就只剩 LAN（192.168.1.7）那条不那么可靠的路"
+      ]
+    },
+    "9996696": {
+      "role": "9996696.xyz。这个块自己就跑在它上面（Nous 宿主 :4790），同时它也是编目里的一台机器 —— 面板能从 j1900 SSH 进来，所以它该在这儿。",
+      "tags": [
+        "tailscale",
+        "ssh-9551",
+        "debian"
+      ],
+      "facts": [
+        {
+          "k": "登录",
+          "v": "root@100.106.43.81:9551（注意端口不是 22），密钥登录，密钥文件在 j1900:/var/cnb_key"
+        },
+        {
+          "k": "实测",
+          "v": "hostname 9996696.xyz，内核 6.1.0-53-amd64 → Debian 12 bookworm；tailscale 地址 100.106.43.81 /32"
+        },
+        {
+          "k": "两个地址一回事",
+          "v": "100.106.43.81 就是这台机器，:4790 上的 Nous 宿主在给它发 /p/new1/vq0f03/ —— 从面板探它，等于从 j1900 探这个块的主人"
+        },
+        {
+          "k": "为什么端口是 9551",
+          "v": "22 上不是它（别按 22 填）。填错端口的表现是 SSH 测试超时，不是拒绝"
+        }
+      ],
+      "caveats": [
+        "密钥内容躺在 j1900 的 vps.json 里（key 字段，跟密码一个待遇）。要换密钥 = PUT 覆盖登记，不是改文件",
+        "改这个块的代码，宿主会收掉它的进程、下次请求再起 —— 不影响这台机器本身的 SSH"
+      ]
+    }
+  },
+  "caveats": [
+    "本块不存机器的凭据，也不存机器清单。清单在上游，凭据从你手里过一下就走（密码明文落进 vps.json，面板自己的 #194 早就写了）",
+    "探活只探编目里写过的 (addr, port)：这是探活，不是端口扫描器",
+    "上游挂了这个 API 就回 503 + 原因，不拿上一次的旧值冒充现在",
+    "登记 / 覆盖 / 删除 都是真写：面板没有废纸篓，删了要重新登记，而且得再过一次 SSH 连线测试",
+    "登记会先拿凭证 SSH 打第一条地址，连不上就不落盘 —— 时间是八十秒这个量级，不是十秒。别在它还没回来的时候再点一次：第二次会撞上写锁（409 LOCK_CONFLICT）",
+    "删机器不会顺手清 tags.json：标签可能还指着已经不存在的名字。页头那条黄色提示就是说这个",
+    "写操作分两半：改数据仓 + 推 GitHub。本地成了、推的时候 TLS 断了，上游回 500 —— 可机器是真的登记上了。本块按上游那句话（「本地 commit 已成功」）把它报成「成功 + 一条 warning」，别照着 500 去重试第二次"
+  ]
+}

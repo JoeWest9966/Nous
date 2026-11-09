@@ -58,8 +58,9 @@ content/<board-id>/
 **这个文件叫 `AGENTS.md`，不叫 `agent.md`。** 一字之差决定 agent 会不会读它：
 所有 coding agent 进来先找 `AGENTS.md` / `CLAUDE.md`，小写的 `agent.md` 谁都不会自动打开。
 在这个文件夹里跑 `setup-matt-pocock-skills` 时，它编辑的也是这一份（它只就地更新 `## Agent skills`
-那一段，不覆盖周围的内容）。万一写坏了没有 git 兜底 —— `content/` 是运行时数据，不在版本控制里；
-要靠版本就自己 `git init` 到别处，或者用 `tar`/`rsync` 做备份。
+那一段，不覆盖周围的内容）。`content/` 整盘都在仓库版本控制里（树、会话日志、锁、块代码和数据），
+写坏了有 git 兜底 —— 整个仓库 clone 下来就是完整可跑的盘面。只排除嵌套 `.git`、`node_modules`、
+`dist` 和 `*.log`（都是可再生的，见 `.gitignore`）。
 
 **新建的节点（块和组都一样）只有一个空文件夹：没有 `AGENTS.md`，没有代码，什么都没有。**
 所以它的「打开」是一张白板 —— 那不是坏了，是「还没写」。

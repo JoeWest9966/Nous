@@ -1,0 +1,12 @@
+{
+  "name": "vq0f03",
+  "private": true,
+  "type": "module",
+  "description": "vps 编目 API：清单来自 nw-panel 的 /api/vps，注解和实测在这里，输出是 JSON 不是页面。",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

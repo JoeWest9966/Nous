@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>7awa4h · 会话鱼骨</title>
+<style>
+  /* 皮照着 Pele 的 ishikawa 做（pele.run/examples/ishikawa）：
+     1px 脊 + 实心小箭头、骨头斜 0.48、横刺 18px、鱼头 48 高圆角胶囊、
+     骨头标签 34 高的圆角框、刺上文字 14px、第三层 13.5px 且降一档灰。
+     颜色是它深色主题里的实际像素。 */
+  :root {
+    color-scheme: dark;
+    --bg:#1c1b1a;
+    --fg:#cecdc3;
+    --muted:#878580;
+    --faint:#5f5c58;
+    --line:#75746f;      /* 脊、骨头、横刺 */
+    --box:#282726;       /* 框 / 胶囊的底 */
+    --box-line:#403e3c;  /* 框 / 胶囊的边 */
+    --accent:#5b7bd5;
+    --font: -apple-system, BlinkMacSystemFont, "Inter Variable", Inter, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; height:100dvh; display:flex; flex-direction:column;
+         background:var(--bg); color:var(--fg); font:16px/1.4 var(--font); -webkit-font-smoothing:antialiased; }
+
+  .bar { display:flex; align-items:center; gap:10px; padding:14px 18px 8px; flex:none; }
+  .brand { font-size:15px; }
+  .count { font-size:13px; color:var(--faint); font-variant-numeric:tabular-nums; }
+  .grow { flex:1; }
+  .state { font-size:12.5px; color:#c08a7a; max-width:44ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .link { font:inherit; font-size:13px; color:var(--muted); background:none; border:0; padding:2px 4px;
+          cursor:pointer; text-decoration:none; border-radius:5px; }
+  .link:hover { color:var(--fg); background:#272523; }
+  .link[hidden] { display:none; }
+
+  /* 图比屏宽就横着滚：鱼骨不能为了塞进一屏把骨头折成两截。
+     width:max-content + margin:auto —— 装得下就居中，装不下就贴左，这才滚得到头。 */
+  #stage { flex:1; overflow:auto; padding:8px 18px 28px; }
+  #canvas { width:max-content; margin:0 auto; }
+  #canvas text { font-family:var(--font); fill:var(--fg); }
+
+  .spine, .bone, .stub, .tick { fill:none; stroke:var(--line); stroke-width:1; }
+  .head-fill { fill:var(--box); stroke:var(--box-line); stroke-linejoin:round; }
+  .head-label { font-size:16px; font-weight:600; }
+  .cat-box { fill:var(--box); stroke:var(--box-line); }
+  .cat-box.sel { stroke:var(--accent); }
+  .cat-label { font-size:16px; cursor:pointer; }
+  .cat-label.sel { fill:var(--accent); }
+  .cause { font-size:14px; cursor:pointer; }
+  .cause.small { font-size:13.5px; fill:var(--muted); }
+  .cause.sel, .cause.small.sel { fill:var(--accent); }
+  .hit { fill:transparent; }
+  .hit:hover + .cause, .hit:hover + .cat-label { fill:var(--fg); }
+  .ro { fill:var(--faint); font-size:11.5px; }
+  .note { color:var(--muted); font-size:14px; padding:24px 4px; }
+  .note.err { color:#c08a7a; }
+  .note code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px; color:var(--fg); }
+</style>
+</head>
+<body>
+<header class="bar">
+  <span class="brand">作业面</span>
+  <span class="count" id="count"></span>
+  <span class="grow"></span>
+  <span class="state" id="state"></span>
+  <a class="link" id="list" href="#" hidden>列表 ↗</a>
+  <a class="link" id="open" href="#" hidden>qrd3wh ↗</a>
+  <button class="link" id="refresh" type="button" title="重新拉一次">刷新</button>
+</header>
+
+<div id="stage"><div id="canvas"></div></div>
+
+<script type="module">
+// 块之间只走 HTTP，地址只从宿主的 ctx 来 —— 这里一个 `/p/...` 都不拼。
+const self = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const $ = (id) => document.getElementById(id);
+const get = (url) => fetch(url).then(async (r) => {
+  const body = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+  return body;
+});
+const post = (url, body) => fetch(url, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}),
+}).then(async (r) => {
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
+  return data;
+});
+
+let tag = null;
+try {
+  const ctx = await get(self + "__nous/ctx");
+  tag = ctx.blocks.find((b) => b.id === "qrd3wh")
+     ?? ctx.blocks.find((b) => b.name === "session" && b.kind === "group")
+     ?? null;
+  if (!tag) throw new Error("这一盘里没有 qrd3wh，鱼骨不知道挂谁的会话");
+  $("open").href = tag.url;
+  $("open").hidden = false;
+  // 同一份会话的另一种摆法（pxbgng 那棵树）：它在就挂个入口，不在就当没这回事。
+  const list = ctx.blocks.find((b) => b.id === "pxbgng");
+  if (list) {
+    $("list").href = list.url;
+    $("list").hidden = false;
+  }
+} catch (error) {
+  $("canvas").innerHTML = `<p class="note err">找不到对话那一边：<code>${String(error.message ?? error)}</code></p>`;
+}
+
+const api = (p) => get(tag.url + "/" + p);
+
+// ── 尺寸：全是量的 ─────────────────────────────────────────────────────
+const FONT = `-apple-system, BlinkMacSystemFont, "Inter Variable", Inter, "Segoe UI", Helvetica, Arial, sans-serif`;
+const ctx2d = document.createElement("canvas").getContext("2d");
+const measure = (text, size, weight = 400) => {
+  ctx2d.font = `${weight} ${size}px ${FONT}`;
+  const w = ctx2d.measureText(text).width;
+  return Number.isFinite(w) && w > 0 ? w : String(text).length * size;
+};
+
+const ROW = 27;        // 刺间距
+const STUB = 18;       // 刺长
+const GAP = 4;         // 刺尖到文字
+const TOP = 27;        // 第一根刺离脊
+const SLOPE = 0.48;    // 骨头每往外 1px，往左 0.48
+const BOX_H = 34;      // 骨头标签框
+const BOX_PAD = 26;
+const BOX_LIFT = 21.5; // 最后一根刺到框底
+const HEAD_H = 48;
+const HEAD_PAD = 34;
+const TAIL = 40;       // 最后一根骨头到鱼头的脊长
+const CAT_GAP = 46;    // 骨头之间在脊上的最小间距
+const M = 24;          // 画布留白
+const TICK = 0.5;      // 第三层小斜刺的斜率
+const SPINE_LEAD = 24; // 脊在最后一根骨头之外多伸出去的一段
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+let sessions = [];
+let selected = null;
+let selAt = -1;
+let signature = "";
+let model = null;
+
+const forksOf = (id, byParent) => (byParent.get(id) ?? []).slice().sort((a, b) => a.id - b.id);
+
+/** 一根骨头上的行：父（分叉）先、孩子（分叉的分叉）更靠外 —— 和 Pele 的排法一致。 */
+const rowsFor = (root, byParent) => {
+  const rows = [];
+  let k = 0;
+  for (const fork of forksOf(root.id, byParent)) {
+    const kids = forksOf(fork.id, byParent);
+    if (!kids.length) {
+      rows.push({ conv: fork, o: TOP + k * ROW, kind: "cause" });
+      k += 1;
+      continue;
+    }
+    // 三层以上的折成一条路径：「A / B」，不丢东西，也不把骨头撑成一棵树。
+    const lean = [];
+    const collect = (list, path) => {
+      for (const node of list) {
+        const grand = forksOf(node.id, byParent);
+        if (!grand.length) lean.push({ conv: node, label: [...path, node.name].join(" / ") });
+        else collect(grand, [...path, node.name]);
+      }
+    };
+    collect(kids, []);
+
+    const parent = { conv: fork, o: TOP + k * ROW, kind: "parent", kids: [] };
+    rows.push(parent);
+    k += 1;
+    // 第一个孩子最靠外，最后一个贴着父行。
+    for (let i = lean.length - 1; i >= 0; i--) {
+      parent.kids.push({ conv: lean[i].conv, text: lean[i].label, o: TOP + k * ROW });
+      k += 1;
+    }
+  }
+  return rows;
+};
+
+const layout = (roots, byParent) => {
+  const cats = [];
+  for (const [index, root] of roots.entries()) {
+    const rows = rowsFor(root, byParent);
+    for (const row of rows) {
+      row.text = row.conv.name;
+      row.w = measure(row.text, 14);
+      row.ro = row.conv.readOnly ? " · 只读" : "";
+      if (row.ro) row.w += measure(row.ro, 11.5);
+      for (const kid of row.kids ?? []) {
+        kid.w = measure(kid.text, 13.5);
+        kid.ro = kid.conv.readOnly ? " · 只读" : "";
+        if (kid.ro) kid.w += measure(kid.ro, 11.5);
+      }
+    }
+
+    // 最外那根刺：有孩子的父行，孩子是嵌在它里面的，别只算父行自己。
+    const last = rows.reduce((acc, row) => Math.max(acc, row.o, ...(row.kids ?? []).map((kid) => kid.o)), 0);
+    const nameW = measure(root.name, 16) + BOX_PAD;
+    const oBone = (last || TOP) + BOX_LIFT;   // 骨头止于最外那根刺往外 21.5
+    const oBox = oBone + BOX_H / 2;
+    const tipDist = SLOPE * oBone;         // 骨头尖离挂点多远（往左）
+    // 框骑在骨头尖上（Pele 就是这么摆的）。名字宽、骨头短的时候它会往右越过挂点、
+    // 把脊顶歪 —— 那就把框往左推，而不是把骨头拉成晾衣绳。
+    const boxDist = Math.max(tipDist, nameW / 2 + 6);
+
+    // 这根骨头往左占多宽（离挂点的距离）。
+    let left = boxDist + nameW / 2;
+    for (const row of rows) {
+      const bone = SLOPE * row.o;
+      if (row.kind === "parent" && row.kids.length) {
+        const span = Math.max(...row.kids.map((kid) => kid.o - row.o));
+        const colW = Math.max(...row.kids.map((kid) => kid.w));
+        row.col = bone + 20 + span * TICK;                  // 孩子们文字的右缘（离挂点的距离）
+        row.line = row.col + 6;                            // 父行那根长横杆的左端
+        left = Math.max(left, row.line + GAP + row.w, row.col + colW);
+      } else {
+        left = Math.max(left, bone + STUB + GAP + row.w);
+      }
+    }
+
+    cats.push({ root, rows, nameW, oBone, oBox, tipDist, boxDist, left, side: index % 2 === 0 ? -1 : 1 });
+  }
+
+  // 从右往左挂：第 0 根离鱼头 TAIL 远，后面的依次左移。
+  let attach = -TAIL;
+  for (const cat of cats) {
+    cat.attach = attach;
+    attach -= cat.left + CAT_GAP;
+  }
+
+  const above = Math.max(0, ...cats.filter((c) => c.side < 0).map((c) => c.oBox + BOX_H / 2));
+  const below = Math.max(0, ...cats.filter((c) => c.side > 0).map((c) => c.oBox + BOX_H / 2));
+  const leftMost = cats.length ? cats[cats.length - 1].attach - cats[cats.length - 1].left : 0;
+  const headLeft = M - leftMost;                       // 最左内容正好落在 M
+  const headText = `${roots.length} 个会话`;
+  const headW = measure(headText, 16, 600) + HEAD_PAD;
+
+  return { cats, above, below, headLeft, headW, headText, width: headLeft + headW + M, height: M * 2 + above + below };
+};
+
+/** 骨头扎进脊（或脊扎进鱼头）的小实心箭头：tip 在点 A，尾巴沿 dir 反方向退 7。 */
+const arrow = (ax, ay, dx, dy) => {
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len, uy = dy / len;
+  const bx = ax - ux * 7, by = ay - uy * 7;
+  const px = -uy * 3.4, py = ux * 3.4;
+  return `<path d="M${ax},${ay}L${bx + px},${by + py}L${bx - px},${by - py}Z" fill="var(--line)"/>`;
+};
+
+const build = () => {
+  const box = $("canvas");
+  if (!sessions.length) {
+    model = null;
+    box.innerHTML = '<p class="note">还没有会话。去 qrd3wh 建一个。</p>';
+    $("count").textContent = "";
+    return;
+  }
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  const byParent = new Map();
+  const roots = [];
+  for (const s of sessions) {
+    const parent = s.parent && byId.has(s.parent.id) ? s.parent.id : null;
+    if (parent === null) roots.push(s);
+    else byParent.set(parent, [...(byParent.get(parent) ?? []), s]);
+  }
+  roots.sort((a, b) => a.id - b.id);
+
+  const sig = JSON.stringify([selected, roots.map((r) => [r.id, r.name, r.busy, r.readOnly, (byParent.get(r.id) ?? []).map((f) => [f.id, f.name, f.readOnly, (byParent.get(f.id) ?? []).map((g) => g.id)])])]);
+  if (sig === signature && model) return;   // 轮询每 3 秒一次，没变就别重画
+  signature = sig;
+
+  const L = layout(roots, byParent);
+  const spineY = M + L.above;
+  const X = (cat, dist) => L.headLeft + cat.attach - dist;   // dist 是「往左多远」
+  const Y = (o, side) => spineY + side * o;
+
+  const parts = [];
+  const leftMost = L.cats[L.cats.length - 1];
+  // 脊在最后一根骨头的挂点之外再伸出去一截；内容可以比脊更靠左（Pele 也是这么办的）。
+  const spineStart = L.headLeft + leftMost.attach - SPINE_LEAD;
+  const spineEnd = L.headLeft - 8;
+  parts.push(`<path class="spine" d="M${spineStart},${spineY}H${spineEnd}"/>`);
+  parts.push(arrow(spineEnd + 8, spineY, 1, 0));
+
+  for (const cat of L.cats) {
+    const s = cat.side;
+    const ax = L.headLeft + cat.attach;
+    const bx = X(cat, cat.boxDist);
+    const tipX = X(cat, cat.tipDist);
+
+    parts.push(`<path class="bone" d="M${ax},${spineY}L${tipX},${Y(cat.oBone, s)}"/>`);
+    parts.push(arrow(ax, spineY, -SLOPE, s));   // 骨头根上的小箭头，指着脊
+
+    // 骨头标签框：底边骑在骨头上
+    parts.push(`<rect class="cat-box${cat.root.id === selected ? " sel" : ""}" x="${bx - cat.nameW / 2}" y="${Y(cat.oBox, s) - BOX_H / 2}" width="${cat.nameW}" height="${BOX_H}" rx="4"/>`);
+    parts.push(`<rect class="hit" x="${bx - cat.nameW / 2}" y="${Y(cat.oBox, s) - BOX_H / 2}" width="${cat.nameW}" height="${BOX_H}" data-id="${cat.root.id}"/>`);
+    parts.push(`<text class="cat-label${cat.root.id === selected ? " sel" : ""}" x="${bx}" y="${Y(cat.oBox, s) + 5.6}" text-anchor="middle" data-id="${cat.root.id}">${esc(cat.root.name)}${cat.root.busy ? " ●" : ""}</text>`);
+
+    for (const row of cat.rows) {
+      const y = Y(row.o, s);
+      const bone = X(cat, SLOPE * row.o);
+      const mark = row.conv.id === selected ? " sel" : "";
+      const ro = row.ro ? `<tspan class="ro">${esc(row.ro)}</tspan>` : "";
+
+      if (row.kind === "parent" && row.kids.length) {
+        const lineX = X(cat, row.line);
+        parts.push(`<path class="stub" d="M${lineX},${y}H${bone}"/>`);
+        parts.push(`<rect class="hit" x="${lineX - row.w - 10}" y="${y - ROW / 2}" width="${row.w + 18}" height="${ROW}" data-id="${row.conv.id}"/>`);
+        parts.push(`<text class="cause${mark}" x="${lineX - GAP}" y="${y - 5}" text-anchor="end" data-id="${row.conv.id}">${esc(row.text)}${ro}</text>`);
+
+        const colX = X(cat, row.col);
+        for (const kid of row.kids) {
+          const ky = Y(kid.o, s);
+          const footX = X(cat, row.col - 4 - (kid.o - row.o) * TICK);
+          parts.push(`<path class="tick" d="M${colX + 4},${ky}L${footX},${y}"/>`);
+          parts.push(`<rect class="hit" x="${colX - kid.w - 8}" y="${ky - ROW / 2}" width="${kid.w + 12 + Math.max(0, footX - colX)}" height="${ROW}" data-id="${kid.conv.id}"/>`);
+          parts.push(`<text class="cause small${kid.conv.id === selected ? " sel" : ""}" x="${colX}" y="${ky - 3}" text-anchor="end" data-id="${kid.conv.id}">${esc(kid.text)}${kid.ro ? `<tspan class="ro">${esc(kid.ro)}</tspan>` : ""}</text>`);
+        }
+        continue;
+      }
+
+      const tipX = bone - STUB;
+      parts.push(`<path class="stub" d="M${bone},${y}H${tipX}"/>`);
+      parts.push(`<rect class="hit" x="${tipX - row.w - 8}" y="${y - ROW / 2}" width="${row.w + STUB + 10}" height="${ROW}" data-id="${row.conv.id}"/>`);
+      parts.push(`<text class="cause${mark}" x="${tipX - GAP}" y="${y - 5}" text-anchor="end" data-id="${row.conv.id}">${esc(row.text)}${ro}</text>`);
+    }
+  }
+
+  // 鱼头：48 高、右端圆角，底和边跟骨头框同一套。
+  const hy = spineY, hx = L.headLeft;
+  parts.push(`<path class="head-fill" d="M${hx},${hy - HEAD_H / 2}H${hx + L.headW - HEAD_H / 2}A${HEAD_H / 2},${HEAD_H / 2} 0 0 1 ${hx + L.headW - HEAD_H / 2},${hy + HEAD_H / 2}H${hx}Z"/>`);
+  parts.push(`<text class="head-label" x="${hx + L.headW / 2}" y="${hy + 5.6}" text-anchor="middle" xml:space="preserve">${esc(L.headText)}</text>`);
+
+  model = L;
+  box.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${Math.ceil(L.width)} ${Math.ceil(L.height)}" width="${Math.ceil(L.width)}" height="${Math.ceil(L.height)}" role="img" aria-label="会话鱼骨：${sessions.length} 个会话，${L.cats.length} 根骨头">${parts.join("")}</svg>`;
+  $("count").textContent = `${sessions.length} 个会话 · ${L.cats.length} 根骨头`;
+};
+
+// ── 选谁 ────────────────────────────────────────────────────────────────
+const pick = async (id) => {
+  if (id === selected) return;
+  selected = id;
+  signature = "";
+  build();
+  try {
+    const saved = await post(tag.url + "/v1/selection", { id });
+    selAt = saved.at;
+    $("state").textContent = "";
+  } catch (error) {
+    $("state").textContent = `没选上：${error.message ?? error}`;
+  }
+};
+
+$("canvas").addEventListener("click", (event) => {
+  const node = event.target.closest("[data-id]");
+  if (node) pick(Number(node.dataset.id));
+});
+
+const loadSessions = async () => {
+  try {
+    sessions = (await api("v1/sessions")).items;
+    build();
+  } catch (error) {
+    $("state").textContent = `拉不到会话：${error.message ?? error}`;
+  }
+};
+
+const loadSelection = async () => {
+  try {
+    const saved = await api("v1/selection");
+    if (saved.at === selAt) return;
+    selAt = saved.at;
+    if (saved.id === selected) return;
+    selected = saved.id;
+    signature = "";
+    build();
+  } catch {}
+};
+
+if (tag) {
+  $("refresh").onclick = () => { loadSessions(); loadSelection(); };
+  await loadSessions();
+  await loadSelection();
+  setInterval(loadSessions, 3000);
+  setInterval(loadSelection, 1200);
+}
+</script>
+</body>
+</html>

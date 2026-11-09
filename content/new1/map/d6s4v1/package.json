@@ -1,0 +1,14 @@
+{
+  "name": "d6s4v1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "storage · pi-durable 的 X 光机：把 data/agent.sqlite 摊开",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node dev/check.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

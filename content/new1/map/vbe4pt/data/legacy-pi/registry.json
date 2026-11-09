@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "watch": [
+    "/opt/nw-136/.pi/extensions"
+  ],
+  "items": [
+    {
+      "id": "xmvtc7ol2u5r9",
+      "name": "worktree-guard",
+      "scope": "project",
+      "origin": "/opt/nw-136/.pi/extensions/worktree-guard.ts",
+      "files": [
+        "worktree-guard.ts"
+      ],
+      "installDirs": [
+        "/root/.pi/agent/extensions"
+      ],
+      "notes": "",
+      "updatedAt": "2026-10-29T09:25:21.305Z"
+    },
+    {
+      "id": "xmvtca6yjyikx",
+      "name": "herdr-agent-state",
+      "scope": "global",
+      "origin": "/root/.pi/agent/extensions/herdr-agent-state.ts",
+      "files": [
+        "herdr-agent-state.ts"
+      ],
+      "installDirs": [],
+      "notes": "",
+      "updatedAt": "2026-10-29T09:26:52.604Z"
+    }
+  ]
+}

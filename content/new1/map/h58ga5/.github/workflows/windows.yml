@@ -1,0 +1,106 @@
+name: windows
+
+# 只做 Windows —— 这个应用只发布 Windows 版（见 decisions.md）。
+# 手动触发，或者打 tag（v*）时自动出包并发 Release。
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+# 发 Release 要写权限；不给的话 softprops 会报 Resource not accessible by integration。
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 装 Rust（stable）
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          # 这个 workspace 有 800+ 依赖，缓存能把重复构建从 20 分钟压到几分钟。
+          workspaces: "."
+
+      - name: 编译 release
+        run: cargo build --release -p nous-desktop
+
+      # ── 便携版：exe + desktop.toml + 说明 ─────────────────────────────
+      #
+      # 宿主地址走**仓库 secret**，不写进代码：公库里不该出现某个人的 tailnet 地址，
+      # 但发布包又必须开箱即用。所以配置在打包时生成，放在 exe 旁边（便携式）。
+      - name: 写 desktop.toml（地址来自 secret）
+        shell: pwsh
+        env:
+          NOUS_HOST: ${{ secrets.NOUS_HOST }}
+          NOUS_BOARD: ${{ vars.NOUS_BOARD || 'new1' }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (-not $env:NOUS_HOST) {
+            # packager 的 resources 要这个文件存在，所以缺省也要写一份（本地地址）。
+            Write-Host "::warning::没有 NOUS_HOST secret，包里带的是默认地址 127.0.0.1"
+            $env:NOUS_HOST = "http://127.0.0.1:4790"
+          }
+          "host = `"$env:NOUS_HOST`"`nboard = `"$env:NOUS_BOARD`"`n" |
+            Set-Content -Path "dist/desktop.toml" -Encoding utf8 -NoNewline
+          Get-Content "dist/desktop.toml"
+
+      - name: 打便携 zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/release/nous-desktop.exe" "dist/NousDesktop.exe"
+          Copy-Item "README.md" "dist/README.md"
+          $files = @("dist/NousDesktop.exe","dist/README.md")
+          if (Test-Path "dist/desktop.toml") { $files += "dist/desktop.toml" }
+          Compress-Archive -Path $files `
+                           -DestinationPath "dist/NousDesktop-windows-x64.zip" -Force
+          Get-ChildItem dist
+
+      # ── 安装包：cargo-packager 出 msi（cargo-packager 的 wix 格式） ─────────────────────────────────
+      # 这一步失败不该把便携版也拖没有，所以 continue-on-error。
+      - name: 装 cargo-packager
+        continue-on-error: true
+        run: cargo install cargo-packager --locked
+
+      # WiX 要从 github.com 下载，runner 上偶发 504，重试三次。
+      - name: 出 msi（cargo-packager 的 wix 格式）
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            cargo packager -p nous-desktop --release --formats wix
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "第 $i 次失败，等 15 秒重试"
+            Start-Sleep -Seconds 15
+          }
+          exit 1
+
+      - name: 看看产出了什么
+        shell: pwsh
+        run: Get-ChildItem -Recurse -File dist | Select-Object FullName, Length
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: nous-desktop-windows
+          path: |
+            dist/*.zip
+            dist/*.msi
+          if-no-files-found: error
+
+      - name: 发 Release（只有打 tag 时）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.zip
+            dist/*.msi
+          generate_release_notes: true

@@ -1,0 +1,134 @@
+{
+  "v": 1,
+  "name": "new1",
+  "version": 191,
+  "updatedAt": "2026-11-08T08:36:13.121Z",
+  "root": {
+    "id": "n45",
+    "name": "Nous",
+    "children": [
+      {
+        "id": "vh79pm",
+        "name": "Nous-Functions",
+        "children": [
+          {
+            "id": "qrd3wh",
+            "name": "session",
+            "children": [
+              {
+                "id": "pxbgng",
+                "name": "session-List",
+                "children": [
+                  {
+                    "id": "7awa4h",
+                    "name": "session-List-Ishikawa",
+                    "value": 1
+                  }
+                ]
+              },
+              {
+                "id": "hb7k3j",
+                "name": "New-Manual",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "id": "cmqt66",
+            "name": "work",
+            "value": 1
+          },
+          {
+            "id": "k5411g",
+            "name": "model",
+            "value": 1
+          },
+          {
+            "id": "68kazk",
+            "name": "skills",
+            "children": [
+              {
+                "id": "p34pgp",
+                "name": "skills-local",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "id": "vbe4pt",
+            "name": "extend",
+            "children": [
+              {
+                "id": "s9hzsp",
+                "name": "alpha.1",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "id": "d6s4v1",
+            "name": "storage",
+            "children": [
+              {
+                "id": "mcfpqm",
+                "name": "storage-Archive",
+                "value": 1
+              },
+              {
+                "id": "4qpzmw",
+                "name": "storage.1",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "id": "n8qkkj",
+            "name": "Trigger",
+            "value": 1
+          },
+          {
+            "id": "6ysg01",
+            "name": "Prompts",
+            "value": 1
+          },
+          {
+            "id": "8ven4x",
+            "name": "Template",
+            "children": [
+              {
+                "id": "3699b9",
+                "name": "Session-Template",
+                "value": 1
+              },
+              {
+                "id": "jtjzw5",
+                "name": "Ultimate-Template",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "zefsvf",
+        "name": "tailnet",
+        "value": 1
+      },
+      {
+        "id": "vq0f03",
+        "name": "vps",
+        "value": 1
+      },
+      {
+        "id": "bjes6b",
+        "name": "Nous-Mobile",
+        "value": 1
+      },
+      {
+        "id": "h58ga5",
+        "name": "Nous-Desktop",
+        "value": 1
+      }
+    ]
+  }
+}

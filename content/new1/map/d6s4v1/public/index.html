@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>agent.sqlite · X 光机</title>
+    <meta name="description" content="把 pi-durable 的 data/agent.sqlite 摊开：字节解剖、会话树、回放、账单、维修。" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand"><b>agent.sqlite</b><span>X 光机 · 只读</span></div>
+      <label for="target" class="muted" style="font-size: 12px">病人</label>
+      <select id="target" aria-label="看哪个库"></select>
+      <span id="badge"></span>
+      <span class="spacer"></span>
+      <button id="refresh" title="重新读一遍（库可能正在被别人写）">刷新</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="overview">① 解剖</button>
+      <button role="tab" data-tab="conversations">② 会话树</button>
+      <button role="tab" data-tab="replay">③ 回放</button>
+      <button role="tab" data-tab="cost">④ 账单</button>
+      <button role="tab" data-tab="health">⑤ 维修</button>
+    </nav>
+
+    <main>
+      <section id="panel-overview" role="tabpanel"></section>
+      <section id="panel-conversations" role="tabpanel" hidden></section>
+      <section id="panel-replay" role="tabpanel" hidden></section>
+      <section id="panel-cost" role="tabpanel" hidden></section>
+      <section id="panel-health" role="tabpanel" hidden></section>
+    </main>
+
+    <footer>
+      这一页只读：<code class="mono">readOnly: true</code>，不建文件、不建索引、不 VACUUM。
+      想修的命令在「⑤ 维修」里，复制走自己跑。图由
+      <a href="https://pele.run" target="_blank" rel="noreferrer">Pele</a> 渲染 Mermaid 12.1。
+    </footer>
+
+    <script src="vendor/pele.global.js"></script>
+    <script src="app.js" type="module"></script>
+  </body>
+</html>
