@@ -73,13 +73,29 @@ export const openUnread = async (file, { now = Date.now, entries } = {}) => {
 
   const key = (id) => String(id);
 
-  /** 没有水位就把水位种在「当时最新」上。返回有没有种。 */
+  /**
+   * 老会话补种：没有水位就把水位种在「当时最新」上。返回有没有种。
+   *
+   * 一条 entry 都没有的会话不在这儿种 —— 那是新会话，走 `begin` 种 0。
+   */
   const seed = async (id) => {
     if (table[key(id)]) return false;
     const latest = await entries.latest(id);
-    // 一条 entry 都没有的会话：没有可种的位置，等它有了再说（下次进来就是 0 条未读）。
     if (latest === null) return false;
     table[key(id)] = { lastReadId: latest, readAt: null };
+    schedule();
+    return true;
+  };
+
+  /**
+   * 新会话出生：水位种在 0（= 「一条都还没读过」）。幂等，已有的不动。
+   *
+   * 不能像老会话那样种在「当时最新」：新会话出生时还没有 entry，等第一条消息进来再种
+   * 就已经晚了 —— 那条消息会被吞成 0 条未读。种 0 之后，进来的每条都算未读。
+   */
+  const begin = (id) => {
+    if (table[key(id)]) return false;
+    table[key(id)] = { lastReadId: 0, readAt: null };
     schedule();
     return true;
   };
@@ -88,8 +104,11 @@ export const openUnread = async (file, { now = Date.now, entries } = {}) => {
     /** 原样给出水位；没有就是 null。 */
     watermark: (id) => table[key(id)] ?? null,
 
-    /** 种水位（启动时给老会话补、首次见面时顺手补）。幂等：已有的不动。 */
+    /** 老会话的种子（启动时补一次）：种在「当时最新」。幂等：已有的不动。 */
     seed,
+
+    /** 新会话出生：种 0 = 之后进来的每条 entry 都算未读。幂等：已有的不动。 */
+    begin,
 
     /**
      * { unread, readAt }。没有水位 = `{ unread: 0, readAt: null }`。

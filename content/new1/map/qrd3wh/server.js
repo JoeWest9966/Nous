@@ -1755,6 +1755,10 @@ const harness = await Harness.open(
     conversationCreated: async (tx, conversation) => {
       const doc = await tx.doc(Sessions);
       doc.names[key(conversation.id)] = `对话 ${conversation.id}`;
+      // 未读水位也在这儿种（`unread` 是下面才建的 const，这个钩子只在新会话出生时跑，
+      // 那时早就初始化完了）。种 0 而不是「当时最新」：出生时还没有 entry，等第一条消息
+      // 进来再种就已经晚了 —— 那条会被吞成 0 条未读。老会话靠启动时那次 seed。
+      unread.begin(conversation.id);
     },
     onReport: (error, info) => console.error("[durable]", info?.kind ?? "", String(error)),
   },

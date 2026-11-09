@@ -62,6 +62,31 @@ test("unread：种子种在「当时最新」，不是 0 —— 否则下一条�
   }
 });
 
+test("unread：新会话一出生水位种在 0 —— 之后进来的每条 entry 都算未读", async () => {
+  const dir = await tmp();
+  try {
+    const table = { 20: [] };
+    const marks = await openUnread(path.join(dir, "read.json"), { now: clock(), entries: fakeEntries(table) });
+
+    // 出生时一条 entry 都没有，但水位已经有了：0 = 「还一条都没读过」。
+    await marks.begin(20);
+    assert.deepEqual(marks.watermark(20), { lastReadId: 0, readAt: null });
+    assert.deepEqual(await marks.unreadOf(20), { unread: 0, readAt: null });
+
+    // 第一条消息进来：未读是 1。这里要是没种 0、等它有了 entry 再种，
+    // 这条消息就会被吞成 0 条未读 —— 正是评审咬住的那个洞。
+    table[20].push(459);
+    assert.deepEqual(await marks.unreadOf(20), { unread: 1, readAt: null });
+
+    // 幂等：已经有了就不动。推到「现在最新」会把已在的未读吞掉。
+    table[20].push(460);
+    await marks.begin(20);
+    assert.deepEqual(await marks.unreadOf(20), { unread: 2, readAt: null });
+  } finally {
+    await cleanup(dir);
+  }
+});
+
 test("unread：新 entry 进来才算未读，markRead 之后归零并记下读的时刻", async () => {
   const dir = await tmp();
   try {
