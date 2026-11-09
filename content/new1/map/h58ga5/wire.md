@@ -125,8 +125,9 @@ body `{ content, requestId?, waitMs?, whenBusy? }`。
 
 - `unread` 是引擎按「EntryId 水位之后还有几条」数好的，**客户端不自己数**（数不出对的：
   条数会被 fork / compaction 弄错，水位不会）。
-- `readAt` 是上次标已读的时刻（epoch ms），可能为 `null` —— 那是引擎种的水位
-  （老会话开张时不算未读），不是「读到过」。
+- `readAt` 是上次标已读的时刻（epoch ms），可能为 `null` —— 那是引擎种的水位：
+  新会话出生时种在 0（之后进来的每条 entry 才算未读），老会话启动时种在「当时最新」
+  （开张时不算未读）。`null` 不是「读到过」，只是一个还没被 `POST /v1/read/:id` 推进过的水位。
 - 覆盖**所有**会话；没有水位的会话给 `{ unread: 0, readAt: null }`。
 
 ### POST /v1/read/:id
