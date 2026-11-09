@@ -480,6 +480,19 @@ function renderDrawer() {
       </section>
 
       <section class="d-sec">
+        <h3>凭据</h3>
+        ${
+          m.credential === "key"
+            ? `<p class="dim" style="margin:0">密钥型：本体在数据仓的 <code>vps_key/${esc(m.name)}.key</code>，远端会话直接能用。</p>`
+            : `<p style="margin:0 0 8px">密码型：能登进去，但**跑不了远端会话** —— ssh 的密码不走 stdin，自动化只剩 sshpass（密码进 argv，<code>ps</code> 一眼看见）。</p>
+               <div class="row">
+                 <button class="ghost" data-act="bootstrap" ${S.busy ? "disabled" : ""}>装公钥（用密码，一次）</button>
+               </div>
+               <p class="dim" style="margin:6px 0 0;font-size:11px">面板现生一对 ed25519，用密码把公钥追加进目标机的 authorized_keys，**验通之后**才覆盖登记 —— 上游的凭证闸是二选一，所以登记成功那一刻，编目里的密码就没了。</p>`
+        }
+      </section>
+
+      <section class="d-sec">
         <h3>危险区</h3>
         ${
           S.deleteArm
@@ -788,6 +801,28 @@ async function removeMachine(name) {
   await load(true);
 }
 
+/** 密码型 → 密钥型：密码只用一次，用一次的目的就是让它变成密钥型。 */
+async function bootstrapKey(m) {
+  const addr = m.ips[0]?.addr ?? "?";
+  const ok = confirm(
+    `用编目里记着的密码，给 ${m.name}（${m.user}@${addr}:${m.port}）装一把新公钥？\n\n` +
+      "装好并验通之后才覆盖登记；那一步会**把编目里的密码清掉**（上游的凭证闸是二选一），这台就变成密钥型。\n\n" +
+      "撤回来：目标机 ~/.ssh/authorized_keys 里删掉 nous@" + m.name + " 那一行。",
+  );
+  if (!ok) return;
+  S.busy = true;
+  toast(`装公钥中：连 ${addr} + 覆盖登记，最多 90 秒`);
+  const r = await api(`api/vps/${encodeURIComponent(m.name)}/bootstrap-key`, { method: "POST" });
+  S.busy = false;
+  if (!r.ok) {
+    toast(r.errors[0] ?? "装公钥失败", "err");
+    return renderDrawer();
+  }
+  toast(`${m.name} 现在是密钥型（${r.data?.fingerprint ?? "已登记"}）—— 密码已从编目里清掉`);
+  closeDrawer();
+  await load(true);
+}
+
 async function addTag(name, tag, quiet = false) {
   const r = await api(`api/vps/${encodeURIComponent(name)}/tags`, { method: "POST", body: JSON.stringify({ name: tag }) });
   if (!r.ok) {
@@ -1019,6 +1054,7 @@ document.addEventListener("click", (e) => {
   if (act === "edit" && m) return openForm("edit", m);
   if (act === "submit") return submitForm();
   if (act === "probe" && m) return probeAll(true).then(() => renderDrawer());
+  if (act === "bootstrap" && m) return bootstrapKey(m);
   if (act === "delete") {
     S.deleteArm = true;
     return renderDrawer();

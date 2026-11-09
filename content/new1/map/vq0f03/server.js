@@ -25,9 +25,11 @@
 //
 // 宿主给 PORT / NOUS_DATA / NOUS_ORIGIN / NOUS_SELF。这里只用前两个，加可选的 NW_BASE。
 
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -255,6 +257,9 @@ const shape = (raw, note, tagsByMachine) => {
       user,
       port,
       ips: ipsOf(m),
+      // 凭据类型：投影里有 `key`（一个路径，不是本体）就是密钥型。
+      // 密码型没有这个槽 —— 所以这里能只凭元数据判，不用去取真正的凭据。
+      credential: m.key ? "key" : "password",
       // 派生的东西一个字都不存：ssh 命令是从 user/port/ips 现拼的。
       ssh: ipsOf(m).map((i) => ({ addr: i.addr, label: i.label, cmd: `ssh -p ${port} ${user}@${i.addr}` })),
       tags: tagsByMachine.get(name) ?? [],
@@ -384,9 +389,144 @@ const reveal = async (name) => {
     if (!res.ok || body?.ok === false || !data) {
       return { ok: false, status: res.status, kind: data?.kind ?? null, key: null, errors: (body?.errors ?? []).map(oneLine) };
     }
-    return { ok: true, status: res.status, kind: data.kind ?? null, key: data.key ?? null, errors: [] };
+    return { ok: true, status: res.status, kind: data.kind ?? null, key: data.key ?? null, password: data.password ?? null, errors: [] };
   } catch (error) {
-    return { ok: false, status: 0, kind: null, key: null, errors: [`回环面板不可达：${String(error?.message ?? error)}`] };
+    return { ok: false, status: 0, kind: null, key: null, password: null, errors: [`回环面板不可达：${String(error?.message ?? error)}`] };
+  }
+};
+
+// ── 装公钥：密码型机器的一次性引导 ────────────────────────────────────────
+//
+// 「支持密码登录」是个陷阱：ssh 不从 stdin 读密码（它直连 /dev/tty），自动化只剩两条路
+// —— sshpass（密码进 argv，`ps` 一眼看见）或换掉 ssh（丢掉宿主 ~/.ssh 的 config、
+// known_hosts、跳板、ControlMaster）。所以密码只用一次，用一次的目的就是**把它自己
+// 变成密钥型**：
+//
+//   取密码 → 现生一对密钥 → 用密码把公钥追加进目标机的 authorized_keys
+//          → 用新私钥**真验一次** → PUT 覆盖登记（只给 keyFile）
+//
+// 上游 `nw vps register --yes` 的 creds 闸是二选一（见 Warehouse internal/vps/register.go：
+// `password := opts.Password`，只给 --key 时它落盘的就是空串）—— 所以登记成功那一刻，
+// 这本账里就没有密码了。私钥落到数据仓的 vps_key/<名>，跟 9996696 那份同一处、同一纪律。
+//
+// 密码不进 argv、不进日志、不进响应：它唯一的去处是 askpass 脚本的**子进程环境**
+// （SSH_ASKPASS + SSH_ASKPASS_REQUIRE=force，OpenSSH ≥ 8.4；宿主上是 10.0）。
+
+const run = (cmd, argv, { stdin = "", env = {}, timeout = 90_000 } = {}) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(cmd, argv, { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...env } });
+    let out = "";
+    let err = "";
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeout);
+    child.stdout.on("data", (b) => {
+      out += b;
+    });
+    child.stderr.on("data", (b) => {
+      err += b;
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ code, out, err });
+    });
+    child.stdin.end(stdin);
+  });
+
+/** 目标地址：编目里第一条 —— 跟 `ssh` 那栏现拼用的是同一条，不另立一套选法。 */
+const primaryAddr = (machine) => machine.ips[0]?.addr ?? "";
+
+const bootstrap = async (machine) => {
+  const addr = primaryAddr(machine);
+  if (!addr) return { ok: false, status: 400, errors: [`${machine.name} 在编目里一条地址都没登记`] };
+
+  const secret = await reveal(machine.name);
+  if (!secret.ok) {
+    return { ok: false, status: secret.status || 503, errors: secret.errors.length ? secret.errors : [`拿不到 ${machine.name} 的凭据`] };
+  }
+  if (!secret.password) {
+    return { ok: false, status: 409, errors: [`${machine.name} 是 kind=${secret.kind}，本来就有密钥 —— 不用引导`] };
+  }
+
+  const target = `${machine.user}@${addr}`;
+  const common = ["-p", String(machine.port), "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=15"];
+  const dir = await mkdtemp(path.join(os.tmpdir(), "nous-bootstrap-"));
+  try {
+    // 1) 现生一对。不留口令：这是机器对机器的凭据，口令只会变成「又一处要去解的东西」。
+    const priv = path.join(dir, "id_ed25519");
+    const gen = await run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-C", `nous@${machine.name}`, "-f", priv]);
+    if (gen.code !== 0) return { ok: false, status: 500, errors: [`ssh-keygen 没生成出来（exit ${gen.code}）：${oneLine(gen.err)}`] };
+    const pub = (await readFile(path.join(dir, "id_ed25519.pub"), "utf8")).trim();
+    const fingerprint = (await run("ssh-keygen", ["-lf", `${priv}.pub`])).out.trim().split(/\s+/).filter((w) => w.startsWith("SHA256:") || w.startsWith("MD5:"))[0] ?? "";
+
+    // 2) 用密码把公钥追进去。stdin 先送一个空行：目标机的 authorized_keys 末尾
+    //    没有换行时直接 `cat >>` 会把两把钥粘成一行（awk 'NF' 会把多余空行吃掉）。
+    const askpass = path.join(dir, "askpass");
+    await writeFile(askpass, '#!/bin/sh\nprintf \'%s\\n\' "$NOUS_ASKPASS"\n', { mode: 0o700 });
+    const install = await run(
+      "ssh",
+      [
+        ...common,
+        "-o", "PreferredAuthentications=password",
+        "-o", "PubkeyAuthentication=no",
+        "-o", "NumberOfPasswordPrompts=1",
+        target,
+        "umask 077; mkdir -p ~/.ssh; cat >> ~/.ssh/authorized_keys; " +
+          "awk 'NF' ~/.ssh/authorized_keys | sort -u > ~/.ssh/.ak.$$ && mv ~/.ssh/.ak.$$ ~/.ssh/authorized_keys; " +
+          "chmod 600 ~/.ssh/authorized_keys; echo nous-installed",
+      ],
+      {
+        stdin: `\n${pub}\n`,
+        env: { SSH_ASKPASS: askpass, SSH_ASKPASS_REQUIRE: "force", DISPLAY: process.env.DISPLAY ?? ":0", NOUS_ASKPASS: secret.password },
+      },
+    );
+    if (install.code !== 0 || !install.out.includes("nous-installed")) {
+      return { ok: false, status: 502, errors: [`用密码装公钥失败（exit ${install.code}）：${oneLine(install.err)}`] };
+    }
+
+    // 3) 验一次，而且**只**认这把私钥：验不过就不登记 —— 编目里多一台连不上的机器，
+    //    比这台机器留在密码型更难查。
+    const verify = await run("ssh", [...common, "-i", priv, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", target, "echo nous-ok"]);
+    if (verify.code !== 0 || !verify.out.includes("nous-ok")) {
+      return { ok: false, status: 502, errors: [`公钥写进去了，但这把私钥连不上（exit ${verify.code}）：${oneLine(verify.err)}`] };
+    }
+
+    // 4) 覆盖登记。只给 keyFile：上游的 creds 闸会把旧密码清掉（这不是副作用，是目的）。
+    const pem = await readFile(priv, "utf8");
+    const body = {
+      name: machine.name,
+      ips: machine.ips,
+      user: machine.user,
+      port: machine.port,
+      ...(machine.note ? { note: machine.note } : {}),
+      keyFile: { name: `${machine.name}.key`, content: Buffer.from(pem, "utf8").toString("base64") },
+    };
+    const problems = validateMachine(body, { requireCreds: true });
+    if (problems.length) return { ok: false, status: 500, errors: problems };
+    const raised = await write("PUT", `/api/vps/${encodeURIComponent(machine.name)}`, body);
+    if (raised.ok) invalidate();
+    return {
+      ok: raised.ok,
+      status: raised.ok ? 200 : raised.status || 502,
+      errors: raised.errors,
+      warnings: raised.warnings,
+      data: {
+        name: machine.name,
+        kind: "key",
+        fingerprint,
+        addr,
+        user: machine.user,
+        action: raised.action,
+        upstreamMs: raised.ms,
+        caveat:
+          "私钥现在活在数据仓的 vps_key/<名>（跟别的密钥同一处），密码已从编目里清掉。" +
+          "要撤掉这把：在目标机 ~/.ssh/authorized_keys 里删掉 `nous@<名>` 那一行。",
+      },
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 };
 
@@ -531,6 +671,7 @@ const ENDPOINTS = [
   ["GET", "/api/vps/<name>", "一台（带注解）"],
   ["GET", "/api/vps/<name>/ssh", "连它的命令（现拼，不存盘）"],
   ["GET", "/api/vps/<name>/secret", "那台机器的凭据本体（只打回环面板；调用方自己负责不落盘）"],
+  ["POST", "/api/vps/<name>/bootstrap-key", "密码型 → 密钥型：用密码装一次公钥，然后编目里的密码就没了（密码不进 argv / 日志 / 响应）"],
   ["POST", "/api/vps", "登记：{name, ips[{label,addr}], user?, port, note?, tags?, password?|keyFile{name,content}}"],
   ["PUT", "/api/vps/<name>", "覆盖登记；凭证留空 = 保留旧的"],
   ["DELETE", "/api/vps/<name>", "从编目里删掉这台"],
@@ -707,6 +848,20 @@ const route = async (req, res, url) => {
       );
     }
     return notFound(res, `没有这个端点：/${seg.join("/")}`);
+  }
+
+  // 密码型 → 密钥型：一次性引导。放在读请求体**之前** —— 它不需要 body（也不需要
+  // 任何参数：名字在路径里，密码在上游的账里）。
+  if (req.method === "POST" && a === "vps" && seg.length === 4 && c === "bootstrap-key") {
+    const name = decodeURIComponent(b);
+    const catalog = await bundle(false);
+    const machine = catalog.data.machines.find((m) => m.name === name);
+    if (!machine) {
+      return json(res, 404, envelope(404, schema("vps-bootstrap"), { known: catalog.data.machines.map((m) => m.name) }, { errors: [`编目里没有 ${name}`] }));
+    }
+    const out = await bootstrap(machine);
+    const code = out.status ?? (out.ok ? 200 : 502);
+    return json(res, code, envelope(code, schema("vps-bootstrap"), out.data ?? { name }, { errors: out.errors, warnings: out.warnings }));
   }
 
   // ── 写 ──
