@@ -18,7 +18,11 @@
 //   POST /v1/sessions                 {name, model, thinkingLevel, skills, template, cwd, machine} → 新对话
 //   POST /v1/sessions/:id/rename      {name}
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
-//   POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template, cwd, machine} 只读 = 不给会写的工具
+//   POST /v1/sessions/:id/config      {readOnly, model, thinkingLevel, skills, template, cwd, machine} 只读 = 不给会写的工具
+//   POST /v1/sessions/:id/archive     归档 = 复印进 data/archives/gen-YYYYMMDD.sqlite + 写墓碑（ADR 0001）
+//   POST /v1/sessions/:id/purge       真删：撕原件（必须先归档过、闲置、无活后代）
+//   GET  /v1/archive                  浏览归档库（gens + 每裸子树的会话）
+//   POST /v1/archive/:id/restore      {gen} 打捞：原样 INSERT 回活库 + 抹墓碑
 //   GET  /v1/skills                   技能仓库全景（repo 状态 + list() + archived + 类别）
 //   …                                全套 /v1/skills* 在 skills-api.js（见那个文件的头）
 //   GET  /v1/prompts                  模板私库全景（repo 状态 + list() + archived + 类别 + 默认值）
@@ -63,6 +67,7 @@ import { installCatalog } from "./catalog.js";
 import { openActivity } from "./activity.js";
 import { collectPages } from "./pages.js";
 import { openUnread } from "./unread.js";
+import { openArchive } from "./archive.js";
 // 自研扩展的**源码不在这棵树里** —— 在 Nous-extend 仓库的本地副本（`NOUS_EXTEND`）。
 // 块里只留两件事：去哪儿拿（下面这两行）+ 钉着哪个 commit（extensions.lock.json）。
 // 用动态 import 是因为路径得能配；静态 import 只能写字面量，一换机器就炸。
@@ -1311,7 +1316,9 @@ const Sessions = defineDoc({
   kind: "qrd3wh.sessions",
   version: 1,
   scope: "session",
-  initial: () => ({ names: {}, machines: {} }),
+  // archived 是归档墓碑（ADR 0001）：{ id: { at, gen, purged } }。老盘没有这个键 ——
+  // setArchived 里和 machines 一个待遇（`??=`），不靠 initial。
+  initial: () => ({ names: {}, machines: {}, archived: {} }),
   // 这张表很小、改得也不勤：每次都给一份完整 base，别攒 delta。
   checkpointWhen: () => true,
 });
@@ -1480,6 +1487,10 @@ const setSelection = async (id) => {
 const storage = await openNodeSqliteStorage(path.join(DATA, "agent.sqlite"));
 const registry = createRegistry();
 registry.install(CodingTools);
+
+// 归档机器（ADR 0001：复印 + 撕原件，agent.sqlite 永不关）。
+// 用第二个连接动表 —— 活 Session 一次都不关；机器内部自己校验 durable_schema 版本。
+const archive = openArchive({ dataDir: DATA, liveDbPath: path.join(DATA, "agent.sqlite"), log: (m) => console.log(m) });
 
 // ── 提示词 ───────────────────────────────────────────────────────────────
 //
@@ -1875,6 +1886,21 @@ const setMachine = (conversationId, machine) =>
     else doc.machines[key(conversationId)] = machine;
   }, ctx);
 
+/**
+ * 归档墓碑（ADR 0001）：`{ at, gen, purged }` 或 `null` = 抹掉（打捞了）。
+ * at = 归档时刻，gen = 复印进了哪个 gen 文件，purged = 原件撕了没。
+ * 住 Sessions 文档跟 names/machines 一起 —— 它是「这盘的状态」，不是 durable 的数据。
+ */
+const setArchived = (conversationId, mark) =>
+  harness.commit(async (tx) => {
+    const doc = await tx.doc(Sessions);
+    doc.archived ??= {}; // 老盘的文档里没这个键，跟 machines 同一个坑
+    if (mark === null) delete doc.archived[key(conversationId)];
+    else doc.archived[key(conversationId)] = mark;
+  }, ctx);
+
+const archivedMarks = async () => (await harness.snapshot(Sessions, ctx))?.archived ?? {};
+
 /** 每个会话在忙什么：inspect() 一次拿全，别按会话一个个问。 */
 const busyMap = async () => {
   const inspection = await harness.inspect(ctx);
@@ -1889,7 +1915,7 @@ const busyMap = async () => {
 
 const tree = async () => {
   const page = await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx);
-  const [namesNow, machinesNow, busy] = await Promise.all([names(), machinesOf(), busyMap()]);
+  const [namesNow, machinesNow, busy, archivedNow] = await Promise.all([names(), machinesOf(), busyMap(), archivedMarks()]);
   const nodes = [];
   for (const record of page.items) {
     const conversation = await harness.conversation(record.id, ctx);
@@ -1917,6 +1943,8 @@ const tree = async () => {
       template: templateOf(agent),
       readOnly: !agent.tools?.some?.((tool) => WRITE_NAMES.includes(tool.name)),
       busy: busy.get(key(record.id)) ?? null,
+      // 归档墓碑（ADR 0001）：null = 活着的；{ at, gen, purged } = 归档了。客户端拿这个画「已归档」。
+      archived: archivedNow[key(record.id)] ?? null,
       // 这条会话最后一次落库的时刻（epoch ms）。没记过就是 null —— 宁可空，也不拿文件的
       // mtime 之类冒充（拷一份盘就能让每条会话都变成「刚刚」）。
       updatedAt: activity.at(record.id),
@@ -2645,7 +2673,13 @@ const route = async (req, res, url) => {
   }
 
   if (req.method === "GET" && parts[0] === "v1" && parts[1] === "sessions" && !parts[2]) {
-    return json(res, 200, { items: await tree() });
+    const items = await tree();
+    // 默认藏归档的 —— 老客户端拿到的列表跟以前一个形状；?archived=1 才给全量（带墓碑，客户端自己画）。
+    if (url.searchParams.get("archived") !== "1") {
+      const marks = await archivedMarks();
+      return json(res, 200, { items: items.filter((s) => !marks[key(s.id)]) });
+    }
+    return json(res, 200, { items });
   }
 
   // 未读：**平铺的 map**，一条会话一个键，不套 items（客户端照这个形状读）。
@@ -2667,6 +2701,28 @@ const route = async (req, res, url) => {
     if (!parts[2] || !Number.isFinite(id)) return json(res, 400, { error: "read 后面得跟会话号" });
     if (!(await harness.conversation(id, ctx))) return json(res, 404, { error: "没有这个会话", id });
     return json(res, 200, await unread.markRead(id));
+  }
+
+  // ── 归档（ADR 0001：复印 + 撕原件，agent.sqlite 永不关）───────────────────────────
+  // 动词跟扩展那套同款：archive（复印+墓碑）/ purge（撕原件）/ restore（打捞）。
+  if (parts[0] === "v1" && parts[1] === "archive") {
+    // GET /v1/archive   浏览归档库（mcfpqm 的 storage-Archive 页吃这个）
+    if (req.method === "GET" && !parts[2]) return json(res, 200, await archive.browse());
+
+    const rid = Number(parts[2]);
+    if (!parts[2] || !Number.isFinite(rid)) return json(res, 400, { error: "archive 后面得跟会话号" });
+    if (req.method !== "POST") return json(res, 405, { error: "archive/:id 只有 POST" });
+
+    // POST /v1/archive/:id/restore   {gen} 打捞：原样 INSERT 回活库 + 抹墓碑
+    if (parts[3] === "restore") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      const gen = String(body.gen ?? "").replace(/\D/g, "");
+      if (!gen) return json(res, 400, { error: "gen 得是日期（YYYYMMDD）" });
+      const result = await archive.restore({ rootId: rid, gen });
+      await setArchived(rid, null);
+      return json(res, 200, result);
+    }
+    return json(res, 404, { error: "archive/:id 下只有 restore" });
   }
 
   if (req.method === "POST" && parts[0] === "v1" && parts[1] === "sessions" && !parts[2]) {
@@ -2823,12 +2879,60 @@ const route = async (req, res, url) => {
       return json(res, 200, { id, name });
     }
 
+    // POST /v1/sessions/:id/archive   归档 = 复印进 gen + 写墓碑（活库的行不动，purge 才动）
+    if (req.method === "POST" && rest === "archive") {
+      const busy = await busyMap();
+      if (busy.get(key(id))) return json(res, 409, { error: "会话正在忙，等它说完再归档", id, busy: busy.get(key(id)) });
+      // 闭包纪律：有活后代不归 —— 爹的行搬走了，儿子的祖先链就断了。
+      // archive.js 的复印侧不查这个（它只管闭包算得对），这里拦：归档后列表里不该再有指着爹的孩子。
+      const records = await collectPages((cursor) => harness.commit((tx) => tx.scanConversations({}, 200, cursor), ctx));
+      const liveKids = records.filter((r) => r.parent?.conversationId === id).map((r) => r.id);
+      if (liveKids.length) {
+        return json(res, 409, { error: `它还有 ${liveKids.length} 条活分支，先归档它们或改用整子树归档`, id, children: liveKids });
+      }
+      const result = await archive.archive({ rootId: id });
+      await setArchived(id, { at: Date.now(), gen: result.gen, purged: false });
+      return json(res, 200, result);
+    }
+
+    // POST /v1/sessions/:id/purge   真删：复印件完整才动手，事务 DELETE 九张表 + 墓碑记 purged
+    if (req.method === "POST" && rest === "purge") {
+      const busy = await busyMap();
+      if (busy.get(key(id))) return json(res, 409, { error: "会话正在忙，等它说完再撕", id });
+      const mark = (await archivedMarks())[key(id)];
+      if (!mark) return json(res, 409, { error: "它还没归档过 —— 先归档再撕，别裸删", id });
+      if (mark.purged) return json(res, 409, { error: "原件已经撕过了", id });
+      const result = await archive.purge({ rootId: id });
+      await setArchived(id, { ...mark, purged: true });
+      return json(res, 200, result);
+    }
+
     if (req.method === "POST" && rest === "config") {
       const body = JSON.parse((await readBody(req)) || "{}");
       if (typeof body.readOnly === "boolean") {
         // 只读不是「拦住」，是根本不把会写的工具递给模型。
         // 走 modelTools（按名字过滤），不走 tools.remove（那个要的是工具对象）。
         await conversation.configure({ modelTools: body.readOnly ? { remove: WRITE_TOOLS } : null }, ctx);
+      }
+      // 模型：`"provider/modelId"` 换掉这条会话的模型。
+      // 建会话时 model 是直接塞进 createConversation 的，改已有会话只能走 configure ——
+      // pi-durable 的 AgentChange 里有 model 这个字段（README 里 configure({ model }) 就是例子）。
+      // 换完要按**新模型**重夹一次档位：有的模型没有 high，留着旧值会落一个用不了的档。
+      if (body.model !== undefined) {
+        const wanted = String(body.model ?? "").trim();
+        const at = wanted.indexOf("/");
+        if (at <= 0 || at === wanted.length - 1) {
+          return json(res, 400, { error: `model 得是 "provider/modelId"：${wanted}` });
+        }
+        const provider = wanted.slice(0, at);
+        const modelId = wanted.slice(at + 1);
+        if (!models.getModel(provider, modelId)) {
+          return json(res, 400, { error: `没有这个模型：${wanted}` });
+        }
+        await conversation.configure({ model: { provider, modelId } }, ctx);
+        const now = await conversation.agent(ctx);
+        const fit = fitLevel(models.getModel(provider, modelId), now.thinkingLevel);
+        if (fit) await conversation.configure({ thinkingLevel: fit }, ctx);
       }
       // 档位改的是**这条对话**，不是全局：configure 落的 AgentState 跟着会话走，
       // 下一条消息就吃到新值（不用重建会话，也就不会丢历史）。
