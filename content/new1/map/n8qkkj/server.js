@@ -435,10 +435,22 @@ async function publishTrigger(name) {
   });
 
   // 编不过就别提交 —— 一个编不过的触发器，push 上去只会让下一个人 pull 到坏东西。
-  const check = await run("cargo", ["check", "--quiet"], { cwd: dir, timeout: 180_000 });
+  // 产物必须落在这个触发器自己的 target/ 里（调度器按 `<dir>/target/debug/<name>` 找它）。
+  // 不写死 --target-dir，机器上的 CARGO_TARGET_DIR 会把它卷到别处去，调度器就找不到。
+  const cargo = (args, timeout) =>
+    run("cargo", [...args, "--target-dir", path.join(dir, "target")], { cwd: dir, timeout });
+  const check = await cargo(["check", "--quiet"], 180_000);
   if (check.code !== 0) {
     const detail = `${check.err}\n${check.out}`.trim().split("\n").slice(0, 40).join("\n");
     throw Object.assign(new Error(`cargo check 没过：\n${detail}`), { status: 422, stage: "check" });
+  }
+
+  // 光 check 不够：调度器跑的是 `target/debug/<name>` 这个**产物**。只 check 不 build，
+  // 触发器在调度器眼里就是「没编译、跑不了」。debug 就够（跑一次毫秒级），不用 release。
+  const build = await cargo(["build", "--quiet"], 300_000);
+  if (build.code !== 0) {
+    const detail = `${build.err}\n${build.out}`.trim().split("\n").slice(0, 40).join("\n");
+    throw Object.assign(new Error(`cargo build 没过：\n${detail}`), { status: 422, stage: "build" });
   }
 
   const manifest = await readJsonFile(path.join(dir, MANIFEST), null);

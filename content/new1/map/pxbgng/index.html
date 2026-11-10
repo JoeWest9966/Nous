@@ -244,6 +244,16 @@ const render = () => {
       tagEl.textContent = "只读";
       row.append(tagEl);
     }
+
+    // 血缘：这条会话是哪个终极模板 fire 出来的（`origin` 由引擎的 /v1/sessions 带来）。
+    if (node.origin) {
+      const tagEl = document.createElement("span");
+      tagEl.className = "tag";
+      tagEl.textContent = `▶ ${node.origin.ultimate}`;
+      const when = node.origin.at ? ` · ${new Date(node.origin.at).toLocaleString()}` : "";
+      tagEl.title = `${node.origin.trigger ?? "?"} · ${node.origin.forced ? "手动" : "自动"}${when}`;
+      row.append(tagEl);
+    }
     frag.append(row);
 
     const children = kids.get(node.id) ?? [];
