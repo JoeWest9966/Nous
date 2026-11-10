@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mcfpqm · 归档库</title>
+<style>
+  /* 跟 pxbgng（对话列表）同一套皮：同一个树里长大的兄弟，颜色和字号不该有第二种说法。 */
+  :root {
+    color-scheme: dark;
+    --bg:#1c1b1a;
+    --fg:#cecdc3;
+    --muted:#878580;
+    --faint:#5f5c58;
+    --guide:#3f3d3a;
+    --surface:#272523;
+    --accent:#5b7bd5;
+    --warn:#c08a7a;        /* 已销毁、出错 */
+    --font: -apple-system, BlinkMacSystemFont, "Inter Variable", Inter, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; height:100dvh; display:flex; flex-direction:column;
+         background:var(--bg); color:var(--fg); font:16px/1.4 var(--font); -webkit-font-smoothing:antialiased; }
+
+  .bar { display:flex; align-items:center; gap:10px; padding:14px 18px 10px; flex:none; }
+  .brand { font-size:15px; color:var(--fg); }
+  .count { font-size:13px; color:var(--faint); font-variant-numeric:tabular-nums; }
+  .grow { flex:1; }
+  .state { font-size:12.5px; color:var(--warn); max-width:40ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .link { font:inherit; font-size:13px; color:var(--muted); background:none; border:0; padding:2px 4px;
+          cursor:pointer; text-decoration:none; border-radius:5px; }
+  .link:hover { color:var(--fg); background:var(--surface); }
+  .link[hidden] { display:none; }
+
+  #list { flex:1; overflow:auto; padding:6px 0 40px; scrollbar-gutter:stable both-edges; }
+  #list > * { max-width:820px; margin:0 auto; }
+
+  /* ── 一天一段 ── */
+  .gen { display:flex; align-items:center; gap:8px; padding:18px 16px 6px 8px; }
+  .gen .day { font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums; letter-spacing:.02em; }
+  .gen .n { font-size:12px; color:var(--faint); }
+  .gen .today { font-size:11px; color:var(--accent); border:1px solid rgba(91,123,213,.35);
+                border-radius:99px; padding:0 6px; line-height:15px; }
+
+  /* ── 一行：跟 pxbgng 一样的 28px 行距、20px 缩进、1px 引导线 ── */
+  .row { position:relative; display:flex; align-items:center; gap:6px; height:28px;
+         padding:0 8px 0 8px; border-radius:6px; }
+  .row:hover { background:rgba(255,255,255,.028); }
+
+  .ico { flex:none; width:16px; height:16px; color:var(--muted); }
+  .row:hover .ico { color:var(--fg); }
+  .row.gone .ico { color:#6b4f47; }
+  .nm { flex:none; max-width:46%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        font-size:16px; color:var(--fg); }
+  .row.dir .nm { font-weight:600; }
+  .row.gone .nm { color:var(--muted); }
+  .tail { flex:1; min-width:0; font-size:13px; color:var(--faint);
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tag { flex:none; font-size:11px; color:var(--faint); border:1px solid var(--guide);
+         border-radius:99px; padding:0 6px; line-height:15px; }
+  .tag.gone { color:var(--warn); border-color:rgba(192,138,122,.34); }
+  .tag.back { color:var(--accent); border-color:rgba(91,123,213,.34); }
+
+  /* 行操作：安静地待在行尾，指上来才现形 —— 这一页平时是「看」的。 */
+  .act { flex:none; font:inherit; font-size:12.5px; color:var(--muted); background:none;
+         border:1px solid var(--guide); border-radius:5px; padding:0 7px; line-height:19px;
+         cursor:pointer; opacity:0; transition:opacity .12s; }
+  .row:hover .act, .act:focus-visible { opacity:1; }
+  .act:hover { color:var(--fg); background:var(--surface); }
+  .act.danger:hover { color:var(--warn); border-color:rgba(192,138,122,.5); }
+
+  .guides { position:absolute; inset:0; pointer-events:none; }
+  .guides i { position:absolute; background:var(--guide); }
+  .guides i.v { width:1px; top:0; bottom:0; }
+  .guides i.h { height:1px; width:8px; top:14px; }
+  .guides i.elbow { top:0; height:14px; width:8px; background:none;
+                    border-left:1px solid var(--guide); border-bottom:1px solid var(--guide);
+                    border-bottom-left-radius:4px; }
+
+  .note { color:var(--muted); font-size:14px; padding:24px 18px; line-height:1.6; }
+  .note.err { color:var(--warn); }
+  .note code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px; color:var(--fg); }
+
+  @media (max-width:620px) {
+    .tail { display:none; }
+    .nm { max-width:calc(100% - 130px); }
+    .act { opacity:1; }
+  }
+</style>
+</head>
+<body>
+<header class="bar">
+  <span class="brand">归档库</span>
+  <span class="count" id="count"></span>
+  <span class="grow"></span>
+  <span class="state" id="state"></span>
+  <a class="link" id="open" href="#" hidden>qrd3wh ↗</a>
+  <button class="link" id="refresh" type="button">刷新</button>
+</header>
+
+<main id="list"></main>
+
+<script type="module">
+// 块之间只走 HTTP：归档的复印件在 qrd3wh 的盘上，这一页一个文件都不读。
+// 地址只从宿主的 ctx 来，这里没有一处自己拼 `/p/...`。
+const self = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
+const $ = (id) => document.getElementById(id);
+const get = (url) => fetch(url).then(async (r) => {
+  const body = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(body?.error ?? `HTTP ${r.status}`);
+  return body;
+});
+const post = (url, body) => fetch(url, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}),
+}).then(async (r) => {
+  const data = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(data?.error ?? `HTTP ${r.status}`);
+  return data;
+});
+
+// 对面是谁：先认 id，id 认不出来就按名字找（换一盘也还能用）。
+let tag = null;
+try {
+  const ctx = await get(self + "__nous/ctx");
+  tag = ctx.blocks.find((b) => b.id === "qrd3wh")
+     ?? ctx.blocks.find((b) => b.name === "session" && b.kind === "group")
+     ?? null;
+  if (!tag) throw new Error("这一盘里没有 qrd3wh，归档库不知道去问谁");
+  $("open").href = tag.url;
+  $("open").hidden = false;
+} catch (error) {
+  $("list").innerHTML = `<p class="note err">找不到 qrd3wh：<code>${String(error.message ?? error)}</code></p>`;
+}
+
+const api = (p) => get(tag.url + "/" + p);
+const send = (p, body) => post(tag.url + "/" + p, body ?? {});
+
+// ── 图标：跟 pxbgng 同一对 24 格 path ──
+const svg = (d) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  node.setAttribute("class", "ico");
+  node.setAttribute("viewBox", "0 0 24 24");
+  node.setAttribute("fill", "none");
+  node.setAttribute("stroke", "currentColor");
+  node.setAttribute("stroke-width", "1.5");
+  node.setAttribute("stroke-linecap", "round");
+  node.setAttribute("stroke-linejoin", "round");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", d);
+  node.append(path);
+  return node;
+};
+const FILE = "M6.5 3h7L19 8.5v11a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 5 19.5v-15A1.5 1.5 0 0 1 6.5 3zM13.5 3v5.5H19";
+const DIR = "M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2.4 2.5h8A1.5 1.5 0 0 1 21 9v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z";
+
+const pad = (n) => String(n).padStart(2, "0");
+const today = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`; };
+const fmtGen = (gen) => /^\d{8}$/.test(gen) ? `${gen.slice(0, 4)}-${gen.slice(4, 6)}-${gen.slice(6, 8)}` : gen;
+const fmtAt = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+let gens = [];
+
+/**
+ * 一条归档件的状态。四种，页面只认这四种 —— 别在别处再算一遍。
+ *
+ *   gone    撕过原件（墓碑 purged）→ 只能打捞
+ *   here    归档过、原件还在 → 可以撕
+ *   back    捞回来了、墓碑抹了（复印件照旧留着）→ 不用操作
+ *   orphan  复印件在、活库没有、也没墓碑 → 盘被人动过，只让人看
+ */
+const stateOf = (item) => {
+  if (item.archived?.purged) return "gone";
+  if (item.live && item.archived) return "here";
+  if (item.live) return "back";
+  return "orphan";
+};
+
+const render = () => {
+  const box = $("list");
+  const scroll = box.scrollTop;
+
+  const total = gens.reduce((n, g) => n + g.items.length, 0);
+  if (!total) {
+    box.innerHTML = '<p class="note">归档库是空的。<br>去 qrd3wh 的会话列表里把一条对话归档，复印就落在这儿。</p>';
+    $("count").textContent = "";
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  const INDENT = 20;
+  const ICON = 8;
+  const LINE = 7;
+
+  for (const group of gens) {
+    if (!group.items.length) continue;
+
+    const head = document.createElement("div");
+    head.className = "gen";
+    const day = document.createElement("span");
+    day.className = "day";
+    day.textContent = fmtGen(group.gen);
+    const n = document.createElement("span");
+    n.className = "n";
+    n.textContent = `${group.items.length} 条`;
+    head.append(day, n);
+    if (group.gen === today()) {
+      const badge = document.createElement("span");
+      badge.className = "today";
+      badge.textContent = "今天";
+      head.append(badge);
+    }
+    frag.append(head);
+
+    // 归档拿的是整棵死子树，所以组里也有父子关系 —— 照 pxbgng 那样画。
+    const byId = new Map(group.items.map((s) => [s.id, s]));
+    const kids = new Map();
+    const roots = [];
+    for (const item of group.items) {
+      const parent = item.parent && byId.has(item.parent.id) ? item.parent.id : null;
+      if (parent === null) roots.push(item);
+      else kids.set(parent, [...(kids.get(parent) ?? []), item]);
+    }
+    for (const list of kids.values()) list.sort((a, b) => a.id - b.id);
+    roots.sort((a, b) => a.id - b.id);
+
+    const walk = (node, depth, lasts) => {
+      const kind = stateOf(node);
+      const row = document.createElement("div");
+      row.className = "row" + (kind === "gone" ? " gone" : "") +
+                      ((kids.get(node.id)?.length ?? 0) ? " dir" : "");
+      row.style.paddingLeft = `${ICON + depth * INDENT}px`;
+      row.title = `#${node.id} · ${node.entries} 条记录` +
+                  (node.archived ? ` · 归档于 ${fmtAt(node.archived.at)}` : "") +
+                  (node.last?.text ? `\n${node.last.text.slice(0, 300)}` : "");
+
+      const guides = document.createElement("span");
+      guides.className = "guides";
+      for (let level = 0; level <= depth - 2; level++) {
+        if (lasts[level + 1]) continue;
+        const v = document.createElement("i");
+        v.className = "v";
+        v.style.left = `${ICON + level * INDENT + LINE}px`;
+        guides.append(v);
+      }
+      if (depth > 0) {
+        const x = ICON + (depth - 1) * INDENT + LINE;
+        if (lasts[depth]) {
+          const elbow = document.createElement("i");
+          elbow.className = "elbow";
+          elbow.style.left = `${x}px`;
+          guides.append(elbow);
+        } else {
+          const v = document.createElement("i");
+          v.className = "v";
+          v.style.left = `${x}px`;
+          const h = document.createElement("i");
+          h.className = "h";
+          h.style.left = `${x}px`;
+          guides.append(v, h);
+        }
+      }
+
+      row.append(guides, svg((kids.get(node.id)?.length ?? 0) ? DIR : FILE));
+
+      const name = document.createElement("span");
+      name.className = "nm";
+      name.textContent = node.name;
+      row.append(name);
+
+      const tail = document.createElement("span");
+      tail.className = "tail";
+      tail.textContent = node.last?.text?.replace(/\s+/g, " ").slice(0, 72)
+        || (node.parent ? `← #${node.parent.id} 分叉` : (node.entries ? `${node.entries} 条记录` : "空会话"));
+      row.append(tail);
+
+      const tagEl = document.createElement("span");
+      tagEl.className = "tag" + (kind === "gone" ? " gone" : kind === "back" ? " back" : "");
+      tagEl.textContent = { gone: "已销毁", here: "原件在", back: "已捞回", orphan: "无墓碑" }[kind];
+      tagEl.title = {
+        gone: "活库里的原件已经撕了，只剩这份复印件",
+        here: "归档过，活库里的原件还在 —— 可以撕掉",
+        back: "捞回活库了，这份复印件留着没删",
+        orphan: "复印件在、活库没有、也没墓碑 —— 盘被动过",
+      }[kind];
+      row.append(tagEl);
+
+      // 只给两种操作留口子：撕（原件还在）和捞（原件没了）。
+      if (kind === "here") {
+        const button = document.createElement("button");
+        button.className = "act danger";
+        button.type = "button";
+        button.textContent = "撕原件";
+        button.onclick = (event) => { event.stopPropagation(); purge(node, group.gen); };
+        row.append(button);
+      } else if (kind === "gone" || kind === "orphan") {
+        const button = document.createElement("button");
+        button.className = "act";
+        button.type = "button";
+        button.textContent = "打捞";
+        button.onclick = (event) => { event.stopPropagation(); restore(node, group.gen); };
+        row.append(button);
+      }
+
+      frag.append(row);
+
+      const children = kids.get(node.id) ?? [];
+      children.forEach((child, i) => walk(child, depth + 1, [...lasts, i === children.length - 1]));
+    };
+    roots.forEach((root, i) => walk(root, 0, [i === roots.length - 1]));
+  }
+
+  box.replaceChildren(frag);
+  box.scrollTop = scroll;
+  $("count").textContent = `${total} 条`;
+};
+
+// 撕原件：硬条件全在 qrd3wh 那侧拦（忙、有活后代、复印件不完整都会回 409），
+// 这一页只管问一遍 —— 这动作没有撤销键。
+const purge = async (item, gen) => {
+  const ok = confirm(
+    `撕掉 #${item.id}「${item.name}」的原件？\n\n` +
+    `复印件在 ${fmtGen(gen)} 里，以后还能打捞回来。\n` +
+    `撕了之后它会从 qrd3wh 的会话列表里消失。`,
+  );
+  if (!ok) return;
+  $("state").textContent = "";
+  try {
+    const result = await send(`v1/sessions/${item.id}/purge`);
+    $("state").textContent = `撕掉了 #${item.id}（${result.rows} 行）`;
+    await load();
+  } catch (error) {
+    $("state").textContent = `没撕成：${error.message ?? error}`;
+  }
+};
+
+// 打捞：原样 INSERT 回活库，id 不变，fork 链不断。
+const restore = async (item, gen) => {
+  $("state").textContent = "";
+  try {
+    const result = await send(`v1/archive/${item.id}/restore`, { gen });
+    $("state").textContent = `捞回了 #${item.id}（${result.rows} 行）`;
+    await load();
+  } catch (error) {
+    $("state").textContent = `没捞成：${error.message ?? error}`;
+  }
+};
+
+const load = async () => {
+  if (!tag) return;
+  try {
+    const view = await api("v1/archive");
+    gens = view.gens.filter((g) => g.items.length);
+    render();
+  } catch (error) {
+    $("state").textContent = `拉不到归档库：${error.message ?? error}`;
+  }
+};
+
+if (tag) {
+  $("refresh").onclick = load;
+  await load();
+  // 归档是低频动作，轮询只为「别处归档/撕了，这页跟上」—— 页面藏起来就别问了。
+  setInterval(() => {
+    if (document.visibilityState === "visible") load();
+  }, 5000);
+}
+</script>
+</body>
+</html>

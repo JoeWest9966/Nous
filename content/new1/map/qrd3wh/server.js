@@ -2707,7 +2707,27 @@ const route = async (req, res, url) => {
   // 动词跟扩展那套同款：archive（复印+墓碑）/ purge（撕原件）/ restore（打捞）。
   if (parts[0] === "v1" && parts[1] === "archive") {
     // GET /v1/archive   浏览归档库（mcfpqm 的 storage-Archive 页吃这个）
-    if (req.method === "GET" && !parts[2]) return json(res, 200, await archive.browse());
+    //
+    // archive.js 只认 sqlite：它给的每条只有 id/parent/entries/last。名字和墓碑住在
+    // Sessions 文档里，活库有没有原件得问 harness —— 这三样在这儿合进去，页面才够画。
+    if (req.method === "GET" && !parts[2]) {
+      const view = await archive.browse();
+      const [marks, namesNow, records] = await Promise.all([
+        archivedMarks(),
+        names(),
+        collectPages((cursor) => harness.commit((tx) => tx.scanConversations({}, 200, cursor), ctx)),
+      ]);
+      const liveIds = new Set(records.map((record) => record.id));
+      for (const group of view.gens) {
+        for (const item of group.items) {
+          const k = key(item.id);
+          item.name = namesNow[k] ?? `对话 ${item.id}`;
+          item.archived = marks[k] ?? null; // { at, gen, purged } / null：墓碑（撕没撕都在这）
+          item.live = liveIds.has(item.id); // 活库里还有原件 = 没撕（或者已经捞回来了）
+        }
+      }
+      return json(res, 200, view);
+    }
 
     const rid = Number(parts[2]);
     if (!parts[2] || !Number.isFinite(rid)) return json(res, 400, { error: "archive 后面得跟会话号" });
