@@ -497,7 +497,11 @@ const announce = (id) =>
     .then((saved) => { selAt = saved.at; })
     .catch(() => {});
 
-const select = async (id, talk = true) => {
+// 打开一个会话，返回它有没有内容（条目是不是空的）。
+// `placeholder` 只说一件事：会话是空的时候要不要留那句「空会话，说第一句吧」。
+// 开页时传 false —— 这一页没有会话列表，一眼看去全是空就等于什么都没开，
+// 让调用方拿这个 false 去退到别处，比留一片空有用。
+const select = async (id, talk = true, placeholder = true) => {
   current = id;
   transcript.replaceChildren();
   clearNav();
@@ -510,6 +514,7 @@ const select = async (id, talk = true) => {
   const items = [...data.items].reverse();
 
   replaying = true;
+  let drew = 0;   // 真的落成文字的行数：条目不为空、但全是空壳的情况也算没内容
   for (const entry of items) {
     const text = entry.text;
     if (!text) continue;
@@ -518,12 +523,14 @@ const select = async (id, talk = true) => {
     if (role === "tool") addStep(null, text);
     else if (role === "user") addUser(text, entry.id);
     else addReply().para.textContent = text;
+    drew += 1;
   }
   settleGroup();
   replaying = false;
   for (const md of transcript.querySelectorAll(".md.streaming")) md.classList.remove("streaming");
 
   if (!items.length) {
+    if (!placeholder) { status(""); return false; }
     const empty = el("div", "empty");
     empty.append(el("div", "pi", "π"), el("div", "", "空会话，说第一句吧"));
     transcript.append(empty);
@@ -593,6 +600,7 @@ const select = async (id, talk = true) => {
   };
   stream.onerror = () => status("断流了，正在重连…");
   if (talk) announce(id);
+  return drew > 0;
 };
 
 // 一条 entry 里的正文：content 可能是字符串，也可能是一串 block（thinking / text / tool…），
@@ -750,10 +758,25 @@ await refresh();
 // 打开就跟盘上选的那个走：pxbgng 里挑过谁，这一页就是谁。
 const saved = await api("v1/selection").catch(() => null);
 if (saved) selAt = saved.at;
-const first = saved?.id != null && sessions.some((s) => s.id === saved.id) ? saved.id : current;
-if (first !== null) {
-  await select(first, saved?.id == null);
-} else {
+const picked = saved?.id != null && sessions.some((s) => s.id === saved.id) ? saved.id : null;
+
+// 盘上那个选中指针可能停在一个从没写过话的空壳上（程序建的会话常常是壳），
+// 而这页自己没有列表可以挑 —— 那就退到最近一个说得上话的会话。
+// 只读兜底：**不写 selection**，pxbgng 和皮那边的选择一个字节都不改。
+//
+// 候选跟皮一样是「新的在前」（引擎按 id 升序给，聊天要倒过来），
+// 至多试 3 个：开一页不能变成一串 entries 请求。
+const candidates = sessions
+  .filter((s) => s.last && s.id !== picked)
+  .map((s) => s.id)
+  .sort((a, b) => b - a);
+
+let opened = picked !== null && (await select(picked, false, false));
+// 至多试前 3 个候选：开一页不能变成一串 entries 请求。
+for (let i = 0; !opened && i < candidates.length && i < 3; i += 1) {
+  opened = await select(candidates[i], false, false);
+}
+if (!opened) {
   const empty = el("div", "empty");
   empty.append(el("div", "pi", "π"), el("div", "", "还没有对话。点「＋ 新对话」。"));
   transcript.append(empty);
