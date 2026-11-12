@@ -1,4 +1,4 @@
-# h58ga5 · Nous-Desktop
+# h58ga5 · NousDesk
 
 Nous 的**桌面客户端**（微信桌面版的样子）。GPUI + `gpui-kit` 原生应用，不是网页。
 
@@ -41,6 +41,9 @@ Nous 的**桌面客户端**（微信桌面版的样子）。GPUI + `gpui-kit` �
 `POST /p/demo/bjes6b/api/sessions/:id/pin`，地址从 `resolve` 拿。宁可多一次 HTTP、
 坏了 404 响得很明显，也不要两份互不相干的置顶表。要改这条，见 `decisions.md`。
 
+**已验证**（2026-11-09，Windows 真机）：右键菜单「置顶该聊天 / 取消置顶」点得动，
+写入 `pins.json` 后左栏顺序跟着变，失败会回滚。合成鼠标点不动就走 `PostMessage`（见 `坑.md` 23）。
+
 ## 启动 / 开发
 
 ```bash
@@ -61,7 +64,7 @@ GPUI 能在 Xvfb 里跑，三个坑都踩过了：
 ```bash
 Xvfb :99 -screen 0 1280x800x24 &
 DISPLAY=:99 picom --backend xrender &
-DISPLAY=:99 target/debug/nous-desktop &
+DISPLAY=:99 target/debug/nousdesk &
 DISPLAY=:99 import -window root /tmp/shot.png   # 截图看
 ```
 
@@ -69,12 +72,12 @@ DISPLAY=:99 import -window root /tmp/shot.png   # 截图看
 二进制不在项目的 `target/` 里。
 
 配置查找顺序：`NOUS_DESKTOP_CONFIG` → **exe 旁边的 `desktop.toml`**（发布包带的那份）
-→ `%APPDATA%\nous\desktop.toml`。**具体某台机器的宿主地址不进仓库** ——
-发布包里的 `desktop.toml` 由 CI 从仓库 secret `NOUS_HOST` 生成（见 `.github/workflows/windows.yml`）。
+→ `%APPDATA%\nousdesk\desktop.toml`。发布包里的 `desktop.toml` 由 CI 从仓库 secret `NOUS_HOST` 生成（见 `.github/workflows/windows.yml`）；
+源码里的默认值 `DEFAULT_HOST` 是「一个配置文件都没有」时的兜底，现在指向内网 `192.168.1.7:4790`。
 只有两个键：
 
 ```toml
-host = "http://127.0.0.1:4790"  # 走 tailnet/反代就写那个地址
+host = "http://192.168.1.7:4790"
 board = "new1"
 ```
 
@@ -87,3 +90,5 @@ board = "new1"
 - `wire.md` —— **唯一会漂的那份**：我们依赖了引擎 `/v1/*` 的哪些字段、引擎改了会怎么坏。
 - `decisions.md` —— 选了什么 + 为什么 + 什么时候该反悔。一行一条，追加式。
 - `坑.md` —— **开发中踩的每个坑**。症状 / 根因 / 解，三行以内。踩到新的就加。
+- `验证.md` —— **哪些东西真机验过**（带日期和怎么验的），以及还没验的清单。
+  **动手前先看一眼：验过的别再验**，除非用户主动要求、或者你改了它依赖的那段代码。

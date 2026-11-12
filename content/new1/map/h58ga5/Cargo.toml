@@ -1,10 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/nous-engine", "crates/nous-desktop"]
+members = ["crates/nous-engine", "crates/nousdesk"]
 default-members = ["crates/nous-engine"]
 
 [workspace.package]
-version = "0.1.0"
+# 发版时跟着 tag 走：msi 的 ProductVersion 用它，Windows 才能把新版「升级」上去，
+# 而不是当成同一个版本装不上（v0.1.3/v0.1.4 都还是 0.1.0，安装包里看着很怪）。
+version = "0.1.10"
 edition = "2024"
 license = "MIT"
 

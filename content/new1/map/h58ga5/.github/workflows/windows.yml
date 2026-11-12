@@ -29,8 +29,11 @@ jobs:
           # 这个 workspace 有 800+ 依赖，缓存能把重复构建从 20 分钟压到几分钟。
           workspaces: "."
 
+      - name: 单测（协议层：SSE 切帧 / 中文跨 chunk / 心跳帧）
+        run: cargo test -p nous-engine
+
       - name: 编译 release
-        run: cargo build --release -p nous-desktop
+        run: cargo build --release -p nousdesk
 
       # ── 便携版：exe + desktop.toml + 说明 ─────────────────────────────
       #
@@ -45,8 +48,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           if (-not $env:NOUS_HOST) {
             # packager 的 resources 要这个文件存在，所以缺省也要写一份（本地地址）。
-            Write-Host "::warning::没有 NOUS_HOST secret，包里带的是默认地址 127.0.0.1"
-            $env:NOUS_HOST = "http://127.0.0.1:4790"
+            Write-Host "::warning::没有 NOUS_HOST secret，包里带的是默认地址 192.168.1.7"
+            $env:NOUS_HOST = "http://192.168.1.7:4790"
           }
           "host = `"$env:NOUS_HOST`"`nboard = `"$env:NOUS_BOARD`"`n" |
             Set-Content -Path "dist/desktop.toml" -Encoding utf8 -NoNewline
@@ -56,19 +59,28 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item "target/release/nous-desktop.exe" "dist/NousDesktop.exe"
+          Copy-Item "target/release/nousdesk.exe" "dist/NousDesk.exe"
           Copy-Item "README.md" "dist/README.md"
-          $files = @("dist/NousDesktop.exe","dist/README.md")
+          $files = @("dist/NousDesk.exe","dist/README.md")
           if (Test-Path "dist/desktop.toml") { $files += "dist/desktop.toml" }
           Compress-Archive -Path $files `
-                           -DestinationPath "dist/NousDesktop-windows-x64.zip" -Force
+                           -DestinationPath "dist/NousDesk-windows-x64.zip" -Force
           Get-ChildItem dist
 
       # ── 安装包：cargo-packager 出 msi（cargo-packager 的 wix 格式） ─────────────────────────────────
       # 这一步失败不该把便携版也拖没有，所以 continue-on-error。
+      # `cargo install` 本身也要走网络（crates.io），runner 上偶发 502，同样重试三次。
       - name: 装 cargo-packager
         continue-on-error: true
-        run: cargo install cargo-packager --locked
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            cargo install cargo-packager --locked
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "第 $i 次装 cargo-packager 失败，等 10 秒重试"
+            Start-Sleep -Seconds 10
+          }
+          exit 1
 
       # WiX 要从 github.com 下载，runner 上偶发 504，重试三次。
       - name: 出 msi（cargo-packager 的 wix 格式）
@@ -76,7 +88,7 @@ jobs:
         shell: pwsh
         run: |
           for ($i = 1; $i -le 3; $i++) {
-            cargo packager -p nous-desktop --release --formats wix
+            cargo packager -p nousdesk --release --formats wix
             if ($LASTEXITCODE -eq 0) { exit 0 }
             Write-Host "第 $i 次失败，等 15 秒重试"
             Start-Sleep -Seconds 15
@@ -87,10 +99,21 @@ jobs:
         shell: pwsh
         run: Get-ChildItem -Recurse -File dist | Select-Object FullName, Length
 
+      # v0.1.4 就是只出了 zip、msi 静默地没出来，没人发现。缺了要显眼报警
+      # （用 ::error:: 只做注释，不把整份产物判死 —— 便携版还是能用的）。
+      - name: msi 缺了要报警
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "dist/*.msi")) {
+            Write-Host "::error::这次没产出 msi（多半是 WiX 下载挂了）。便携 zip 仍然可用，但安装版用户拿不到这个版本。"
+          } else {
+            Write-Host "msi 正常：$(Get-ChildItem dist/*.msi | Select-Object -First 1 -ExpandProperty Name)"
+          }
+
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: nous-desktop-windows
+          name: nousdesk-windows
           path: |
             dist/*.zip
             dist/*.msi

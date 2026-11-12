@@ -30,4 +30,4 @@
 | `zefsvf` | `Nous/tailnet` | tailnet | 块 |
 | `vq0f03` | `Nous/vps` | vps | 块 |
 | `bjes6b` | `Nous/Nous-Mobile` | Nous-Mobile | 块 |
-| `h58ga5` | `Nous/Nous-Desktop` | Nous-Desktop | 块 |
+| `h58ga5` | `Nous/NousDesk` | NousDesk | 块 |
