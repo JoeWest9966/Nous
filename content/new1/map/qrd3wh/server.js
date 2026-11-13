@@ -138,6 +138,7 @@ import { handlePrompts } from "./prompts-api.js";
 import { handlePresets } from "./presets-api.js";
 import { createPresets, expandPresetSpec, presetContext, readSections } from "./presets.js";
 import { readTriggerCatalog } from "./triggers.js";
+import { comboView, trialProblem, withEnabled } from "./combos.js";
 import { createScheduler, runTriggerBinary } from "./scheduler.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
@@ -2320,6 +2321,34 @@ const scheduler = createScheduler({
     console.error(`[scheduler] ${combo?.name ?? "?"}：${message}`);
   },
 });
+
+// ── 终极模板的启停 ──────────────────────────────────────────────────────────
+//
+// 开关写回 `Ultimate-Template/<name>/preset.json` 的 `enabled`，**不另存一份开关表**：
+// 调度器读的就是这个字段，另存一份迟早对不上（老坑：两份名单总有一份过期）。
+//
+// 不 commit：enabled 是运行状态，不是代码。写盘后由人（或面板的 sync）决定要不要进历史。
+const setComboEnabled = async (name, enabled) => {
+  const roster = presetsOf("Ultimate-Template");
+  const item = roster?.get(name) ?? null;
+  if (!item) throw withStatus(new Error(`没有这条终极模板：${name}`), 404);
+
+  const section = presetSections.find((it) => it.id === "Ultimate-Template");
+  const manifest = section?.manifest ?? "preset.json";
+  const file = path.join(PRESETS_ROOT, "Ultimate-Template", name, manifest);
+
+  // 读-改-写整段塞进整仓的串行锁：两条启停同时按不该把对方那半截盖掉。
+  // 不走 writeRepoFile —— 那个要 etag/dirty，会在「不是 git 仓」的地方为了一句
+  // `git status` 把已经写好的盘算成失败；启停不需要那两样。
+  await serializeRepoWrite(PRESETS_ROOT, async () => {
+    const before = await readFile(file, "utf8");
+    const next = JSON.stringify(withEnabled(JSON.parse(before), enabled), null, 2) + "\n";
+    if (next !== before) await writeFileAtomic(file, next);
+  });
+
+  await roster.load();
+  return roster.get(name);
+};
 const route = async (req, res, url) => {
   const parts = stripPrefix(url.pathname.split("/").filter(Boolean));
 
@@ -2511,6 +2540,74 @@ const route = async (req, res, url) => {
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
     }
+  }
+
+  // ── 组合的开关与手动试跑 ────────────────────────────────────────────────────
+  //
+  // 为什么不挂 /v1/triggers：触发器是**种类**（single-shot 这种），没有实例、没有状态，
+  // 「启停一个触发器」这句话本身不成立。开着没开的是**组合**（终极模板里的一条），
+  // 调度器 listEnabledCombos 读的也是它。所以这三条端点住在 combos 上。
+  if (parts[0] === "v1" && parts[1] === "combos") {
+    const roster = presetsOf("Ultimate-Template");
+    const name = decodeURIComponent(parts[2] ?? "");
+    const action = parts[3] ?? "";
+
+    // 列表：页面照这份画开关，不自己算「开着没开」。
+    if (!name && (req.method ?? "GET") === "GET") {
+      return json(res, 200, {
+        combos: (roster?.list() ?? []).map(comboView),
+        scheduler: { lastTickAt: scheduler.lastTickAt, lastError: scheduler.lastError },
+      });
+    }
+
+    if (action === "enable" || action === "disable") {
+      if (req.method !== "POST") return json(res, 405, { error: "启停只有 POST" });
+      try {
+        const updated = await setComboEnabled(name, action === "enable");
+        return json(res, 200, { combo: comboView(updated) });
+      } catch (error) {
+        return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+      }
+    }
+
+    // 试跑 = **问一次触发器**（不绕过它）。fire 才起会话 —— 这和调度器走同一条路，
+    // 所以「手动跑不出来」和「自动不会跑」是同一个原因，不用猜。
+    // 不动 deadline：single-shot 的「跑过没」由它自己记，试跑不改那个状态。
+    if (action === "fire") {
+      if (req.method !== "POST") return json(res, 405, { error: "试跑只有 POST" });
+      const item = roster?.get(name) ?? null;
+      const problem = trialProblem(item);
+      if (problem) return json(res, item ? 400 : 404, { error: problem });
+
+      const combo = {
+        name,
+        trigger: item.spec?.trigger,
+        params: item.spec?.params ?? {},
+        session: item.spec?.session,
+      };
+      const result = await runComboTrigger(combo);
+      // 触发器自己挂了（没编译 / 超时 / 退出码非 0）—— 200 带 error，跟「不 fire」分开说。
+      if (result.error) {
+        return json(res, 200, { fired: false, reason: result.reason ?? "", error: result.error });
+      }
+      if (!result.fire) {
+        return json(res, 200, { fired: false, reason: result.reason ?? "", data: result.data ?? {} });
+      }
+      try {
+        // force:false —— 这一趟**经过了触发器**，血缘里不该记成「手点现在跑」。
+        const launched = await launchCombo(combo, { force: false });
+        return json(res, 201, {
+          fired: true,
+          reason: result.reason ?? "",
+          data: result.data ?? {},
+          launched,
+        });
+      } catch (error) {
+        return json(res, 500, { error: String(error?.message ?? error) });
+      }
+    }
+
+    return json(res, 404, { error: `没有这个动作：${action || "（空）"}` });
   }
 
   // 扩展类别：改 nous.json + 重扫 index.json（立刻生效）；commit/push 走 /sync。
