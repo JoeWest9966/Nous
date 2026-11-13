@@ -15,3 +15,4 @@ import "./pages.test.js";
 import "./unread.test.js";
 
 import "./scheduler.test.js";
+import "./combos.test.js";
