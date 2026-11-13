@@ -113,6 +113,22 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
     );
   };
 
+  /**
+   * POST 一条**不属于 /v1/presets 段**的路径（组合的启停 / 试跑在 /v1/combos 上）。
+   * 跟 post() 的唯一区别就是不过 sectioned() —— 别让它把这一页的段名拼到别人头上。
+   */
+  const postRaw = async (path, body) => {
+    if (!base) throw new ApiError("还没连上 qrd3wh", { code: "unconnected" });
+    const clean = String(path ?? "").replace(/^\/+/, "");
+    return readJson(
+      await doFetch(base + clean, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(body ?? {}),
+      }),
+    );
+  };
+
   return {
     get base() {
       return base;
@@ -121,6 +137,7 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
       return ctx;
     },
     post,
+    postRaw,
     /** 问宿主「qrd3wh 在哪」。 */
     async connect() {
       ctx = await readJson(await doFetch(ctxUrl()));
@@ -128,6 +145,7 @@ export function createApi({ fetch: doFetch = globalThis.fetch, self = "/" } = {}
       return base;
     },
     get,
+    getRaw,
     /**
      * 这一段的总览。503 = 这一段还没装好（形状未定）—— 调用方把它原样摆出来，页面就空着。
      * **不许拿假数据把它填满**：填满了人就会以为仓里有东西。
