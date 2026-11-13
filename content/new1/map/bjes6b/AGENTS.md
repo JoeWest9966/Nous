@@ -40,9 +40,16 @@ GET  /api/sessions/:id/entries   { items: [] }                             ← �
 GET  /api/sessions/:id/events    SSE：snapshot → message_update → message_end → run_end
 POST /api/sessions/:id/messages  { content, requestId }                    ← requestId 幂等
 POST /api/sessions/:id/abort
+POST /api/sessions/:id/archive   POST qrd3wh `/v1/sessions/:id/archive`
+POST /api/sessions/:id/purge     POST qrd3wh `/v1/sessions/:id/purge`
+GET  /api/archive                qrd3wh `/v1/archive` 原文
+POST /api/archive/:id/restore    body `{gen}` 原样转给 `/v1/archive/:id/restore`
 POST /api/sessions               { preset, name }                         ← 从一个模板开一条
 GET  /api/presets                qrd3wh `v1/presets/Session-Template` 原文
 ```
+
+归档那四条**只转发**：四态由前端拿 `archived` / `live` 推，硬条件（忙、活分支、
+复印件完整性）全在 qrd3wh 那侧判，这一层一条都不判。
 
 上游是 qrd3wh 的 `/v1/*`，形状一模一样。**别在这一层加业务字段** —— 加了就是第二个真相。
 `/api/presets` 尤其：引擎给什么就递什么，筛 / 补 / 算状态全在浏览器里（或在 3699b9），
@@ -112,6 +119,9 @@ node test/smoke-templates.mjs      # 默认 http://127.0.0.1:4790/p/new1/bjes6b/
 
 它**会真开一条会话**（点一行 = 建会话），这是故意的：不真开就验不到「生效值」和跳转。
 引擎没有删会话的路，跑完那几条 `scratch MM-DD HH:MM` 会留在列表里。
+
+归档那条冒烟（`test/smoke-archive.mjs`）只碰名字以 `zz-` 开头的探针会话：
+没有探针就打印 SKIP 退出，**不拿真会话做归档 / 撕 / 捞**；CDP 端口连不上也 SKIP。
 
 手机上装：这一页是 PWA，但**只有安全上下文能装**。仓库根那台机子已经挂好了：
 

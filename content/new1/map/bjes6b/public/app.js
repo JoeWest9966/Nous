@@ -28,10 +28,23 @@ const toast = (text) => {
   toastTimer = setTimeout(() => (toastEl.hidden = true), 1400);
 };
 
+/** 引擎的 `{error}` 是给人看的原文：解析出来挂在 error 上，调用方原样 toast，不改写。 */
+const engineError = (error) => error?.engineError ?? error?.message ?? String(error);
+
 const api = async (path, init) => {
   const res = await fetch(new URL(path, API), init);
   const text = await res.text();
-  if (!res.ok) throw new Error(`${res.status} ${text.slice(0, 200)}`);
+  if (!res.ok) {
+    const failure = new Error(`${res.status} ${text.slice(0, 200)}`);
+    failure.status = res.status;
+    try {
+      const body = JSON.parse(text);
+      if (typeof body?.error === "string") failure.engineError = body.error;
+    } catch {
+      // 不是 JSON 就退回状态码 + 原文，至少别吞掉。
+    }
+    throw failure;
+  }
   return text ? JSON.parse(text) : null;
 };
 
@@ -261,8 +274,11 @@ const setHeldRow = (row) => {
   heldRow?.classList.add("holding");
 };
 
-/** 面板里那一项。pointer 驱动的语义跟老浮层菜单的 menuItem 一模一样：
- *  按住高亮、滑出项外取消、松手才执行 —— 别改成 click。 */
+/**
+ * 面板里那一项：菜单项完全由 pointer 事件驱动，不靠 click。
+ * 手指按住 → 高亮；滑出去 → 高亮消失；松手时还在项内才执行，否则只关菜单。
+ * 这就是微信「按住菜单项滑到外面再松手 = 取消」。
+ */
 const sheetItem = (label, { danger = false, cap = false, run } = {}) => {
   const item = el("button", `sheet-item${danger ? " danger" : ""}`, label);
   item.type = "button";
@@ -346,7 +362,15 @@ const openRowMenu = (row, id) => {
     sheetItem(name, { cap: true }),
     sheetItem(pinned ? "取消置顶" : "置顶该聊天", { run: () => togglePin(row, id) }),
     sheetItem("归档该聊天…", { run: () => archiveSession(row, id) }),
-    sheetItem("撕原件…", { danger: true, run: () => confirmPurge({ id: Number(id), name }, () => purgeSession(row, id)) }),
+    sheetItem("撕原件…", {
+      danger: true,
+      run: () => confirmPurge({ name }, () => purge(id, {
+        onDone: () => {
+          loadSessions();
+          loadArchive();
+        },
+      })),
+    }),
   );
   const cancelGroup = el("div", "sheet-group");
   cancelGroup.append(sheetItem("取消", { run: () => {} }));
@@ -358,6 +382,7 @@ const openRowMenu = (row, id) => {
   mask.addEventListener("click", closeRowMenu);
 
   document.body.append(mask, sheet);
+  openMenu = { sheet, mask };
   // 下一帧再拉 on：transition 要先有一个 translateY(110%) 的起点才有「滑出」。
   requestAnimationFrame(() => {
     mask.classList.add("on");
@@ -376,10 +401,11 @@ document.addEventListener("keydown", (event) => {
  * 右键菜单照抄宿主 NodeMenu 的做法：在 `contextmenu` 里 `preventDefault` + 弹面板。
  * 浏览器原生菜单的抑制只认 contextmenu 这一个事件 —— 放在 pointerdown 里弹、
  * 再另挂一个 contextmenu 去拦，是两套逻辑，原生菜单照样出来（多浏览器实测都这样）。
- * 别处右键（空白、输入框）还给浏览器。归档库的行也归它管。
+ * 别处右键（空白、输入框、归档库的行）还给浏览器 —— 归档库的行只留行尾的「打捞 / 撕」，
+ * 给它弹「置顶」会给已归档 id 写 pins.json，那就是第二份置顶名单。
  */
 document.addEventListener("contextmenu", (event) => {
-  const row = event.target.closest("#sessions .row, #archive-list .arch-row");
+  const row = event.target.closest("#sessions .row");
   if (!row) return;
   event.preventDefault();
   openRowMenu(row, row.dataset.id);
@@ -436,20 +462,20 @@ const togglePin = async (row, id) => {
   }
 };
 
-/**
- * 菜单项完全由 pointer 事件驱动，不靠 click：
- * 手指按住 → 高亮；滑出去 → 高亮消失；松手时还在项内才执行，否则只关菜单。
- * 这就是微信「按住菜单项滑到外面再松手 = 取消」。
- */
+/** closeRowMenu 的 200ms 收回定时器只拆自己那一对 mask / sheet，不按选择器抓「当前那个」。 */
+let openMenu = null;
+
 const closeRowMenu = () => {
-  const sheet = document.querySelector(".sheet");
-  if (sheet) {
+  const current = openMenu;
+  openMenu = null;
+  if (current) {
+    const { sheet, mask } = current;
     // 180ms 滑回去再拆 DOM —— 直接 remove 就没有「收回」动画了。
     sheet.classList.remove("on");
-    document.querySelector(".sheet-mask")?.classList.remove("on");
+    mask.classList.remove("on");
     setTimeout(() => {
       sheet.remove();
-      document.querySelector(".sheet-mask")?.remove();
+      mask.remove();
     }, 200);
   }
   setHeldRow(null);
@@ -477,32 +503,36 @@ const archiveSession = async (row, id) => {
     loadSessions();
   } catch (error) {
     // 引擎那句原话（忙 / 有活分支），一个字不改。
-    toast(String(error.message).slice(0, 90));
+    toast(engineError(error));
   }
 };
 
-/** 撕原件：先红面板再确认一层。失败把引擎原文 toast 出来，不改写。 */
-const purgeSession = async (id) => {
+/** 撕原件：只有这一份实现 —— 主列表的面板、归档库的行尾都按数字 id 调它。 */
+const purge = async (id, { onDone } = {}) => {
   try {
     await api(`sessions/${id}/purge`, { method: "POST" });
-    toast("已撕掉原件 · 归档库那份复印件也一起销毁了");
-    loadSessions();
-    loadArchive();
+    toast("已撕掉原件 · 归档库那份复印件还在，以后还能打捞回来");
   } catch (error) {
-    toast(String(error.message).slice(0, 90));
+    // 引擎原文，不截断、不加前缀 —— 规格要求的「不要改写」。
+    toast(engineError(error));
+    return;
   }
+  onDone?.();
 };
 
 /**
- * 撕原件的二次确认（票上的文案，一个字不改）。
+ * 撕原件的二次确认。正文有意偏离票里的原句：引擎的 purge 只删活库九张表，
+ * 归档 gen 文件里的复印件还在（见 qrd3wh/archive.js 的 purge、qrd3wh/归档.md 的「打捞」）。
+ * 写「复印件也一起销毁」是在撒谎 —— 所以别改回去。
+ *
  * onConfirm 由调用方给：主列表里是「撕完回列表重拉」，归档库里是「撕完刷新归档库」。
  */
-const confirmPurge = ({ id, name }, onConfirm) => {
+const confirmPurge = ({ name }, onConfirm) => {
   const wrap = el("div", "confirm");
   const box = el("div", "confirm-box");
   box.append(
     el("h3", null, `撕原件：${name}`),
-    el("p", null, "真删，归档库里那份复印件也一起销毁，不能撤销。"),
+    el("p", null, "真删，不能撤销。归档库里那份复印件还在，以后还能打捞回来。"),
   );
   const foot = el("div", "confirm-foot");
   const cancel = el("button", null, "取消");
@@ -1222,7 +1252,6 @@ const stateOf = (item) => {
 
 const STATE_LABEL = { gone: "已销毁", here: "原件在", back: "已捞回", orphan: "无墓碑" };
 
-const pad2 = (n) => String(n).padStart(2, "0");
 const fmtGen = (gen) => (/^\d{8}$/.test(gen) ? `${gen.slice(4, 6)}月${gen.slice(6, 8)}日` : gen);
 
 const archiveRow = (item, gen) => {
@@ -1248,20 +1277,12 @@ const archiveRow = (item, gen) => {
   // 只给两种操作留口子：撕（原件还在时）和打捞（原件没了 / 无墓碑）。
   const acts = el("div", "arch-acts");
   if (kind === "here") {
-    const purge = el("span", "arch-act purge", "撕");
-    purge.addEventListener("click", (event) => {
+    const tear = el("span", "arch-act purge", "撕");
+    tear.addEventListener("click", (event) => {
       event.stopPropagation();
-      confirmPurge({ id: item.id, name }, async () => {
-        try {
-          await api(`sessions/${item.id}/purge`, { method: "POST" });
-          toast("已撕掉原件 · 归档库那份复印件也一起销毁了");
-          loadArchive();
-        } catch (error) {
-          toast(String(error.message).slice(0, 90));
-        }
-      });
+      confirmPurge({ name }, () => purge(item.id, { onDone: loadArchive }));
     });
-    acts.append(purge);
+    acts.append(tear);
   }
   if (kind === "gone" || kind === "orphan") {
     const restore = el("span", "arch-act restore", "打捞");
@@ -1276,7 +1297,7 @@ const archiveRow = (item, gen) => {
         toast("已捞回 · 回主列表看看");
         loadArchive();
       } catch (error) {
-        toast(String(error.message).slice(0, 90));
+        toast(engineError(error));
       }
     });
     acts.append(restore);
