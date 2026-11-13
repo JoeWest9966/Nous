@@ -179,13 +179,10 @@ const loadSessions = async () => {
   listEl.replaceChildren(frag);
 };
 
-/* ── 长按 / 右键菜单 ─────────────────────────────────── */
+/* ── 长按 / 右键 → 底部动作面板 ─────────────────────────── */
 
-const HOLD_MS = 400;      // 按到这么久才进入"选中"态
-const MOVE_SLOP = 10;     // 手指挪超过这么多 = 想滚动，不算长按
-const ARROW_W = 14;       // 小三角的宽
-const ARROW_H = 7;        // 小三角的高
-const MENU_GAP = 8;       // 菜单和手指之间的缝
+const HOLD_MS = 500;      // 票上的手感：按住 0.5 秒才出面板
+const MOVE_SLOP = 6;      // 手指挪超过 6px = 想滚动，不算长按
 
 let holdFired = false;
 /** 当前列表的置顶序（id 数组）。loadSessions 时从服务端拿，乐观更新时自己改。 */
@@ -194,29 +191,23 @@ let rowOrder = [];
 let heldRow = null;
 
 /**
- * 微信那套节奏，一步不差：
+ * 微信那套节奏（H 方案，票上的手感参数）：
  *
- *   按下 → 400ms 内不动，列表还能照常滚动（长按没"生效"）；
- *   到阈值 → 震一下 + 这一行变暗（holding），但菜单**还不出现**；
- *   松手 → 菜单从手指位置弹出来，带指向手指的小三角 + 弹簧。
- *   到阈值之后再滑开 > 10px → 取消（不弹）。
+ *   按下 → 0.5s 内不动，列表还能照常滚动（长按没"生效"）；
+ *   到阈值 → 震一下 + 遮罩变暗 + 底部面板从下面滑出（180ms，CSS 的 transition）；
+ *   滑动超过 6px → 取消（不出面板）。
  *
- * 电脑右键：当场弹，锚点 = 鼠标位置。
+ * 电脑右键：当场开同一个面板（同一份菜单内容，只有一份实现）。
  */
 const hold = (row, id) => {
   let startX = 0;
   let startY = 0;
-  let armed = false; // 到了阈值，行已经变暗
   let active = false; // 这次按压还在长按流程里
   let timer = 0;
 
   const disarm = () => {
     active = false;
     clearTimeout(timer);
-    if (armed) {
-      armed = false;
-      row.classList.remove("holding");
-    }
   };
 
   row.addEventListener("pointerdown", (event) => {
@@ -226,14 +217,15 @@ const hold = (row, id) => {
 
     startX = event.clientX;
     startY = event.clientY;
-    armed = false;
     active = true;
     holdFired = false;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      armed = true;
-      row.classList.add("holding");
-      navigator.vibrate?.(10);
+      if (!active) return;
+      active = false;
+      holdFired = true;
+      navigator.vibrate?.(8);
+      openRowMenu(row, id);
     }, HOLD_MS);
   });
 
@@ -244,16 +236,9 @@ const hold = (row, id) => {
     if (dx * dx + dy * dy > MOVE_SLOP * MOVE_SLOP) disarm();
   });
 
-  row.addEventListener("pointerup", (event) => {
-    if (event.pointerType === "mouse" || !active) return;
-    active = false;
-    clearTimeout(timer);
-    if (armed) {
-      armed = false;
-      row.classList.remove("holding");
-      holdFired = true;
-      openRowMenu(row, id, event.clientX, event.clientY);
-    }
+  row.addEventListener("pointerup", () => {
+    if (!active) return;
+    disarm();
   });
 
   row.addEventListener("pointercancel", disarm);
@@ -276,33 +261,146 @@ const setHeldRow = (row) => {
   heldRow?.classList.add("holding");
 };
 
-const openRowMenu = (row, id, x, y) => {
+/** 面板里那一项。pointer 驱动的语义跟老浮层菜单的 menuItem 一模一样：
+ *  按住高亮、滑出项外取消、松手才执行 —— 别改成 click。 */
+const sheetItem = (label, { danger = false, cap = false, run } = {}) => {
+  const item = el("button", `sheet-item${danger ? " danger" : ""}`, label);
+  item.type = "button";
+  if (cap) {
+    item.classList.add("sheet-cap");
+    item.disabled = true; // 灰字，只是告诉你按的是哪条，不可点
+    return item;
+  }
+  let active = false;
+  let touchHandled = false;
+
+  const inside = (event) => {
+    const r = item.getBoundingClientRect();
+    return (
+      event.clientX >= r.left &&
+      event.clientX <= r.right &&
+      event.clientY >= r.top &&
+      event.clientY <= r.bottom
+    );
+  };
+
+  item.addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse") return; // 鼠标交给 click
+    active = true;
+    item.classList.add("pressed");
+    event.preventDefault();
+  });
+
+  item.addEventListener("pointermove", (event) => {
+    if (!active) return;
+    item.classList.toggle("pressed", inside(event));
+  });
+
+  item.addEventListener("pointerup", (event) => {
+    if (!active) return;
+    active = false;
+    item.classList.remove("pressed");
+    const hit = inside(event);
+    if (hit) run();
+    // 合成 click 还在路上：sheetItem 必须留在 DOM 里当它的目标，否则 click 会
+    // 穿透到底下的会话行，直接跳进会话。下一帧再关面板。
+    touchHandled = true;
+    requestAnimationFrame(closeRowMenu);
+    event.preventDefault();
+  });
+
+  item.addEventListener("pointercancel", () => {
+    if (!active) return;
+    active = false;
+    item.classList.remove("pressed");
+    // 滑出面板后被系统手势接管（浏览器发 cancel 而不是 up）：跟滑出松手一样，只关不执行。
+    closeRowMenu();
+  });
+
+  item.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (touchHandled) {
+      touchHandled = false;
+      return;
+    }
+    closeRowMenu();
+    run();
+  });
+  return item;
+};
+
+/**
+ * 菜单内容只有一份：长按开它，右键也开它。要加动作只改这里。
+ * 「彻底删除」永远不在这里 —— 它只住在归档库那一页。
+ */
+const openRowMenu = (row, id) => {
   closeRowMenu();
   setHeldRow(row);
   // pinned 读**当前** dataset —— 乐观更新后 row 的状态已经变了，闭包里的旧值会撒谎。
   const pinned = row.dataset.pinned === "1";
-  const menu = el("div", "rowmenu");
-  menu.append(
-    menuItem(pinned ? "取消置顶" : "置顶该聊天", () => togglePin(row, id)),
+  const name = row.querySelector(".row-name span:last-child")?.textContent?.trim() || `会话 ${id}`;
+
+  const group = el("div", "sheet-group");
+  group.append(
+    sheetItem(name, { cap: true }),
+    sheetItem(pinned ? "取消置顶" : "置顶该聊天", { run: () => togglePin(row, id) }),
+    sheetItem("归档该聊天…", { run: () => archiveSession(row, id) }),
+    sheetItem("撕原件…", { danger: true, run: () => confirmPurge({ id: Number(id), name }, () => purgeSession(row, id)) }),
   );
-  document.body.append(menu);
-  place(menu, x, y);
-  // 捕获阶段监听：手指碰到菜单以外的任何地方（包括别的行）就关。
+  const cancelGroup = el("div", "sheet-group");
+  cancelGroup.append(sheetItem("取消", { run: () => {} }));
+
+  const sheet = el("div", "sheet");
+  sheet.append(group, cancelGroup);
+  const mask = el("div", "sheet-mask");
+  mask.addEventListener("pointerdown", closeRowMenu);
+  mask.addEventListener("click", closeRowMenu);
+
+  document.body.append(mask, sheet);
+  // 下一帧再拉 on：transition 要先有一个 translateY(110%) 的起点才有「滑出」。
+  requestAnimationFrame(() => {
+    mask.classList.add("on");
+    sheet.classList.add("on");
+  });
+  // 捕获阶段监听：手指碰到面板以外的任何地方（包括别的行）就关。
   document.addEventListener("pointerdown", onMenuOutside, true);
 };
 
+/** Esc（有键盘时）关面板 —— 桌面右键开的那份也归它管。 */
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && document.querySelector(".sheet")) closeRowMenu();
+});
+
 /**
- * 右键菜单照抄宿主 NodeMenu 的做法：在 `contextmenu` 里 `preventDefault` + 弹菜单。
+ * 右键菜单照抄宿主 NodeMenu 的做法：在 `contextmenu` 里 `preventDefault` + 弹面板。
  * 浏览器原生菜单的抑制只认 contextmenu 这一个事件 —— 放在 pointerdown 里弹、
  * 再另挂一个 contextmenu 去拦，是两套逻辑，原生菜单照样出来（多浏览器实测都这样）。
- * 别处右键（空白、输入框）还给浏览器。
+ * 别处右键（空白、输入框）还给浏览器。归档库的行也归它管。
  */
 document.addEventListener("contextmenu", (event) => {
-  const row = event.target.closest("#sessions .row");
+  const row = event.target.closest("#sessions .row, #archive-list .arch-row");
   if (!row) return;
   event.preventDefault();
-  openRowMenu(row, row.dataset.id, event.clientX, event.clientY);
+  openRowMenu(row, row.dataset.id);
 });
+
+/** 乐观更新只动了 rowOrder，列表 DOM 的顺序得按同一套规则重排。 */
+const resortRows = () => {
+  const rows = [...listEl.querySelectorAll(".row")];
+  rows.sort((a, b) => {
+    const ia = Number(a.dataset.id);
+    const ib = Number(b.dataset.id);
+    const pa = rowOrder.indexOf(ia);
+    const pb = rowOrder.indexOf(ib);
+    if (pa !== -1 || pb !== -1) {
+      if (pa !== -1 && pb !== -1) return pa - pb;
+      return pa !== -1 ? -1 : 1;
+    }
+    return Number(b.dataset.last ?? 0) - Number(a.dataset.last ?? 0);
+  });
+  for (const row of rows) listEl.append(row);
+};
 
 const togglePin = async (row, id) => {
   const wasPinned = row.dataset.pinned === "1";
@@ -343,130 +441,94 @@ const togglePin = async (row, id) => {
  * 手指按住 → 高亮；滑出去 → 高亮消失；松手时还在项内才执行，否则只关菜单。
  * 这就是微信「按住菜单项滑到外面再松手 = 取消」。
  */
-const menuItem = (label, run) => {
-  const item = el("button", "rowmenu-item", label);
-  item.type = "button";
-  let active = false;
-  let touchHandled = false;
-
-  const inside = (event) => {
-    const r = item.getBoundingClientRect();
-    return (
-      event.clientX >= r.left &&
-      event.clientX <= r.right &&
-      event.clientY >= r.top &&
-      event.clientY <= r.bottom
-    );
-  };
-
-  item.addEventListener("pointerdown", (event) => {
-    if (event.pointerType === "mouse") return; // 鼠标交给 click
-    active = true;
-    item.classList.add("pressed");
-    event.preventDefault();
-  });
-
-  item.addEventListener("pointermove", (event) => {
-    if (!active) return;
-    item.classList.toggle("pressed", inside(event));
-  });
-
-  item.addEventListener("pointerup", (event) => {
-    if (!active) return;
-    active = false;
-    item.classList.remove("pressed");
-    const hit = inside(event);
-    if (hit) run();
-    // 合成 click 还在路上：menuItem 必须留在 DOM 里当它的目标，否则 click 会
-    // 穿透到底下的会话行，直接跳进会话。下一帧再关菜单。
-    touchHandled = true;
-    requestAnimationFrame(closeRowMenu);
-    event.preventDefault();
-  });
-
-  item.addEventListener("pointercancel", () => {
-    if (!active) return;
-    active = false;
-    item.classList.remove("pressed");
-    // 滑出菜单后被系统手势接管（浏览器发 cancel 而不是 up）：跟滑出松手一样，只关不执行。
-    closeRowMenu();
-  });
-
-  item.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (touchHandled) {
-      touchHandled = false;
-      return;
-    }
-    closeRowMenu();
-    run();
-  });
-  return item;
-};
-
 const closeRowMenu = () => {
-  document.querySelector(".rowmenu")?.remove();
+  const sheet = document.querySelector(".sheet");
+  if (sheet) {
+    // 180ms 滑回去再拆 DOM —— 直接 remove 就没有「收回」动画了。
+    sheet.classList.remove("on");
+    document.querySelector(".sheet-mask")?.classList.remove("on");
+    setTimeout(() => {
+      sheet.remove();
+      document.querySelector(".sheet-mask")?.remove();
+    }, 200);
+  }
   setHeldRow(null);
   document.removeEventListener("pointerdown", onMenuOutside, true);
 };
 
 const onMenuOutside = (event) => {
-  if (!event.target.closest(".rowmenu")) closeRowMenu();
-};
-
-/** 菜单锚定手指：默认在手指下方（箭头朝上），放不下翻到上方（箭头朝下）。 */
-const place = (menu, x, y) => {
-  requestAnimationFrame(() => {
-    const vw = document.documentElement.clientWidth;
-    const vh = document.documentElement.clientHeight;
-    const mw = menu.offsetWidth;
-    const mh = menu.offsetHeight;
-
-    // 菜单水平居中于手指，出屏就贴边。
-    let left = x - mw / 2;
-    left = Math.max(8, Math.min(left, vw - mw - 8));
-
-    // 箭头水平对齐手指，但别跑出菜单圆角外面。
-    let arrowX = x - left - ARROW_W / 2;
-    arrowX = Math.max(12, Math.min(arrowX, mw - 12 - ARROW_W));
-
-    let below = true;
-    let top = y + MENU_GAP;
-    if (top + mh > vh - 8) {
-      below = false;
-      top = y - MENU_GAP - mh;
-    }
-    if (top < 8) top = 8;
-
-    menu.style.top = `${top}px`;
-    menu.style.left = `${left}px`;
-    menu.dataset.arrow = below ? "up" : "down";
-    menu.style.setProperty("--arrow-x", `${arrowX}px`);
-    // 弹簧从箭头那个点往外长，而不是从菜单角落。
-    menu.style.transformOrigin = `${arrowX + ARROW_W / 2}px ${below ? 0 : mh}px`;
-  });
-};
-
-/** 乐观更新只动了 rowOrder，列表 DOM 的顺序得按同一套规则重排。 */
-const resortRows = () => {
-  const rows = [...listEl.querySelectorAll(".row")];
-  rows.sort((a, b) => {
-    const ia = Number(a.dataset.id);
-    const ib = Number(b.dataset.id);
-    const pa = rowOrder.indexOf(ia);
-    const pb = rowOrder.indexOf(ib);
-    if (pa !== -1 || pb !== -1) {
-      if (pa !== -1 && pb !== -1) return pa - pb;
-      return pa !== -1 ? -1 : 1;
-    }
-    return Number(b.dataset.last ?? 0) - Number(a.dataset.last ?? 0);
-  });
-  for (const row of rows) listEl.append(row);
+  if (!event.target.closest(".sheet") && !event.target.closest(".confirm")) closeRowMenu();
 };
 
 // 菜单开着时，列表一滚就关（滚之前的那一下 pointerdown 其实已经关了，这是兜底）。
 listEl.addEventListener("scroll", closeRowMenu, { passive: true });
+
+/* ── 归档 / 撕原件：动作只有一层壳，硬条件全在引擎那侧 ───────────── */
+
+/** 归档：不问（可逆，随时可捞回）。行从列表消失靠重拉 —— 引擎默认藏归档。 */
+const archiveSession = async (row, id) => {
+  try {
+    await api(`sessions/${id}/archive`, { method: "POST" });
+    if (String(thread.id) === String(id)) {
+      // 归档的正是当前打开的会话 → 退回列表页。
+      location.hash = "#/";
+    }
+    toast("已归档 · 可在归档库捞回");
+    loadSessions();
+  } catch (error) {
+    // 引擎那句原话（忙 / 有活分支），一个字不改。
+    toast(String(error.message).slice(0, 90));
+  }
+};
+
+/** 撕原件：先红面板再确认一层。失败把引擎原文 toast 出来，不改写。 */
+const purgeSession = async (id) => {
+  try {
+    await api(`sessions/${id}/purge`, { method: "POST" });
+    toast("已撕掉原件 · 归档库那份复印件也一起销毁了");
+    loadSessions();
+    loadArchive();
+  } catch (error) {
+    toast(String(error.message).slice(0, 90));
+  }
+};
+
+/**
+ * 撕原件的二次确认（票上的文案，一个字不改）。
+ * onConfirm 由调用方给：主列表里是「撕完回列表重拉」，归档库里是「撕完刷新归档库」。
+ */
+const confirmPurge = ({ id, name }, onConfirm) => {
+  const wrap = el("div", "confirm");
+  const box = el("div", "confirm-box");
+  box.append(
+    el("h3", null, `撕原件：${name}`),
+    el("p", null, "真删，归档库里那份复印件也一起销毁，不能撤销。"),
+  );
+  const foot = el("div", "confirm-foot");
+  const cancel = el("button", null, "取消");
+  cancel.type = "button";
+  const ok = el("button", "danger", "撕掉原件");
+  ok.type = "button";
+  const close = () => wrap.remove();
+  cancel.addEventListener("click", close);
+  ok.addEventListener("click", () => {
+    close();
+    onConfirm?.();
+  });
+  foot.append(cancel, ok);
+  box.append(foot);
+  wrap.append(box);
+  // 点遮罩不算确认 —— 这种面板上，只有那颗红按钮能放行。
+  wrap.addEventListener("click", (event) => {
+    if (event.target === wrap) close();
+  });
+  wrap.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  document.body.append(wrap);
+  ok.focus();
+  return wrap;
+};
 
 /* ── 会话 ───────────────────────────────────────────── */
 
@@ -746,12 +808,15 @@ const route = () => {
     if (String(thread.id) !== match[1]) openThread(match[1]);
     return;
   }
-  // 离开会话：先关流。画哪一屏交给下面 —— 回列表还是去模板，hash 说了算。
+  // 离开会话：先关流。画哪一屏交给下面 —— 回列表还是去模板/归档库，hash 说了算。
   if (thread.id != null) closeThread();
 
   if (/^#\/templates\/?$/.test(location.hash)) {
     show("templates");
     loadTemplates();
+  } else if (/^#\/archive\/?$/.test(location.hash)) {
+    show("archive");
+    loadArchive();
   } else {
     show("list");
     loadSessions();
@@ -837,7 +902,7 @@ fit();
 
 /* ── 页面切换 ─────────────────────────────────── */
 
-const PAGES = { list: "#page-list", templates: "#page-templates", thread: "#page-thread" };
+const PAGES = { list: "#page-list", templates: "#page-templates", thread: "#page-thread", archive: "#page-archive" };
 
 /**
  * 一屏只有一页在。会话页藏 tabbar 靠 `body[data-view="thread"]` 那一条 CSS。
@@ -1134,6 +1199,130 @@ $("#tpl-cancel-search").addEventListener("click", closeTemplateSearch);
 queryEl.addEventListener("input", () => {
   tpl.q = queryEl.value ?? "";
   renderTemplates();
+});
+
+/* ── 归档库页：按 gen 分天，四态由引擎的 archived / live 推 ──────────
+   四态的判断照抄 mcfpqm（现成的消费者），不自己编第二套：
+
+     gone    墓碑 purged（撕过原件）→ 只能打捞
+     here    归档过、原件还在 → 可以撕
+     back    捞回来了、墓碑抹了（复印件照旧留着）→ 不用操作
+     orphan  复印件在、活库没有、也没墓碑 → 盘被人动过，只让人看
+
+   「彻底删除」只在这一页有 —— 主列表永远不出现。 */
+
+const archiveListEl = $("#archive-list");
+
+const stateOf = (item) => {
+  if (item.archived?.purged) return "gone";
+  if (item.live && item.archived) return "here";
+  if (item.live) return "back";
+  return "orphan";
+};
+
+const STATE_LABEL = { gone: "已销毁", here: "原件在", back: "已捞回", orphan: "无墓碑" };
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const fmtGen = (gen) => (/^\d{8}$/.test(gen) ? `${gen.slice(4, 6)}月${gen.slice(6, 8)}日` : gen);
+
+const archiveRow = (item, gen) => {
+  const kind = stateOf(item);
+  const name = item.name || `会话 ${item.id}`;
+
+  const row = el("button", `row arch-row${kind === "gone" ? " gone" : ""}`);
+  row.type = "button";
+  row.dataset.id = item.id;
+  row.dataset.gen = gen;
+
+  const main = el("div", "row-main");
+  const rowName = el("div", "row-name");
+  rowName.append(el("span", null, name));
+  main.append(rowName);
+  main.append(el("div", "row-last", item.last?.text ? preview(item.last.text) : `归档于 ${fmtGen(gen)}`));
+  row.append(main);
+
+  const state = el("span", `arch-state ${kind}`, STATE_LABEL[kind]);
+  state.dataset.state = kind;
+  row.append(state);
+
+  // 只给两种操作留口子：撕（原件还在时）和打捞（原件没了 / 无墓碑）。
+  const acts = el("div", "arch-acts");
+  if (kind === "here") {
+    const purge = el("span", "arch-act purge", "撕");
+    purge.addEventListener("click", (event) => {
+      event.stopPropagation();
+      confirmPurge({ id: item.id, name }, async () => {
+        try {
+          await api(`sessions/${item.id}/purge`, { method: "POST" });
+          toast("已撕掉原件 · 归档库那份复印件也一起销毁了");
+          loadArchive();
+        } catch (error) {
+          toast(String(error.message).slice(0, 90));
+        }
+      });
+    });
+    acts.append(purge);
+  }
+  if (kind === "gone" || kind === "orphan") {
+    const restore = el("span", "arch-act restore", "打捞");
+    restore.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await api(`archive/${item.id}/restore`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gen }),
+        });
+        toast("已捞回 · 回主列表看看");
+        loadArchive();
+      } catch (error) {
+        toast(String(error.message).slice(0, 90));
+      }
+    });
+    acts.append(restore);
+  }
+  if (acts.children.length) row.append(acts);
+
+  return row;
+};
+
+const loadArchive = async () => {
+  let data;
+  try {
+    data = await api("archive");
+  } catch (error) {
+    archiveListEl.replaceChildren(el("div", "empty", `连不上引擎：${error.message}`));
+    return;
+  }
+
+  const gens = (data.gens ?? []).filter((g) => g.items.length);
+  if (!gens.length) {
+    archiveListEl.replaceChildren(el("div", "empty", "归档库是空的。去会话列表长按一条，先归档。"));
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  for (const group of gens) {
+    const head = el("div", "arch-gen", fmtGen(group.gen));
+    head.dataset.gen = group.gen;
+    frag.append(head);
+    // 引擎给的是新的在前？两边都不赌：按 id 稳定排序，重拉不闪。
+    for (const item of group.items.slice().sort((a, b) => a.id - b.id)) {
+      frag.append(archiveRow(item, group.gen));
+    }
+  }
+  archiveListEl.replaceChildren(frag);
+};
+
+$("#open-archive").addEventListener("click", () => {
+  location.hash = "#/archive";
+});
+
+$("#archive-refresh").addEventListener("click", loadArchive);
+
+$("#archive-back").addEventListener("click", () => {
+  if (history.length > 1) history.back();
+  else location.hash = "#/";
 });
 
 // PWA：只在安全上下文注册。`http://IP:4790` 下注册必然失败，而且失败了没人会去看。

@@ -147,12 +147,17 @@ const pick = `(() => {
   })()`);
   check("滑出项外 → 高亮消失", await tab.eval("[...document.querySelectorAll('.sheet button')].find(x => x.textContent.trim() === '归档该聊天…').classList.contains('pressed')"), false);
 
-  // 在取消上松手 → 面板关、什么都没执行
+  // 在取消上松手（pointerdown 在前 —— 菜单项的 run 只认它自己 pointerup）→ 面板关、什么都没执行
+  await tab.eval(`(() => {
+    const b = [...document.querySelectorAll('.sheet button')].find(x => x.textContent.trim() === '取消');
+    b.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, pointerId:12, pointerType:'touch', clientX:${r.x}, clientY:${r.y}}));
+  })()`);
+  await sleep(50);
   await tab.eval(`(() => {
     const b = [...document.querySelectorAll('.sheet button')].find(x => x.textContent.trim() === '取消');
     b.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, pointerId:12, pointerType:'touch', clientX:${r.x}, clientY:${r.y}}));
   })()`);
-  await sleep(260);
+  await sleep(300);
   check("松手在取消上 → 面板关", await tab.eval("document.querySelector('.sheet')?.classList.contains('on') ?? false"), false);
 }
 
@@ -214,9 +219,10 @@ const pick = `(() => {
     const b = [...document.querySelectorAll('.sheet button')].find(x => x.textContent.trim() === '归档该聊天…');
     b.dispatchEvent(new PointerEvent('pointerup', {bubbles:true, pointerId:14, pointerType:'touch', clientX:${a.x}, clientY:${a.y}}));
   })()`);
+  await sleep(400); // toast 只亮 1.4s，先看一眼再等列表重拉
+  check("归档有 toast", await tab.eval("!document.querySelector('#toast').hidden && document.querySelector('#toast').textContent.includes('归档')"), true);
   await sleep(1800);
   check("归档后行从列表消失", await tab.eval(`![...document.querySelectorAll('#sessions .row[data-id]')].some(r => r.dataset.id === '${id}')`), true);
-  check("归档有 toast", await tab.eval("!document.querySelector('#toast').hidden && document.querySelector('#toast').textContent.includes('归档')"), true);
 
   // 归档库里有它（原件在）
   await tab.eval("document.querySelector('#open-archive').click()");

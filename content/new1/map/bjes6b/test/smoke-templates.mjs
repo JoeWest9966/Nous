@@ -78,7 +78,7 @@ await sleep(1800);
 check("点 tab → 视图", await tab.eval("document.body.dataset.view"), "templates");
 check("点 tab → 只有模板页可见", await tab.eval(
   `[...document.querySelectorAll('.page')].map(n => n.id + '=' + !n.hidden).join(',')`,
-), ["page-list=false", "page-templates=true", "page-thread=false"].join(","));
+), ["page-list=false", "page-archive=false", "page-templates=true", "page-thread=false"].join(","));
 check("hash", await tab.eval("location.hash"), "#/templates");
 check("tab 高亮", await tab.eval(
   `[...document.querySelectorAll('.tab')].map(t => t.dataset.tab + ':' + t.classList.contains('on')).join(',')`,

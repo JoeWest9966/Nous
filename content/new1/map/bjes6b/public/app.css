@@ -776,6 +776,214 @@ body[data-view="thread"] .tabbar {
   stroke: currentColor;
 }
 
+/* ── 底部动作面板（长按 / 右键共用）。微信那张底板：遮罩变暗、面板从底下滑出 180ms。 ── */
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  background: rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+
+.sheet-mask.on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 16;
+  padding: 0 8px calc(8px + env(safe-area-inset-bottom));
+  transform: translateY(110%);
+  transition: transform 0.18s ease;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.sheet.on {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* 上半是白底动作组（会话名 + 各项），下半是单独一块的「取消」—— 微信的分组就是这样。 */
+.sheet-group {
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.16);
+}
+
+.sheet-group + .sheet-group {
+  margin-top: 8px;
+}
+
+.sheet-cap {
+  padding: 11px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--wx-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: var(--hair) solid var(--wx-line);
+}
+
+.sheet-item {
+  display: block;
+  width: 100%;
+  padding: 15px 16px;
+  text-align: center;
+  font-size: 16.5px;
+  line-height: 1.3;
+  color: var(--wx-text);
+  background: #fff;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sheet-item + .sheet-item {
+  border-top: var(--hair) solid var(--wx-line);
+}
+
+.sheet-item.pressed {
+  background: #e6e6e6;
+}
+
+.sheet-item.danger {
+  color: var(--wx-red);
+}
+
+/* ── 撕原件的二次确认：居中红面板，盖在遮罩上、遮罩上。 ── */
+.confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.34);
+}
+
+.confirm-box {
+  width: 100%;
+  max-width: 300px;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+}
+
+.confirm h3 {
+  margin: 0;
+  padding: 18px 18px 4px;
+  font-size: 15.5px;
+  line-height: 1.4;
+  color: var(--wx-text);
+  overflow-wrap: anywhere;
+}
+
+.confirm p {
+  margin: 0;
+  padding: 6px 20px 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--wx-sub);
+}
+
+.confirm-foot {
+  display: flex;
+  border-top: var(--hair) solid var(--wx-line);
+}
+
+.confirm-foot button {
+  flex: 1;
+  padding: 14px 8px;
+  font-size: 16px;
+  background: #fff;
+}
+
+.confirm-foot button + button {
+  border-left: var(--hair) solid var(--wx-line);
+}
+
+.confirm-foot button:active {
+  background: #e6e6e6;
+}
+
+.confirm-foot .danger {
+  color: var(--wx-red);
+  font-weight: 600;
+}
+
+/* ── 归档库页。列表的骨头复用 .row，多的只有状态标签和行尾动作。 ── */
+.arch-gen {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 6px 16px;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--wx-sub);
+  background: var(--wx-bg);
+  border-top: var(--hair) solid var(--wx-line);
+}
+
+.arch-state {
+  flex: none;
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 99px;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  color: var(--wx-sub);
+  background: #fff;
+}
+
+.arch-state.gone {
+  color: var(--wx-red);
+  border-color: rgba(250, 81, 81, 0.4);
+}
+
+.arch-state.back {
+  color: var(--wx-green);
+  border-color: rgba(7, 193, 96, 0.4);
+}
+
+.arch-acts {
+  flex: none;
+  display: flex;
+  gap: 14px;
+  margin-left: 4px;
+}
+
+.arch-act {
+  flex: none;
+  font-size: 14px;
+  line-height: 1.2;
+  color: #576b95;
+}
+
+.arch-act.purge {
+  color: var(--wx-red);
+}
+
+.arch-act:active {
+  opacity: 0.6;
+}
+
+/* 行尾有动作的行，摘要让让路。 */
+.row.arch-row .row-main {
+  padding-right: 4px;
+}
+
 /* ── toast ────────────────────────────────────────────── */
 .toast {
   position: fixed;

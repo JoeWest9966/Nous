@@ -19,10 +19,33 @@
         <span class="nav-side"></span>
         <h1 class="nav-title">Nous</h1>
         <span class="nav-side end">
+          <button class="nav-icon" id="open-archive" aria-label="归档库">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3.4" y="4" width="17.2" height="4.6" rx="1.4" />
+              <path d="M5 8.6v9.4a1.8 1.8 0 0 0 1.8 1.8h10.4A1.8 1.8 0 0 0 19 18V8.6M10 13h4" />
+            </svg>
+          </button>
           <button class="nav-icon" data-todo="新建会话" aria-label="新建">＋</button>
         </span>
       </header>
       <main class="scroller" id="sessions">
+        <div class="empty">加载中…</div>
+      </main>
+    </section>
+
+    <!-- 归档库：按 gen 分天，四态由引擎的 archived / live 推，
+         行尾「打捞 / 撕」两个动作。主列表永远不出现「彻底删除」—— 只有这页有。 -->
+    <section class="page" id="page-archive" hidden>
+      <header class="nav">
+        <span class="nav-side">
+          <button class="nav-icon back" id="archive-back" aria-label="返回">‹</button>
+        </span>
+        <h1 class="nav-title">归档库</h1>
+        <span class="nav-side end">
+          <button class="nav-icon" id="archive-refresh" aria-label="刷新">↻</button>
+        </span>
+      </header>
+      <main class="scroller list" id="archive-list">
         <div class="empty">加载中…</div>
       </main>
     </section>
