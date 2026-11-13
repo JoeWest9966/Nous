@@ -19,6 +19,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
    - purge    = 撕原件（tombstone.purged=true，live=false；没墓碑就 409）
    - restore  = 打捞（墓碑抹掉，live=true）                                             */
 const hits = [];
+// 下一次 GET /v1/archive 故意炸一次 —— 用来钉住「BFF 不重试真 500」。
+let failBrowseOnce = false;
 const registry = new Map([
   [4, { name: "档案甲", gen: "20261110", tombstone: { at: 1, gen: "20261110", purged: false }, live: true }],
   [5, { name: "档案乙", gen: "20261110", tombstone: { at: 2, gen: "20261110", purged: true }, live: false }],
@@ -91,7 +93,13 @@ const engine = createServer((req, res) => {
       return jsonReply(res, 200, { purged: [id], gen: r.gen, rows: 3 });
     }
 
-    if (p === "/v1/archive" && req.method === "GET") return jsonReply(res, 200, browseView());
+    if (p === "/v1/archive" && req.method === "GET") {
+      if (failBrowseOnce) {
+        failBrowseOnce = false;
+        return jsonReply(res, 500, { error: "引擎自己炸了" });
+      }
+      return jsonReply(res, 200, browseView());
+    }
 
     const restore = p.match(/^\/v1\/archive\/(\d+)\/restore$/);
     if (restore && req.method === "POST") {
@@ -137,11 +145,19 @@ const BASE = await new Promise((resolve, reject) => {
   });
 });
 
-// node --test 并发下 CPU 争抢，偶发一次 fetch failed 被进程级 catch 兜成 500 ——
-// 这种抖动重发一次就好，不是要测的行为。真正的错（409/404）重发也一样，不影响断言。
+// 只对「连接被拒」重发一次：那是 server.js 还没把端口挂上时的抖动。
+// 真 500 是行为，重发一次会把故障藏起来 —— 不重试。
+const refused = (error) =>
+  [error?.code, error?.cause?.code, ...(error?.cause?.errors ?? []).map((e) => e.code)].includes("ECONNREFUSED");
+
 const call = async (path, init) => {
-  let res = await fetch(`${BASE}${path}`, init);
-  if (res.status === 500) res = await fetch(`${BASE}${path}`, init);
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, init);
+  } catch (error) {
+    if (!refused(error)) throw error;
+    res = await fetch(`${BASE}${path}`, init);
+  }
   return { status: res.status, text: await res.text() };
 };
 
@@ -172,6 +188,16 @@ test("GET /api/archive 原样转发：形状、字段、四态原料一个不改
   assert.deepEqual(JSON.parse(mine.text), await up.json());
   // 引擎侧只该收到一次 GET /v1/archive
   assert.ok(hits.filter((h) => h.method === "GET" && h.path === "/v1/archive").length >= 1);
+});
+
+test("引擎真 500 只请求一次：重试会把故障藏起来", async () => {
+  failBrowseOnce = true;
+  const before = hits.filter((h) => h.method === "GET" && h.path === "/v1/archive").length;
+  const out = await call("/api/archive");
+  const after = hits.filter((h) => h.method === "GET" && h.path === "/v1/archive").length;
+  assert.equal(out.status, 500);
+  assert.equal(after - before, 1, "500 被重试了，真正的故障被藏起来了");
+  assert.deepEqual(JSON.parse(out.text), { error: "引擎自己炸了" });
 });
 
 test("POST /api/sessions/:id/archive 原样转发 + 成功回原文", async () => {
