@@ -356,11 +356,16 @@ POST /v1/sessions/:id/config      {readOnly, thinkingLevel, skills, template}
 POST /v1/sessions/:id/messages    {content, requestId?, waitMs?}
 GET  /v1/sessions/:id/events      SSE
 GET  /v1/sessions/:id/entries     ?system=1 额外给 items[].delta + system（调试提示词用）
+GET  /v1/triggers                 触发器**种类**目录（Nous-Trigger 的 index.json 投影，没有实例、没有状态）
+GET  /v1/combos                   终极模板组合：enabled + 写坏原因 + 调度器节拍（页面照这份画，不自己算）
+POST /v1/combos/:name/enable|disable  启停：只写回该组合 ultimate.json 的 enabled（串行锁，不 commit）
+POST /v1/combos/:name/fire        立刻问一次触发器；fire 才起会话（血缘 forced:false —— 这一趟经过了触发器）
 ```
 
 环境：`PORT`（默认 4780）、`NOUS_DATA`、`NOUS_SKILLS`（技能仓根，默认 `/opt/Nous-skills`）、
 `NOUS_PROMPTS`（模板仓根，默认 `/opt/Nous-prompts`）、
-`NOUS_EXTEND`（扩展仓，默认 `/opt/Nous-extend`）、`NW_BASE`（默认 tailnet 8443，**只给模型编目**）、
+`NOUS_EXTEND`（扩展仓，默认 `/opt/Nous-extend`）、
+`NOUS_PRESETS`（模板仓，默认 `/opt/Nous-Template`）、`NOUS_TRIGGER`（触发器仓，默认 `/opt/Nous-Trigger`）、`NW_BASE`（默认 tailnet 8443，**只给模型编目**）、
 `NW_TOKEN`（走 panel-gate 才要）。
 
 ### 提示词是增量的 —— `?system=1` 得回放才看得见
