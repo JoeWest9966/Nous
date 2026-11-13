@@ -251,6 +251,26 @@ const route = async (req, res) => {
   const p = url.pathname;
   const origins = originsOf(req);
 
+  // 归档库浏览。引擎给什么就是什么：gen 分组、每条的 name / archived 墓碑 / live 全在响应里，
+  // 四态（原件在 / 已销毁 / 已捞回 / 无墓碑）由前端拿 archived / live 推，这一层不碰。
+  if (p === "/api/archive" && req.method === "GET") {
+    return relay(res, await call(origins, "/v1/archive"));
+  }
+
+  // 打捞：body（{"gen"}）一个字不改地递过去。
+  const restore = p.match(/^\/api\/archive\/(\d+)\/restore$/);
+  if (restore && req.method === "POST") {
+    const body = await readBody(req);
+    return relay(
+      res,
+      await call(origins, `/v1/archive/${restore[1]}/restore`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      }),
+    );
+  }
+
   if (p === "/api/health") {
     return json(res, 200, { ok: true, origins: originsOf(req), engines: [...engines.entries()] });
   }
@@ -331,6 +351,17 @@ const route = async (req, res) => {
 
     if (tail === "/abort" && req.method === "POST") {
       return relay(res, await call(origins, `/v1/sessions/${id}/abort`, { method: "POST" }));
+    }
+
+    if (tail === "/archive" && req.method === "POST") {
+      // 归档 = 复印进引擎的 gen 文件 + 写墓碑。成功后引擎的列表就藏掉它，
+      // 这一页的 /api/sessions 自然也就不见了 —— 这里没有第二份名单。
+      return relay(res, await call(origins, `/v1/sessions/${id}/archive`, { method: "POST" }));
+    }
+
+    if (tail === "/purge" && req.method === "POST") {
+      // 撕原件：硬条件（已归档、闲置、无活后代）全在引擎那侧拦，409 连 {error} 原样递回来。
+      return relay(res, await call(origins, `/v1/sessions/${id}/purge`, { method: "POST" }));
     }
 
     if (tail === "/pin" && req.method === "POST") {
