@@ -54,6 +54,9 @@ const state = {
   known: { presets: null, prompts: null },
   /** 触发器表（引擎的投影）：name → { name, summary, params }。表单照它画。 */
   triggers: new Map(),
+  /** 组合的开关与调度器节拍（GET /v1/combos）：开关以引擎为准，这一页不拿本地猜。 */
+  combos: new Map(),
+  scheduler: null,
   /** 会话模板的名字（另一个段的名册）。 */
   sessions: new Set(),
   /** 正在编辑的草稿：null = 没在编辑。 */
@@ -119,12 +122,17 @@ const load = async () => {
 
     // 触发器表 + 会话模板名册：**都要了才画得出手单**。
     // 问不到就空着 —— 页面要说清「没有触发器可选」，而不是画一个空的表单让人猜。
-    const [triggers, sessions] = await Promise.all([
+    const [triggers, sessions, combos] = await Promise.all([
       api.triggers().catch(() => ({ triggers: [] })),
       api.overviewOf("Session-Template").catch(() => ({ presets: [] })),
+      // 开关和节拍是**引擎**那一层的（/v1/combos）；问不到就空着 —— 页面照常画，
+      // 只是开关显示为「不知道」，别拿 state.rows 里的 enabled 冒充实时状态。
+      api.getRaw("v1/combos").catch(() => null),
     ]);
     state.triggers = new Map((triggers.triggers ?? []).map((item) => [item.name, item]));
     state.sessions = new Set((sessions.presets ?? []).map((item) => item.name));
+    state.combos = new Map((combos?.combos ?? []).map((item) => [item.name, item]));
+    state.scheduler = combos?.scheduler ?? null;
 
     state.rows = (data.presets ?? []).map(rowOfApi);
   } catch (error) {
@@ -149,6 +157,18 @@ const renderTop = () => {
     .join(" · ") || "—";
   $("repo").dataset.drift = state.repo?.error ? "1" : "0";
   if (state.repo?.error) $("repo").textContent = state.repo.error;
+
+  // 调度器节拍：开关改完要等下一拍，所以「上一拍几点」是这一页唯一能解释「为什么还没跑」的东西。
+  const sched = $("sched");
+  const tickAt = state.scheduler?.lastTickAt ?? null;
+  const tickError = String(state.scheduler?.lastError ?? "").trim();
+  const clock = tickAt ? new Date(tickAt).toLocaleTimeString("zh-CN", { hour12: false }) : null;
+  sched.dataset.state = tickError ? "bad" : clock ? "ok" : "wait";
+  sched.textContent = tickError
+    ? `调度器 ${clock ?? "?"} 报错：${tickError}`
+    : clock
+      ? `调度器 上一拍 ${clock}`
+      : "调度器 还没跑过";
 
   const sync = !state.repo
     ? { text: "这一段还装不了东西", dot: "wait" }
@@ -269,12 +289,15 @@ const cardFor = (row) => {
 
   const chips = el("div", "chips");
   for (const chip of chipRows(row, state.known)) {
+    // 「已停」这条不画成死 chip —— 下面那个开关就是它，两个一起出现会让人以为有两处状态。
+    if (chip.kind === "enabled") continue;
     const node = el("span", "chip");
     node.dataset.state = chip.state === "bad" ? "invalid" : chip.state;
     node.title = chip.title ?? "";
     node.textContent = chip.text;
     chips.append(node);
   }
+  chips.append(enabledToggle(row));
   card.append(chips);
 
   // 红卡要写清「修哪边」：写坏了修这条，引用没了去那边。
@@ -283,13 +306,22 @@ const cardFor = (row) => {
   if (note) card.append(el("p", "card-note", note));
 
   const foot = el("div", "card-foot");
-  const run = el("button", "launch", "▶ 现在跑");
+  const run = el("button", "launch", "▶ 直接起会话");
   run.type = "button";
-  run.title = "跳过触发器判断，立刻起一条会话 —— 测这条组合本身对不对";
+  run.title = "跳过触发器，立刻起一条会话 —— 测这条组合本身（参数、会话模板）对不对";
   run.onclick = (event) => {
     event.stopPropagation();
     launchCombo(row, run);
   };
+  const fire = el("button", "launch", "问触发器");
+  fire.type = "button";
+  fire.title = "真问一次触发器：它说 fire 才起会话 —— 和调度器是同一个判断";
+  fire.onclick = (event) => {
+    event.stopPropagation();
+    trialCombo(row, fire);
+  };
+  const actions = el("div", "foot-actions");
+  actions.append(run, fire);
   const edit = el("button", "launch", "改");
   edit.type = "button";
   edit.onclick = (event) => {
@@ -297,7 +329,7 @@ const cardFor = (row) => {
     openEditor(row);
   };
   const hint = el("span", "card-hint", row.state === "unpublished" ? "只在本地" : "");
-  foot.append(run, edit, hint);
+  foot.append(actions, edit, hint);
   card.append(foot);
 
   const open = () => openDetail(row);
@@ -461,16 +493,20 @@ const renderDetail = (row) => {
 
   const foot = $("dt-foot");
   foot.innerHTML = "";
-  const run = el("button", "btn btn-go", "▶ 现在跑");
+  const run = el("button", "btn btn-go", "▶ 直接起会话");
   run.type = "button";
-  run.title = "跳过触发器判断，立刻起一条会话 —— 测这条组合本身对不对";
+  run.title = "跳过触发器，立刻起一条会话 —— 测这条组合本身（参数、会话模板）对不对";
   run.onclick = () => launchCombo(row, run);
+  const fire = el("button", "btn", "问触发器");
+  fire.type = "button";
+  fire.title = "真问一次触发器：它说 fire 才起会话 —— 和调度器是同一个判断";
+  fire.onclick = () => trialCombo(row, fire);
   const edit = el("button", "btn btn-primary", "改");
   edit.type = "button";
   edit.onclick = () => openEditor(row);
   const close = el("button", "btn", "关闭");
   close.onclick = closeDetail;
-  foot.append(close, run, edit);
+  foot.append(close, fire, run, edit);
 };
 
 const openDetail = (row) => {
@@ -737,6 +773,89 @@ const publishSection = async () => {
 };
 
 /**
+ * 开关。**乐观更新 + 失败回滚**：网络抖一下不该让人盯着灰按钮猜。
+ *
+ * 开关是引擎写的（`/v1/combos/:name/enable|disable` → 组合自己的 `ultimate.json`），
+ * 这一页只翻 UI、只把引擎的话转出来 —— 本地没有第二份「开着没开」。
+ */
+const toggleCombo = async (row, button) => {
+  const next = row.enabled === false;
+  row.enabled = next;
+  paintToggle(button, next, true);
+  try {
+    await api.postRaw(`v1/combos/${encodeURIComponent(row.name)}/${next ? "enable" : "disable"}`);
+    state.combos.set(row.name, { ...(state.combos.get(row.name) ?? {}), enabled: next });
+    toast(`${row.name} 已${next ? "启用" : "停用"} · 下一拍${next ? "开始" : "不再"}问它`, next ? "ok" : null);
+  } catch (error) {
+    row.enabled = !next;
+    toast(`没${next ? "启用" : "停用"}：${error.message}`, "bad");
+  } finally {
+    paintToggle(button, row.enabled !== false, false);
+    render();
+  }
+};
+
+/** 开关长什么样：一个函数画两遍（初次渲染 + 乐观更新后），省得两处文案漂。 */
+const paintToggle = (button, enabled, busy) => {
+  button.dataset.state = enabled ? "ok" : "none";
+  button.setAttribute("aria-pressed", String(enabled));
+  button.disabled = busy;
+  button.textContent = busy ? "…" : enabled ? "开着 · 点停" : "已停 · 点开";
+};
+
+const enabledToggle = (row) => {
+  const button = el("button", "chip chip-toggle");
+  button.type = "button";
+  button.title =
+    row.enabled === false
+      ? "启用：调度器下一拍开始问这条的触发器"
+      : "停用：调度器下一拍不再问它 —— 这里不删任何东西，随时能点回来";
+  paintToggle(button, row.enabled !== false, false);
+  button.onclick = (event) => {
+    event.stopPropagation();
+    toggleCombo(row, button);
+  };
+  return button;
+};
+
+/**
+ * 试跑 = **真问一次触发器**（不是「直接起会话」）。
+ *
+ * 三种结果分开说清楚，因为它们要修的地方完全不同：
+ *   fired:true  → 起来了，给一个「看详情」——详情里「跑过的会话」会多这一条
+ *   fired:false → 触发器说这次不 fire，把 reason 原样摆出来（「还没到点」）
+ *   error       → 触发器自己挂了（没编译 / 超时）——这是引擎原文，不加工
+ *
+ * 超时 20 秒（引擎给的），按钮要防连点：连点会把同一个触发器跑两遍。
+ */
+const trialCombo = async (row, button = null) => {
+  if (button) {
+    button.disabled = true;
+    button.dataset.busy = "1";
+    button.textContent = "问…";
+  }
+  try {
+    const result = await api.postRaw(`v1/combos/${encodeURIComponent(row.name)}/fire`);
+    if (result.error) {
+      toast(`触发器报错：${result.error}`, "bad");
+    } else if (!result.fired) {
+      toast(`没 fire：${result.reason || "触发器说这次不跑"}`, null);
+    } else {
+      const opened = result.launched?.name ?? result.launched?.id ?? "（没给名字）";
+      toast(`起来了：${opened} · 点这里看详情`, "ok", () => openDetail(row));
+    }
+  } catch (error) {
+    toast(`问不动：${error.message}`, "bad");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.dataset.busy = "";
+      button.textContent = "问触发器";
+    }
+  }
+};
+
+/**
  * 手动跑一次：**跳过触发器判断**，直接起一条会话。
  * 这是「fire → 起会话」这条路的测试 / 手动入口 —— 测的是参数、会话模板、展开对不对，
  * 不是触发器「该不该 fire」（那是触发器自己的单测）。
@@ -814,10 +933,23 @@ const render = () => {
   }
 };
 
-const toast = (text) => {
+/**
+ * 一条提示。`tone` 只有两种情况要区分：成了（ok）/ 坏了（bad）—— 别给中间态编颜色。
+ * `action` 是「点这条提示能做一件事」：给的是函数，不是 URL（这一页没有稳定的会话地址）。
+ */
+const toast = (text, tone = null, action = null) => {
   const node = el("div", "toast", text);
+  if (tone) node.dataset.tone = tone;
+  if (action) {
+    node.dataset.action = "1";
+    node.title = "点这里";
+    node.onclick = () => {
+      node.remove();
+      action();
+    };
+  }
   $("toasts").append(node);
-  setTimeout(() => node.remove(), 4000);
+  setTimeout(() => node.remove(), action ? 6000 : 4000);
 };
 
 const bind = () => {
