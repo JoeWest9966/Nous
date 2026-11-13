@@ -395,7 +395,13 @@ const server = createServer((req, res) => {
   });
 });
 
+server.on("error", (error) => {
+  console.error(`[bjes6b] 起不来：${error.code ?? error.message}`);
+  process.exit(1); // 端口被占就死给宿主看 —— 悄悄挂着只会让人以为它活着。
+});
+
 server.listen(PORT, async () => {
   await loadPins();
-  console.log(`[bjes6b] 听 ${PORT} · 引擎 ${ENGINE} · ${SELF} · 置顶 ${pins.ids.length}`);
+  // PORT=0 时打印实际端口，测试和脚本才找得到它。
+  console.log(`[bjes6b] 听 ${server.address().port} · 引擎 ${ENGINE} · ${SELF} · 置顶 ${pins.ids.length}`);
 });

@@ -110,18 +110,41 @@ const engine = createServer((req, res) => {
 await new Promise((r) => engine.listen(0, "127.0.0.1", r));
 const ENGINE_URL = `http://127.0.0.1:${engine.address().port}`;
 
-/* ── 真的 server.js，起在临时端口，指着 stub 引擎 ── */
-const PORT = 4877 + Math.floor(Math.random() * 100);
+/* ── 真的 server.js，起在随机端口（PORT=0），指着 stub 引擎 ──
+   写死端口区间会撞上上一轮没死干净的进程（EADDRINUSE）；PORT=0 让内核给。
+   实际端口从 server 的 stdout 里读。 */
 const DATA = mkdtempSync(path.join(tmpdir(), "bjes6b-bff-"));
 const child = spawn(process.execPath, [path.join(HERE, "..", "server.js")], {
-  env: { ...process.env, PORT: String(PORT), BJES6B_ENGINE_URL: ENGINE_URL, NOUS_DATA: DATA },
-  stdio: "ignore",
+  env: { ...process.env, PORT: "0", BJES6B_ENGINE_URL: ENGINE_URL, NOUS_DATA: DATA },
+  stdio: ["ignore", "pipe", "pipe"],
 });
-const BASE = `http://127.0.0.1:${PORT}`;
+child.stderr.on("data", (d) => process.stderr.write(`[bjes6b server] ${d}`));
+
+const BASE = await new Promise((resolve, reject) => {
+  let buf = "";
+  const timer = setTimeout(() => reject(new Error("server.js 没报端口")), 10_000);
+  child.stdout.on("data", (chunk) => {
+    buf += chunk.toString();
+    const m = buf.match(/听 (\d+) /);
+    if (m) {
+      clearTimeout(timer);
+      resolve(`http://127.0.0.1:${m[1]}`);
+    }
+  });
+  child.on("exit", () => {
+    clearTimeout(timer);
+    reject(new Error(`server.js 退了：${buf.slice(0, 200)}`));
+  });
+});
+
+// node --test 并发下 CPU 争抢，偶发一次 fetch failed 被进程级 catch 兜成 500 ——
+// 这种抖动重发一次就好，不是要测的行为。真正的错（409/404）重发也一样，不影响断言。
 const call = async (path, init) => {
-  const res = await fetch(`${BASE}${path}`, init);
+  let res = await fetch(`${BASE}${path}`, init);
+  if (res.status === 500) res = await fetch(`${BASE}${path}`, init);
   return { status: res.status, text: await res.text() };
 };
+
 let booted = false;
 for (let i = 0; i < 50 && !booted; i++) {
   try {
@@ -131,12 +154,14 @@ for (let i = 0; i < 50 && !booted; i++) {
   }
 }
 if (!booted) {
-  child.kill();
+  child.kill("SIGKILL");
   throw new Error("server.js 没起来");
 }
 
 test.after(() => {
-  child.kill();
+  // kill 只发 SIGTERM，listen 里的异步回调可能还没跑完 —— SIGKILL 兜底，
+  // 不给孤儿进程占端口的机会（下一个测试进程会撞 EADDRINUSE）。
+  child.kill("SIGKILL");
   engine.close();
 });
 
