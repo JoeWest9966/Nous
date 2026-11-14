@@ -15,4 +15,5 @@ import "./pages.test.js";
 import "./unread.test.js";
 
 import "./scheduler.test.js";
+import "./archive.test.mjs";
 import "./combos.test.js";
