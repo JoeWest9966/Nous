@@ -140,6 +140,7 @@ import { createPresets, expandPresetSpec, presetContext, readSections } from "./
 import { readTriggerCatalog } from "./triggers.js";
 import { comboView, trialProblem, withEnabled } from "./combos.js";
 import { createScheduler, runTriggerBinary } from "./scheduler.js";
+import { inspect as inspectSqlite, vacuum as vacuumSqlite } from "./maintenance.js";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 // 多服务器：远端会话的 bash/文件读写走这个 —— ExecutionEnv 接口翻译成 ssh 命令。
@@ -1489,7 +1490,30 @@ const setSelection = async (id) => {
   await writeFile(SELECTION_FILE, JSON.stringify(selection, null, 2) + "\n");
 };
 
-const storage = await openNodeSqliteStorage(path.join(DATA, "agent.sqlite"));
+const SQLITE_PATH = path.join(DATA, "agent.sqlite");
+
+// ── 启动间隙回收空间（VACUUM）────────────────────────────────────────────────
+//
+// 为什么必须在这儿：VACUUM 要独占重写整个文件，而 storage 一打开就全程握着连接。
+// 进程活着时只有「会话全闲」才敢动它（那是端点的事）；重启这一刻没人占着 —— 这是
+// 最便宜的口子，也是归档.md 当初写的「挑静默时刻或重启间隙」。
+//
+// 阈值很保守（见 maintenance.js）：空洞 < 2048 页或 < 20% 就不动。现在这库 900KB，
+// 跑不跑都无所谓 —— 但账要还，等它真长到几十 MB 的时候，这条路径已经在跑了。
+try {
+  const plan = inspectSqlite({ dbPath: SQLITE_PATH });
+  if (plan.should) {
+    const done = vacuumSqlite({ dbPath: SQLITE_PATH });
+    console.log(`[maintenance] VACUUM：空洞 ${plan.freelistCount} 页 → 回收 ${Math.round(done.freedBytes / 1024)} KB`);
+  } else if (plan.freelistCount > 0) {
+    console.log(`[maintenance] 空洞 ${plan.freelistCount} 页（${Math.round(plan.ratio * 100)}%），不到阈值，先留着`);
+  }
+} catch (error) {
+  // 库还没建 / 不是 sqlite / 打不开：这不是启动路径的错，别让它把服务拖死。
+  console.log(`[maintenance] 跳过 VACUUM：${String(error?.message ?? error)}`);
+}
+
+const storage = await openNodeSqliteStorage(SQLITE_PATH);
 const registry = createRegistry();
 registry.install(CodingTools);
 
@@ -2539,6 +2563,36 @@ const route = async (req, res, url) => {
       });
     } catch (error) {
       return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+    }
+  }
+
+  // ── 空间回收（手动）──────────────────────────────────────────────────────────
+  //
+  // GET  = 只看：多少空洞、值不值得。只读连接，永远安全。
+  // POST = 真 VACUUM：**有会话在跑就 409** —— VACUUM 期间库是锁住的，正聊着的人会卡住。
+  //        日常靠启动那一次（见 storage 上面那段），这条是兜底。
+  if (parts[0] === "v1" && parts[1] === "maintenance" && parts[2] === "vacuum") {
+    if ((req.method ?? "GET") === "GET") {
+      try {
+        return json(res, 200, inspectSqlite({ dbPath: SQLITE_PATH }));
+      } catch (error) {
+        return json(res, 500, { error: String(error?.message ?? error) });
+      }
+    }
+    if (req.method !== "POST") return json(res, 405, { error: "空间回收只有 GET / POST" });
+
+    const busy = await busyMap();
+    if (busy.size > 0) {
+      const who = [...busy.keys()].slice(0, 3).join("、");
+      return json(res, 409, {
+        error: `还有 ${busy.size} 个会话在跑（${who}）—— VACUUM 会把库锁住，等它们闲下来，或者等下次重启。`,
+      });
+    }
+    try {
+      const done = vacuumSqlite({ dbPath: SQLITE_PATH });
+      return json(res, 200, done);
+    } catch (error) {
+      return json(res, 409, { error: `VACUUM 没做成（库被占着？）：${String(error?.message ?? error)}` });
     }
   }
 
