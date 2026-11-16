@@ -502,7 +502,13 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
         repo.mutateCategories(
           root,
           { op: body.op, name: body.name, to: body.to },
-          { index: presetsIndex(repo, root), ...NO_PROTECT },
+          {
+            index: presetsIndex(repo, root),
+            // 预设的清单叫 `preset.json`，不是 `nous.json` —— 不传这个，
+            // rename/remove 扫不到任何挂载，等于只改词表（坑：读的时候还会被挂载补回来）。
+            manifest: kit.manifest,
+            ...NO_PROTECT,
+          },
         ),
       );
       const loadError = await reloadRoster(presets);

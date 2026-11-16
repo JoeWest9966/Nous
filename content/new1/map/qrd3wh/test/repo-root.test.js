@@ -190,3 +190,51 @@ test("类别保护是参数：默认护 Basics（扩展仓），传 protect: [] 
     await cleanup(root);
   }
 });
+
+test("mutateCategories 得知道这一仓的清单叫 preset.json，rename/remove 才动得到挂载", async () => {
+  // 踩过的坑：`readManifest` 默认只认 `nous.json`，而预设段的清单是 `preset.json`。
+  // 漏了 `manifest` 时 rename/remove 退化成「只改词表」—— 读的时候引擎又拿挂载把旧名字
+  // 补回词表（改名白改），remove 更狠：老名字从词表消失、preset.json 还挂着它，
+  // `index.mjs` 校验会拦住整仓所有写操作（「类别缺一段」）。
+  const root = await makeRepo({
+    files: {
+      "categories.json": JSON.stringify({ categories: ["工程"] }),
+      "deep-dive/preset.json": JSON.stringify({ v: 1, name: "deep-dive", summary: "s", category: ["工程"] }),
+    },
+  });
+  const opts = { protect: [], index: async () => {}, manifest: "preset.json" };
+  const spec = async () => JSON.parse(await readFile(`${root}/deep-dive/preset.json`, "utf8"));
+  try {
+    const renamed = await repo.mutateCategories(root, { op: "rename", name: "工程", to: "zz-eng" }, opts);
+    assert.deepEqual(renamed.categories, ["zz-eng"]);
+    assert.equal(renamed.touched, 1, "rename 应该摸到那一条预设");
+    assert.deepEqual((await spec()).category, ["zz-eng"], "预设上的挂载必须跟着改名");
+
+    const removed = await repo.mutateCategories(root, { op: "remove", name: "zz-eng" }, opts);
+    assert.deepEqual(removed.categories, []);
+    assert.deepEqual((await spec()).category, [], "remove 得把挂载摘掉，别留悬挂引用");
+  } finally {
+    await cleanup(root);
+  }
+});
+
+test("不传 manifest 就只改词表（这条是那个坑的形状，改坏了这里会红）", async () => {
+  const root = await makeRepo({
+    files: {
+      "categories.json": JSON.stringify({ categories: ["工程"] }),
+      "deep-dive/preset.json": JSON.stringify({ v: 1, name: "deep-dive", summary: "s", category: ["工程"] }),
+    },
+  });
+  try {
+    const renamed = await repo.mutateCategories(root, { op: "rename", name: "工程", to: "zz-eng" }, {
+      protect: [],
+      index: async () => {},
+    });
+    assert.deepEqual(renamed.categories, ["zz-eng"]);
+    assert.equal(renamed.touched, 0, "默认 manifest 是 nous.json，扫不到 preset.json —— 这正是那个 bug");
+    const spec = JSON.parse(await readFile(`${root}/deep-dive/preset.json`, "utf8"));
+    assert.deepEqual(spec.category, ["工程"], "挂载没动：读的时候旧名会被补回词表");
+  } finally {
+    await cleanup(root);
+  }
+});
