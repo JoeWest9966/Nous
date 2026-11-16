@@ -19,12 +19,17 @@ WHAT="${1:-all}"
 # 0. 提货体检：crates 一个都没有时，别让人误以为"全都过了"
 step "0. 提货体检"
 if [ -z "$(ls -A crates 2>/dev/null)" ]; then
-	skip "crates/ 是空的 —— 还没提货，下面三项全部跳过"
-	bad "SOURCES.md 里仍有「待提货」的行，本库还不构成可验收状态"
-	printf '\n\033[31m未通过：尚未提货\033[0m\n'
-	exit 2
+	if [ "$WHAT" = ledger ]; then
+		skip "crates/ 是空的 —— 只跑台账体检（ledger）"
+	else
+		skip "crates/ 是空的 —— 还没提货，下面三项全部跳过"
+		bad "SOURCES.md 里仍有「待提货」的行，本库还不构成可验收状态"
+		printf '\n\033[31m未通过：尚未提货\033[0m\n'
+		exit 2
+	fi
+else
+	ok "crates/ 已存在 $(ls crates | wc -l) 个 crate"
 fi
-ok "crates/ 已存在 $(ls crates | wc -l) 个 crate"
 
 # 1. 单元测试 + 一致性套件
 if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
@@ -80,11 +85,17 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ]; then
 	fi
 fi
 
-# 4. 台账体检：不许残留「待提货」的路径却已经在 crates/ 里出现
-if [ "$WHAT" = all ]; then
+# 4. 台账体检：四件事机器判，不靠自觉
+#   4a 「待提货」的行不许已经有代码
+#   4b 每一行的上游路径都要能用 git cat-file 在 pin 的那个 tag 上对上
+#   4c 占位桩：todo!()/unimplemented!() 必须 0；注释里的 占位/stub/FIXME 只报数
+#   4d 台账的四列 + 状态值不许出现别的取值
+if [ "$WHAT" = all ] || [ "$WHAT" = ledger ]; then
 	step "4. 台账体检"
+
+	# 4a
 	STALE=$(python3 - <<'PY'
-import re,os
+import os
 rows=[l for l in open('SOURCES.md',encoding='utf-8') if l.startswith('| `crates/') or l.startswith('| `vendor/')]
 n=0
 for r in rows:
@@ -96,7 +107,64 @@ for r in rows:
 print('' if n else 'clean')
 PY
 )
-	if [ "$STALE" = clean ]; then ok "台账和代码一致"; else bad "这些路径已存在但台账还写「待提货」：$STALE"; fi
+	if [ "$STALE" = clean ]; then ok "台账状态和代码一致"; else bad "这些路径已存在但台账还写「待提货」：$STALE"; fi
+
+	# 4b + 4d：把每行拆成 TSV 交给 bash 逐行 cat-file
+	ROWS=$(python3 - <<'PY'
+import re,sys
+src_map={'rpi@v0.24.2':('/tmp/pi-rust','v0.24.2'),'pi@v1.5.2':('/tmp/pi-check','v1.5.2')}
+STATUS={'待提货','已提货','已改'}
+bad_status=[]
+for raw in open('SOURCES.md',encoding='utf-8'):
+    if not raw.startswith('| `'): continue
+    cells=[c.strip() for c in raw.strip().strip('|').split('|')]
+    if len(cells)!=5: continue
+    local, source, upstream, change, status = cells
+    if status not in STATUS:
+        bad_status.append(f'{local}\t{status}'); continue
+    if source not in src_map:
+        print(f'SKIP\t{source}\t{upstream}'); continue
+    repo,tag = src_map[source]
+    upstream = upstream.strip('`')
+    # {a,b} 展开；/** 收到父目录
+    m=re.search(r'\{([^}]*)\}', upstream)
+    paths=[upstream[:m.start()]+alt+upstream[m.end():] for alt in m.group(1).split(',')] if m else [upstream]
+    for p in paths:
+        if p.endswith('/**'): p=p[:-3]
+        print(f'CHECK\t{repo}\t{tag}\t{p}')
+for b in bad_status: print('BADSTATUS\t'+b)
+PY
+)
+	MISSING=0; CHECKED=0; SKIPPED=0
+	while IFS=$'\t' read -r kind a b2 c; do
+		case "$kind" in
+		CHECK)
+			if [ ! -d "$a" ]; then SKIPPED=$((SKIPPED+1)); continue; fi
+			CHECKED=$((CHECKED+1))
+			if ! git -C "$a" cat-file -e "$b2:$c" 2>/dev/null; then
+				bad "台账对不上上游：$b2:$c（$a）"; MISSING=$((MISSING+1))
+			fi
+			;;
+		SKIP) SKIPPED=$((SKIPPED+1)) ;;
+		BADSTATUS) bad "状态值不在三个值里：$a → $b2" ;;
+		esac
+	done <<< "$ROWS"
+	if [ $MISSING -eq 0 ]; then ok "$CHECKED 行上游路径全部对上（$SKIPPED 行跳过：来源不是 pi/pi-rust，或本地 checkout 不在）"; fi
+	if [ $CHECKED -eq 0 ] && [ $SKIPPED -gt 0 ]; then skip "没有可核对的行 —— /tmp/pi-rust 或 /tmp/pi-check 不在"; fi
+
+	# 4c 占位桩
+	if [ -d crates ]; then
+		if command -v rg >/dev/null 2>&1; then RG=rg; else RG="grep -rnE"; fi
+		if [ "$RG" = rg ]; then
+			TODO=$($RG -n 'todo!\(|unimplemented!\(' crates 2>/dev/null | wc -l)
+			NOTES=$($RG -n '^\s*//.*(占位|stub|FIXME)' crates 2>/dev/null | wc -l)
+		else
+			TODO=$(grep -rnE 'todo!\(|unimplemented!\(' crates 2>/dev/null | wc -l)
+			NOTES=$(grep -rnE '^\s*//.*(占位|stub|FIXME)' crates 2>/dev/null | wc -l)
+		fi
+		[ "$TODO" -eq 0 ] && ok "没有 todo!()/unimplemented!() 占位桩" || bad "有 $TODO 行 todo!()/unimplemented!() —— 占位桩不算实现"
+		ok "注释里的 占位/stub/FIXME：$NOTES 行（只报数，逐条看）"
+	fi
 fi
 
 printf '\n'
