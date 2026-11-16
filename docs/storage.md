@@ -183,6 +183,36 @@ with the transaction.`
 `record_ids`，哪怕记录被删也永不再分配（`next_id` 只向前）。判据：分 5 个 → 删 3 条 →
 重开 → 下一个是 7，台账里 entry 仍是 5 条。
 
+### 10.3 12c 落地的部分（文档修订与复制）
+
+| 文件 | 内容 | 判据 |
+|---|---|---|
+| `documents.rs` | `DocumentPoint`（`Current` / `At(seq)`）、`StoredDocument`、`materialize`：找最新 base → tail 逐条校验版本 → 逐条 apply | 见下五条 |
+| `writes.rs` | `StorageWrite::DocumentCopy` / `CopySource` / `DocumentAction.copy`；`Refusal::CopySourceChanged` / `CopyRejected` | 同批改源 = 拒绝；源形状不符 = 拒绝 |
+| `commit.rs` | `resolve_copies`：有复制时**先 flush 前面已接受的批**再读源（源才看得见）；`Sqlite` 错往上抛、其余算拒绝 | 复制出来的是**一条 base**，`deltas_since_base == 0` |
+
+**读文档的四条判定**（`tests/documents.rs`）：
+
+1. **跨版本没有 base = 明确失败**（`VersionCrossing`）：revision 序列里出现 `version != base.version`
+   的 delta，说明库被写坏或我们的写入漏了 base —— 不猜、不按错的版本硬 apply。
+2. **只留最新态的文档不能读过去**（`HistoryNotRetained`）：session / task 作用域与 `history: "latest"`
+   的文档没有历史，给「最新的值当作过去的」就是伪造。
+3. **在世是左闭右开**：退役那个 seq 上已经读不到，之前读得到。
+4. **delta 存的是 op 数组**，读时用 `nous-chord` 的 `Decoder` + `TrustedOps::from_decoded` 再 apply ——
+   信任边界只有一处（存进去的 ops 就是当初调用方给的 wire 形式）。
+
+**带 emoji 的往返**：`an_emoji_rewrite_round_trips_through_a_base_and_a_delta` 的改写里含
+ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是长度相等 —— `t` 的计数是 UTF-16 码元，
+截在代理对中间要整字符丢弃。
+
+**真数据上的第一跑**：`every_fixture_document_replays_and_survives_a_delta_round_trip` 把 fixture 的
+**961 份文档**全部重放一遍，并把每一份的值折成 delta 再重放，逐字段比；`truncation_counts_utf16_units_on_real_fixture_text`
+在真中文串上做 `t 1`，断言正好少一个字符（fixture 不在时跳过并打印，不假绿）。
+
+**「500ms 一个窗口 = 一条 op」**：窗口化在调用方（harness 的 `persistWithinMs`），存储侧看到的是
+「一个窗口一条 delta revision」。判据在 `a_window_of_streamed_appends_is_one_op_and_one_revision`：
+纯增长的两段文字折成**一条** `a`，一个窗口一条 revision，两个窗口两条。
+
 ## 11. 记录字段的对齐
 
 对外记录的字段名由 `wire.md` 决定；内部存的东西可以和它不同，但**同名字段必须同义**。`pi.*` 记录里 assistant 消息的字段名（`stopReason` / `responseId` / `responseModel` / `rawStopReason` / `usage`）来自上游，`nous-ai` 的 `#[serde(rename_all = "camelCase")]` 已经对齐，改这里之前先看 `wire.md` 对应段。

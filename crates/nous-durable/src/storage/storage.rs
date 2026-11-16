@@ -24,7 +24,8 @@ use serde_json::Value;
 
 use nous_chord::sqlite::{SqliteDatabase, SqliteExecutor, SqliteValue as Cell};
 
-use super::commit::{CommitResult, CommitState, ConversationQuery, PendingWrites};
+use super::commit::{resolve_copies, CommitResult, CommitState, ConversationQuery, PendingWrites};
+use super::documents::{materialize, DocumentPoint, StoredDocument};
 use super::cursor::{cut_page, scan_start, Cursor, Page, ScanOrder};
 use super::sqlite::rows::{parse_json, required_i64};
 use super::sqlite::schema::SqliteSchema;
@@ -128,6 +129,15 @@ impl Storage {
                     if let Some(refusal) = state.check(writes, &actions)? {
                         refused = Some(refusal);
                         break;
+                    }
+                    let mut actions = actions;
+                    // 复制要读源文档：先把前面已接受的批写下去，源才看得见（上游 `checkBatch`）。
+                    if actions.values().any(|action| action.needs_copy()) {
+                        pending.flush(tx, &schema)?;
+                        if let Some(refusal) = resolve_copies(tx, &schema, &mut actions)? {
+                            refused = Some(refusal);
+                            break;
+                        }
                     }
                     let seq = next_seq;
                     next_seq += 1;
@@ -279,6 +289,20 @@ impl Storage {
         Ok(Ok(cut_page(records, limit, order, |record| {
             record.get("id").and_then(Value::as_i64).unwrap_or(0)
         })))
+    }
+
+    /// 一份文档在 `at` 上的值（base + 其后的 delta 重放）。不存在 / 不在世 → `None`。
+    pub fn materialize(&self, id: i64, at: DocumentPoint) -> Result<Option<StoredDocument>> {
+        materialize(self.store.db(), self.schema(), id, at)
+    }
+
+    /// 一份文档的记录（不重放内容）。
+    pub fn document(&self, id: i64) -> Result<Option<Value>> {
+        let row = self.store.db().get(
+            &format!("SELECT record FROM {} WHERE id = ?", self.schema().table("documents")),
+            &[Cell::Integer(id)],
+        )?;
+        row.as_ref().map(record_of).transpose()
     }
 
     fn schema(&self) -> &SqliteSchema {

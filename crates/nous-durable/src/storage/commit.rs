@@ -36,8 +36,8 @@ use super::sqlite::tables::{
     DOCUMENT_COLUMNS, DOCUMENT_REVISION_COLUMNS,
 };
 use super::writes::{
-    check_documents, check_ids, prepare_document_actions, DocumentAction, DocumentContent, Id,
-    Refusal, Seq, StorageWrite, TableName,
+    check_documents, check_ids, prepare_document_actions, CopySource, DocumentAction,
+    DocumentContent, Id, Refusal, Seq, StorageWrite, TableName,
 };
 use crate::error::{Result, StorageError};
 
@@ -465,6 +465,72 @@ impl PendingWrites {
     }
 }
 
+/// 把一批里的复制解成 base：读源文档在 `source.at` 上的值（上游 `resolveCopies`）。
+///
+/// 顺序照抄：**先 flush 前面已接受的批**，源才读得到 —— 一次调用里的多条 fork 于是每条一次读，
+/// 语句数按 fork 数走，不按批数走。
+///
+/// 失败分两类：数据库自己的失败（[`StorageError::Sqlite`]）原样往上抛（整次回滚）；其余
+/// （源不存在 / 不在世 / 没留历史 / 形状对不上 / delta 解不出来）是**拒绝**，不抛。
+pub(crate) fn resolve_copies(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    actions: &mut HashMap<Id, DocumentAction>,
+) -> Result<Option<Refusal>> {
+    let copies: Vec<(Id, CopySource, Value)> = actions
+        .iter()
+        .filter_map(|(id, action)| {
+            let copy = action.copy?;
+            let create = action.create.clone()?;
+            Some((*id, copy, create))
+        })
+        .collect();
+    for (id, source, create) in copies {
+        let stored = match super::documents::materialize(executor, schema, source.id, source.at) {
+            Ok(stored) => stored,
+            Err(error @ StorageError::Sqlite(_)) => return Err(error),
+            Err(error) => {
+                return Ok(Some(Refusal::CopyRejected {
+                    document_id: id,
+                    reason: error.to_string(),
+                }))
+            }
+        };
+        let Some(stored) = stored else {
+            return Ok(Some(Refusal::CopyRejected {
+                document_id: id,
+                reason: format!("fork source document {} cannot be read", source.id),
+            }));
+        };
+        // 源与目标必须是「同一类文档的另一个 id」：换 scope 就不是复制，是另造一份。
+        let matches = stored.record.get("scope").and_then(|scope| scope.get("kind")).and_then(Value::as_str)
+            == Some("conversation")
+            && create.get("scope").and_then(|scope| scope.get("kind")).and_then(Value::as_str)
+                == Some("conversation")
+            && ["kind", "key", "history", "fork"].iter().all(|field| {
+                stored.record.get(*field).unwrap_or(&Value::Null)
+                    == create.get(*field).unwrap_or(&Value::Null)
+            });
+        if !matches {
+            return Ok(Some(Refusal::CopyRejected {
+                document_id: id,
+                reason: format!(
+                    "fork source document {} does not match the copied record",
+                    source.id
+                ),
+            }));
+        }
+        if let Some(action) = actions.get_mut(&id) {
+            action.copy = None;
+            action.content = Some(DocumentContent::Base {
+                version: stored.version,
+                value: stored.value,
+            });
+        }
+    }
+    Ok(None)
+}
+
 /// 预先算好一批写会碰到的文档动作（`prepareDocumentActions` 的可失败版）。
 pub fn prepare(writes: &[StorageWrite]) -> Result<std::result::Result<HashMap<Id, DocumentAction>, Refusal>> {
     match prepare_document_actions(writes) {
@@ -587,6 +653,7 @@ mod tests {
                 id,
                 DocumentAction {
                     create: None,
+                    copy: None,
                     content: Some(base.clone()),
                     retire: false,
                 },
@@ -596,6 +663,7 @@ mod tests {
                 id,
                 DocumentAction {
                     create: None,
+                    copy: None,
                     content: Some(next.clone()),
                     retire: false,
                 },

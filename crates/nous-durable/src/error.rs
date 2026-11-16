@@ -15,6 +15,14 @@ pub enum StorageError {
     WriterMismatch { found: Option<String> },
     /// 要读的文档最新一条 revision 是 `delta`，本版还不会重放（12c）。
     UndecodedDelta { document_id: i64 },
+    /// 只留最新态的文档没有历史可读（要过去的点 = 伪造）。
+    HistoryNotRetained { document_id: i64 },
+    /// 文档一条 base 都没有，可它的值只能从 base 起算。
+    MissingBase { document_id: i64 },
+    /// revision 序列里出现跨版本的 delta：中间缺一个 base。
+    VersionCrossing { document_id: i64 },
+    /// 存着的 delta 解不出来（不是合法的 op 数组 / op 形状不对 / 路径不可解）。
+    DeltaDecode { document_id: i64, message: String },
     /// 库里的 seq 已经走到 `floor`，`next_seq` 却是 `next_seq` —— 接着写就是复用旧号。
     SeqRegression { next_seq: i64, floor: i64 },
     /// `durable_metadata` 的 singleton 行不在，或它的值读不出来。
@@ -55,6 +63,20 @@ impl std::fmt::Display for StorageError {
                 f,
                 "document {document_id} has a delta as its newest revision; delta replay is not wired yet"
             ),
+            StorageError::HistoryNotRetained { document_id } => write!(
+                f,
+                "Document {document_id} does not retain historical content"
+            ),
+            StorageError::MissingBase { document_id } => {
+                write!(f, "Document {document_id} is missing a required base")
+            }
+            StorageError::VersionCrossing { document_id } => write!(
+                f,
+                "Document {document_id} crosses a stored version boundary without a base"
+            ),
+            StorageError::DeltaDecode { document_id, message } => {
+                write!(f, "Document {document_id} has an undecodable delta: {message}")
+            }
             StorageError::SeqRegression { next_seq, floor } => write!(
                 f,
                 "next_seq {next_seq} would reuse a seq already stored (the highest stored seq is {floor})"

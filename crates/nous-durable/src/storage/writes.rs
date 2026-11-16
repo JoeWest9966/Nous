@@ -13,8 +13,12 @@
 //! 的结果一起回去（上游 `CommitResult.refused`）。数据库自己的失败（约束、IO、抢锁）是
 //! [`StorageError`](crate::StorageError)，整批回滚。
 //!
-//! `document.copy` 不在这一版：它要把源文档在某个点上的值**materialize** 出来（base + 后续
-//! delta 重放），那是 12c 的活。这里没有这个变体，于是提交根本收不到它 —— 比收下再拒绝干净。
+//! ## `document.copy`（12c）
+//!
+//! 复制 = 「把源文档在 `source.at` 上的值 materialize 出来，当成新文档的第一条 base」。
+//! 于是它同时是 [创建](StorageWrite::DocumentCopy) 和 [内容](DocumentContent::Base)，
+//! 但内容要**在事务里读源文档之后**才确定 —— 见 [`DocumentAction::copy`] 与
+//! `commit::resolve_copies`。
 
 use std::collections::HashMap;
 use std::fmt;
@@ -91,7 +95,17 @@ pub enum StorageWrite {
     Task(Value),
     Submission(Value),
     /// 新造一份文档。`record` 里**没有** `createdAt` / `retiredAt`，由提交盖章。
-    DocumentCreate { id: Id, record: Value, content: DocumentContent },
+    DocumentCreate {
+        id: Id,
+        record: Value,
+        content: DocumentContent,
+    },
+    /// 新造一份文档，值来自另一份文档在 `source.at` 上的 materialize 结果。
+    DocumentCopy {
+        id: Id,
+        record: Value,
+        source: CopySource,
+    },
     DocumentChange { id: Id, content: DocumentContent },
     DocumentRetire { id: Id },
 }
@@ -108,18 +122,37 @@ impl StorageWrite {
             StorageWrite::Submission(record) => {
                 Some((required_i64(record, "id")?, TableName::Submission))
             }
-            StorageWrite::DocumentCreate { id, .. } => Some((*id, TableName::Document)),
+            StorageWrite::DocumentCreate { id, .. } | StorageWrite::DocumentCopy { id, .. } => {
+                Some((*id, TableName::Document))
+            }
             StorageWrite::DocumentChange { .. } | StorageWrite::DocumentRetire { .. } => None,
         })
     }
 }
 
-/// 一批写对一份文档做了什么：创建（含内容）、改内容、退役。同一份文档在一批里最多各一次。
+/// 复制的源：哪份文档、哪个点。上游 `document.copy` 的 `source`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopySource {
+    pub id: Id,
+    pub at: super::documents::DocumentPoint,
+}
+
+/// 一批写对一份文档做了什么：创建（含内容）、复制（内容待定）、改内容、退役。
+/// 同一份文档在一批里最多各一次。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DocumentAction {
     pub create: Option<Value>,
+    /// 复制还没解出来的源；解开之后 `content` 会变成一条 base。
+    pub copy: Option<CopySource>,
     pub content: Option<DocumentContent>,
     pub retire: bool,
+}
+
+impl DocumentAction {
+    /// 这一批要不要在事务里读数据库（只有复制要）。
+    pub fn needs_copy(&self) -> bool {
+        self.copy.is_some()
+    }
 }
 
 /// 把一批写按文档归拢。上游 `prepareDocumentActions`：同一份文档两条内容命令、或退役两次 ——
@@ -127,22 +160,29 @@ pub struct DocumentAction {
 pub fn prepare_document_actions(writes: &[StorageWrite]) -> Result<HashMap<Id, DocumentAction>, Refusal> {
     let mut actions: HashMap<Id, DocumentAction> = HashMap::new();
     for write in writes {
-        let (id, is_create) = match write {
-            StorageWrite::DocumentCreate { id, .. } => (*id, true),
-            StorageWrite::DocumentChange { id, .. } | StorageWrite::DocumentRetire { id } => (*id, false),
+        let id = match write {
+            StorageWrite::DocumentCreate { id, .. } | StorageWrite::DocumentCopy { id, .. } => *id,
+            StorageWrite::DocumentChange { id, .. } | StorageWrite::DocumentRetire { id } => *id,
             _ => continue,
         };
         let action = actions.entry(id).or_default();
         match write {
             StorageWrite::DocumentCreate { record, content, .. } => {
-                if action.create.is_some() || action.content.is_some() {
+                if action.create.is_some() || action.content.is_some() || action.copy.is_some() {
                     return Err(Refusal::DuplicateContent { document_id: id });
                 }
                 action.create = Some(record.clone());
                 action.content = Some(content.clone());
             }
+            StorageWrite::DocumentCopy { record, source, .. } => {
+                if action.create.is_some() || action.content.is_some() || action.copy.is_some() {
+                    return Err(Refusal::DuplicateContent { document_id: id });
+                }
+                action.create = Some(record.clone());
+                action.copy = Some(*source);
+            }
             StorageWrite::DocumentChange { content, .. } => {
-                if action.content.is_some() {
+                if action.content.is_some() || action.copy.is_some() {
                     return Err(Refusal::DuplicateContent { document_id: id });
                 }
                 action.content = Some(content.clone());
@@ -155,7 +195,6 @@ pub fn prepare_document_actions(writes: &[StorageWrite]) -> Result<HashMap<Id, D
             }
             _ => unreachable!("已经过滤过"),
         }
-        let _ = is_create;
     }
     Ok(actions)
 }
@@ -183,6 +222,10 @@ pub enum Refusal {
     DeltaWithoutBase { document_id: Id },
     /// delta 的版本接不上最新一条 revision。
     DeltaVersionMismatch { document_id: Id, previous: i64, wanted: i64 },
+    /// 复制的源文档在同一批里也被改了 —— 那这一批的复制没有确定的基准。
+    CopySourceChanged { document_id: Id },
+    /// 复制的源读不出来（不存在、不在世、没留历史）或形状对不上。
+    CopyRejected { document_id: Id, reason: String },
     /// 同一个地址（kind + scope + key）已经有在世的化身了。
     AddressAlreadyCurrent { address: String },
     /// 游标不是本库编出来的。
@@ -215,6 +258,13 @@ impl fmt::Display for Refusal {
                 f,
                 "Document {document_id} version transition requires a base ({previous} -> {wanted})"
             ),
+            Refusal::CopySourceChanged { document_id } => write!(
+                f,
+                "Document copy {document_id} source is changed in the copy batch"
+            ),
+            Refusal::CopyRejected { document_id, reason } => {
+                write!(f, "Document copy {document_id} was rejected: {reason}")
+            }
             Refusal::AddressAlreadyCurrent { address } => {
                 write!(f, "Document address already has a current incarnation: {address}")
             }
@@ -281,6 +331,12 @@ pub(crate) fn check_documents(
 ) -> crate::error::Result<Option<Refusal>> {
     let mut live: HashMap<String, i64> = HashMap::new();
     for (id, action) in actions {
+        // 复制在同一批里改自己的源：这一批的基准不确定，直接拒绝（上游先查这条）。
+        if let Some(copy) = &action.copy {
+            if actions.contains_key(&copy.id) {
+                return Ok(Some(Refusal::CopySourceChanged { document_id: *id }));
+            }
+        }
         let stored = existing.get(id);
         if action.create.is_none() && stored.is_none() {
             return Ok(Some(Refusal::UnknownDocument { document_id: *id }));
@@ -421,6 +477,7 @@ mod tests {
                     version: 2,
                     ops: json!([]),
                 }),
+                copy: None,
                 retire: false,
             },
         )]);
@@ -455,6 +512,7 @@ mod tests {
             DocumentAction {
                 create: Some(record(6)),
                 content: None,
+                copy: None,
                 retire: false,
             },
         )]);

@@ -15,6 +15,7 @@
 //! `nous_chord::sqlite::apply_sqlite_migrations` 的 `SchemaTooNew` 保证，不是约定。
 
 pub mod commit;
+pub mod documents;
 pub mod cursor;
 pub mod import;
 pub mod sessions;

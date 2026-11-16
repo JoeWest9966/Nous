@@ -15,4 +15,7 @@ pub use error::{Result, StorageError};
 pub use storage::commit::{CommitResult, CommitState, ConversationQuery, PendingWrites};
 pub use storage::cursor::{Cursor, Page, ScanOrder};
 pub use storage::storage::{EntryQuery, Storage};
-pub use storage::writes::{DocumentAction, DocumentContent, Id, Refusal, Seq, StorageWrite, TableName};
+pub use storage::documents::{DocumentPoint, StoredDocument};
+pub use storage::writes::{
+    CopySource, DocumentAction, DocumentContent, Id, Refusal, Seq, StorageWrite, TableName,
+};
