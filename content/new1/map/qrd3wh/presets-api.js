@@ -691,6 +691,26 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
       return send(res, 200, { ...(await writeResult(repo, repoRoot, result)), name });
     }
 
+    if (route[0] === "history") {
+      if (method !== "GET") return send(res, 405, { error: "提交历史只有 GET" });
+      const name = String(url.searchParams.get("name") ?? "").trim();
+      const rel = `${scope}/${name}`;
+      // 只看一次提交在某一个文件上的改动（父 → 该提交）。`path` 默认 preset.json。
+      if (route[1] === "diff") {
+        const hash = String(url.searchParams.get("hash") ?? "").trim();
+        if (!hash) return send(res, 400, { error: "要指定 hash" });
+        const file = String(url.searchParams.get("path") ?? "preset.json");
+        const after = await repo.gitFileAt(repoRoot, `${rel}/${file}`, hash);
+        const before = await repo.gitFileAt(repoRoot, `${rel}/${file}`, `${hash}^`);
+        return send(res, 200, { name, hash, path: file, before, after });
+      }
+      if (!name) return send(res, 400, { error: "要指定 name" });
+      const raw = Number(url.searchParams.get("limit") ?? 20);
+      const limit = Number.isFinite(raw) ? Math.min(Math.max(Math.trunc(raw), 1), 100) : 20;
+      const commits = await repo.gitHistory(repoRoot, rel, { limit });
+      return send(res, 200, { name, path: rel, commits });
+    }
+
     if (route[0] === "pending") {
       if (method !== "GET") return send(res, 405, { error: "待同步清单只有 GET" });
       if (route[1] === "diff") {

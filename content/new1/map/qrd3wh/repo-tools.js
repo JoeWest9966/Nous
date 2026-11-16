@@ -1141,3 +1141,37 @@ export const syncRepo = async (
     }
   }
 };
+
+/**
+ * 某个目录的提交历史（新到旧）。`rel` 相对仓根（`Session-Template/asd`）。
+ *
+ * 按**目录**取，不是按文件：一条预设的 `preset.json` / `PROMPT.md` 一起改时，历史该是一份。
+ * git 没有「重命名」的概念，我们也不假装有 —— 删了再建回来的同名目录，历史接着算。
+ */
+export const gitHistory = async (root, rel, { limit = 20 } = {}) => {
+  const SEP = "\x1f";
+  const out = await run(
+    "git",
+    ["-C", root, "log", `-n${limit}`, `--format=%H${SEP}%h${SEP}%aI${SEP}%an${SEP}%s`, "--", rel],
+    { timeout: 20_000 },
+  );
+  return out.stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, short, at, author, message] = line.split(SEP);
+      return { hash, short, at, author, message };
+    });
+};
+
+/**
+ * 某个文件在某个版本里的原文。**没有就是 `null`**（那个版本还没这个文件），
+ * 和「有，但是空的」是两件事 —— 前者画 diff 时要标「新文件」。
+ */
+export const gitFileAt = async (root, rel, rev) => {
+  try {
+    return (await run("git", ["-C", root, "show", `${rev}:${rel}`], { timeout: 20_000 })).stdout;
+  } catch {
+    return null;
+  }
+};
