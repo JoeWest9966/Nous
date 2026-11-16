@@ -108,7 +108,7 @@ nous-durable       → chord, ai, wire, telemetry, env
 | 想 `git pull` 上游或 `cargo add` pi-rust | 走 4.1 读 changelog；真要代码就**提货**，抄进来记 `SOURCES.md` |
 | 想拿 chord 的整个包 | 只六个目录。缺什么先问"这个功能 Nous 用得到吗"，用不到就停 |
 | 想 port `pi-ai` / `rpi-harness` / `rpi-cli` / `rpi-tui` / `rpi-extensions` | `nous-ai` 已经是 `rpi-ai` 的冻结版；其余四个与本库无关 |
-| 想沿用上游的表结构、`record` 形状、`durable_schema.version` | 表结构、版本号、迁移链由本库自己定，写进 `docs/storage.md` |
+| 想沿用上游的表结构、`record` 形状、`durable_schema.version` | 表结构和 `record` 形状**照拄**上游（DDL 取 `storage/sqlite/migrations.ts` 的 v2 + 一列 `writer`；`record` 存 camelCase JSON）；**版本号从 1 数起、迁移链单向**、分拆列规则本库自己定。全部定在 `docs/storage.md`，改这三样就是改契约，先改文档 |
 | 想用"类型兼容"保证互通 | 互通只靠**序列化后的字段名**（`camelCase`，`Option` 字段 `skip_serializing_if`）。加一个字段先看 `wire.md` |
 | 想顺手"改进"上游代码的风格 | 冻结的前 45 天里不改。改了要记 `SOURCES.md` 的"改了什么"列 |
 
