@@ -29,8 +29,17 @@ const MAX_ARRAY_CHARACTERS: usize = 512 * 1024;
 /// `sql` 的写法约定：参数在 `json_each(?)` 里出现，例如
 /// `SELECT * FROM entries WHERE id IN (SELECT value FROM json_each(?))`。
 pub fn read_rows(executor: &dyn SqliteExecutor, sql: &str, values: &[Cell]) -> Result<Vec<SqliteRow>> {
+    read_rows_parts(executor, sql, values.iter().map(|cell| cell_json(cell).to_string()).collect())
+}
+
+/// 同 [`read_rows`]，但每一段自己就是一段 JSON —— 用于「数组里装数组」的查询（地址元组）。
+pub fn read_rows_parts(
+    executor: &dyn SqliteExecutor,
+    sql: &str,
+    parts: Vec<String>,
+) -> Result<Vec<SqliteRow>> {
     let mut rows = Vec::new();
-    for array in json_arrays(values.iter().map(|cell| cell_json(cell).to_string()).collect())? {
+    for array in json_arrays(parts)? {
         rows.extend(executor.all(sql, &[array.into()])?);
     }
     Ok(rows)

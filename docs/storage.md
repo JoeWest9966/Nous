@@ -131,6 +131,28 @@ tasks / submissions / durable_metadata / durable_schema
 **认门的两条边界**（都有测试）：上游 v2 库**写模式打不开**（版本过新）、缺 `writer` 列的库
 **写模式也打不开**（`found: None`），两者**只读都能读**。
 
+### 10.2 12b 落地的部分（提交语义）
+
+| 文件 | 内容 | 判据 |
+|---|---|---|
+| `commit.rs` | `CommitState`（三类状态各一条语句 + 一次 join 读全）、`PendingWrites`（按表攒净效果）、拒绝语义（不用 savepoint） | 一次提交 500 行仍是几条语句；只读态文档只留最新 base、可回放的全留 |
+| `writes.rs` | `StorageWrite` 七种、`claim`、`prepareDocumentActions`、`checkIds` / `checkDocuments`、`Refusal` 十二种 | id 重复/串类型、两条内容命令、delta 版本接不上、同地址两个在世化身，各一条单测 |
+| `storage.rs` | `BEGIN IMMEDIATE` 事务壳、seq 盖章、回执、`mint_id`、会话/entry 扫描 | 见下三条负例 + 分配器 + 游标 |
+| `cursor.rs` | 不透明游标（`a`/`d` + base36 id）、`scan_start`、`cut_page` | 编造的游标 / 方向不一致 = 拒绝 |
+
+**三条负例**（`tests/commit_semantics.rs`，票面点名）：
+
+1. **半写回滚整批不可见**：第 1 批合法、第 2 批撞 `tasks.status` 的 CHECK → 整次调用失败，
+   会话 / 台账 / `next_seq` 一样都没动。（对照：只是「被拒绝」时，前面的批照常提交 ——
+   没有 savepoint 就是这样。）
+2. **seq 回退绝不复用**：把 `next_seq` 拨回 1 再提交 → `SeqRegression { next_seq: 1, floor: 1 }`。
+   这条守卫是**上游没有的**：上游信任自己的计数器，我们不信 —— 拷库、半重放、手工改库都见过。
+3. **`writer != 'nous'` 写拒、只读通**：`Storage::open` 拒绝，`Storage::open_read_only` 照读。
+
+**id 分配器**：`mint_id` 只在内存里推进（上游一样），随下一次提交落盘；一旦 id 进了
+`record_ids`，哪怕记录被删也永不再分配（`next_id` 只向前）。判据：分 5 个 → 删 3 条 →
+重开 → 下一个是 7，台账里 entry 仍是 5 条。
+
 ## 11. 记录字段的对齐
 
 对外记录的字段名由 `wire.md` 决定；内部存的东西可以和它不同，但**同名字段必须同义**。`pi.*` 记录里 assistant 消息的字段名（`stopReason` / `responseId` / `responseModel` / `rawStopReason` / `usage`）来自上游，`nous-ai` 的 `#[serde(rename_all = "camelCase")]` 已经对齐，改这里之前先看 `wire.md` 对应段。

@@ -3,8 +3,8 @@
 `durable` 的语义自己写 —— `AGENTS.md` §一 的原话是**只借语义和坑，不借结构**。
 上游 27,259 行里我们只取 storage / session / harness 的核心，`watch` 那套不要（事件走 `nous-wire`）。
 
-**已落地（12a）**：`storage/`
-**待落地**：提交语义（12b）、文档修订（12c）、conformance（12d）、session、harness。
+**已落地**：`storage/` 的行层与只读导入（12a）、提交语义（12b）
+**待落地**：文档修订重放（12c）、conformance（12d）、session、harness。
 
 ## 目录
 
@@ -14,6 +14,10 @@ storage/
   import.rs  只读导入：任意上游库 → 九张表 → 与源库逐列对齐
   sessions.rs 会话树 → wire.md 的 GET /v1/sessions
   mod.rs     SqliteStore：打开、认门、计数器
+  writes.rs  一次提交里的写 + 「这一批合法吗」（Refusal 十二种）
+  commit.rs  CommitState / PendingWrites：一次调用几条语句，拒绝不回滚已验证的批
+  storage.rs 事务壳：seq 盖章、回执、id 分配器、扫描
+  cursor.rs  不透明游标（a/d + base36 id），只有 id
 ```
 
 ## 三条自己定的规矩（改之前先看 docs/storage.md）
@@ -34,6 +38,9 @@ storage/
   `null` 照样在场。
 - `…::orphan_names_are_skipped_not_an_error` —— 名字表 207 条 vs 会话 189 条：孤儿跳过不报错。
 - `…::an_upstream_fixture_is_refused_in_write_mode_but_open_read_only` —— 认门两个方向都有测试。
+- `commit_semantics.rs` 三条负例：**半写回滚整批不可见**、**seq 回退不复用**
+  （`SeqRegression { next_seq, floor }`，上游没有这条守卫）、**`writer != 'nous'` 写拒只读通**；
+  外加 seq 逐批盖章 + 回执晚于 `COMMIT`、分配器删记录后也不复用、游标分页（升/降序 + 方向不符即拒）。
 
 fixture 不在时这些测试**跳过并打印**，不假绿。
 

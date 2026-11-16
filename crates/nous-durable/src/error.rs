@@ -15,6 +15,10 @@ pub enum StorageError {
     WriterMismatch { found: Option<String> },
     /// 要读的文档最新一条 revision 是 `delta`，本版还不会重放（12c）。
     UndecodedDelta { document_id: i64 },
+    /// 库里的 seq 已经走到 `floor`，`next_seq` 却是 `next_seq` —— 接着写就是复用旧号。
+    SeqRegression { next_seq: i64, floor: i64 },
+    /// `durable_metadata` 的 singleton 行不在，或它的值读不出来。
+    MissingMetadata,
     /// 迁移后版本与代码期望不一致。
     SchemaVersion { found: i64, supported: i64 },
 }
@@ -51,6 +55,13 @@ impl std::fmt::Display for StorageError {
                 f,
                 "document {document_id} has a delta as its newest revision; delta replay is not wired yet"
             ),
+            StorageError::SeqRegression { next_seq, floor } => write!(
+                f,
+                "next_seq {next_seq} would reuse a seq already stored (the highest stored seq is {floor})"
+            ),
+            StorageError::MissingMetadata => {
+                f.write_str("durable_metadata has no singleton row, or next_id/next_seq is unreadable")
+            }
             StorageError::SchemaVersion { found, supported } => write!(
                 f,
                 "schema version {found} is not the supported version {supported}"

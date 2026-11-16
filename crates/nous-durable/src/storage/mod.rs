@@ -5,11 +5,21 @@
 //! - **导入器**（[`import`]）：只读打开任意上游库 → 吐 `/v1` 形状。永不写回源库。
 //! - **迁移**（[`SqliteStore::open_writer`]）：只推进**我们自己**写的库的版本，单向、无 down。
 //!
+//! ## 三件东西各自的活
+//!
+//! - [`sqlite`]：行与语句（照上游），一次提交几行几语句的问题在这里解决；
+//! - [`writes`] + [`commit`]：一批写合不合法（拒绝）、怎么盖 seq、攒成什么净效果；
+//! - [`storage`]：一个 `BEGIN IMMEDIATE` 事务包住上面两步，加上 id 分配器与扫描。
+//!
 //! 所以「打开一份上游 v2 库」在写模式下是**明确失败**（版本 2 > 我们支持的 1），这条由
 //! `nous_chord::sqlite::apply_sqlite_migrations` 的 `SchemaTooNew` 保证，不是约定。
 
+pub mod commit;
+pub mod cursor;
 pub mod import;
 pub mod sessions;
+pub mod storage;
+pub mod writes;
 pub mod sqlite;
 
 use std::path::Path;
