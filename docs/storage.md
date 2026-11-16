@@ -2,29 +2,89 @@
 
 表结构、版本号、迁移链**由本库自己定**，不从上游继承。这份文件是唯一的权威描述；`nous-durable/src/storage/` 里的代码要能逐条对上这里的每一条。
 
-## 一、为什么不继承上游
+**2026-11-16 定稿**（决策票 #11；证据见 `docs/fixture-map.md` 对 `fixtures/agent.sqlite` 的实测）。七问全部有答案，正文即答案，不再有「待定」。
 
-上游 `pi-durable` 的库里有六张表 + `record` JSON + `durable_schema.version`，并且它自己明说 `pi.tool` 升到 v4、`pi.generation` 升到 v3 之后**新版写的库不该被旧版打开**（旧版会把任务卡成 `task_too_old`）。
+## 0. 一句话
 
-这套东西的价值是"思路"，不是"形状"。抄形状的代价是把上游的版本升级节奏绑到我们自己的会话历史上。
+**形状照抄上游，版本号和身份自己定。** 表九张不动（fixture 里九张全有数据），`durable_schema.version` 从 1 自己数起，另加一列 `writer` 认门。语义（提交序号、落库节奏、失败行为）由本库自己写死。
 
-## 二、必须自己回答的问题（逐条填，填完再写代码）
+> **这是对 `AGENTS.md` §五 守卫第一条的有意例外。** 守卫说「想沿用上游的表结构、`record` 形状、`durable_schema.version` → 表结构、版本号、迁移链由本库自己定」。定稿时的判定：**表结构照抄**（理由见 §1），**版本号与迁移链自己定**（§3、§4）。改写守卫那一行是人的事，本文只记录例外与理由。
 
-- [ ] **表**：几张、每张负责什么。会话 / 条目 / 提交序号 / 文档 / 任务 至少各一张。
-- [ ] **记录体**：`record` 里存 JSON 还是拆列。存 JSON 的先例是上游，好处是加字段不用迁移。
-- [ ] **版本号**：一个整数还是逐表版本。**必须能回答"这版写的库，上一版能不能开"**。
-- [ ] **迁移链**：从 1 → 2 → 3 每一步的可逆性。不可逆的写成单向并说明。
-- [ ] **提交序号**：单库单调递增还是每会话一套。SSE 重连靠它续，形状决定重连语义。
-- [ ] **进度落库**：流式中间态多久落一次盘。上游默认 1,000 ms（`progress.persistWithinMs`），代价是崩溃丢约一秒的流式内容。写清我们的取值和理由。
-- [ ] **回环**：写失败、半写、被另一个进程打开时各是什么行为。
+## 1. 表：9 张，照抄，不减不加
 
-## 三、硬约束
+```
+conversations / entries / record_ids / documents / document_revisions
+tasks / submissions / durable_metadata / durable_schema
+```
+
+理由：fixture 里九张全有数据，且下面两张是**在用**的，不是历史残留 ——
+
+- `record_ids`（1609 行，id → 类型台账）是**分配器**：没有它就没法保证 id 单调且不复用（§8 硬约束 5）。
+- `submissions`（56 行）里的 `request_id` 就是 `wire.md` 的幂等键：`POST /v1/sessions/:id/messages` 的 `requestId` 靠它去重。
+
+## 2. 记录体：混合，照上游
+
+**被 `WHERE` / `ORDER BY` / 联结用到的字段才拆列**，其余全进 `record TEXT`：
+
+拆列的：`conversation_id` / `status` / `kind` / `abort_requested` / `background` / `commit_seq` / `record_type`。
+
+规矩：新字段**默认进 `record`**，除非它需要被查询。这样子加字段不用迁移；需要查询时才升列（升列 = 一次迁移，见 §4）。
+
+## 3. 两个版本，语义分开
+
+| 东西 | 管什么 | 取值 |
+|---|---|---|
+| `durable_schema.version` | **表结构**版本 | 本库**从 1 数起**，不复刻上游的 2 |
+| 记录版本（`pi.tool` v4 / `pi.generation` v3 / `document_revisions.version`） | **内容格式**版本 | 跟上游对齐 |
+| `durable_schema.writer` | 这个库是谁写的 | `'nous'`（新列，表数仍是 9） |
+
+**认门规则**：
+
+- **写模式打开**：先校验 `writer = 'nous'`，不是就拒绝把它当本库打开（不迁移、不写、不猜）。
+- **只读打开**：允许上游写的库 —— fixture 就是上游 `durable_schema.version = 2` 的真库，导入器按 §4 只读读取，**不认 writer**。
+- 两件事一起挡住「和上游库版本号撞车」：上游 v2 与我们的 v1 数字不同、身份列也不同。
+
+## 4. 迁移单向
+
+- `migrate_v(n) → v(n+1)`，**没有 down**。不可逆是明确的选择，不是遗漏。
+- 每个迁移带一份 `v(n)` 库副本测试：拿一份 v(n) 的库 → 打开 → 迁移 → 断言 v(n+1) 的结构与内容。副本进 `fixtures/`（gitignore 挡着）。
+- **读上游 v2 的库走导入器，不走迁移。** 两条路不许混：
+  - **导入器** = 只读打开任意上游库 → 吐 `/v1` 形状（`nous-fixture` 走这条）。
+  - **迁移** = 只推进**我们自己**写的库的版本。
+
+## 5. 提交序号：单库全局递增
+
+- `durable_metadata.next_seq` 一个计数器；`entries.commit_seq` **全局单调**（fixture 实证 3…5073，跨会话不分局）。
+- `?since=` 是**全局游标**，重连语义 = `WHERE commit_seq > since`。
+- **这是内部量，这一版不进 `wire.md`。** SSE 重连对外仍靠第一帧 `snapshot`（`wire.md` 的 SSE 段本来就是这么写的）。将来要把它变成对外契约，先改 `wire.md`（§4.4 的顺序），不是先改代码。
+
+## 6. 进度落库：500 ms
+
+- `pi.live` 每 **500 ms** 一个 revision。落库粒度 = **一次 append 一个 revision**。
+- 为什么不是上游默认的 1000 ms：桌面端盯着屏幕，崩溃丢约一秒可见文字太刺眼。
+- 为什么不是 100 ms：写放大换不到可感知的收益。
+- 反悔点：有用户抱怨「崩了丢一坨」→ 降到 100–200 ms；写盘成为瓶颈 → 回到 1000 ms 并写清丢失窗口。
+
+## 7. 失败 / 半写 / 多进程
+
+- **单写者**：`BEGIN IMMEDIATE` + WAL + `busy_timeout = 5000`。
+- 事务失败 = 回滚 = 内存态保留 = **对外不发布**（先落库后可见，硬约束 2）。
+- IO / 磁盘错：该次生成落 `status = terminal`，`record` 里标 `storage_failure`，**不静默续跑**。
+- 只读打开一律 `mode=ro`（fixture 就是这样，永不写回）。
+
+## 8. 硬约束
 
 1. **`conversations.id` 与 `entries.id` 数值单调**：客户端拿 id 当游标（`?since=`），回退的 id 会打断续流。
-2. **落库的顺序 = 对外可见的顺序**：SSE 能看到的，库里必须先有。反过来可以（库里有的，客户端可以还没拿到）。
+2. **落库的顺序 = 对外可见的顺序**：SSE 能看到的，库里必须先有。反过来可以。
 3. **只读打开不写入**：fixture 打开时 `read_only`，永远不写回。
-4. **`agent.sqlite` 是一份真实库**（1.2 MB / `conversations` 189 行 / `entries` 209 行），当 fixture 用；它的内容属于用户，**不进 git**。
+4. **`agent.sqlite` 是一份真实库**（1,179,648 B / `conversations` 189 行 / `entries` 209 行 / `documents` 961 行），当 fixture 用；它的内容属于用户，**不进 git**。
+5. **id 分配即占位，删除不回收**：`record_ids` 里有 244 个 entry 类型 id，`entries` 只有 209 行 —— 35 个 id 分配过、记录已不在。分配器**只增不复用**，否则与 fixture 的 id 空间语义分叉。
+6. **文档会成孤儿**：`pi.*` 文档各 192 份、`conversations` 只有 189 行 —— 3 份是归档/撕过的会话留下的。导入器与 `/v1/sessions` 拼装都必须扛住「文档在、会话不在」：**跳过，不报错**。
 
-## 四、记录字段的对齐
+## 9. 已知空白
+
+`entries.head` 列保留，**本版不赋予语义**（fixture 209 行全 NULL）。要定它的意思得连着 fork / 归档一起定，那时再回来看。
+
+## 10. 记录字段的对齐
 
 对外记录的字段名由 `wire.md` 决定；内部存的东西可以和它不同，但**同名字段必须同义**。`pi.*` 记录里 assistant 消息的字段名（`stopReason` / `responseId` / `responseModel` / `rawStopReason` / `usage`）来自上游，`nous-ai` 的 `#[serde(rename_all = "camelCase")]` 已经对齐，改这里之前先看 `wire.md` 对应段。
