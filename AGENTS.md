@@ -11,6 +11,13 @@
 
 上游的价值是**读**，不是**合**。上游发版时你的动作是打开 changelog，不是打开 `git pull`。
 
+### 边界
+
+- **本库之外一律不读不写**：`/opt/NousDesk`（桌面端）、Nous 仓（面板 + `qrd3wh` 内核 JS）、j1900 上的 `qrd3wh` 目录 —— 不读、不参考、不改。理由：`qrd3wh` 钉在 `pi-durable@1.4.0`，照着它 port 就是把 1.4 的语义抄回本库。
+- **契约只看本库的 `wire.md`**。数据可以读：`fixtures/agent.sqlite` 是数据不是源码，只读打开。
+- **上游 checkout 可读**（`/tmp/pi-rust`、`/tmp/pi-check`），只读、只停在 pin 的 tag 上。
+- **版本以 `SOURCES.md` 的 pin 为准**：`pi-rust@v0.24.2`、`pi@v1.5.2`，这两个就是当前最新 tag。上游出了更新的 tag **不动** —— 按 §4.1 在 `docs/pitfalls-from-pi.md` 记一条，等指令。
+
 ---
 
 ## 一、来源与各自的规矩
@@ -67,6 +74,8 @@ nous-durable       → chord, ai, wire, telemetry, env
 ### 4.1 上游发版了
 
 **不改代码。** 逐条读上游 changelog（`pi` 的 chord/durable/env，加 `pi-rust` 的 release notes），对每条 `fix` 问一句：我们的 Rust 版有没有同一个毛病？
+
+**看到上游有比 `SOURCES.md` 里更新的 tag，也不许换 pin。** 在 `docs/pitfalls-from-pi.md` 加一节记录它的存在和主要变动，然后停 —— 换 pin 是人的决定。
 
 完成判据：`docs/pitfalls-from-pi.md` 末尾新增一节，**当期每一条 `fix` 都有一行判定**（`中` / `不中` / `未知 + 原因`），没有一条被跳过。判成"中"的转成 4.4。
 
@@ -147,3 +156,19 @@ fixture 来自线上那份 `agent.sqlite`（1.2 MB，`conversations` 189 行、`
 ## 八、这一版的一句话交接
 
 > **`nous-ai` / `nous-tools` / `nous-runtime` / `nous-telemetry` / `nous-wire` 是冻结的 pi-rust 拷贝；`nous-chord` 是 chord 的六个目录；`nous-durable` 是 durable 的语义自己写；env 的 daemon 是官方二进制。四类任务之外，先开 issue。**
+
+---
+
+## Agent skills
+
+### Issue tracker
+
+Issues 在本仓库的 GitHub Issues 中（JoeWest9966/Nous-Package），用 `gh` CLI 读写。See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+五个标准 triage 角色标签：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+单上下文布局：仓库根 `GLOSSARY.md` + `docs/adr/`。See `docs/agents/domain.md`.
