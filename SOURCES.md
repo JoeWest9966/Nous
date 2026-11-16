@@ -17,7 +17,7 @@
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
 | `crates/nous-telemetry/**` | rpi@v0.24.2 | `crates/rpi-telemetry/src/**` | 原样；包名 `rpi-telemetry` → `nous-telemetry`；README 换成带出处的抬头 | 已提货 |
-| `crates/nous-ai/**` | rpi@v0.24.2 | `crates/rpi-ai/src/**` | 原样；包名改名，内部依赖 `rpi-telemetry` → `nous-telemetry`；`providers` feature 保留 | 待提货 |
+| `crates/nous-ai/**` | rpi@v0.24.2 | `crates/rpi-ai/src/**` | 原样（`src/**` + `tests/**`）；包名 `rpi-ai` → `nous-ai`、依赖 `rpi-telemetry` → `nous-telemetry`（含注释与测试里的 `rpi_ai::` 路径）；`providers` / `smoke` feature 保留 | 已提货 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/agent_tool.rs` | 新文件：只取 `AgentTool` trait（66 行） | 待提货 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/error.rs` | 同上：`AgentError`（43 行） | 待提货 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/types.rs` | 同上：`AgentToolResult` / `TextContentOrImage` / `ToolResultPartial` 三个类型 | 待提货 |
