@@ -10,7 +10,7 @@
 
 > **与 `AGENTS.md` §五 守卫一致。** 守卫那一行的原文是：
 >
-> > 表结构和 `record` 形状**照拄**上游（DDL 取 `storage/sqlite/migrations.ts` 的 v2 + 一列 `writer`；`record` 存 camelCase JSON）；**版本号从 1 数起、迁移链单向**、分拆列规则本库自己定。全部定在 `docs/storage.md`，改这三样就是改契约，先改文档
+> > 表结构和 `record` 形状**照抄**上游（DDL 取 `storage/sqlite/migrations.ts` 的 v2 + 一列 `writer`；`record` 存 camelCase JSON）；**版本号从 1 数起、迁移链单向**、分拆列规则本库自己定。全部定在 `docs/storage.md`，改这三样就是改契约，先改文档
 >
 > 也就是：表结构与 `record` 形状照抄（DDL 取上游 migrations 的 v2 + 一列 `writer`），版本号从 1 数起、迁移链单向、拆列规则本库自己定 —— 三样全定在这份文档里。
 
