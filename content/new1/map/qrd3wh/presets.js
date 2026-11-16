@@ -189,6 +189,48 @@ export function ultimateReferenceProblems(spec, ctx = {}) {
   return errors;
 }
 
+/**
+ * 段目录里的排序表文件名。
+ *
+ * **不能写进 `preset.json`** —— 那两份键表（`PRESET_KEYS` / `ULTIMATE_KEYS`）是白名单，
+ * 多一个键就报「不认识这个键」，而它们报得对（拼错的键等于那条设置静默没生效）。
+ * 所以顺序单独一个文件，放段目录里 —— 是**文件不是目录**，`scan` 和 `index.mjs` 都只认目录，
+ * 不会把它当成一条模板。全局一份（所有类别共用一套顺序），跟通讯录一样。
+ */
+export const ORDER_FILE = "order.json";
+
+/** 读排序表。读不到 / 读坏了都当「没有顺序」（按名字排）—— 排序挂了不该让整段打不开。 */
+export async function readOrder(dir) {
+  const raw = await readFile(path.join(dir, ORDER_FILE), "utf8").catch(() => null);
+  if (raw === null) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.order)) return [];
+    return parsed.order
+      .map((name) => (typeof name === "string" ? name.trim() : ""))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 按排序表重排。表里没有的排在后面，按名字 —— **不是「排最后随便」**：新模板 / 刚复制的
+ * 名字是新的，应该稳定地待在同一头，而不是每刷新一次换个位置。
+ */
+export function applyOrder(items, order) {
+  if (!Array.isArray(order) || !order.length) return items;
+  const at = new Map(order.map((name, index) => [name, index]));
+  return [...items].sort((a, b) => {
+    const ai = at.get(a.name);
+    const bi = at.get(b.name);
+    if (ai !== undefined && bi !== undefined) return ai - bi;
+    if (ai !== undefined) return -1;
+    if (bi !== undefined) return 1;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
+}
+
 /** 思考档的**顺序**（往上找、再往下找都靠它）。跟 pi-ai 的档位表同一份，别另立一套。 */
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -655,8 +697,10 @@ export async function createPresets({ dir, manifest = "preset.json", checker = "
 
   const load = async () => {
     const found = await scan(dir, { manifest, check });
+    // 盘上是字母序；人排过就按人排的来（`order.json`，全局一份）。
+    const sorted = applyOrder(found, await readOrder(dir));
     roster.clear();
-    for (const item of found) roster.set(item.name, item);
+    for (const item of sorted) roster.set(item.name, item);
     return [...roster.values()];
   };
 

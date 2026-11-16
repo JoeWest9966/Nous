@@ -28,6 +28,8 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/p
 import path from "node:path";
 
 import {
+  ORDER_FILE,
+  readOrder,
   resolveSpec,
   resolveUltimate,
   shapeProblems,
@@ -532,6 +534,27 @@ const renamePreset = async ({ repo, repoRoot, section, sections, name, to }) => 
   }
 };
 
+/**
+ * 写排序表。
+ *
+ * **收的是完整顺序**（界面上拖完那一下的全量），不是「谁挪到谁前面」—— 一次落盘、一次提交，
+ * 不用在服务端重放一串移动。盘上已经不存在的名字顺手滤掉：删掉的模板不该留在表里。
+ */
+const writeOrder = async ({ repo, repoRoot, scope, root, order }) => {
+  const dirs = new Set(
+    (await readdir(root, { withFileTypes: true }).catch(() => []))
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .map((entry) => entry.name),
+  );
+  const clean = [...new Set(order)].filter((name) => dirs.has(name));
+  await writeFile(
+    path.join(root, ORDER_FILE),
+    `${JSON.stringify({ v: 1, order: clean }, null, 2)}\n`,
+    "utf8",
+  );
+  return repo.syncRepo(repoRoot, "session: 调整顺序", { scope, label: "预设", tag: "session" });
+};
+
 const purgePreset = async ({ repo, repoRoot, scope, root, name }) => {
   const rel = `${repo.ARCHIVE_DIR}/${name}`;
   const source = path.join(root, rel);
@@ -830,6 +853,22 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
         name,
         to,
         refs: Array.isArray(result.refs) ? result.refs : [],
+      });
+    }
+
+    if (route[0] === "order") {
+      if (method === "GET") return send(res, 200, { order: await readOrder(root) });
+      if (method !== "POST") return send(res, 405, { error: "排序只有 GET / POST" });
+      const body = await parseJsonBody(req);
+      if (!Array.isArray(body.order)) return send(res, 400, { error: "order 得是一个数组" });
+      const order = body.order.map((name) => String(name ?? "").trim()).filter(Boolean);
+      const result = await repo.serializeRepoWrite(repoRoot, () =>
+        writeOrder({ repo, repoRoot, scope, root, order }),
+      );
+      await reloadRoster(presets);
+      return send(res, 200, {
+        ...(await writeResult(repo, repoRoot, result)),
+        order: await readOrder(root),
       });
     }
 
