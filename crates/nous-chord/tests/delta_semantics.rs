@@ -129,6 +129,27 @@ fn trusted_apply_is_a_type_level_boundary() {
     assert_eq!(base, json!({"a": {"b": 1}}));
 }
 
+// ─────────── 陈旧草稿的判据在 `Draft`，不在 `apply`（边界写清楚） ───────────
+
+#[test]
+fn a_stale_batch_is_rejected_by_the_draft_not_by_apply() {
+    // 判据只在 `Draft::prepare` 里（它记着出生时的修订号）。`apply_immutable_trusted`
+    // 收的是「相对 base 的一批 op」，手里没有修订号 —— 所以它能重放到任何 base 上。
+    // 这不是漏洞，是分层：陈旧检测属于持有 base 的那一层（durable 的 storage/tracker）。
+    let base = json!({"a": 1});
+    let ops = diff_revisions(&base, &json!({"a": 2}));
+    let other_base = json!({"a": 100, "b": true});
+    let replayed = apply_immutable_trusted(&other_base, &ops).unwrap();
+    assert_eq!(replayed, json!({"a": 2, "b": true}), "op 是相对的，apply 无从判断");
+
+    // 而 `Draft` 这一层明确拒绝（细节见 draft.rs 的单测）。
+    use nous_chord::delta::draft::Draft;
+    use nous_chord::delta::Revision;
+    let mut draft = Draft::new(&base, Revision::ZERO);
+    draft.set(&[Seg::Key("a".into())], json!(2)).unwrap();
+    assert!(draft.prepare(Revision::ZERO.next()).is_err());
+}
+
 // ─────────────────────── UTF-16：`t` op 的唯一单位 ───────────────────────
 
 #[test]

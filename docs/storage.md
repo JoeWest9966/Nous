@@ -91,7 +91,15 @@ tasks / submissions / durable_metadata / durable_schema
 
 ## 9. 已知空白
 
-`entries.head` 列保留，**本版不赋予语义**（fixture 209 行全 NULL）。要定它的意思得连着 fork / 归档一起定，那时再回来看。
+**`entries.head` 列保留，本版不赋予语义**（fixture 209 行全 NULL）。要定它的意思得连着 fork / 归档一起定，那时再回来看。
+
+**陈旧草稿的拒绝在 `Draft` 层，不在 `apply` 层**（`nous-chord`）。`Draft::prepare(current_revision)` 比对草稿出生时的修订号，不等就 `RevisionError::Stale` —— 两份草稿从同一个 base 出发，A 提交推进修订号后，B 再提交会**明确失败**，不会静默覆盖（上游 `tracker.ts:289` 同语义，有单测钉住）。
+
+这条保证的边界要写明白：
+
+- **单进程内有效**：凡是走 `Draft` 的写入都受保护。
+- **跨进程无效**：`documents` 的修订号只在持有它的进程里推进；两个进程各写一份，靠的是 §7 的**单写者**（`BEGIN IMMEDIATE` + `busy_timeout`）+ §5 的 seq 单向，不是修订号比对。要跨进程陈旧检测得把修订号落库并在事务里 `WHERE revision = ?`，本版没做。
+- **绕过 `Draft` 直接重放 op 不受保护**：`apply` 收的是相对 base 的一批 op，手里没有修订号（`tests/delta_semantics.rs::a_stale_batch_is_rejected_by_the_draft_not_by_apply` 把这个边界钉住了）。所以 **storage 自己必须做修订号校验**，不能指望 apply。
 
 ## 10. 记录字段的对齐
 

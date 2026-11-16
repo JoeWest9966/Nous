@@ -188,12 +188,46 @@ impl std::fmt::Display for OpError {
 
 impl std::error::Error for OpError {}
 
-/// 严格 JSON 校验失败。上游抛 `TypeError`。
+/// 修订号：**每 adopt（提交）一次 +1**，单调，不取模。上游 `tracker.revision` 是同一个概念。
+///
+/// 它的唯一职责是让「陈旧草稿」变成**明确失败**：一份草稿记着它出生时的修订号，
+/// 提交时和当前修订号比对，不等就拒绝 —— 而不是拿过期的 base 静默覆盖别人刚写的东西
+/// （上游 `tracker.ts:289–299` 抛 `Prepared change is stale`）。见 [`Draft::prepare`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Revision(u64);
+
+impl Revision {
+    pub const ZERO: Revision = Revision(0);
+
+    pub const fn new(value: u64) -> Self {
+        Revision(value)
+    }
+
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+
+    /// 提交成功后推进到下一版。返回新区间而不是原地改，谁持有谁负责传下去。
+    pub const fn next(self) -> Self {
+        Revision(self.0 + 1)
+    }
+}
+
+impl std::fmt::Display for Revision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "rev#{}", self.0)
+    }
+}
+
+/// 严格 JSON 校验 / 修订号校验失败。上游抛 `TypeError` 或 `Error("Prepared change is stale")`。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RevisionError {
     /// 超过允许的嵌套深度。`serde_json` 的反序列化默认限 128 层，这里再兜一道，
     /// 免得递归遍历把栈打穿。
     TooDeep { depth: usize },
+    /// 草稿出生时的修订号已经不是当前修订号：别人先提交了。**必须明确失败**，
+    /// 不许静默覆盖（上游同一语义，`tracker.ts:289`）。
+    Stale { base: Revision, current: Revision },
 }
 
 impl std::fmt::Display for RevisionError {
@@ -202,6 +236,10 @@ impl std::fmt::Display for RevisionError {
             RevisionError::TooDeep { depth } => {
                 write!(f, "replicated state nesting is too deep: {depth}")
             }
+            RevisionError::Stale { base, current } => write!(
+                f,
+                "prepared change is stale: draft was opened at {base}, current revision is {current}"
+            ),
         }
     }
 }
