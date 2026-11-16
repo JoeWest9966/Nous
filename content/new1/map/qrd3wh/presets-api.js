@@ -24,7 +24,7 @@
 //     不 load 的话面板显示新预设、建会话时还看不见它。
 //   · `publish` = 形状闸 + 重扫 index.json + commit + push，一步；闸不过不动 index.json。
 
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -414,6 +414,127 @@ const restorePreset = async ({ repo, repoRoot, scope, root, name }) => {
   }
 };
 
+/** 目录下的所有文件，带 `prefix/` 前缀 —— 给 `syncRepo` 的 `paths` 用（它要文件级口径）。 */
+const listFilesUnder = async (dir, prefix) => {
+  const out = [];
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const rel = `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) out.push(...(await listFilesUnder(path.join(dir, entry.name), rel)));
+    else out.push(rel);
+  }
+  return out;
+};
+
+/**
+ * 谁引用了这条会话模板。
+ *
+ * 终极模板的 `session` 是**名字字符串**（不是 id），所以会话模板一改名，引用它的终极模板
+ * 立刻变成「会话模板「旧名」不在 Session-Template 里」。改名的人不会知道该去哪修 ——
+ * 所以改名要连带改引用，这一步就是先把受影响的找出来。
+ */
+const findSessionRefs = async (repoRoot, ultimateSection, name) => {
+  const root = path.join(repoRoot, ultimateSection.id);
+  const manifest = ultimateSection.manifest ?? "ultimate.json";
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const refs = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const file = path.join(root, entry.name, manifest);
+    const text = await readFile(file, "utf8").catch(() => null);
+    if (text === null) continue;
+    let raw;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      continue; // 坏文件不归改名管，`specError` 已经会红
+    }
+    if (raw?.session === name) refs.push({ dir: entry.name, file, raw });
+  }
+  return refs;
+};
+
+/** 把一份清单里的 `name` 改掉，其余键原样（`session` 引用也用这个改）。 */
+const rewriteName = async (file, key, value) => {
+  const raw = JSON.parse(await readFile(file, "utf8"));
+  raw[key] = value;
+  await writeFile(file, `${JSON.stringify(raw, null, 2)}\n`, "utf8");
+};
+
+/**
+ * 改一条模板的名字。
+ *
+ * 名字 = 目录名 = 主键（形状校验要求 `name` 等于目录名），所以三件事必须一起做：
+ * 目录改名（`git mv`，**保 git 历史**）、清单里的 `name`、引用了它的终极模板的 `session`。
+ * 少做一件就是红：只改目录 → `specError`；只改清单 → 目录对不上；不改引用 → 别人的模板红。
+ */
+const renamePreset = async ({ repo, repoRoot, section, sections, name, to }) => {
+  const scope = section.id;
+  const root = path.join(repoRoot, scope);
+  const kit = shapeKit(section);
+  const from = path.join(root, name);
+  const dest = path.join(root, to);
+  if (!(await stat(from).catch(() => null))) throw withStatus(new Error(`工作区里没有 ${name}/`), 404);
+  if (await stat(dest).catch(() => null)) {
+    throw withStatus(new Error(`已经有 ${to}/ 了 —— 改名前先处理它`), 409);
+  }
+
+  const ultimate = sections?.find?.((entry) => entry.checker === "ultimate") ?? null;
+  // 终极模板段自己的条目不会被谁指着，只有会话模板会被 `session` 引用。
+  const refs = ultimate && ultimate.id !== scope ? await findSessionRefs(repoRoot, ultimate, name) : [];
+
+  const snapshot = await snapshotIndex(root);
+  const tracked = await repo.isTrackedDir(root, name);
+  try {
+    if (tracked) {
+      await repo.run("git", ["-C", repoRoot, "mv", `${scope}/${name}`, `${scope}/${to}`], {
+        timeout: 30_000,
+      });
+    } else {
+      // 未发布的（盘上有、仓里没）：git mv 会报 pathspec 不匹配，直接搬。
+      await repo.moveDir(from, dest);
+    }
+
+    await rewriteName(path.join(dest, kit.manifest), "name", to);
+    for (const ref of refs) await rewriteName(ref.file, "session", to);
+
+    await repo.regenIndex(repoRoot, { required: false });
+    // 跨段（自己 + 被改引用的终极模板），所以 `scope: null` + 显式 `paths`：
+    // 一个 scope 只盖一段，而 `paths` 过滤是**文件级**口径，传目录名一条都命中不了。
+    const paths = [
+      ...(await listFilesUnder(dest, `${scope}/${to}`)),
+      ...refs.map((ref) => path.relative(repoRoot, ref.file)),
+    ];
+    // 两段的索引也是这次改动的产物（`regenIndex` 刚写进去的），不带上的话每次改名
+    // 都留两个 `?? index.json` 脏文件在那儿。
+    for (const dir of [scope, ultimate?.id]) {
+      if (!dir) continue;
+      const rel = `${dir}/index.json`;
+      if (await stat(path.join(repoRoot, rel)).catch(() => null)) paths.push(rel);
+    }
+    const result = await repo.syncRepo(repoRoot, `session: 改名 ${name} → ${to}`, {
+      includeDeleted: true,
+      paths,
+      scope: null,
+      label: "预设",
+      tag: "session",
+    });
+    // 连带改了哪些终极模板，回给调用方 —— 界面要说清楚「还动了谁」，不能悄悄改别人的东西。
+    return { ...result, refs: refs.map((ref) => ref.dir) };
+  } catch (error) {
+    // 回滚：暂存区、目录、清单、引用，一件件还回去。半截的改名比不改更糟 ——
+    // 目录在那边、`name` 在这边，那条就永远红着，人还得手工去改。
+    await repo
+      .run("git", ["-C", repoRoot, "reset", "-q", "--", `${scope}/${name}`, `${scope}/${to}`])
+      .catch(() => {});
+    await repo.moveDir(dest, from).catch(() => {});
+    await rewriteName(path.join(from, kit.manifest), "name", name).catch(() => {});
+    for (const ref of refs) await rewriteName(ref.file, "session", name).catch(() => {});
+    await restoreIndex(snapshot);
+    throw error.status ? error : withStatus(new Error(`改名失败，已回滚：${oneLine(error)}`), 400);
+  }
+};
+
 const purgePreset = async ({ repo, repoRoot, scope, root, name }) => {
   const rel = `${repo.ARCHIVE_DIR}/${name}`;
   const source = path.join(root, rel);
@@ -715,6 +836,23 @@ export async function handlePresets({ req, res, url, parts, repoRoot, sections, 
       const limit = Number.isFinite(raw) ? Math.min(Math.max(Math.trunc(raw), 1), 100) : 20;
       const commits = await repo.gitHistory(repoRoot, rel, { limit });
       return send(res, 200, { name, path: rel, commits });
+    }
+    if (route[0] === "rename") {
+      if (method !== "POST") return send(res, 405, { error: "改名只有 POST" });
+      const body = await parseJsonBody(req);
+      const name = checkName(body.name);
+      const to = checkName(body.to);
+      if (to === name) return send(res, 400, { error: "新名字和旧名字一样" });
+      const result = await repo.serializeRepoWrite(repoRoot, () =>
+        renamePreset({ repo, repoRoot, section, sections, name, to }),
+      );
+      await reloadRoster(presets);
+      return send(res, 200, {
+        ...(await writeResult(repo, repoRoot, result)),
+        name,
+        to,
+        refs: Array.isArray(result.refs) ? result.refs : [],
+      });
     }
 
     if (route[0] === "pending") {
