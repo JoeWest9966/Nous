@@ -133,7 +133,7 @@ PY
 	ROWS=$(python3 - <<'PY'
 import re,sys
 src_map={'rpi@v0.24.2':('/tmp/pi-rust','v0.24.2'),'pi@v1.5.2':('/tmp/pi-check','v1.5.2')}
-STATUS={'待提货','已提货','已改'}
+STATUS={'待提货','已提货','已改','自写'}
 bad_status=[]
 for raw in open('SOURCES.md',encoding='utf-8'):
     if not raw.startswith('| `'): continue
@@ -142,6 +142,8 @@ for raw in open('SOURCES.md',encoding='utf-8'):
     local, source, upstream, change, status = cells
     if status not in STATUS:
         bad_status.append(f'{local}\t{status}'); continue
+    if status=='自写':
+        print(f'OWN\t{local}'); continue
     if source not in src_map:
         print(f'SKIP\t{source}\t{upstream}'); continue
     repo,tag = src_map[source]
@@ -155,7 +157,7 @@ for raw in open('SOURCES.md',encoding='utf-8'):
 for b in bad_status: print('BADSTATUS\t'+b)
 PY
 )
-	MISSING=0; CHECKED=0; SKIPPED=0
+	MISSING=0; CHECKED=0; SKIPPED=0; OWNED=0
 	while IFS=$'\t' read -r kind a b2 c; do
 		case "$kind" in
 		CHECK)
@@ -166,10 +168,11 @@ PY
 			fi
 			;;
 		SKIP) SKIPPED=$((SKIPPED+1)) ;;
-		BADSTATUS) bad "状态值不在三个值里：$a → $b2" ;;
+		OWN) OWNED=$((OWNED+1)) ;;
+		BADSTATUS) bad "状态值不在四个值里（待提货/已提货/已改/自写）：$a → $b2" ;;
 		esac
 	done <<< "$ROWS"
-	if [ $MISSING -eq 0 ]; then ok "$CHECKED 行上游路径全部对上（$SKIPPED 行跳过：来源不是 pi/pi-rust，或本地 checkout 不在）"; fi
+	if [ $MISSING -eq 0 ]; then ok "$CHECKED 行上游路径全部对上（$SKIPPED 行跳过：来源不是 pi/pi-rust，或本地 checkout 不在；$OWNED 行自写，无上游）"; fi
 	if [ $CHECKED -eq 0 ] && [ $SKIPPED -gt 0 ]; then skip "没有可核对的行 —— /tmp/pi-rust 或 /tmp/pi-check 不在"; fi
 
 	# 4c 占位桩
