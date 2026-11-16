@@ -2,13 +2,12 @@
 
 一行一个来源单元。五列：本库路径 / 来源 / 上下游路径 / 改动 / 状态。**判据：每一行都能用 `git -C <来源> cat-file -e <tag>:<上下游路径>` 对上；对不上的行是错的 —— 改台账或删代码。** 这条判据由 `scripts/verify.sh` 第 4 段机器执行，不是口头约定。
 
-状态只有三个值：
+状态只有四个值：
 
 - `待提货` —— 计划里，还没抄进来
 - `已提货` —— 抄进来了，和上游一致
 - `已改` —— 抄进来了，本库改过（改动写进第四列，一句说清）
-
-「**自写**」不是状态值（`verify.sh` 的枚举只有上面三个），写在第四列：那一行的代码本库自己写，上游只提供形状参考。
+- `自写` —— 本库自己写的，没有上游可对（上游只提供形状参考）
 
 来源代号：`rpi@v0.24.2` = `bigfish1913/pi-rust`（本地只读检出 `/tmp/pi-rust`）；`pi@v1.5.2` = `earendil-works/pi`（本地只读检出 `/tmp/pi-check`）。
 
@@ -27,16 +26,21 @@
 | `crates/nous-ai/src/providers/google_generative_ai/**` | pi@v1.5.2 | `packages/ai/src/api/google-generative-ai.ts` | TS→Rust 翻译（本库第一个**自己写**的 provider，不是提货）：`mod.rs` = stream/streamSimple/createClient，`build_params.rs` = buildParams + `google-shared.ts` 的 convertMessages/convertTools/thinking，`mapper.rs` = 流式映射 + mapStopReason。结构化差异：SDK 摊平的 REST body 手写、`abortSignal` → `CancellationToken`。**已知缺口：`toolChoice`（TS 的 `GoogleOptions` 有，`rpi-ai` 的 `SimpleStreamOptions` 没有）。固定按「未给」处理。要支持 `auto`/`none`/`any` 得给 provider 层加 per-provider 选项通道，那是扩展契约，等真有调用方要「强制/禁止工具」时再开票。** 测试备注：方言之间的工具声明对拍只覆盖 anthropic ↔ google（两者的 builder 是 `pub`）。openai 两个方言的 builder 在冻结文件里是私有的，**不为了多两方对拍去改可见性** —— `diff -r` 归零是本库唯一「原样提货」的机器判据，把它换掉不划算。将来真要覆盖 openai，走公开入口（`streamSimple` 喂 options、抓请求体断言 tools 形状），不改可见性 | 已改 |
 | `crates/nous-tools/**` | rpi@v0.24.2 | `crates/rpi-tools/src/**` | 改 use：`rpi_agent::*` → `nous_ai::{tool,types}`（11 文件）；`rpi_plugin_sdk` 两处常量内联成 `&str`；`env.rs` 移出到 `nous-env`；`os_env.rs` 的 `process::resume_child` **未提货**（需子进程控制，超出契约面） | 待提货 |
 | `crates/nous-runtime/**` | rpi@v0.24.2 | `crates/rpi-runtime/src/**` | 原样；包名改名，依赖 `rpi-ai`+`providers` → `nous-ai`+`providers` | 待提货 |
-| `crates/nous-wire/src/event.rs` | rpi@v0.24.2 | `crates/rpi-cli/src/remote/protocol.rs` | **自写**（不是提货）：只取事件枚举的**形状语义**，类型、变体、辅助方法由本库按 `wire.md` 定；上游有而宪法没有的一律不抄（`ui_dialog_*` / `agent_start` / `agent_end` / `retry_scheduled` / `turn_*` / `tool_execution_end`、`ready`/`response`/`command` 帧），全落 `Unknown`；帧 / CBOR / 客户端那套不要。测试是手写 JSON 对宪法，不照着上游类型编 | 已改 |
+| `crates/nous-wire/src/event.rs` | rpi@v0.24.2 | `crates/rpi-cli/src/remote/protocol.rs` | 只取事件枚举的**形状语义**，类型、变体、辅助方法由本库按 `wire.md` 定；上游有而宪法没有的一律不抄（`ui_dialog_*` / `agent_start` / `agent_end` / `retry_scheduled` / `turn_*` / `tool_execution_end`、`ready`/`response`/`command` 帧），全落 `Unknown`；帧 / CBOR / 客户端那套不要。测试是手写 JSON 对宪法，不照着上游类型编 | 自写 |
 | `crates/nous-durable/src/tokens.rs` | rpi@v0.24.2 | `crates/rpi-harness/src/compaction/tokens.rs` | 原样 | 待提货 |
 | `crates/nous-durable/src/retry.rs` | rpi@v0.24.2 | `crates/rpi-harness/src/agent_harness.rs` | 摘录 retry 段，其余不要 | 待提货 |
 
-## 二、env 契约层（从 rpi-tools 里抽出来，不是拷贝）
+## 二、env 契约层（形状取 TS 那份，不是拷贝）
 
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
-| `crates/nous-env/src/**.rs` | rpi@v0.24.2 | `crates/rpi-tools/src/env.rs` | 只取 `ExecutionEnv = FileSystem + Shell` 与 `FileChange`；**不带走** InMemory / 变更队列 / 工具实现 | 待提货 |
-| `crates/nous-env/src/error.rs` | rpi@v0.24.2 | `crates/rpi-tools/src/error.rs` | 只取 `FileError` / `FileErrorCode` / `ExecutionError` | 待提货 |
+| `crates/nous-env/src/**` | pi@v1.5.2 | `packages/durable/src/env/index.ts` | **形状取 TS**（`durable/src/env/index.ts`），名 snake_case 化 + `Context` 合并（`AbortSignal`+telemetry → `CancellationToken`+进度 sink，改一次不散进 116 个调用点）；不提货 Rust 那份的四样（JSONL 专用，见下）；三档能力写进 trait 文档（必需 14 个无默认实现 / 可选 12 个默认 `not_supported`）；`truncate_file` 按 TS 语义（可缩可扩）；`cwd` 只读；**不带** IO 实现（本地 / SSH / InMemory 都在 trait 之下） | 已改 |
+| `crates/nous-env/src/types.rs` | pi@v1.5.2 | `packages/durable/src/env/index.ts` | 只取 `FileChange`（`paths`/`overflow`/`failed`）、`WatchTarget`、`FileWatcher`（`native`/`polling`）。**备注**：文件监视在 rpi-rust 那边不在 `env.rs`，在 `crates/rpi-harness/src/watcher.rs` 与 `crates/rpi-cli/src/fs_watch.rs` —— 所以别以为「Rust 没实现，我们也可以不做」：**我们要做，走 TS 形状** | 已改 |
+| `crates/nous-env/src/error.rs` | rpi@v0.24.2 | `crates/rpi-tools/src/error.rs` | 原样：`FileError`/`FileErrorCode`、`ExecutionError`/`ExecutionErrorCode`、`io_to_file_code`/`io_to_file_error`（本地/SSH/内存三个后端要给出同一组 code，所以分类留在契约层）；**补 `ExecutionError::spill_path`**（TS 有 `spillPath`，Rust 版没有，而 `spill` 是我们明确要带走的） | 已改 |
+| `crates/nous-env/src/append.rs` | rpi@v0.24.2 | `crates/rpi-tools/src/env.rs` | **不提货**：可复用追加句柄 + 回执（`AppendFile` / `AppendReceipt` / `open_append_file` / `append_with_receipt`）。理由：为 rpi-durable 的 JSONL 日志服务，本库写 SQLite | 待提货 |
+| `crates/nous-env/src/writer_lease.rs` | rpi@v0.24.2 | `crates/rpi-tools/src/env.rs` | **不提货**：跨进程写者租约（`WriterLease` / `try_acquire_writer_lease` / `verify_fence`）。理由同上 | 待提货 |
+| `crates/nous-env/src/fs_sync.rs` | rpi@v0.24.2 | `crates/rpi-tools/src/env.rs` | **不提货**：`sync_file(path, data_only)` / `sync_directory`（目录 fsync 让 rename 真正落地）。理由同上；契约面只留 TS 的 `flush_file` | 待提货 |
+| `crates/nous-env/src/shell_override.rs` | rpi@v0.24.2 | `crates/rpi-tools/src/env.rs` | **不提货**：`ShellOverride`（自定义解释器 + 固定参数）。理由：TS 用 `string[]` 命令表达「不经 shell 的 argv」，两套并存就是两套契约 —— 取 TS 那套 | 待提货 |
 
 ## 三、自己 port（官方 pi）
 

@@ -1,0 +1,17 @@
+[package]
+name = "nous-env"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "ExecutionEnv 契约：FileSystem + Shell 两张 trait 面（形状取 pi-durable 的 env，无内部依赖）"
+readme = "README.md"
+
+# 契约面只允许两个依赖。出现 nous-* / reqwest / rusqlite 就是契约图被破坏了
+# （AGENTS.md §二：nous-env 无内部依赖）。
+[dependencies]
+async-trait = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

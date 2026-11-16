@@ -876,6 +876,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-env"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "nous-telemetry"
 version = "0.1.0"
 dependencies = [
