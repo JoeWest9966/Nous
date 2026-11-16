@@ -101,6 +101,21 @@ tasks / submissions / durable_metadata / durable_schema
 - **跨进程无效**：`documents` 的修订号只在持有它的进程里推进；两个进程各写一份，靠的是 §7 的**单写者**（`BEGIN IMMEDIATE` + `busy_timeout`）+ §5 的 seq 单向，不是修订号比对。要跨进程陈旧检测得把修订号落库并在事务里 `WHERE revision = ?`，本版没做。
 - **绕过 `Draft` 直接重放 op 不受保护**：`apply` 收的是相对 base 的一批 op，手里没有修订号（`tests/delta_semantics.rs::a_stale_batch_is_rejected_by_the_draft_not_by_apply` 把这个边界钉住了）。所以 **storage 自己必须做修订号校验**，不能指望 apply。
 
-## 10. 记录字段的对齐
+## 10. 落点：这一层的零件已经在 `nous-chord`
+
+`#12` 不新造 SQLite 门面 —— 底下的东西已经在 `nous-chord::sqlite` 里，判据都跑过了：
+
+| 需要的能力 | 在哪 | 判据 |
+|---|---|---|
+| 只读/读写打开、`BEGIN IMMEDIATE` 事务、`run_counted` | `nous_chord::sqlite::LocalDatabase` | `local.rs::the_fixture_opens_read_only_and_lists_nine_tables`（fixture 只读打开 + 9 张表 + 写失败） |
+| 迁移（版本连续、整批原子、库比代码新就拒绝） | `nous_chord::sqlite::apply_sqlite_migrations` | `migrations.rs` 6 条（回滚、版本过新、元数据表前缀校验） |
+| schema 前缀校验 | `nous_chord::sqlite::validate_schema_prefix` | `schema.rs` 3 条（含 `sqlite_` 保留名） |
+| 严格 JSON / 深度上限 | `nous_chord::json` | `json.rs` 5 条 |
+| 文档修订（base/delta）的编解码与重放 | `nous_chord::delta` | `delta_semantics.rs` 9 条 + 1,000 例随机往返 |
+| 取消与进度 | `nous_chord::context`（`nous-env::Context` 就是它） | `context.rs` 10 条 |
+
+所以 `#12` 要写的是**表结构与提交语义**，不是数据库门面。
+
+## 11. 记录字段的对齐
 
 对外记录的字段名由 `wire.md` 决定；内部存的东西可以和它不同，但**同名字段必须同义**。`pi.*` 记录里 assistant 消息的字段名（`stopReason` / `responseId` / `responseModel` / `rawStopReason` / `usage`）来自上游，`nous-ai` 的 `#[serde(rename_all = "camelCase")]` 已经对齐，改这里之前先看 `wire.md` 对应段。

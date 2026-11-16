@@ -12,8 +12,9 @@
 //!
 //! - **没有 IO 实现**。本地实现、SSH / 远端实现、测试用的 InMemory 都在这个 trait 之下
 //!   （AGENTS.md §二：`ExecutionEnv` 只有一份）。
-//! - **没有内部依赖**。`cargo tree -p nous-env` 里只有 `async-trait` / `tokio-util`；
-//!   出现 `nous-ai` / `reqwest` / `rusqlite` 就是契约图破了。
+//! - **只有一个内部依赖：`nous-chord`**，而且只为 [`Context`]（取消 + 作用域值）。
+//!   `cargo tree -p nous-env` 里出现 `nous-ai` / `nous-durable` / `nous-tools` /
+//!   `reqwest` / `rusqlite` 就是契约图破了。
 //! - **没有 JSONL 专用的那四样**：可复用的追加句柄（带回执）、跨进程写者租约、
 //!   目录 fsync、自定义解释器（`ShellOverride`）。
 //!   它们服务的是 rpi-durable 的追加日志，本库写 SQLite。台账各记一行 待提货 并写明
@@ -21,9 +22,9 @@
 //!
 //! ## 结构性改动只有一处
 //!
-//! 所有方法统一收 [`Context`]（TS 是每方法最后一个 `context` 参数）。它把
-//! `AbortSignal` + `telemetry` 换成 `CancellationToken` + 可选进度 sink，**改一次，
-//! 不散进 116 个调用点**。
+//! 所有方法统一收 `&Context`（TS 是每方法最后一个 `context` 参数）。这个 `Context`
+//! **就是 `nous-chord` 那一份**（`pub use`，不是新类型）：TS 侧只有一份，本库也只有一份。
+//! 进度是挂在它上面的一个 key（[`PROGRESS_KEY`]），不是结构体字段。
 //!
 //! ## 三档能力
 //!
@@ -50,7 +51,9 @@ pub mod fs;
 pub mod shell;
 pub mod types;
 
-pub use context::{Context, Progress, ProgressSink};
+pub use context::{
+    Context, ContextExt, ContextKey, Progress, ProgressSink, PROGRESS_KEY,
+};
 pub use error::{
     io_to_file_code, io_to_file_error, ExecutionError, ExecutionErrorCode, FileError,
     FileErrorCode,

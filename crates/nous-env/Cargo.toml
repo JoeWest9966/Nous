@@ -7,11 +7,13 @@ license.workspace = true
 description = "ExecutionEnv 契约：FileSystem + Shell 两张 trait 面（形状取 pi-durable 的 env，无内部依赖）"
 readme = "README.md"
 
-# 契约面只允许两个依赖。出现 nous-* / reqwest / rusqlite 就是契约图被破坏了
-# （AGENTS.md §二：nous-env 无内部依赖）。
+# AGENTS.md §二：nous-env → nous-chord，只为 Context（取消与进度用 chord 那一份，
+# 不另造第二套）。除此之外只允许 async-trait / tokio-util；
+# 出现 nous-ai / nous-durable / nous-tools / reqwest / rusqlite 就是契约图破了。
 [dependencies]
 async-trait = { workspace = true }
 tokio-util = { workspace = true }
+nous-chord = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

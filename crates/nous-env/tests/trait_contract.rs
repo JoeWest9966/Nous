@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use nous_env::{
-    Command, Context, CreateDirOptions, ExecutionEnv, ExecutionError, FileContent, FileError,
-    FileErrorCode, FileInfo, FileKind, FileSystem, ReadTextLinesOptions, RemoveOptions,
+    Command, Context, ContextExt, CreateDirOptions, ExecutionEnv, ExecutionError, FileContent,
+    FileError, FileErrorCode, FileInfo, FileKind, FileSystem, ReadTextLinesOptions, RemoveOptions,
     ShellExecOptions, ShellExecResult, ShellStream, TempFileOptions, TextLine,
 };
 

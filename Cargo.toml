@@ -22,7 +22,6 @@ license = "MIT"
 # SOURCES.md。
 #
 # 已 pin、等第一处使用再落成真行（现在没有 crate 用到，落了就是白绑约束）：
-#   rusqlite   = { version = "0.31", features = ["bundled"] }        ← nous-durable/src/storage
 #   yaml_serde = "=0.10.2"                                          ← nous-runtime
 [workspace.dependencies]
 async-trait = "0.1"
@@ -33,6 +32,9 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
 schemars = { version = "0.8", features = ["preserve_order"] }
 jsonschema = "0.18"
+# SQLite：`bundled` 自带一份 libsqlite3，不依赖系统库（部署机各不相同）。
+# 版本照 `pi-rust@v0.24.2` 的 workspace.dependencies pin 住。
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 # 错误 / 日志
 thiserror = "1"
@@ -49,4 +51,5 @@ bytes = "1"
 eventsource-stream = "0.2"
 
 nous-telemetry = { path = "crates/nous-telemetry", version = "0.1.0" }
+nous-chord = { path = "crates/nous-chord", version = "0.1.0" }
 nous-ai = { path = "crates/nous-ai", version = "0.1.0" }

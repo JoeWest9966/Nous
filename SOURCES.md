@@ -46,11 +46,12 @@
 
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
-| `crates/nous-chord/src/json.rs` | pi@v1.5.2 | `packages/chord/src/json.ts` | 翻译；`JsonRepresentation` 落到 serde 类型约束，不留 `any` 旁路 | 待提货 |
-| `crates/nous-chord/src/context/**` | pi@v1.5.2 | `packages/chord/src/context/index.ts` | 翻译 | 待提货 |
+| `crates/nous-chord/src/json.rs` | pi@v1.5.2 | `packages/chord/src/json.ts` | 翻译；`JsonRepresentation` 落到 serde 类型约束，不留 `any` 旁路；运行期四项（环/稀疏数组/symbol/非有限数）在 Rust 是类型保证，只留深度校验（`MAX_JSON_DEPTH`），理由写进模块文档 | 已改 |
+| `crates/nous-chord/src/context.rs` | pi@v1.5.2 | `packages/chord/src/context/index.ts` | 翻成 Rust；`AbortSignal` → `CancellationToken`（`AbortSignal.any` 换成「沿链多 token，任一取消」）；`ContextKey<T>` 用 `TypeId` 做键（TS 是 `Symbol()`，代价是同一类型只能挂一个值）；`awaitWithContext` 的底层 future 会被丢弃（Rust 与 promise 的差别，写进模块文档）。**例外：`withTelemetry` / `traceIn` 两处未提货** —— 跨 `nous-telemetry` 的 span 接线未定，先按 `ContextKey` 挂值，接通时再定要不要变成一等成员；不为「161 行抄全」把没想清楚的东西焊进去 | 已改 |
 | `crates/nous-chord/src/output.rs` | pi@v1.5.2 | `packages/chord/src/output.ts` | 翻译；`pi-telemetry` → `nous-telemetry` | 待提货 |
 | `crates/nous-chord/src/watch/**` | pi@v1.5.2 | `packages/chord/src/watch.ts` | 翻译；**`watchEvents` 视角不要**，事件出口接 `nous-wire` | 待提货 |
-| `crates/nous-chord/src/sqlite/**` | pi@v1.5.2 | `packages/chord/src/sqlite/**` | 翻译；`node:sqlite` → `rusqlite`，`node:fs`/`node:path` → `nous-env` | 待提货 |
+| `crates/nous-chord/src/sqlite/{database,schema,migrations,local}.rs` | pi@v1.5.2 | `packages/chord/src/sqlite/{database,schema,migrations,node}.ts` | 翻成 Rust；`node:sqlite` → `rusqlite`（`bundled`，版本从 workspace 引）；去掉 Promise（同步，调用方要挪线程自己 `spawn_blocking`）；行是「列名 → `SqliteValue`」而非泛型反序列化；事务用 `BEGIN IMMEDIATE`（`docs/storage.md` §7） | 已改 |
+| `crates/nous-chord/src/sqlite/cloudflare.rs` | pi@v1.5.2 | `packages/chord/src/sqlite/cloudflare.ts` | **未提货**：Cloudflare Durable Objects 的 SQLite 适配器（192 行）；本库是单进程 SQLite，走 `local.rs` | 待提货 |
 | `crates/nous-chord/src/delta/{mod,op,apply,codec,diff,pending,validator,draft}.rs` | pi@v1.5.2 | `packages/chord/src/delta/{index,diff,pending,apply-immutable-trusted,revision-validator,draft}.ts` | 翻成 Rust；去掉 Promise（同步 `Result`）；`Proxy`/descriptor 换成显式命令式 API（`set`/`remove`/`append_text`/`splice`）；`WeakSet` 的 copy-on-write 换成「每批克隆一次 root」（语义同、性能结构不同，见模块文档）；数组 diff 简化成前后缀对齐 + 一段 splice（**精确但不规范**，判据只有重放值）；`t` 按 **UTF-16 码元**（`encode_utf16`）计数与切分；`assertXxx` 换成 `Result<_, OpError>` | 已改 |
 | `crates/nous-chord/src/delta/tracker.rs` | pi@v1.5.2 | `packages/chord/src/delta/tracker.ts` | **未提货**：overlay 节点树 / piece tree / 位置缓存 / 竞争草稿与 `open→prepared→consumed→aborted→stale` 生命周期状态机（上游 2,319 行）；`emit` 的保留段折叠与 4096 上限已在 `diff`/`draft` 里以简化形式存在。`Draft` 目前建在克隆值上、`prepare` 用 diff 兜底 —— 语义已通、性能结构与并发生命周期未做 | 待提货 |
 | `crates/nous-durable/src/storage/**` | pi@v1.5.2 | `packages/durable/src/storage/**` | 翻译；**表结构与版本号自己定**（`docs/storage.md`）；`commit()` 批写 | 待提货 |
