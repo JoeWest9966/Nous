@@ -213,8 +213,12 @@ impl SqliteDatabase for LocalDatabase {
         };
         match work(&handle) {
             Ok(value) => {
+                // 提交失败：`message` 记一句上下文，底层错误挂在 `cause` 上（不压成字符串）。
                 transaction.commit().map_err(|error| {
-                    E::from(SqliteError::new(SqliteErrorKind::Transaction, error.to_string()))
+                    E::from(
+                        SqliteError::new(SqliteErrorKind::Transaction, format!("commit failed: {error}"))
+                            .with_cause(error),
+                    )
                 })?;
                 Ok(value)
             }

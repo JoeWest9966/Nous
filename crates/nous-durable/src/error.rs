@@ -59,6 +59,14 @@ impl std::fmt::Display for StorageError {
     }
 }
 
-impl std::error::Error for StorageError {}
+impl std::error::Error for StorageError {
+    /// 把 `SqliteError` 交出去 —— 事务边界的错误也要能一路问到底。
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            StorageError::Sqlite(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 pub type Result<T> = std::result::Result<T, StorageError>;
