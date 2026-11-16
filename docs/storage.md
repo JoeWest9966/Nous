@@ -76,9 +76,39 @@ tasks / submissions / durable_metadata / durable_schema
 ## 7. 失败 / 半写 / 多进程
 
 - **单写者**：`BEGIN IMMEDIATE` + WAL + `busy_timeout = 5000`。
-- 事务失败 = 回滚 = 内存态保留 = **对外不发布**（先落库后可见，硬约束 2）。
+- **一次调用失败的三种样子，别压成一句**（见 §7.1）：
+  1. **校验拒绝**（durable 自己的检查）—— 不抛，装进 `CommitResult.refused`；
+     前 N−1 批照常提交，seq 逐批盖章，回执在 `COMMIT` 之后发。
+  2. **数据库失败**（约束、IO、连接）—— 整次回滚，前 N−1 批不可见，seq 不推进。
+  3. **认门失败**（`writer != 'nous'`）—— 写模式直接拒绝打开，根本不进入事务。
 - IO / 磁盘错：该次生成落 `status = terminal`，`record` 里标 `storage_failure`，**不静默续跑**。
 - 只读打开一律 `mode=ro`（fixture 就是这样，永不写回）。
+
+### 7.1 拒绝 ≠ 回滚（上游原话）
+
+出处 `packages/durable/src/storage/sqlite/storage.ts:160-195`：
+
+```js
+for (const writes of batches) {
+  const checked = await this.#checkBatch(transaction, schema, writes);
+  if ("refused" in checked) { refused = { error: checked.refused }; break; }  // ← break，不是 throw
+  ...
+}
+await pending.flush(transaction, ...);   // ← 已接受的批次照常写
+return refused === undefined ? { stored } : { stored, refused };   // ← refused 是返回值字段
+```
+
+上游注释原文：`A failure of the database rejects the call and rolls back the batches before it
+with the transaction.`
+
+也就是说 **`refused` 是 `CommitResult` 的一个字段，不是异常**；只有数据库自己的失败才让整次
+调用失败。本库的 `CommitResult { stored, refused: Option<Refusal> }` 与它逐字对齐，
+`tests/commit_semantics.rs` 两组测试各钉住一半：
+`a_refused_batch_stops_the_call_but_the_batches_before_it_stay`（拒绝，前面留下）与
+`a_half_written_call_rolls_back_whole_and_is_invisible`（数据库失败，整次不可见）。
+
+**为什么不做成 savepoint**：上游不做，而且 `refused` 需要「前面已接受的批确实落盘」这个前提
+才对调用方有意义（否则调用方无从知道哪一批进了库）。改成 savepoint 会让 `stored` 的含义变。
 
 ## 8. 硬约束
 
