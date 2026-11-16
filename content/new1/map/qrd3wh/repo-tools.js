@@ -1042,7 +1042,11 @@ export const syncRepo = async (
   message,
   { only = null, includeDeleted = false, paths = null, scope = null, label = "扩展", tag = "extend" } = {},
 ) => {
-  const opts = { cwd: root, timeout: 60_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } };
+  // 25s 而不是 60s：这个仓都是小仓，推得动就是两三秒的事。60 秒只会在**推不动**的时候
+  // 起作用 —— 而「推不动」在 j1900 上是常态（它连不上 GitHub，`GIT_TERMINAL_PROMPT=0`
+  // 之后就在那儿干等 TCP 超时）。让人对着一个写操作等满一分钟，比早点告诉他
+  // 「存下了、但没推上去」糟得多。
+  const opts = { cwd: root, timeout: 25_000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } };
   let committed = false;
   // `scope` = 只提交这一段（一个仓放两段时的防火墙：另一段没写完的东西不许搭车）。
   const changes = await gitChanges(root, { scope });
