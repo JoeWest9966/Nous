@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+
+# 真实用户数据，永不入库
+fixtures/*.sqlite
+fixtures/*.sqlite-wal
+fixtures/*.sqlite-shm
+data/
