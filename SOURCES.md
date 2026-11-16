@@ -8,6 +8,8 @@
 - `已提货` —— 抄进来了，和上游一致
 - `已改` —— 抄进来了，本库改过（改动写进第四列，一句说清）
 
+「**自写**」不是状态值（`verify.sh` 的枚举只有上面三个），写在第四列：那一行的代码本库自己写，上游只提供形状参考。
+
 来源代号：`rpi@v0.24.2` = `bigfish1913/pi-rust`（本地只读检出 `/tmp/pi-rust`）；`pi@v1.5.2` = `earendil-works/pi`（本地只读检出 `/tmp/pi-check`）。
 
 上下游路径列的规矩（机器要读）：**一个路径，不带注记**。`/**` 表示整棵子树，`{a,b}` 表示并列的多个文件；注记写进「改动」列。台账**不写行数**（行数随上游漂，作不了判据）。
@@ -22,10 +24,10 @@
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/agent_tool.rs` | 只取 `AgentTool` trait，零逻辑改动（连带 `ToolExecutionMode`，它是 `execution_mode()` 的返回类型，跑不掉）；`rpi_ai` → `nous_ai` 只改名 | 已改 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/error.rs` | 只取 `AgentError` 枚举 + `impl`，零逻辑改动（`Box<crate::types::AgentToolResult>` → 同模块 `Box<AgentToolResult>`） | 已改 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/types.rs` | 只取 `AgentToolResult` / `TextContentOrImage` / `ToolResultPartial`（含同源的三个便捷方法与 `From` 实现），零逻辑改动；`rpi_ai::types::X` → `crate::types::X` | 已改 |
-| `crates/nous-ai/src/providers/google_generative_ai/**` | pi@v1.5.2 | `packages/ai/src/api/google-generative-ai.ts` | TS→Rust 翻译（本库第一个**自己写**的 provider，不是提货）：`mod.rs` = stream/streamSimple/createClient，`build_params.rs` = buildParams + `google-shared.ts` 的 convertMessages/convertTools/thinking，`mapper.rs` = 流式映射 + mapStopReason。结构化差异：SDK 摊平的 REST body 手写、`abortSignal` → `CancellationToken`。已知缺口：`toolChoice` 无对应字段（见票） | 已改 |
+| `crates/nous-ai/src/providers/google_generative_ai/**` | pi@v1.5.2 | `packages/ai/src/api/google-generative-ai.ts` | TS→Rust 翻译（本库第一个**自己写**的 provider，不是提货）：`mod.rs` = stream/streamSimple/createClient，`build_params.rs` = buildParams + `google-shared.ts` 的 convertMessages/convertTools/thinking，`mapper.rs` = 流式映射 + mapStopReason。结构化差异：SDK 摊平的 REST body 手写、`abortSignal` → `CancellationToken`。**已知缺口：`toolChoice`（TS 的 `GoogleOptions` 有，`rpi-ai` 的 `SimpleStreamOptions` 没有）。固定按「未给」处理。要支持 `auto`/`none`/`any` 得给 provider 层加 per-provider 选项通道，那是扩展契约，等真有调用方要「强制/禁止工具」时再开票。** 测试备注：方言之间的工具声明对拍只覆盖 anthropic ↔ google（两者的 builder 是 `pub`）。openai 两个方言的 builder 在冻结文件里是私有的，**不为了多两方对拍去改可见性** —— `diff -r` 归零是本库唯一「原样提货」的机器判据，把它换掉不划算。将来真要覆盖 openai，走公开入口（`streamSimple` 喂 options、抓请求体断言 tools 形状），不改可见性 | 已改 |
 | `crates/nous-tools/**` | rpi@v0.24.2 | `crates/rpi-tools/src/**` | 改 use：`rpi_agent::*` → `nous_ai::{tool,types}`（11 文件）；`rpi_plugin_sdk` 两处常量内联成 `&str`；`env.rs` 移出到 `nous-env`；`os_env.rs` 的 `process::resume_child` **未提货**（需子进程控制，超出契约面） | 待提货 |
 | `crates/nous-runtime/**` | rpi@v0.24.2 | `crates/rpi-runtime/src/**` | 原样；包名改名，依赖 `rpi-ai`+`providers` → `nous-ai`+`providers` | 待提货 |
-| `crates/nous-wire/src/event.rs` | rpi@v0.24.2 | `crates/rpi-cli/src/remote/protocol.rs` | 只取事件枚举与形状；帧/CBOR/客户端那套不要 | 待提货 |
+| `crates/nous-wire/src/event.rs` | rpi@v0.24.2 | `crates/rpi-cli/src/remote/protocol.rs` | **自写**（不是提货）：只取事件枚举的**形状语义**，类型、变体、辅助方法由本库按 `wire.md` 定；上游有而宪法没有的一律不抄（`ui_dialog_*` / `agent_start` / `agent_end` / `retry_scheduled` / `turn_*` / `tool_execution_end`、`ready`/`response`/`command` 帧），全落 `Unknown`；帧 / CBOR / 客户端那套不要。测试是手写 JSON 对宪法，不照着上游类型编 | 已改 |
 | `crates/nous-durable/src/tokens.rs` | rpi@v0.24.2 | `crates/rpi-harness/src/compaction/tokens.rs` | 原样 | 待提货 |
 | `crates/nous-durable/src/retry.rs` | rpi@v0.24.2 | `crates/rpi-harness/src/agent_harness.rs` | 摘录 retry 段，其余不要 | 待提货 |
 

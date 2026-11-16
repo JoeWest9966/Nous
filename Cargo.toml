@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/nous-telemetry",
     "crates/nous-ai",
+    "crates/nous-wire",
 ]
 # `packages/env/daemon` 自带 Cargo.toml / Cargo.lock / rust-toolchain.toml，不是本 workspace 的成员。
 # 不 exclude 掉，cargo 会直接罢工。
