@@ -53,6 +53,12 @@
 - `parent != null` = 这是一条 **fork 分支**。bjes6b 手机端把它全滤掉，只认主线。
   桌面端要不要显示分支是产品决定，别在客户端里猜 —— 真要做 fork 走 `POST /v1/sessions/:id/fork`。
 - `last` 是最后一条 entry 的摘要（`{id, kind, text}`），用来画列表预览。它可能为 null。
+- `name` 是会话名，**可能是空串 `""`** —— 含义是「这条会话从没被命名过」，不是错误。
+  **本库不生成默认名**，没有「对话 44」这种东西：目录里没这个名字就是 `""`。
+  要显示占位就客户端自己拼（「对话 12」），**别把占位写回库里** —— 写回等于把「没命名」
+  变成「命名为『对话 12』」，改名历史从此脏掉。
+  这是本库与旧引擎的**故意差别**（旧 `qrd3wh` 会给「对话 N」），依据见 `docs/fixture-map.md`：
+  fixture 的 `names` 覆盖全部 189 条活会话，`""` 只出现在建了没命名那一段。
 - `skills` / `template` / `thinkingLevels` / `extensions` 是**生效值**，不是请求值 —— 拿来画勾，
   别自己猜。引擎改这些字段，列表预览不受影响，只有详情面板受影响。
 
@@ -159,7 +165,7 @@ body `{ entryId?, name? }`。`entryId` 省略 = **从最后一条分叉**。回 
 `id` 是新会话，`at` 是在父会话的哪条 entry 上分的叉。
 
 - 分出来的会话在列表里带 `parent: {id, at}`。
-- 名字不给就沿用引擎的默认名（「对话 44」这种），要区分就自己带 `name`。
+- 名字不给就是空串 `""`（本库不生成默认名，见上面 `GET /v1/sessions` 的 `name` 那条），要区分就自己带 `name`。
 
 ### POST /v1/sessions/:id/rename
 
@@ -362,7 +368,7 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ```jsonc
 {
-  "name": "…",                        // 可省，省了引擎给「对话 N」
+  "name": "…",                        // 可省；省了就是空串 ""，本库不生成默认名
   "model": {"provider":"…","modelId":"…"},
   "thinkingLevel": "off|minimal|low|medium|high|xhigh|max",
   "skills": ["code-review", "…"],     // 可省 = 不挂
