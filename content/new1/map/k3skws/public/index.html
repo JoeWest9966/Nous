@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>element · Nous 元素库</title>
+<link rel="stylesheet" href="./style.css" />
+<script>
+  // 宿主把这块挂在 /p/new1/k3skws（可能没有尾斜杠）。没有它，./style.css 会解析到上一层去。
+  if (!location.pathname.endsWith("/")) {
+    location.replace(location.pathname + "/" + location.search + location.hash);
+  }
+</script>
+</head>
+<body data-mode="a">
+
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>
+      <rect x="3" y="14" width="7" height="7" rx="1.5"/><circle cx="17.5" cy="17.5" r="3.4"/>
+    </svg>
+    <div class="titles">
+      <h1>element</h1>
+      <p>new1<span class="sep">/</span>k3skws<span class="sep">·</span><span id="count">—</span></p>
+    </div>
+  </div>
+  <div class="top-right">
+    <div class="modetoggle" role="group" aria-label="编辑方式">
+      <button id="mA" aria-pressed="true" title="A · 表单为主，JSON 只读预览">A 表单</button>
+      <button id="mB" aria-pressed="false" title="B · JSON 为主，字段摘要辅助">B JSON</button>
+    </div>
+    <span class="hint dim mono" id="repo">—</span>
+    <button class="chip-status" id="sync" title="未保存的改动">
+      <span class="dot" data-state="ok"></span><span class="sync-label">已同步</span>
+    </button>
+    <button class="chip-status" id="refresh" title="重新读一遍仓库">
+      <span class="dot" data-state="wait"></span>刷新
+    </button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="rail">
+    <div class="rail-search"><input id="search" type="search" placeholder="搜名字 / id / 字段值" autocomplete="off" /></div>
+    <div class="rail-scroll">
+      <div class="facet-head">
+        <h3>组</h3><span class="n" id="nGroup">0</span>
+        <button class="add" id="newGroup" title="新建组">＋</button>
+      </div>
+      <div id="rowsGroup"></div>
+      <div class="facet-head">
+        <h3>包</h3><span class="n" id="nPackage">0</span>
+        <button class="add" id="newPackage" title="新建包">＋</button>
+      </div>
+      <div id="rowsPackage"></div>
+    </div>
+    <div class="rail-foot">仓库 <code id="repoPath">—</code> · <span id="footSync">—</span></div>
+  </aside>
+
+  <section class="main">
+    <div class="main-head">
+      <span class="badge" id="badge" data-kind="group">组</span>
+      <span class="mono" id="headId">—</span>
+      <span style="flex:1"></span>
+      <span class="file">写入 <b id="filePath">—</b></span>
+    </div>
+    <div class="main-body">
+      <div class="banner" id="banner"></div>
+      <div class="form" id="form"></div>
+      <div class="jsonedit"><textarea id="jsonText" spellcheck="false"></textarea></div>
+      <div class="note">
+        <b>字段随你加。</b>这里只认两个必填：<code>id</code>（= 文件名）和 <code>name</code>；
+        其余字段想加就加、想删就删，后端一个字都不改地写进
+        <code>groups/&lt;id&gt;.json</code> 或 <code>packages/&lt;id&gt;.json</code>。
+        组和包之间只靠 <code>packages: ["包 id", …]</code> 这个引用连起来。
+      </div>
+    </div>
+    <div class="main-foot">
+      <span class="msg" id="msg">—</span>
+      <button class="btn" id="revert" title="丢掉这次改动">还原</button>
+      <button class="btn btn-danger" id="del" title="删掉这份 JSON 并提交">删除</button>
+      <button class="btn btn-primary" id="save" title="Ctrl / ⌘ + S">保存并提交</button>
+    </div>
+  </section>
+
+  <aside class="side">
+    <div class="side-head">
+      <h3 id="sideTitle">JSON</h3>
+      <span style="flex:1"></span>
+      <span class="mono dim" id="bytes">—</span>
+      <button class="btn" id="copy" title="复制整份 JSON">复制</button>
+    </div>
+    <pre class="json" id="json"></pre>
+    <div class="jsonedit" id="sideEdit" style="display:none"></div>
+    <div class="summary" id="summary"></div>
+    <div class="err" id="err"></div>
+    <div class="side-foot" id="gitLine">—</div>
+  </aside>
+</div>
+
+<div class="toast" id="toast"></div>
+<datalist id="pkgList"></datalist>
+
+<script src="./app.js"></script>
+</body>
+</html>
