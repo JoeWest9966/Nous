@@ -28,6 +28,7 @@ pub(crate) mod redact;
 pub mod schema;
 #[cfg(feature = "providers")]
 pub(crate) mod strict_schema;
+pub mod tool;
 pub mod types;
 
 // Flat re-exports — consumers do `use nous_ai::Message` not `nous_ai::types::Message`.
@@ -39,6 +40,9 @@ pub use provider::{
     SimpleStreamOptionsPatch, DEFAULT_LLM_API_TIMEOUT, DEFAULT_STREAM_IDLE_TIMEOUT,
 };
 pub use schema::validate_tool_arguments;
+pub use tool::{
+    AgentError, AgentTool, AgentToolResult, TextContentOrImage, ToolExecutionMode, ToolResultPartial,
+};
 pub use types::{
     Api, AssistantMessage, AssistantMessageEvent, Content, Context, DeferredHandle, DoneReason,
     ErrorReason, ImageContent, InputModality, Message, ModelCost, ModelCostRates, ModelCostTier,

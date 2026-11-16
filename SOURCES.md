@@ -18,9 +18,9 @@
 |---|---|---|---|---|
 | `crates/nous-telemetry/**` | rpi@v0.24.2 | `crates/rpi-telemetry/src/**` | 原样；包名 `rpi-telemetry` → `nous-telemetry`；README 换成带出处的抬头 | 已提货 |
 | `crates/nous-ai/**` | rpi@v0.24.2 | `crates/rpi-ai/src/**` | 原样（`src/**` + `tests/**`）；包名 `rpi-ai` → `nous-ai`、依赖 `rpi-telemetry` → `nous-telemetry`（含注释与测试里的 `rpi_ai::` 路径）；`providers` / `smoke` feature 保留 | 已提货 |
-| `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/agent_tool.rs` | 新文件：只取 `AgentTool` trait（66 行） | 待提货 |
-| `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/error.rs` | 同上：`AgentError`（43 行） | 待提货 |
-| `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/types.rs` | 同上：`AgentToolResult` / `TextContentOrImage` / `ToolResultPartial` 三个类型 | 待提货 |
+| `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/agent_tool.rs` | 只取 `AgentTool` trait，零逻辑改动（连带 `ToolExecutionMode`，它是 `execution_mode()` 的返回类型，跑不掉）；`rpi_ai` → `nous_ai` 只改名 | 已改 |
+| `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/error.rs` | 只取 `AgentError` 枚举 + `impl`，零逻辑改动（`Box<crate::types::AgentToolResult>` → 同模块 `Box<AgentToolResult>`） | 已改 |
+| `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/types.rs` | 只取 `AgentToolResult` / `TextContentOrImage` / `ToolResultPartial`（含同源的三个便捷方法与 `From` 实现），零逻辑改动；`rpi_ai::types::X` → `crate::types::X` | 已改 |
 | `crates/nous-ai/src/providers/google_generative_ai.rs` | pi@v1.5.2 | `packages/ai/src/api/google-generative-ai.ts` | TS→Rust 翻译；rpi 缺这一个方言 | 待提货 |
 | `crates/nous-tools/**` | rpi@v0.24.2 | `crates/rpi-tools/src/**` | 改 use：`rpi_agent::*` → `nous_ai::{tool,types}`（11 文件）；`rpi_plugin_sdk` 两处常量内联成 `&str`；`env.rs` 移出到 `nous-env`；`os_env.rs` 的 `process::resume_child` **未提货**（需子进程控制，超出契约面） | 待提货 |
 | `crates/nous-runtime/**` | rpi@v0.24.2 | `crates/rpi-runtime/src/**` | 原样；包名改名，依赖 `rpi-ai`+`providers` → `nous-ai`+`providers` | 待提货 |
