@@ -236,6 +236,43 @@ async function rescanIndex() {
 const KIND = { ".rs": "code", ".toml": "code", ".json": "json", ".md": "markdown", ".txt": "markdown" };
 const EDITABLE = new Set(Object.keys(KIND));
 
+/** 给文件清单挂上「相对 HEAD 改了多少」：一次 numstat 拿已跟踪的，未跟踪的按整文件算新增。
+ *  `dir` 是绝对路径（`<REPO>/<name>`），git 的 pathspec 用相对 REPO 的那一段。 */
+async function markChanged(dir, files) {
+  const prefix = path.relative(REPO, dir);
+  const counts = new Map();
+  const diff = await git("diff", "--numstat", "HEAD", "--", prefix);
+  for (const line of diff.out.split("\n")) {
+    const [add, del, ...rest] = line.split("\t");
+    const rel = rest.join("\t").trim();
+    if (!rel) continue;
+    const sub = rel.startsWith(`${prefix}/`) ? rel.slice(prefix.length + 1) : rel;
+    counts.set(sub, {
+      added: add === "-" ? 0 : Number(add),
+      removed: del === "-" ? 0 : Number(del),
+    });
+  }
+  const untracked = await git("ls-files", "--others", "--exclude-standard", "--", prefix);
+  const fresh = new Set(
+    untracked.out
+      .split("\n")
+      .filter(Boolean)
+      .map((p) => (p.startsWith(`${prefix}/`) ? p.slice(prefix.length + 1) : p)),
+  );
+  return Promise.all(
+    files.map(async (file) => {
+      if (fresh.has(file.path)) {
+        const text = await readFile(path.join(dir, file.path), "utf8").catch(() => "");
+        return { ...file, changed: true, added: text ? text.split("\n").length - 1 : 0, removed: 0 };
+      }
+      const hit = counts.get(file.path);
+      return hit
+        ? { ...file, changed: true, added: hit.added, removed: hit.removed }
+        : { ...file, changed: false, added: 0, removed: 0 };
+    }),
+  );
+}
+
 async function listFiles(dir, base = "") {
   const out = [];
   const entries = await readdir(path.join(dir, base), { withFileTypes: true });
@@ -644,7 +681,7 @@ async function api(req, res, pathname, url) {
       throw Object.assign(new Error(`${name} 不在磁盘上`), { status: 404 });
     });
     const files = await listFiles(dir);
-    return send(res, 200, { files });
+    return send(res, 200, { files: await markChanged(dir, files) });
   }
 
   if (pathname === "/v1/triggers/file" && verb === "GET") {
