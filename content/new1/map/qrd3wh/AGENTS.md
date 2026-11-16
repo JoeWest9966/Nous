@@ -431,3 +431,32 @@ qrd3wh ──GET /api/vps/<名>/secret──> vq0f03 ──(X-NW-Reveal: 1)─�
   别的地方出现的技能清单都会漂。
 - 不把技能做成树节点。技能是带目录结构的文件、有正文有脚本，树只有四个字段装不下；
   把别人的 README 导进盘面，盘就不是你的了。
+
+---
+
+## k3skws · element 块（2026-11-16）
+
+### 坑 1 · 部署空块首次带 package.json 会重启面板
+
+- **症状**：往空的 `content/new1/map/k3skws/` 解入 `package.json` + 代码后，`nous-panel.service` 两次收到 SIGTERM（`status=143`），正在跑的会话流断。时间精确落在解包那一秒；单独 `touch k3skws/server.js` 复现不出（只收掉块进程，面板没事）。
+- **根因**：未定。怀疑 `server/blocks.ts` 的块启动方式从「空块」（`BLANK_TAG`，内置 server）切到「有 scripts.start」（`npm start`）时触发了宿主重启。属于面板壳那一侧，不在本块。
+- **解**：空块首次落代码挑没人用时做；要根治查 `blocks.ts` 的 `launch.cmd` 变更路径。k3skws 已上线，不必再演一次。
+
+### 坑 2 · git push 超时只杀 git 本体 → 卡 134 秒
+
+- **症状**：`git push` 设了 20 秒超时，实际卡 134 秒才返回（j1900 → github.com:443 间歇性不通）。
+- **根因**：`git push` 底下挂着 `git-remote-https` 孙进程；只 `child.kill()` 杀掉 git 本体，孙进程仍攥着 stdout/stderr 管道，父进程等 `close` 事件永远等不到。
+- **解**：超时收整个进程组 `process.kill(-child.pid, "SIGKILL")`；再给 git 加 `-c http.lowSpeedLimit=2000 -c http.lowSpeedTime=10` 早断。`qrd3wh/repo-tools.js` 已有同类修复（`57ec925`，25s 版），k3skws 的 `server.js` 同款。
+
+### 坑 3 · j1900 上 Nous 仓 git push 报连不上，gh api 却通
+
+- **症状**：`git -C /opt/Nous push` 报 `Failed to connect to github.com port 443`，同时 `gh api` / `/opt/Nous-Elements` 的 push 都正常。
+- **根因**：`/opt/Nous` 的 git config 没有 credential helper；`/opt/Nous-Elements` 有 `credential.https://github.com.helper = !/usr/bin/gh auth git-credential`。无 helper 时 curl 层的行为不同，表现为网络错，其实是认证路径没配。
+- **解**：push 时显式带 `-c credential.helper="!/usr/bin/gh auth git-credential" -c http.lowSpeedLimit=2000 -c http.lowSpeedTime=8`；或给 Nous 仓配同一条 helper（改配置，不动工作区）。
+
+### 决定 · Nous-Elements：组 / 包的 JSON 约定
+
+- 私库 `JoeWest9966/Nous-Elements`，j1900 工作副本 `/opt/Nous-Elements`；`groups/<id>.json`、`packages/<id>.json`，一个元素一个文件。
+- 字段**不定义终稿**：只校验 `id` / `name` 两个必填，未知字段原样透传（页面可自由加、改名、删字段）。`id` 即文件名，`[a-z0-9-]`，改名 = 换 id（引用会断）。
+- 组 → 包用 `packages: ["包 id", …]` 引用；包正文先内联在 `body` 字符串。
+- 写一次 = 提交一次；push 尽力而为，失败不回滚本地提交，页面留「重试推送」入口。
