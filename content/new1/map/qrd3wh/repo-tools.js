@@ -266,11 +266,16 @@ export const setNodeCategories = async (
   return updated;
 };
 
-/** 类别词表操作：add 建空类别；rename 改名（有子类别就整枝改）；remove 删整枝。 */
+/** 类别词表操作：add 建空类别；rename 改名（有子类别就整枝改）；remove 删整枝。
+ *
+ * `manifest` 是**这一仓的清单名**：技能 / 扩展是 `nous.json`，预设是 `preset.json`。
+ * 漏了它 = 扫不到任何挂载（`readManifest` 默认只认 `nous.json`），rename/remove 就退化成
+ * 「只改词表」—— 读的时候挂载又把旧名字补回词表，改名白改，remove 更是把整仓写操作锁死
+ * （`index.mjs` 报「类别缺一段」）。见 `NousDesk/坑.md 80`。 */
 export const mutateCategories = async (
   root,
   { op, name, to },
-  { index = null, protect = PROTECTED_CATEGORIES } = {},
+  { index = null, protect = PROTECTED_CATEGORIES, manifest = "nous.json" } = {},
 ) => {
   const regenerate = index ? index : () => runIndex(root);
   const current = await readCategories(root, { protect });
@@ -306,7 +311,7 @@ export const mutateCategories = async (
     const plans = [];
     const known = new Set(current);
     for (const dir of dirs) {
-      const found = await readManifest(root, dir);
+      const found = await readManifest(root, dir, { manifest });
       if (!found) continue;
       const cats = normalizeCategories(found.manifest.category);
       for (const c of cats) known.add(c);
@@ -334,7 +339,7 @@ export const mutateCategories = async (
   const snapshots = new Map();
   let touched = 0;
   for (const dir of dirs) {
-    const found = await readManifest(root, dir);
+    const found = await readManifest(root, dir, { manifest });
     if (!found) continue;
     const cats = normalizeCategories(found.manifest.category);
     const kept = cats.filter((c) => !isUnder(c, target));
