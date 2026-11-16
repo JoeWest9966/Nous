@@ -42,6 +42,26 @@ if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	else
 		bad "找不到 nous-durable 的 conformance 测试 —— 验收的核心缺了"
 	fi
+
+	step "1c. conformance 用例数下限（防止套件被瘦成三行）"
+	FLOOR=crates/nous-durable/conformance/FLOOR.tsv
+	if [ -f "$FLOOR" ]; then
+		THIN=0; FILES=0
+		while IFS=$'\t' read -r file min; do
+			case "$file" in ''|'#'*) continue ;; esac
+			FILES=$((FILES+1))
+			N=$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "crates/nous-durable/conformance/$file" 2>/dev/null || true)
+			N=${N:-0}
+			if [ "$N" -ge "$min" ] 2>/dev/null; then
+				ok "$file：$N ≥ $min"
+			else
+				bad "$file：只有 $N 条测试，下限 $min"; THIN=1
+			fi
+		 done < "$FLOOR"
+		[ $THIN -eq 0 ] && ok "$FILES 个 conformance 文件都过了下限"
+	else
+		bad "缺 $FLOOR —— 用例数下限没写下来，套件可以悄悄瘦身"
+	fi
 fi
 
 # 2. fixture：线上那份 agent.sqlite 读得出 /v1/sessions 同形的 JSON
