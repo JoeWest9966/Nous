@@ -1,0 +1,13 @@
+[package]
+name = "nous-chord"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "chord 的 json / delta 语义层（delta 已落地；json 随后）"
+readme = "README.md"
+
+# AGENTS.md §二：nous-chord 无内部依赖。
+# delta 只需要 serde_json —— 出现 nous-ai / tokio / reqwest 就是契约图破了。
+[dependencies]
+serde_json = { workspace = true }

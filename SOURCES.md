@@ -51,7 +51,8 @@
 | `crates/nous-chord/src/output.rs` | pi@v1.5.2 | `packages/chord/src/output.ts` | 翻译；`pi-telemetry` → `nous-telemetry` | 待提货 |
 | `crates/nous-chord/src/watch/**` | pi@v1.5.2 | `packages/chord/src/watch.ts` | 翻译；**`watchEvents` 视角不要**，事件出口接 `nous-wire` | 待提货 |
 | `crates/nous-chord/src/sqlite/**` | pi@v1.5.2 | `packages/chord/src/sqlite/**` | 翻译；`node:sqlite` → `rusqlite`，`node:fs`/`node:path` → `nous-env` | 待提货 |
-| `crates/nous-chord/src/delta/**` | pi@v1.5.2 | `packages/chord/src/delta/**` | 翻译；去掉 Promise；`Proxy`/descriptor 换显式类型 | 待提货 |
+| `crates/nous-chord/src/delta/{mod,op,apply,codec,diff,pending,validator,draft}.rs` | pi@v1.5.2 | `packages/chord/src/delta/{index,diff,pending,apply-immutable-trusted,revision-validator,draft}.ts` | 翻成 Rust；去掉 Promise（同步 `Result`）；`Proxy`/descriptor 换成显式命令式 API（`set`/`remove`/`append_text`/`splice`）；`WeakSet` 的 copy-on-write 换成「每批克隆一次 root」（语义同、性能结构不同，见模块文档）；数组 diff 简化成前后缀对齐 + 一段 splice（**精确但不规范**，判据只有重放值）；`t` 按 **UTF-16 码元**（`encode_utf16`）计数与切分；`assertXxx` 换成 `Result<_, OpError>` | 已改 |
+| `crates/nous-chord/src/delta/tracker.rs` | pi@v1.5.2 | `packages/chord/src/delta/tracker.ts` | **未提货**：overlay 节点树 / piece tree / 位置缓存 / 竞争草稿与 `open→prepared→consumed→aborted→stale` 生命周期状态机（上游 2,319 行）；`emit` 的保留段折叠与 4096 上限已在 `diff`/`draft` 里以简化形式存在。`Draft` 目前建在克隆值上、`prepare` 用 diff 兜底 —— 语义已通、性能结构与并发生命周期未做 | 待提货 |
 | `crates/nous-durable/src/storage/**` | pi@v1.5.2 | `packages/durable/src/storage/**` | 翻译；**表结构与版本号自己定**（`docs/storage.md`）；`commit()` 批写 | 待提货 |
 | `crates/nous-durable/src/session/**` | pi@v1.5.2 | `packages/durable/src/session/**` | 翻译 | 待提货 |
 | `crates/nous-durable/src/session/entries.rs` | pi@v1.5.2 | `packages/durable/src/entries.ts` | 翻译 | 待提货 |
@@ -63,14 +64,10 @@
 | `crates/nous-durable/src/harness/generation.rs` | pi@v1.5.2 | `packages/durable/src/harness/util.ts` | 摘 abort 相关辅助并入 | 待提货 |
 | `crates/nous-durable/src/harness/partial_changes.rs` | pi@v1.5.2 | `packages/durable/src/harness/types.ts` | 摘 abort / 部分变更相关类型并入 | 待提货 |
 | `crates/nous-durable/src/record/**` | pi@v1.5.2 | `packages/durable/src/types.ts` | 只摘记录版本语义（`pi.tool` / `pi.generation` / `task_too_old`）；**不整份搬类型** | 待提货 |
-| `crates/nous-durable/conformance/storage_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-conformance.ts` | 改写成 Rust：`#[test]` ≥ 17（上游 33 个用例） | 待提货 |
-| `crates/nous-durable/conformance/env_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/env-conformance.ts` | 改写成 Rust：`#[test]` ≥ 11（上游 21 个用例） | 待提货 |
-| `crates/nous-durable/conformance/storage_benchmark.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-benchmark.ts` | 改写成 Rust：`#[test]` ≥ 6（上游 12 个用例） | 待提货 |
-| `crates/nous-durable/conformance/commit_writes.rs` | pi@v1.5.2 | `packages/durable/src/testing/commit-writes.ts` | 改写成 Rust：辅助 + ≥ 1 条 `#[test]` | 待提货 |
-| `crates/nous-durable/conformance/assertions.rs` | pi@v1.5.2 | `packages/durable/src/testing/assertions.ts` | 改写成 Rust 断言门面 | 待提货 |
-| `crates/nous-durable/conformance/types.rs` | pi@v1.5.2 | `packages/durable/src/testing/types.ts` | 改写成 Rust 用例/断言类型 | 待提货 |
-| `crates/nous-durable/conformance/runner.rs` | pi@v1.5.2 | `packages/durable/src/testing/runner.ts` | 改写成 Rust 注册器 | 待提货 |
-| `crates/nous-durable/conformance/mod.rs` | pi@v1.5.2 | `packages/durable/src/testing/index.ts` | 改写成 Rust 出口 | 待提货 |
+| `crates/nous-durable/conformance/storage_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-conformance.ts` | 改写成 Rust：**≥ 16 个 `#[test]`**（上游 2,099 行 / **32 个 `createCase(`** 调用点，取一半）。数字来源命令写进文件头，可复算：`grep -c '^\s*createCase(' packages/durable/src/testing/storage-conformance.ts` → 32。**案名逐条照抄英文原文**（如 `reserves ID 1 for the immutable root conversation`），一个不许改名 —— 上游加了案，一条 grep 就能看出缺哪条 | 待提货 |
+| `crates/nous-durable/conformance/env_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/env-conformance.ts` | 改写成 Rust：**≥ 10 个 `#[test]`**（上游 633 行 / **20 个 `createCase(`**，取一半；同上命令可复算）。案名照抄 | 待提货 |
+| `crates/nous-durable/conformance/storage_benchmark.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-benchmark.ts` | 改写成 Rust：**benchmark 不是规范**，`createCase` 调用点 0，不参与 `FLOOR.tsv` 的用例数下限；只用来定本库的性能基线 | 待提货 |
+| `crates/nous-durable/conformance/{assertions,runner,types,mod,commit_writes}.rs` | pi@v1.5.2 | `packages/durable/src/testing/{assertions,runner,types,index,commit-writes}.ts` | **自写**薄门面：用例注册器 + 断言门面 + 用例类型 + 出口 + 提交写入辅助。上游这五个共 169 行，它们是**工具**，`createCase` 调用点 0 —— 不为凑数逐行翻译，只作形状参考 | 自写 |
 
 ## 四、只用不改
 

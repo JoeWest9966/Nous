@@ -876,6 +876,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-chord"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "nous-env"
 version = "0.1.0"
 dependencies = [
