@@ -17,11 +17,12 @@
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
 | `crates/nous-telemetry/**` | rpi@v0.24.2 | `crates/rpi-telemetry/src/**` | 原样；包名 `rpi-telemetry` → `nous-telemetry`；README 换成带出处的抬头 | 已提货 |
+| `crates/nous-ai/src/providers/google_generative_ai/build_params.rs` | pi@v1.5.2 | `packages/ai/src/api/google-shared.ts` | TS→Rust 翻译：convertMessages / convertTools / thinking 解析 / mapStopReason | 已改 |
 | `crates/nous-ai/**` | rpi@v0.24.2 | `crates/rpi-ai/src/**` | 原样（`src/**` + `tests/**`）；包名 `rpi-ai` → `nous-ai`、依赖 `rpi-telemetry` → `nous-telemetry`（含注释与测试里的 `rpi_ai::` 路径）；`providers` / `smoke` feature 保留 | 已提货 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/agent_tool.rs` | 只取 `AgentTool` trait，零逻辑改动（连带 `ToolExecutionMode`，它是 `execution_mode()` 的返回类型，跑不掉）；`rpi_ai` → `nous_ai` 只改名 | 已改 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/error.rs` | 只取 `AgentError` 枚举 + `impl`，零逻辑改动（`Box<crate::types::AgentToolResult>` → 同模块 `Box<AgentToolResult>`） | 已改 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/types.rs` | 只取 `AgentToolResult` / `TextContentOrImage` / `ToolResultPartial`（含同源的三个便捷方法与 `From` 实现），零逻辑改动；`rpi_ai::types::X` → `crate::types::X` | 已改 |
-| `crates/nous-ai/src/providers/google_generative_ai.rs` | pi@v1.5.2 | `packages/ai/src/api/google-generative-ai.ts` | TS→Rust 翻译；rpi 缺这一个方言 | 待提货 |
+| `crates/nous-ai/src/providers/google_generative_ai/**` | pi@v1.5.2 | `packages/ai/src/api/google-generative-ai.ts` | TS→Rust 翻译（本库第一个**自己写**的 provider，不是提货）：`mod.rs` = stream/streamSimple/createClient，`build_params.rs` = buildParams + `google-shared.ts` 的 convertMessages/convertTools/thinking，`mapper.rs` = 流式映射 + mapStopReason。结构化差异：SDK 摊平的 REST body 手写、`abortSignal` → `CancellationToken`。已知缺口：`toolChoice` 无对应字段（见票） | 已改 |
 | `crates/nous-tools/**` | rpi@v0.24.2 | `crates/rpi-tools/src/**` | 改 use：`rpi_agent::*` → `nous_ai::{tool,types}`（11 文件）；`rpi_plugin_sdk` 两处常量内联成 `&str`；`env.rs` 移出到 `nous-env`；`os_env.rs` 的 `process::resume_child` **未提货**（需子进程控制，超出契约面） | 待提货 |
 | `crates/nous-runtime/**` | rpi@v0.24.2 | `crates/rpi-runtime/src/**` | 原样；包名改名，依赖 `rpi-ai`+`providers` → `nous-ai`+`providers` | 待提货 |
 | `crates/nous-wire/src/event.rs` | rpi@v0.24.2 | `crates/rpi-cli/src/remote/protocol.rs` | 只取事件枚举与形状；帧/CBOR/客户端那套不要 | 待提货 |

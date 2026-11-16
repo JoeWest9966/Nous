@@ -11,6 +11,9 @@ pub mod faux;
 pub mod anthropic;
 
 #[cfg(feature = "providers")]
+pub mod google_generative_ai;
+
+#[cfg(feature = "providers")]
 pub mod openai_completions;
 
 #[cfg(feature = "providers")]
