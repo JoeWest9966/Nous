@@ -144,6 +144,8 @@ for raw in open('SOURCES.md',encoding='utf-8'):
         bad_status.append(f'{local}\t{status}'); continue
     if status=='自写':
         print(f'OWN\t{local}'); continue
+    if status=='待提货' and not re.search(r'#\d+', change):
+        print(f'NOTICKET\t{local}')
     if source not in src_map:
         print(f'SKIP\t{source}\t{upstream}'); continue
     repo,tag = src_map[source]
@@ -157,7 +159,7 @@ for raw in open('SOURCES.md',encoding='utf-8'):
 for b in bad_status: print('BADSTATUS\t'+b)
 PY
 )
-	MISSING=0; CHECKED=0; SKIPPED=0; OWNED=0
+	MISSING=0; CHECKED=0; SKIPPED=0; OWNED=0; NOTICKET=0
 	while IFS=$'\t' read -r kind a b2 c; do
 		case "$kind" in
 		CHECK)
@@ -169,11 +171,51 @@ PY
 			;;
 		SKIP) SKIPPED=$((SKIPPED+1)) ;;
 		OWN) OWNED=$((OWNED+1)) ;;
+		NOTICKET) NOTICKET=$((NOTICKET+1)); bad "待提货 但没有票号（改动列里没有 #N）：$a" ;;
 		BADSTATUS) bad "状态值不在四个值里（待提货/已提货/已改/自写）：$a → $b2" ;;
 		esac
 	done <<< "$ROWS"
 	if [ $MISSING -eq 0 ]; then ok "$CHECKED 行上游路径全部对上（$SKIPPED 行跳过：来源不是 pi/pi-rust，或本地 checkout 不在；$OWNED 行自写，无上游）"; fi
 	if [ $CHECKED -eq 0 ] && [ $SKIPPED -gt 0 ]; then skip "没有可核对的行 —— /tmp/pi-rust 或 /tmp/pi-check 不在"; fi
+
+	# 4d not-ported.md：决定不做的上游东西，不许躺在提货台账里
+	if [ -f docs/not-ported.md ]; then
+		NP=$(python3 - <<'PY'
+import re
+src_map={'rpi@v0.24.2':('/tmp/pi-rust','v0.24.2'),'pi@v1.5.2':('/tmp/pi-check','v1.5.2')}
+n=0
+for raw in open('docs/not-ported.md',encoding='utf-8'):
+    if not raw.startswith('| `'): continue
+    cells=[c.strip() for c in raw.strip().strip('|').split('|')]
+    if len(cells)<3: continue
+    up, source = cells[0].strip('`'), cells[1]
+    if up.startswith('crates/') or up.startswith('vendor/'):
+        print(f'LOCAL\t{up}'); continue
+    if not re.search(r'#\d+', cells[2]):
+        print(f'NOREASON\t{up}'); continue
+    if source not in src_map:
+        print(f'NPSKIP\t{source}\t{up}'); continue
+    repo,tag = src_map[source]
+    m=re.search(r'\{([^}]*)\}', up)
+    paths=[up[:m.start()]+alt+up[m.end():] for alt in m.group(1).split(',')] if m else [up]
+    for p in paths:
+        print(f'NPCHECK\t{repo}\t{tag}\t{p[:-3] if p.endswith("/**") else p}')
+PY
+)
+		NPMISS=0; NPOK=0
+		while IFS=$'\t' read -r kind a b2 c; do
+			case "$kind" in
+			NPCHECK) if [ -d "$a" ]; then
+					if git -C "$a" cat-file -e "$b2:$c" 2>/dev/null; then NPOK=$((NPOK+1)); else bad "not-ported.md 编造了上游路径：$b2:$c"; NPMISS=$((NPMISS+1)); fi
+				fi ;;
+			LOCAL) bad "not-ported.md 里出现本地路径（不做的就不该有本地文件）：$a" ;;
+			NOREASON) bad "not-ported.md 行没有理由 + 票号：$a" ;;
+			esac
+		done <<< "$NP"
+		if [ $NPMISS -eq 0 ]; then ok "not-ported.md：$NPOK 行上游路径全部对上（不做的也编不了）"; fi
+	else
+		skip "没有 docs/not-ported.md（决定不做的上游东西记在哪里？）"
+	fi
 
 	# 4c 占位桩
 	if [ -d crates ]; then
