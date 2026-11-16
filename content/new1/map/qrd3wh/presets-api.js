@@ -505,13 +505,10 @@ const renamePreset = async ({ repo, repoRoot, section, sections, name, to }) => 
       ...(await listFilesUnder(dest, `${scope}/${to}`)),
       ...refs.map((ref) => path.relative(repoRoot, ref.file)),
     ];
-    // 两段的索引也是这次改动的产物（`regenIndex` 刚写进去的），不带上的话每次改名
-    // 都留两个 `?? index.json` 脏文件在那儿。
-    for (const dir of [scope, ultimate?.id]) {
-      if (!dir) continue;
-      const rel = `${dir}/index.json`;
-      if (await stat(path.join(repoRoot, rel)).catch(() => null)) paths.push(rel);
-    }
+    // **索引不跟着这次提交走。** `regenIndex` 刚把盘上的条目扫进去，里面可能有一条
+    // 「新建了还没发布」的 —— 一起提交就成了「仓说我有它、实际推不上去」（`syncRepo` 里
+    // `skippedIndex` 那段挡的就是这个，但它只认段根 / 仓根的 index）。留成 `M index.json`
+    // 脏着，跟 `create` 一个样，下次发布一并收走。
     const result = await repo.syncRepo(repoRoot, `session: 改名 ${name} → ${to}`, {
       includeDeleted: true,
       paths,

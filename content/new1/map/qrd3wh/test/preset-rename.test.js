@@ -135,6 +135,15 @@ const api = (repoRoot, rosters) => ({
 
 const read = (root, rel) => readFile(path.join(root, rel), "utf8");
 
+/** 工作区除了 `index.json` 之外应该干净。索引**故意不跟改名提交**（见 `renamePreset` 的注释：
+ *  里面可能装着「新建了还没发布」的条目，一起提交就成了「仓说我有它、实际推不上去」）。 */
+const cleanExceptIndex = async (root) =>
+  (await status(root))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.endsWith("index.json"));
+
 // ── 成功路径 ────────────────────────────────────────────────────────────────
 
 test("rename：目录 + 清单 name 一起动，引用它的终极模板跟着改，一条提交", async () => {
@@ -169,8 +178,8 @@ test("rename：目录 + 清单 name 一起动，引用它的终极模板跟着�
     );
     assert.ok(names.some((line) => line.includes(`${ULTIMATE}/digest/ultimate.json`)));
 
-    // 工作区干净：改名不该留半截脏东西。
-    assert.equal((await status(repoRoot)).trim(), "");
+    // 改名不该留半截脏东西（索引除外，它是下一次发布收的）。
+    assert.deepEqual(await cleanExceptIndex(repoRoot), []);
 
     // 名册也跟上了（不然面板显示新名字、建会话时还看不见它）。
     assert.deepEqual(rosters[SESSION].list().map((item) => item.name), ["weekly-report"]);
@@ -207,7 +216,7 @@ test("rename：没有终极模板引用它时，只动自己（不留多余的�
       200,
     );
     assert.equal(JSON.parse(await read(repoRoot, `${ULTIMATE}/other/ultimate.json`)).session, "another-template");
-    assert.equal((await status(repoRoot)).trim(), "");
+    assert.deepEqual(await cleanExceptIndex(repoRoot), []);
   } finally {
     await cleanup(repoRoot);
   }
@@ -231,6 +240,32 @@ test("rename：未发布的那条也能改（`git mv` 认不了它，退回直�
 });
 
 // ── 拒绝路径：盘上必须一个字节都没动 ────────────────────────────────────────
+
+test("rename：未发布会话模板改名，**不许**把那条塞进索引的提交里", async () => {
+  // 索引里一旦有一条「盘上有、HEAD 里没有」的目录，推上去就是「仓库说我有它、实际没有」——
+  // 别人 pull 之后面板上会显示一条点开就空的东西。
+  const { repoRoot, rosters } = await setup();
+  await writeTree(repoRoot, `${SESSION}/draft/preset.json`, presetFile("draft"));
+  try {
+    assert.equal(
+      (await api(repoRoot, rosters).call("POST", `/v1/presets/${SESSION}/rename`, { name: "draft", to: "draft-2" }))
+        .status,
+      200,
+    );
+    // 盘上的索引会重扫（列了 draft-2）……
+    assert.match(await read(repoRoot, `${SESSION}/index.json`), /draft-2/);
+    // ……但这次提交里**没有**它：那条还留在工作区，跟着下一次发布走。
+    const names = await showNames(repoRoot, "HEAD");
+    assert.equal(
+      names.some((line) => line.includes("index.json")),
+      false,
+      `索引不该跟着改名提交，实际：${names.join(" | ")}`,
+    );
+    assert.equal((await status(repoRoot)).includes("draft-2"), true);
+  } finally {
+    await cleanup(repoRoot);
+  }
+});
 
 test("rename：新名字被占了 → 409，两条都原样留着", async () => {
   const { repoRoot, rosters } = await setup({
