@@ -1,0 +1,17 @@
+[package]
+name = "nous-durable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "durable 的语义自己写：storage / session / harness（AGENTS.md §一：只借语义和坑，不借结构）"
+readme = "README.md"
+
+# 契约面（AGENTS.md §二）：nous-durable → chord, ai, wire, telemetry, env。
+# **工具靠 `nous-ai::Tool` trait 注入** —— 这里永远不该出现 `nous-tools`
+# （判据：`cargo tree -p nous-durable` 里没有 nous-tools）。
+# 12a 只用到 chord 的 sqlite / json 两层，其余等真用到再加，不预先绑。
+[dependencies]
+nous-chord = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

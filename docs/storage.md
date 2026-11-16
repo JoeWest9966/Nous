@@ -116,6 +116,21 @@ tasks / submissions / durable_metadata / durable_schema
 
 所以 `#12` 要写的是**表结构与提交语义**，不是数据库门面。
 
+### 10.1 12a 落地的部分（`crates/nous-durable/src/storage/`）
+
+| 文件 | 内容 | 判据 |
+|---|---|---|
+| `sqlite/schema.rs` | 九张表 + 十六个索引的名字（可带前缀） | 键写错在开发期 panic；`every_key_is_present_exactly_once` |
+| `sqlite/migrations.rs` | v1 = 最终形状（含 `sleeping`）+ `writer` 列；27 条语句 | 9 表 / 16 索引 / `writer='nous'` / `version=1` 全断言 |
+| `sqlite/rows.rs` | `record` 原样、索引字符串 JSON 编码、哨兵 `0` / `""` | 孤立代理对与 ` ` 往返无损 |
+| `sqlite/statements.rs` | 一条 JSON 数组 + `json_each` 批量写；大行走多行 `VALUES` | 500 行 = **1 条语句**；20 个大行 ≤ 2 条 |
+| `sqlite/tables.rs` | 四张记录表 + `record_ids` / `documents` / `revisions` 的行构造 | 每张表一条单测 |
+| `import.rs` | 只读导入 + **重算索引列再逐列对齐** | fixture 七表 19,689 单元读→写→读 diff = 0 |
+| `sessions.rs` | `/v1/sessions` 形状（名字/模型来自旧引擎文档） | 189 条、id 降序；最新 revision 是 `delta` 时明确失败 |
+
+**认门的两条边界**（都有测试）：上游 v2 库**写模式打不开**（版本过新）、缺 `writer` 列的库
+**写模式也打不开**（`found: None`），两者**只读都能读**。
+
 ## 11. 记录字段的对齐
 
 对外记录的字段名由 `wire.md` 决定；内部存的东西可以和它不同，但**同名字段必须同义**。`pi.*` 记录里 assistant 消息的字段名（`stopReason` / `responseId` / `responseModel` / `rawStopReason` / `usage`）来自上游，`nous-ai` 的 `#[serde(rename_all = "camelCase")]` 已经对齐，改这里之前先看 `wire.md` 对应段。

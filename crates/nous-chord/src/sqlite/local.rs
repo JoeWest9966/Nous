@@ -193,30 +193,34 @@ impl SqliteExecutor for TransactionHandle<'_> {
 }
 
 impl SqliteDatabase for LocalDatabase {
-    fn transaction<T, F>(&mut self, work: F) -> Result<T, SqliteError>
+    fn transaction<T, E, F>(&mut self, work: F) -> std::result::Result<T, E>
     where
-        F: FnOnce(&dyn SqliteExecutor) -> Result<T, SqliteError>,
+        F: FnOnce(&dyn SqliteExecutor) -> std::result::Result<T, E>,
+        E: From<SqliteError>,
     {
         let connection = self.connection.as_mut().ok_or_else(|| {
-            SqliteError::new(SqliteErrorKind::Backend, "database is already closed")
+            E::from(SqliteError::new(
+                SqliteErrorKind::Backend,
+                "database is already closed",
+            ))
         })?;
         // `BEGIN IMMEDIATE`：立刻拿写锁，不和别的进程空转（docs/storage.md §7）。
-        let transaction = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let transaction = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| E::from(SqliteError::from(error)))?;
         let handle = TransactionHandle {
             transaction: &transaction,
         };
         match work(&handle) {
             Ok(value) => {
                 transaction.commit().map_err(|error| {
-                    SqliteError::new(SqliteErrorKind::Transaction, error.to_string())
+                    E::from(SqliteError::new(SqliteErrorKind::Transaction, error.to_string()))
                 })?;
                 Ok(value)
             }
             Err(error) => {
-                // 显式回滚：错误原样返回（回滚失败也不掩盖它，只记在 kind 里）。
-                if let Err(rollback) = transaction.rollback() {
-                    tracing_free_note(&error, &rollback);
-                }
+                // 显式回滚：错误原样返回（回滚失败也不掩盖它）。
+                let _ = transaction.rollback();
                 Err(error)
             }
         }
@@ -231,12 +235,6 @@ impl SqliteDatabase for LocalDatabase {
             None => Ok(()),
         }
     }
-}
-
-/// 回滚失败时**不覆盖**原错误（调用方要的是「为什么失败」，不是「回滚崩了」）。
-/// 这里只做一次内存里的事实记录，不引日志依赖。
-fn tracing_free_note(error: &SqliteError, rollback: &rusqlite::Error) {
-    let _ = (error, rollback);
 }
 
 #[cfg(test)]
@@ -321,7 +319,7 @@ mod tests {
     fn a_committed_transaction_is_visible_afterwards() {
         let mut db = LocalDatabase::open_in_memory().unwrap();
         db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY) STRICT").unwrap();
-        db.transaction(|tx| {
+        db.transaction(|tx| -> std::result::Result<(), SqliteError> {
             tx.run("INSERT INTO t (id) VALUES (1)", &[])?;
             Ok(())
         })

@@ -133,9 +133,14 @@ pub trait SqliteDatabase: SqliteExecutor {
     ///
     /// 事务里所有操作必须走传进去的句柄（`&dyn SqliteExecutor`）；句柄出了这个函数就作废。
     /// 事务进行中再调数据库本身（包括 `transaction`）会自锁 —— 上游同一约束。
-    fn transaction<T, F>(&mut self, work: F) -> Result<T, SqliteError>
+    ///
+    /// 错误类型是调用方定的 `E`（只要有 `From<SqliteError>`）：上游是 JS，抛什么都行；
+    /// Rust 里让上层把 [`SqliteError`] 包进自己的错误枚举，比在这里统一成一个类型再往下拆干净。
+    /// 提交/回滚自身失败也走 `E::from`。
+    fn transaction<T, E, F>(&mut self, work: F) -> std::result::Result<T, E>
     where
-        F: FnOnce(&dyn SqliteExecutor) -> Result<T, SqliteError>;
+        F: FnOnce(&dyn SqliteExecutor) -> std::result::Result<T, E>,
+        E: From<SqliteError>;
 
     /// 关库。事务未结束的库不许关。
     fn close(&mut self) -> Result<(), SqliteError>;
