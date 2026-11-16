@@ -189,7 +189,8 @@ for raw in open('docs/not-ported.md',encoding='utf-8'):
     cells=[c.strip() for c in raw.strip().strip('|').split('|')]
     if len(cells)<3: continue
     up, source = cells[0].strip('`'), cells[1]
-    if up.startswith('crates/') or up.startswith('vendor/'):
+    import os
+    if os.path.exists(up.replace('/**','')):
         print(f'LOCAL\t{up}'); continue
     if not re.search(r'#\d+', cells[2]):
         print(f'NOREASON\t{up}'); continue
