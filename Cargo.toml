@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nous-telemetry",
+]
+# `packages/env/daemon` 自带 Cargo.toml / Cargo.lock / rust-toolchain.toml，不是本 workspace 的成员。
+# 不 exclude 掉，cargo 会直接罢工。
+exclude = ["vendor/pi-env-daemon"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+
+# 版本表只列真用到的行。冻结纪律：这些版本号照 `pi-rust@v0.24.2` 的
+# workspace.dependencies 抄，不追新；要加一处依赖，先在这里落一行，再记进
+# SOURCES.md。
+#
+# 已 pin、等第一处使用再落成真行（现在没有 crate 用到，落了就是白绑约束）：
+#   rusqlite   = { version = "0.31", features = ["bundled"] }        ← nous-durable/src/storage
+#   reqwest    = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }  ← nous-ai 的 providers feature
+#   yaml_serde = "=0.10.2"                                          ← nous-runtime
+[workspace.dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "process", "sync", "io-util"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
+
+nous-telemetry = { path = "crates/nous-telemetry", version = "0.1.0" }

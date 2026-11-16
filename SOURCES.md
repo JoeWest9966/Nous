@@ -16,7 +16,7 @@
 
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
-| `crates/nous-telemetry/**` | rpi@v0.24.2 | `crates/rpi-telemetry/src/**` | 原样；包名 `rpi-telemetry` → `nous-telemetry` | 待提货 |
+| `crates/nous-telemetry/**` | rpi@v0.24.2 | `crates/rpi-telemetry/src/**` | 原样；包名 `rpi-telemetry` → `nous-telemetry`；README 换成带出处的抬头 | 已提货 |
 | `crates/nous-ai/**` | rpi@v0.24.2 | `crates/rpi-ai/src/**` | 原样；包名改名，内部依赖 `rpi-telemetry` → `nous-telemetry`；`providers` feature 保留 | 待提货 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/agent_tool.rs` | 新文件：只取 `AgentTool` trait（66 行） | 待提货 |
 | `crates/nous-ai/src/tool.rs` | rpi@v0.24.2 | `crates/rpi-agent/src/error.rs` | 同上：`AgentError`（43 行） | 待提货 |
@@ -72,7 +72,7 @@
 | `vendor/pi-env-daemon/**` | pi@v1.5.2 | `packages/env/daemon/**` | 原样，**只 build 不改**；自带 `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`，本仓根 `Cargo.toml` 必须 `exclude = ["vendor/pi-env-daemon"]` | 待提货 |
 | `docs/spec-from-pi-durable.md` | pi@v1.5.2 | `packages/durable/docs/spec.md` | 摘录 + 逐条「采纳 / 不采纳」+ 反悔点 | 已改 |
 | `docs/pitfalls-from-pi.md` | pi@v1.5.2 | `packages/durable/CHANGELOG.md` | 只追加判定（`中` / `不中` / `未知`），不改旧条目 | 已改 |
-| `wire.md` | NousDesk@`wire.md` | `wire.md` | 迁入并改为权威版本（Nous 侧是只读镜像）；此行的来源不是 pi/pi-rust，机器判定时跳过 | 已提货 |
+| `wire.md` | NousDesk@`wire.md` | `wire.md` | 迁入并改为权威版本（Nous 侧是只读镜像）。**这行是唯一对不上 tag 的**：来源是 NousDesk 仓，不是 pi/pi-rust，没法用 `git cat-file` 核；台账体检会把它列进「跳过」并打出来。留着是为了记出处，不是漏改 | 已提货 |
 
 ## 五、不在本库（写下来是为了以后不用再讨论）
 
