@@ -33,3 +33,14 @@
 ```
 
 判成 `中` 的，写完这一行就去开分支改代码，别只记账。
+
+---
+
+## 2026-11-16 · 移植坑（不是上游 `fix`，但同等级别）
+
+这节记的不是 changelog 条目，是**读上游源码时发现的、Rust 版一定会再踩一次**的坑。放在这份文件里的理由是：三个月后没人记得 `chars().count()` 为什么不行，而这里只追加、会被下一轮读到。来源与行号见 `docs/chord-delta-notes.md`。
+
+| 上游条目 | 现象 | 判定 | 说明 / 等哪一步回答 |
+|---|---|---|---|
+| `packages/chord/src/delta` 的 `t` op（`tracker.ts`、`apply-immutable-trusted.ts`、`index.ts` 三处一致） | `t` 是「从头截掉 count 个 **UTF-16 码元**」，不是 Unicode 标量，也不是字节。Rust 里顺手写 `chars().count()` 或按字节切，会在含 emoji / 代理对的文本上**静默**让副本与权威分叉 —— 没有 TS 那套字符串语义兜底 | **中** | chord delta 落地那张票（#10）第一次实现 `T` 时必须做两件事：① 按 `encode_utf16` 计数再切；② 在 `apply` 那个分支上写一条注释，明说为什么**不能**用 `chars()`/字节下标，并引这一行。测试必须含 emoji 与代理对用例 |
+| `tracker.ts` 的 `appendText` 多 chunk 合并（`tracker.ts:363-388`） | 逐 chunk 追加若退回「比较新旧字符串前缀」，流式写入从 O(N×chunk) 变成 O(N×length)；800KB / 2 万次从 ~1ms 变 ~2.4s | **中** | Nous 的 SSE 合帧铁律就是逐 token 流。Rust 版必须提供 `append_text` 等价 API，emit 时直接发 `a` op；同一条注释里写清「前缀检测只在没有 append 记录时才走」 |
