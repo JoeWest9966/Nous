@@ -44,7 +44,8 @@
 nous-telemetry     无内部依赖
 nous-chord         无内部依赖      json / delta / sqlite / watch / output / context
 nous-wire          无内部依赖      RemoteEvent 等对外事件类型
-nous-env           无内部依赖      只有 trait：FileSystem / Shell / ExecutionEnv / FileChange
+nous-env           nous-chord     只有 trait：FileSystem / Shell / ExecutionEnv / FileChange；
+                                 取消与进度用 chord 那份 Context（不另造第二套）
 nous-ai            → telemetry
 nous-tools         → ai, env
 nous-runtime       → ai
