@@ -1,0 +1,14 @@
+[package]
+name = "nous-wire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "wire.md 的 Rust 投影：对外 SSE 事件类型（无内部依赖，只有 serde）"
+readme = "README.md"
+
+# 契约面：只有序列化后的字段名。这个 crate **只允许** serde + serde_json。
+# 出现 tokio / reqwest / nous-* 就是契约图被破坏了（AGENTS.md §二）。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
