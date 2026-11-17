@@ -197,8 +197,9 @@ fn diff_array(before: &[Value], after: &[Value], path: &mut Path, operations: &m
     }
     // 变动区域恰好 1 对 1：**递归进那个元素**，不发 `p`。
     //
-    // 上游 `diff.ts:376-379` 同一分支（`beforeCount === 1 && afterCount === 1` →
+    // 上游 `diff.ts:398-401` 同一分支（`beforeCount === 1 && afterCount === 1` →
     // `diffValue(before[beforeStart], after[afterStart], [...path, outputStart])`）。
+    // （`:376-379` 是它上游那步 semantic LCS —— 本库没提货，见 `docs/chord-delta-notes.md` §1.7。）
     // 这条不是优化，是流式回答的命根子：`content` 里一个文本块在自己的 `text` 上变长，
     // 折成 `p` 就是把**整块**（整段已经流出来的文本）重新存一遍、发布一遍 —— 100 ms 一次
     // 节流下每次提交都带全文，正好是 `#14` 要消灭的那种 O(n²)。递归之后那条 `a` 才活得下来

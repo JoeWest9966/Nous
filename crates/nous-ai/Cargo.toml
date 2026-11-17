@@ -28,6 +28,9 @@ regex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+# `tests/schema_features.rs` 直接对 `JSONSchema::compile` 断言：外部 `$ref` 必须编译失败。
+# 走 `nous_ai::schema::*` 只到得了「失败被吞成 None」那一层，看不见错误里缺哪个特性。
+jsonschema = { workspace = true }
 
 [features]
 default = []

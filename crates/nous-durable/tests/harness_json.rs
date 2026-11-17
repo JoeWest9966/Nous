@@ -274,6 +274,41 @@ fn a_mixed_write_replays_to_exactly_the_value_it_was_given() {
     assert_eq!(replayed["run"], json!({"turns": 1}));
 }
 
+/// 数组变长不许顺手把追加账本清掉 —— 这条钉的是 `assign_json` 里「先插尾巴、再递归前缀」的顺序。
+///
+/// 顺序反过来时 `Draft::splice()` 会作废这条记录（`crates/nous-chord/src/delta/draft.rs:115-124`），
+/// 于是 `draft.appends()` 空掉、这条红。**它不改变今天的 ops、也不改变值**（区域不是 1 对 1，
+/// diff 自己发一条 `p`），所以这是账本断言而不是值断言；账本正是 `Draft::prepare` 覆写 op 的输入，
+/// 账本没了就等于把「文本只存增量」整个押在 diff 恰好也发 `a` 上。
+#[test]
+fn growing_an_array_keeps_the_append_record() {
+    let base = json!({"message": {"content": [{"type": "text", "text": "正"}]}});
+    let value = json!({"content": [
+        {"type": "text", "text": "正文"},
+        {"type": "thinking", "thinking": "想"},
+    ]});
+    let plan = fields(vec![(
+        Seg::key("content"),
+        fields(vec![(
+            Seg::index(0),
+            fields(vec![(Seg::key("text"), append("文"))]),
+        )]),
+    )]);
+    let mut draft = draft_of(&base);
+    assign_json(&mut draft, &message(), &value, Some(&plan)).unwrap();
+    assert_eq!(
+        draft.appends().keys().cloned().collect::<Vec<_>>(),
+        vec![vec![
+            Seg::key("message"),
+            Seg::key("content"),
+            Seg::index(0),
+            Seg::key("text")
+        ]],
+        "插入尾巴不许把前缀那条追加记录清掉（顺序反了就会）"
+    );
+    assert_eq!(replayed(&base, &ops_of(draft)), json!({"message": value}));
+}
+
 /// 流式回答的常态：**首块在自己的 `text` 上变长、后面的块不动**。这一次提交必须只有一条 `a`。
 #[test]
 fn two_blocks_where_the_first_one_grows_append_in_place() {
