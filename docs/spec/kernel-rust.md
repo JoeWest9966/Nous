@@ -68,16 +68,29 @@ test -n "$K"                   || { echo "SKIP: K 为空（清单里没有 layer
 - 覆盖范围：以 `git grep … -- $K` / `-- $A` 为载体的（3、4、5、6、8、11、12、13）与 `cargo tree` / `cargo metadata` 类（1、2、9、10）。
 - **#14 的验收里必须包含"这 15 条从 RED/SKIP 变真绿"**：#14 第 10 步（清单 + 选择子脚本）之前一律 **RED**（缺配），之后仍 SKIP 即红、仍 RED 即未交付。
 
+**边界基线只有一份，在代码仓**：`docs/boundary-baseline.txt`，由 #14 落定；改它（包括换成员）需要签字。本 spec 仓**不留副本**——两份同义文件 = 第二份真相（代码仓 `docs/spec/` 那 7 份副本也在被删，同一个道理）。判据 3 与判据 6 读的都是**代码仓那一份**（`verify.sh` 里 `BASE=docs/boundary-baseline.txt`）。
+
 1. 正向依赖：`cargo tree -p nous-app --depth 1 -e normal` 含内核层的 `durable` / `wire` / `tools` / `runtime`，不含 `chord` / `rusqlite`。
 2. 反向依赖：内核层任一 crate `--depth 1` 都不依赖应用层。
-3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K` 与 `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
+3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K` 与**代码仓的** `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
 4. 路由归属：`git grep -nE '\.route\(|axum::|tower::' -- $K` 为空。
 5. 数据面唯一入口：`$K` 之外不许出现 `rusqlite` / `Connection::open` / `.sqlite` / `PRAGMA` / `BEGIN IMMEDIATE`。
 6. 进程归应用层：`$K` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。**
-   全仓的进程创建点按**文件**数，不按入口数：`出现真实 spawn 的文件集合 == docs/boundary-baseline.txt 里 spawn_files=N 那一行`（今天 N=2：`crates/nous/tools/src/os_env.rs`、`crates/nous/tools/src/utils/open_browser.rs`；`#20` 落地后变 3，**改这一行需要签字**）。
-   排除项：`output_decode.rs` 的 `#[cfg(windows)] fn console_code_page` 那一块（Linux 不编，判据不数它）；`tests/` 与 `*tests.rs` 一律不算。
-   已知欠账（**不设判据**，只记在 baseline 注释里）：`os_env.rs` 一个文件内 3 个入口（363 / 412 / 915）。口号仍是"其余工具一律经它"，但它今天就是那个它本身。
-   验收口径：**S1 在 S12 签字前，验收结论写 `SKIP: 等 S12 签字` 并打印出来** —— 旧条款本身错了，按它判出来的红没有意义。
+   全仓的进程创建点按**文件**数，不按入口数。生成命令（逐字执行，`verify.sh` 第 5 段就是它）：
+
+   ```bash
+   grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs | sort
+   ```
+
+   结果**逐行相等**于代码仓 `docs/boundary-baseline.txt` 的 `spawn_files=N` + 紧跟的成员清单（今天 **N=2**：`crates/nous/tools/src/os_env.rs`、`crates/nous/ext/src/spawn.rs`）。
+   **排除项（逐条列出，判据从集合里减掉每一条；不许只写"排除 tests/"就完）**：
+   - `tests/`、`*_test.rs`、`*tests.rs` —— 测试夹具；
+   - `#[cfg(windows)]` 块 —— 今天就是 `crates/nous/tools/src/output_decode.rs:198`（Linux 不编）；
+   - 探针 crate `crates/nous/ext-probe/` —— 起一个 `nous-server` 逐帧验协议的探针，**不进 systemd，不是生产路径**；
+   - `crates/nous/ext/src/runtime.rs:537` —— `scope.spawn(…)` 是 `std::thread::scope` 的**线程**，S1 只数进程。
+
+   已知欠账（**不设判据**，只记在 baseline 注释里）：`os_env.rs` 一文件 3 个入口（363 / 412 / 915）；`ext/src/spawn.rs` 一文件 1 个入口（90 / 127）。口号仍是"其余工具一律经它"，但 `os_env.rs` 今天就是那个它本身。
+   **成员变更要签字**："只减不增"管的是**成员**，不只是数字——`open_browser.rs` → `ext/src/spawn.rs` 换人时数字仍为 2，**换成员同样要签字**（数字相等不等于没变，这就是哨兵原则）。
 6b. 依赖方向：`cargo tree -p nous-durable --depth 2 | grep providers` 为空 —— 真相层不许依赖**会 sleep 的那个 crate**，不是"不许依赖 `nous-ai`"（拆完 `types` 允许被依赖，S2）。
 7. **端点索引唯一**：`git grep -l '^### GET /v1/'` 恰好 1 个文件（`wire.md`）。它只是索引——端点、用途、谁在用；**字段形状的权威在 `crates/*/*/tests/` 与 conformance 里**，两者冲突时**测试赢**。
 7b. **索引不抄字段**：`wire.md` 里出现 `"type":` 或 camelCase 字段名清单的段落数 = 0（抄一遍就会漂）。

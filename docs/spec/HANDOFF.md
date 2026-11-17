@@ -9,7 +9,7 @@
 
 - **文件**：`docs/spec/kernel-rust.md`（九章 + 附录 A 的 31 条已拍板）。
 - **接缝修订**：`seams-open.md` 的 S1–S11 **已签 · 2026-11-17**，已**原位**贴进 kernel spec（提交 `773cf1c`），不建副本 —— 抄一遍就会漂（ch1 判据 7b）。`seams-open.md` 转为历史。
-- **判据怎么跑**：`scripts/verify.sh` 八段 + spec 里那些 grep。**四条判据本身修过**：判据 6 补 `tokio::process` 并排除 `ExitCode`/`tests`（输出逐行）；判据 3 的 `docs/boundary-baseline.txt` 首行写死"只减不增"；判据 9 排除 `nous-fixture`；ch3.1 的核心层路径改 `nous-engine`。
+- **判据怎么跑**：`scripts/verify.sh` 八段 + spec 里那些 grep。**四条判据本身修过**：判据 6 补 `tokio::process` 并排除 `ExitCode`/`tests`（输出逐行）；判据 3 的 `docs/boundary-baseline.txt` 首行写死"只减不增"（**唯一副本在代码仓，本仓不留**）；判据 9 排除 `nous-fixture`；ch3.1 的核心层路径改 `nous-engine`。
 - **票**：`#14` 搬迁（与三层目录、baseline **同一次搬到位**）· `#15` 置顶进内核（**阻塞** `#16` C 段）· `#16` 删代码（A 段可并行，C 段等 `#15`）。
 - **新增两张**（见 seams-open）：`nous-ai` 拆 `types` / `providers` + 时钟注入（这是三层分层唯一的阻塞）；SSE 未发送**字节**上限（现在有界的是帧数，`routes.rs:214`）。
 - **纪律**：票由别人做，你**不改 spec**，除非附录 A 某条的"反悔点"命中并把命中证据写进票里。**你验，不许合并 `main`。**
