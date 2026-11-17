@@ -34,6 +34,19 @@ jobs:
         working-directory: repo
         run: ./scripts/judge.sh ex-id-set | grep -F 'ids_equal=1'
 
+      - name: fixture 必须在 CI 存在（本地缺失才 SKIP；CI 出现 SKIP = 红）
+        working-directory: repo
+        run: |
+          [ -f fixtures/agent.sqlite ] || { echo '::error::CI 必须包含 fixtures/agent.sqlite'; exit 1; }
+          NOUS_FIXTURE=fixtures/agent.sqlite ./scripts/verify.sh fixture > /tmp/nous-fixture-ci.log 2>&1
+          rc=$?
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/nous-fixture-ci.log
+          [ "$rc" -eq 0 ] || { echo '::error::verify fixture 未通过'; exit "$rc"; }
+          if grep -qF 'SKIP: fixtures/agent.sqlite 缺失' /tmp/nous-fixture-ci.log; then
+            echo '::error::CI 中不允许 fixture SKIP'
+            exit 1
+          fi
+
       - name: 边界判据（spec 第 1 章 15 条）
         working-directory: repo
         # 判据 1（nous-app 还没接 tools/runtime）与 7b（wire.md 抄字段清单）现在如实红着，

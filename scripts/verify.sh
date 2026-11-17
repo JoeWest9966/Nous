@@ -153,9 +153,8 @@ if [ "$WHAT" = all ] || [ "$WHAT" = fixture ]; then
 	step "2. agent.sqlite fixture"
 	FIX="${NOUS_FIXTURE:-fixtures/agent.sqlite}"
 	if [ ! -f "$FIX" ]; then
-		skip "$FIX 不存在（真实用户数据，不进 git）"
+		skip "SKIP: $FIX 缺失（从 j1900 scp 真数据）"
 		skip "取法：scp root@192.168.1.7:/opt/Nous/content/new1/map/qrd3wh/data/agent.sqlite fixtures/"
-		bad "fixture 缺了就无法验证会话树读得对不对"
 	else
 		if cargo run --quiet -p nous-fixture -- "$FIX" > /tmp/nous-fixture.json 2>/tmp/nous-fixture.err; then
 			# 判据必须是「189 条、id 降序、字段齐、无重复」，不是数 "id" 字符串
@@ -338,10 +337,10 @@ allow={
  'nous-chord': set(),
  'nous-wire': set(),
  'nous-env': {'nous-chord'},
- 'nous-ai': {'nous-telemetry'},
+ 'nous-ai': {'nous-telemetry','nous-ai-types'},
  'nous-tools': {'nous-ai','nous-env'},
  'nous-runtime': {'nous-ai'},
- 'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env'},
+ 'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
  'nous-server': {'nous-durable','nous-wire','nous-telemetry'},
 }
 meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
