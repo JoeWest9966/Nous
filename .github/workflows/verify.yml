@@ -34,11 +34,23 @@ jobs:
         working-directory: repo
         run: ./scripts/judge.sh ex-id-set | grep -F 'ids_equal=1'
 
-      # fixture 判据**不进 CI**：它读的是 j1900 上的真实会话库，`fixtures/*.sqlite` 在
-      # .gitignore 里（真实用户数据永不入库），runner 上不可能有它。断言一个拿不到的文件
-      # 必须存在 = 每次 CI 都红，红久了就没人看 CI。
-      # 本地跑：NOUS_FIXTURE=fixtures/agent.sqlite ./scripts/verify.sh fixture
-      # 让 CI 也能真跑的那份**脱敏** fixture 见 #43；#43 落地后在这里加回一步，指向它。
+      - name: fixture（进仓的脱敏小样本，#43）
+        working-directory: repo
+        # 读的是**进仓**的 `fixtures/agent.small.sqlite`（`scripts/make-small-fixture.py`
+        # 从真库生成：字符串截断 200 字、usage/cost 归零、120 个会话）。真数据永不入库。
+        # 缺了就打 error —— CI 上不许出现 SKIP，那等于这一步什么都没验。
+        run: |
+          test -f fixtures/agent.small.sqlite || {
+            echo '::error::CI 缺少 fixtures/agent.small.sqlite（脱敏小样本，应当进仓）'; exit 1; }
+          rc=0
+          NOUS_FIXTURE=fixtures/agent.small.sqlite ./scripts/verify.sh fixture \
+            > /tmp/nous-fixture-ci.log 2>&1 || rc=$?
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/nous-fixture-ci.log
+          [ "$rc" -eq 0 ] || { echo '::error::verify fixture 未通过'; exit "$rc"; }
+          if grep -qF 'SKIP:' /tmp/nous-fixture-ci.log; then
+            echo '::error::CI 中不允许 fixture SKIP'
+            exit 1
+          fi
 
       - name: 边界判据（spec 第 1 章 15 条）
         working-directory: repo

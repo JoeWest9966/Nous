@@ -151,13 +151,22 @@ fi
 # 2. fixture：线上那份 agent.sqlite 读得出 /v1/sessions 同形的 JSON
 if [ "$WHAT" = all ] || [ "$WHAT" = fixture ]; then
 	step "2. agent.sqlite fixture"
-	FIX="${NOUS_FIXTURE:-fixtures/agent.sqlite}"
+	# 默认用**进仓的脱敏小样本**（#43）：干净 clone 也能真跑，CI 才不是永远 SKIP。
+	# 真数据（190 条，不入库）用 NOUS_FIXTURE=fixtures/agent.sqlite 指过去做人工验。
+	FIX="${NOUS_FIXTURE:-fixtures/agent.small.sqlite}"
+	if [ ! -f "$FIX" ] && [ -z "${NOUS_FIXTURE:-}" ] && [ -f fixtures/agent.sqlite ]; then
+		FIX=fixtures/agent.sqlite
+		skip "小样本不在，退到真数据：$FIX"
+	fi
 	if [ ! -f "$FIX" ]; then
-		skip "SKIP: $FIX 缺失（从 j1900 scp 真数据）"
+		skip "SKIP: $FIX 缺失（小样本应在仓里；真数据从 j1900 scp）"
 		skip "取法：scp root@192.168.1.7:/opt/Nous/content/new1/map/qrd3wh/data/agent.sqlite fixtures/"
+		skip "重做小样本：python3 scripts/make-small-fixture.py"
 	else
 		if cargo run --quiet -p nous-fixture -- "$FIX" > /tmp/nous-fixture.json 2>/tmp/nous-fixture.err; then
-			# 判据必须是「189 条、id 降序、字段齐、无重复」，不是数 "id" 字符串
+			# 判据必须是「**至少 100 条**、id 降序、字段齐、无重复」，不是数 "id" 字符串。
+			# 下限 100 是哨兵：只剩 3 条的库照样「字段齐、降序、无重复」，但没有下限时
+			# 删到 3 条也是绿的 —— 那条判据就成了摆设（#43）。
 			CHECK=$(python3 - <<'PY'
 import json
 try:
@@ -176,6 +185,8 @@ if len(ids)!=len(set(ids)):
     print('BAD'); print(f'id 有重复（{len(ids)} 条，{len(set(ids))} 个唯一）'); raise SystemExit
 if ids!=sorted(ids,reverse=True):
     print('BAD'); print('不是 id 降序'); raise SystemExit
+if len(ids)<100:
+    print('BAD'); print(f'只有 {len(ids)} 条会话（下限 100 —— 小样本被截过头了？）'); raise SystemExit
 print('OK'); print(len(ids))
 PY
 )

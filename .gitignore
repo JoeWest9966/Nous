@@ -30,6 +30,9 @@ content/**/*.sqlite-wal
 fixtures/*.sqlite
 fixtures/*.sqlite-wal
 fixtures/*.sqlite-shm
+# 例外：脱敏小样本**要**进仓（#43）。它是 `scripts/make-small-fixture.py` 从真库生成的，
+# 只有截断的字符串与归零的 usage/cost；CI 靠它真跑 §2 的 fixture 判据。
+!fixtures/agent.small.sqlite
 
 # vendor 里自带 Cargo.toml 的 daemon 单编会生成 target/
 vendor/**/target/
