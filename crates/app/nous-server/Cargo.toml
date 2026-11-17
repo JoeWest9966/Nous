@@ -1,0 +1,41 @@
+[package]
+name = "nous-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "wire.md 的端点层：/v1/* 的 HTTP + SSE 传输（AGENTS.md §二：唯一允许依赖 axum 的 crate）"
+
+# 契约面（AGENTS.md §二）：nous-server → durable, wire, telemetry。
+# - `nous-durable` 出语义（存储 / 会话 / harness 投影），本层只搬运；
+# - `nous-wire` 出事件类型（`wire.md` 的 Rust 投影），本层只序列化；
+# - `nous-telemetry` 出 span/event 契约。
+# **不许**依赖 `nous-ai`：生成走 `nous_durable::session::Session`，本层不碰 provider，
+# 也不许在本 crate 的测试里出现 `FauxProvider`（判据在 issue #22 评论）。
+#
+# 传输绑在这里、且只在这里：`nous-durable` 永久禁 HTTP（`scripts/verify.sh` 4e）。
+# spec §1：一个产物 —— 进 systemd 的 bin 叫 `nous-app`（S4：bin target 恰好 1 个）。
+# crate 名仍叫 `nous-server`（它是 wire.md 的端点层 lib），改的只是 bin 名。
+[[bin]]
+name = "nous-app"
+path = "src/main.rs"
+
+[dependencies]
+nous-durable = { workspace = true }
+nous-wire = { workspace = true }
+nous-telemetry = { workspace = true }
+axum = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# SSE 的流：`futures::stream::unfold` 把 mpsc 的接收端包成 `Stream`。axum 的
+# `Sse` 认的是 `futures_core::Stream`，不为这一件事自己手写 `poll_next`。
+futures = { workspace = true }
+
+# 端点判据直接打 Router（`ServiceExt::oneshot`），不起真监听端口 —— 不绑 127.0.0.1，
+# 也就没有端口冲突和防火墙那类假红。`tower` 只进测试。
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+# `start_paused` 虚拟时钟：合帧判据必须能精确说「窗口差 1 ms 时还没发」。
+tokio = { workspace = true, features = ["test-util"] }
