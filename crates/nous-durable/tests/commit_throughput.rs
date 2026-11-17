@@ -277,3 +277,89 @@ async fn one_thousand_commits_with_a_checkpoint_every_hundred() {
         text
     );
 }
+
+/// 链长扫描：**单次提交的耗时会不会随链长涨**。
+///
+/// `#25` 之前这一条是量 O(n²) 的（链长 200/400/800 → 每次 0.45 / 0.82 / 1.36 ms）；加了
+/// `materialize(Current)` 的缓存之后它必须**平**。只看 1,000 次的总数不够 —— 把常数项改小也能让
+/// 总数变好看，而曲线仍然是斜的。所以这条量的是「同一个动作在不同链长下各自的代价」。
+///
+/// 量法：先不计时地把链跑到长度 `L`，再逐次计 50 次，**取中位数**。取中位数不是讲究：WAL 的
+/// `wal_autocheckpoint`（1,000 页）会恰好落进某个窗口里，那一次能到 30 ms —— 平均值会被它拖走
+/// 一倍，而它跟链长没关系（实测：链长 200 的**第二**个窗口全是 0.14-0.20 ms）。
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "benchmark: 手工跑，链长扫描，数字进 docs/bench-commit.md"]
+async fn a_single_partial_commit_does_not_get_slower_as_the_chain_grows() {
+    const MEASURED: usize = 50;
+    for chain in [200usize, 400, 800] {
+        let path = temp_db(&format!("chain-{chain}"));
+        let session = Session::open(&path).expect("打开");
+        session
+            .commit(
+                vec![
+                    StorageWrite::Conversation(json!({ "id": 2 })),
+                    StorageWrite::DocumentCreate {
+                        id: 3,
+                        record: json!({
+                            "id": 3,
+                            "kind": "pi.live",
+                            "scope": { "kind": "conversation", "conversationId": 2 },
+                            "history": "latest",
+                            "fork": "initial",
+                        }),
+                        content: DocumentContent::Base {
+                            version: 1,
+                            value: json!({
+                                "generation": {
+                                    "attempt": 1,
+                                    "message": { "content": [{ "type": "text", "text": "" }] },
+                                },
+                            }),
+                        },
+                    },
+                ],
+                CommitOptions::default(),
+            )
+            .await
+            .expect("base 提交");
+        for i in 0..chain {
+            let chunk = format!("warm{i:05}{}", "x".repeat(CHUNK - 9));
+            session
+                .commit(vec![append(&chunk)], CommitOptions::default())
+                .await
+                .expect("预热提交");
+        }
+
+        let mut times = Vec::new();
+        for i in 0..MEASURED {
+            let chunk = format!("meas{i:05}{}", "x".repeat(CHUNK - 9));
+            let started = Instant::now();
+            session
+                .commit(vec![append(&chunk)], CommitOptions::default())
+                .await
+                .expect("计时提交");
+            times.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+        times.sort_by(f64::total_cmp);
+        let median = times[MEASURED / 2];
+        let mean = times.iter().sum::<f64>() / MEASURED as f64;
+        println!(
+            "… 链长 {chain}: 单次提交中位数 {median:.3} ms（均值 {mean:.3}，最慢 {:.3}）",
+            times[MEASURED - 1]
+        );
+
+        let reader = Storage::open_read_only(&path).expect("只读连接");
+        let stored = reader
+            .materialize(3, DocumentPoint::Current)
+            .expect("materialize")
+            .expect("文档在");
+        assert_eq!(
+            stored.value["generation"]["message"]["content"][0]["text"]
+                .as_str()
+                .expect("text")
+                .len(),
+            (chain + MEASURED) * CHUNK,
+            "链长 {chain}：每次追加都落库了才算数"
+        );
+    }
+}

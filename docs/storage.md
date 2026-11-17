@@ -253,6 +253,38 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 **961 份文档**全部重放一遍，并把每一份的值折成 delta 再重放，逐字段比；`truncation_counts_utf16_units_on_real_fixture_text`
 在真中文串上做 `t 1`，断言正好少一个字符（fixture 不在时跳过并打印，不假绿）。
 
+### 10.6 `#25` 落地的部分（`materialize(Current)` 的缓存）
+
+| 文件 | 内容 | 判据 |
+|---|---|---|
+| `documents.rs` | `DocumentCache`（按文档 id）、`CachedDocument`（`seq` + `version` + `value` + `deltas_since_base`）、`materialize_cached`、`refresh`（一批写落库**之前**对着库校准）、`values_after_batch`（落库**之后**算这批的 `(version, value)`） | `tests/materialize_cache.rs` 四条 |
+| `storage.rs` | `Storage.cache: Mutex<DocumentCache>`；`commit` 的每批：`refresh` → `flush` → `values_after_batch` → `stored_batch(…, values)`；公开的 `Storage::materialize` 走 `materialize_cached` | 同上 |
+| `commit.rs` | `stored_batch` 不再自己读库：delta 的 `value` 由调用方算好传进来（`values`） | 同上 |
+
+**缓存的有效性判据只有一条**：库里这份文档 `MAX(seq)` 等于缓存记下的 `seq`。理由：revision 只插不改
+（主键 `(document_id, seq)`，没有 upsert），所以「最新那条还是我算值的那一条」⇒ 中间没有任何人写过
+⇒ 那个值仍然成立。
+
+**失效点**（顺序：都在事务里、写锁在手上）：
+
+1. 该文档写了 base ⇒ `values_after_batch` 直接把缓存换成 base 的值（`deltas_since_base = 0`）；
+2. 该文档被 `Retire` ⇒ 删掉缓存。**退役不写 revision**，所以「比 seq」这条判据单独看会漏它
+   （`history: "latest"` 的文档退役时 revision 会被删掉，`MAX(seq)` 变 NULL 恰好挡住；`rewindable`
+   的退役后 revision 全在，就真的会漏）：`materialize_cached` 与 `refresh` 都另外读 `retired_at`；
+3. 该文档被 `Copy` ⇒ 新 id 本来就没有缓存；源文档不动；
+4. **库被另一个连接 / 进程写过** ⇒ `refresh` 比 `MAX(seq)`，不符就删掉，退回重放一次。
+
+**只缓存 `Current`。** `At(seq)` 是历史读取（还拿它判一条 delta 的 `version`），没有「每次都读同一个
+点」的性质，缓存它只有伪造历史的收益。
+
+**两条不许松的判据**：① 同一 store 里两份文档交替读，值各归各的；
+② 加缓存之后 `materialize` 的结果与「另开一条只读连接直接从库里读」**逐字段相等** ——
+`#13` 那条「publication `value` 等于直接读回」不因为加了缓存而放松。后者松了就是缓存与库不一致，
+而这种不一致在流式 UI 上只表现为「最后一段文本没出现」。
+
+**没有「缓存命中率」日志。** 这是语义层，不是指标层：`RUST_LOG` 里出现「命中/未命中」只会变成
+被人盯着的噪声，而它既不解释正确性也不解释那 0.2 ms。
+
 **「500ms 一个窗口 = 一条 op」**：窗口化在调用方（harness 的 `persistWithinMs`），存储侧看到的是
 「一个窗口一条 delta revision」。判据在 `a_window_of_streamed_appends_is_one_op_and_one_revision`：
 纯增长的两段文字折成**一条** `a`，一个窗口一条 revision，两个窗口两条。

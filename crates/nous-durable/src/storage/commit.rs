@@ -530,6 +530,7 @@ pub(crate) fn stored_batch(
     actions: &HashMap<Id, DocumentAction>,
     seq: Seq,
     state: &CommitState,
+    values: &HashMap<Id, (i64, Value)>,
 ) -> Result<StoredBatch> {
     let mut changes: Vec<StoredChange> = Vec::new();
     for write in writes {
@@ -572,19 +573,15 @@ pub(crate) fn stored_batch(
                     (*version, value.clone(), Value::Array(Vec::new()))
                 }
                 DocumentContent::Delta { version, ops } => {
-                    // 读 `Current` 而不是 `At(seq)`：session 作用域的文档没有历史（只留最新态），
-                    // 在 `At` 上读它会明确报 `HistoryNotRetained`。这一批已经 flush，所以 `Current`
-                    // 看到的就是「这批之后」的值。
-                    let stored = super::documents::materialize(
-                        executor,
-                        schema,
-                        id,
-                        super::documents::DocumentPoint::Current,
-                    )?
-                    .ok_or_else(|| {
-                        StorageError::Shape(format!("document {id} vanished right after commit"))
-                    })?;
-                    (*version, stored.value, ops.clone())
+                    // 这批之后的值由 `values_after_batch` 算好（缓存 + 本批 ops，或重放一次）：
+                    // 这里不再自己读库，也不在持锁区间里重放整条链（`#25` O(n²) 的根）。
+                    let value = values
+                        .get(&id)
+                        .map(|(_, value)| value.clone())
+                        .ok_or_else(|| {
+                            StorageError::Shape(format!("document {id} has no value for this batch"))
+                        })?;
+                    (*version, value, ops.clone())
                 }
             };
             StoredDocumentChange::Change {

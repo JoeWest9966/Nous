@@ -33,13 +33,14 @@ cargo test --release -p nous-durable --test commit_throughput -- --ignored --noc
 NOUS_BENCH_DIR=/some/ext4/dir cargo test ...        # 改落点
 ```
 
-`crates/nous-durable/tests/commit_throughput.rs` 里三条：
+`crates/nous-durable/tests/commit_throughput.rs` 里四条（跑基准加 `--test-threads=1`：同一个进程里并行跑会互相踩盘）：
 
 | 测试 | 量什么 |
 |---|---|
 | `the_writer_connection_runs_in_wal_with_normal_synchronous`（**不是** ignored） | 前提条件：WAL + `synchronous=NORMAL` |
 | `one_thousand_immediate_partial_commits_stay_within_the_budget` | 1,000 次提交、**一条不断长的 delta 链** |
 | `one_thousand_commits_with_a_checkpoint_every_hundred` | 同样 1,000 次，但每 100 次打一次 base |
+| `a_single_partial_commit_does_not_get_slower_as_the_chain_grows`（`#25` 加） | 链长 200 / 400 / 800 时**单次提交**的耗时，证明它不随链长涨 |
 
 ## 数字
 
@@ -111,4 +112,39 @@ deferred 能省的只是「把这 110 ms 摊薄」，代价是补 `session/trans
    的错误结论。基准库默认改到 `/var/tmp`（ext4），可用 `NOUS_BENCH_DIR` 覆盖，**测试会打印落点**。
    这条已升级成人工哨兵 `S3`（`docs/pitfalls-from-pi.md`）：**基准必须打印落点**。
 2. **两种节流别混**：存储 100 ms（本文件）/ SSE 合帧 16 ms（`wire.md`、`#22`）。
-3. **`CommitResult.stored` 数的是文档修订条数**，不是「写了几条」—— 一批里带会话行时它仍然是 1。
+3. **WAL 的自动 checkpoint 会落进测量窗口。** `wal_autocheckpoint` 是 1,000 页，触发的那一次
+   提交 20-30 ms（跟链长无关）。用均值量「单次提交」会被它拖走一倍（链长 200 的第一个窗口
+   0.72-1.14 ms，第二个窗口逐个 0.14-0.20 ms），所以链长扫描报**中位数**。
+4. **`CommitResult.stored` 数的是文档修订条数**，不是「写了几条」—— 一批里带会话行时它仍然是 1。
+
+## 2026-11-17 `#25`：`materialize(Current)` 的结果在 `Storage` 里缓存之后
+
+改的是什么：delta 提交的 publication `value` 以前每次都要 `materialize(Current)` 重放整条修订链，
+现在是「缓存的上一个值 + 本批 ops」。缓存按文档 id 存，**有效性判据只有一条**：库里这份文档
+`MAX(seq)` 等于缓存记下的 `seq`（revision 只插不改 ⇒「最新那条还是我算值的那一条」⇒ 中间没人
+写过）。退役不写 revision，所以另外每次也读 `retired_at`。判据在
+`crates/nous-durable/tests/materialize_cache.rs`（四条，**先写、先绿，再动实现**）。
+
+环境同上（AMD Ryzen 5 5500U / 15 GiB / ext4 `/var/tmp` / NVMe / rustc 1.99.1 / `--release` /
+`current_thread` / `synchronous=NORMAL`）。**跑法加了 `--test-threads=1`**：三个基准同进程并行会
+互相踩盘，数字直接不可比。
+
+| 场景 | `#25` 之前 | `#25` 之后（三次，同一台机器） |
+|---|---|---|
+| 一条不断长的链，1,000 次提交 | 1,805-1,989 ms | **292 / 295 / 328 ms**（另有两次被别的编译挤到 424 / 499） |
+| 每 100 次打一次 base，1,000 次提交 | 448-517 ms | **275 / 292 / 299 ms**（不退步） |
+| 链长 200，单次提交 | 0.45 ms | **0.178 / 0.185 / 0.264 ms**（中位数） |
+| 链长 400，单次提交 | 0.82 ms | **0.179 / 0.218 / 0.242 ms** |
+| 链长 800，单次提交 | 1.36 ms | **0.207 / 0.233 / 0.268 ms** |
+
+`#25` 的门是「1,000 次 ≤ 500 ms」：**过**（满负荷时 292-499，安静时 271-306）。链长扫描是平的
+（0.18-0.27 ms 与链长无关），不是「常数项变小了、斜率还在」—— 这是那张票要求分开报的原因。
+
+### 两条新的量法纪律（都是这次踩出来的）
+
+1. **链长扫描必须取中位数，不能取均值。** WAL 的 `wal_autocheckpoint`（1,000 页）会恰好落进某个
+   窗口里，那一次 20-30 ms；链长 200 的第一个窗口均值因此是 0.72-1.14 ms，而同一链长的第二个
+   窗口逐个都是 0.14-0.20 ms。把 checkpoint 算进「单次提交成本」等于在量 SQLite 的维护动作。
+2. **机器上的别的活会污染基准。** 同一天 load average 从 6 涨到 15（另外两条线在编 Rust），
+   同一个二进制同一份数据在 271 ms 和 604 ms 之间跳。所以：贴**散布**，贴**跑法**（`--test-threads=1`），
+   并且**别用单次数字做结论**。
