@@ -29,6 +29,7 @@ pub mod schema;
 #[cfg(feature = "providers")]
 pub(crate) mod strict_schema;
 pub mod tool;
+pub mod transform;
 pub mod types;
 
 // Flat re-exports — consumers do `use nous_ai::Message` not `nous_ai::types::Message`.

@@ -75,7 +75,10 @@ pub fn stream_url(model: &Model) -> String {
 
 /// The request body. Mirrors TS `buildParams`'s `GenerateContentParameters`.
 pub fn build_body(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Value {
-    let contents = convert_messages(model, ctx);
+    // Fold + collapse: Gemini takes the prompt as `systemInstruction`, and the request tool
+    // list is the replayed current set.
+    let folded = crate::transform::system::prepare(ctx);
+    let contents = convert_messages_from(model, &folded.messages);
     let mut generation_config = Map::new();
     if let Some(temperature) = opts.temperature {
         generation_config.insert("temperature".into(), json!(temperature));
@@ -87,15 +90,16 @@ pub fn build_body(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> V
     let supports_strict = supports_strict_tool_sampling(&model.id);
     let mut body = Map::new();
     body.insert("contents".into(), Value::Array(contents));
-    if let Some(system) = ctx.system_prompt.as_deref().filter(|s| !s.is_empty()) {
+    let system_text = folded.system_text();
+    if !system_text.is_empty() {
         body.insert(
             "systemInstruction".into(),
-            json!({ "parts": [{ "text": sanitize_surrogates(system) }] }),
+            json!({ "parts": [{ "text": sanitize_surrogates(&system_text) }] }),
         );
     }
-    if !ctx.tools.is_empty() {
-        body.insert("tools".into(), convert_tools(&ctx.tools, supports_strict));
-        if let Some(mode) = resolve_function_calling_mode(&ctx.tools, supports_strict) {
+    if !folded.tools.is_empty() {
+        body.insert("tools".into(), convert_tools(&folded.tools, supports_strict));
+        if let Some(mode) = resolve_function_calling_mode(&folded.tools, supports_strict) {
             body.insert(
                 "toolConfig".into(),
                 json!({ "functionCallingConfig": { "mode": mode } }),
@@ -455,12 +459,20 @@ pub fn sanitize_for_open_api(schema: &Value) -> Value {
 
 /// Mirrors `convertMessages`: pi messages → Gemini `contents[]`.
 pub fn convert_messages(model: &Model, ctx: &Context) -> Vec<Value> {
+    convert_messages_from(model, &ctx.messages)
+}
+
+/// The same conversion over a bare message list — used by [`build_body`], which passes the
+/// collapsed (system-free) transcript.
+pub fn convert_messages_from(model: &Model, messages: &[crate::types::Message]) -> Vec<Value> {
     let require_id = requires_tool_call_id(&model.id);
     let multimodal_response = supports_multimodal_function_response(&model.id);
     let mut contents: Vec<Value> = Vec::new();
 
-    for message in &ctx.messages {
+    for message in messages {
         match message {
+            // 折叠之后不该出现；出现就丢弃（与上游 collapse 同义）。
+            Message::System(_) => continue,
             Message::User(user) => match &user.content {
                 UserContent::Text(text) => {
                     if text.is_empty() {

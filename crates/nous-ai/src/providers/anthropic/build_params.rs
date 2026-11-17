@@ -229,6 +229,7 @@ impl Serialize for CanonicalTextMessages<'_> {
                 .rev()
                 .find_map(|(index, message)| {
                     let emits = match message {
+                        Message::System(_) => false,
                         Message::User(user) => matches!(
                             &user.content,
                             crate::types::UserContent::Text(text) if !text.trim().is_empty()
@@ -247,6 +248,14 @@ impl Serialize for CanonicalTextMessages<'_> {
         let mut sequence = serializer.serialize_seq(None)?;
         for (index, message) in self.messages.iter().enumerate() {
             match message {
+                // A canonical text body is built from a collapsed transcript; a system
+                // message here means the caller skipped `transform::system::prepare`, and
+                // silently omitting it would ship a request without its prompt.
+                Message::System(_) => {
+                    return Err(serde::ser::Error::custom(
+                        "canonical text body carries a system message; collapse first",
+                    ))
+                }
                 Message::User(user) => {
                     let crate::types::UserContent::Text(text) = &user.content else {
                         unreachable!("canonical text history contains a non-text user message");
@@ -371,6 +380,7 @@ impl Serialize for CanonicalTextAssistantBlocks<'_> {
 fn canonical_text_body_capacity(messages: &[Message]) -> usize {
     let text_bytes = messages.iter().fold(0usize, |total, message| {
         let message_bytes = match message {
+            Message::System(_) => 0,
             Message::User(user) => match &user.content {
                 crate::types::UserContent::Text(text) => text.len(),
                 crate::types::UserContent::Blocks(_) => 0,
@@ -441,6 +451,7 @@ fn canonical_text_message_count(messages: &[Message], model: &Model) -> Option<u
     let mut count = 0;
     for message in messages {
         match message {
+            Message::System(_) => return None,
             Message::User(user) => {
                 let crate::types::UserContent::Text(text) = &user.content else {
                     return None;
@@ -559,6 +570,8 @@ fn request_messages<'a>(messages: &'a [Message], model: &Model) -> std::borrow::
     let supports_images = model.input.contains(&InputModality::Image);
     let mut pending = std::collections::HashSet::new();
     let canonical = messages.iter().all(|message| match message {
+        // A system message needs the full normalizer path.
+        Message::System(_) => false,
         Message::User(user) => {
             pending.is_empty()
                 && (supports_images
@@ -712,6 +725,9 @@ pub fn transform_messages(messages: &[Message], model: &Model) -> Vec<Message> {
     let mut transformed: Vec<Message> = Vec::with_capacity(messages.len());
     for msg in messages {
         match msg {
+            // `prepare` already folded these into the leading prompt; a stray one is dropped
+            // rather than sent (same meaning as upstream's collapse).
+            Message::System(_) => {}
             Message::User(u) => {
                 if supports_images {
                     transformed.push(Message::User(u.clone()));
@@ -828,6 +844,7 @@ pub fn transform_messages(messages: &[Message], model: &Model) -> Vec<Message> {
 
     for msg in transformed {
         match &msg {
+            Message::System(_) => {}
             Message::Assistant(a) => {
                 flush_pending(
                     &mut pending_tool_calls,
@@ -1215,6 +1232,10 @@ fn convert_messages_impl<'message>(
     while i < n {
         let msg = &messages[i];
         match msg {
+            Message::System(_) => {
+                i += 1;
+                continue;
+            }
             Message::User(u) => {
                 if let Some(history) = canonical.as_deref_mut() {
                     history.observe_user(u);
@@ -1653,6 +1674,7 @@ pub fn estimate_context_tokens(messages: &[Message], system_prompt: Option<&str>
     }
     for msg in messages {
         match msg {
+            Message::System(s) => chars += s.text().chars().count() as u64,
             Message::User(u) => match &u.content {
                 crate::types::UserContent::Text(s) => chars += s.chars().count() as u64,
                 crate::types::UserContent::Blocks(blocks) => {
@@ -1818,18 +1840,23 @@ fn build_params_internal(
     let cache_control_opt = get_cache_control(model, opts.cache_retention);
     let cache_ref = cache_control_opt.cache_control.as_ref();
 
+    // Fold + collapse the system messages first: the wire body only ever carries the
+    // collapsed leading prompt, and the tool list is the replayed current set (so a
+    // `toolsRemoved` is actually a removal).
+    let prepared = crate::transform::system::prepare(ctx);
+
     let phase_started = diagnostics_enabled.then(Instant::now);
     let transformed = if compat.tool_references() {
-        request_messages(&ctx.messages, model)
+        request_messages(&prepared.messages, model)
     } else {
-        std::borrow::Cow::Borrowed(ctx.messages.as_slice())
+        std::borrow::Cow::Borrowed(prepared.messages.as_slice())
     };
     let normalize_ns = elapsed_ns(phase_started);
 
     let phase_started = diagnostics_enabled.then(Instant::now);
     let placement = split_deferred_tools(
         &transformed,
-        &ctx.tools,
+        &prepared.tools,
         compat.tool_references(),
         &|name: &str| name.to_string(),
     );
@@ -1849,7 +1876,7 @@ fn build_params_internal(
         // serde_json rejects non-finite f64 values. The owned request path
         // reports that encoding error; do not turn it into a fast-path panic.
         && opts.temperature.map_or(true, f64::is_finite))
-    .then(|| canonical_text_message_count(&ctx.messages, model))
+    .then(|| canonical_text_message_count(&prepared.messages, model))
     .flatten();
     let direct_text = direct_text_message_count.is_some();
     let messages = if direct_text {
@@ -1864,7 +1891,7 @@ fn build_params_internal(
         )
     } else {
         let (wire, canonical) = convert_messages_checked(
-            &ctx.messages,
+            &prepared.messages,
             cache_ref,
             compat.empty_signature(),
             &|name: &str| name.to_string(),
@@ -1873,7 +1900,7 @@ fn build_params_internal(
         if canonical {
             wire
         } else {
-            let transformed = transform_messages(&ctx.messages, model);
+            let transformed = transform_messages(&prepared.messages, model);
             convert_messages(
                 &transformed,
                 cache_ref,
@@ -1890,7 +1917,7 @@ fn build_params_internal(
     let base_max_tokens = opts.max_tokens.unwrap_or(model.max_tokens);
     let context_tokens_started = diagnostics_enabled.then(Instant::now);
     let context_tokens = (model.context_window != 0)
-        .then(|| estimate_context_tokens(&ctx.messages, ctx.system_prompt.as_deref()));
+        .then(|| estimate_context_tokens(&prepared.messages, Some(prepared.system_text().as_str())));
     let context_tokens_ns = elapsed_ns(context_tokens_started);
     let mut max_tokens =
         clamp_max_tokens_to_context_with_estimate(model, context_tokens, base_max_tokens);
@@ -1939,7 +1966,9 @@ fn build_params_internal(
     }
 
     // System prompt. OAuth (TODO) prepends the Claude Code identity block; v1
-    // emits the caller's system_prompt as a single text block.
+    // emits the **collapsed** prompt as a single text block (`Context::system_prompt` plus
+    // every later system message replayed into one — `transform::system::prepare`).
+    let system_text = prepared.system_text();
     let system: Option<Vec<AnthropicSystemBlock>> = if is_oauth {
         // v1 TODO: prepend "You are Claude Code, Anthropic's official CLI for Claude."
         let mut blocks = vec![AnthropicSystemBlock {
@@ -1947,18 +1976,18 @@ fn build_params_internal(
             text: "You are Claude Code, Anthropic's official CLI for Claude.".into(),
             cache_control: cache_ref.cloned(),
         }];
-        if let Some(sp) = &ctx.system_prompt {
+        if !system_text.is_empty() {
             blocks.push(AnthropicSystemBlock {
                 kind: "text".into(),
-                text: sanitize_surrogates(sp),
+                text: sanitize_surrogates(&system_text),
                 cache_control: cache_ref.cloned(),
             });
         }
         Some(blocks)
-    } else if let Some(sp) = &ctx.system_prompt {
+    } else if !system_text.is_empty() {
         Some(vec![AnthropicSystemBlock {
             kind: "text".into(),
-            text: sanitize_surrogates(sp),
+            text: sanitize_surrogates(&system_text),
             cache_control: cache_ref.cloned(),
         }])
     } else {
@@ -2008,7 +2037,7 @@ fn build_params_internal(
         .map(|uid| AnthropicMetadata { user_id: uid });
     // Beta headers.
     let use_fine_grained_tool_streaming_beta =
-        !ctx.tools.is_empty() && !compat.eager_tool_input_streaming();
+        !prepared.tools.is_empty() && !compat.eager_tool_input_streaming();
     let needs_interleaved_beta = thinking_enabled && !compat.adaptive_thinking();
     let beta_header =
         build_beta_header(use_fine_grained_tool_streaming_beta, needs_interleaved_beta);
@@ -2027,12 +2056,12 @@ fn build_params_internal(
     };
     let preencoded_started = diagnostics_enabled.then(Instant::now);
     let preencoded_body = direct_text.then(|| {
-        let mut body = Vec::with_capacity(canonical_text_body_capacity(&ctx.messages));
+        let mut body = Vec::with_capacity(canonical_text_body_capacity(&prepared.messages));
         serde_json::to_writer(
             &mut body,
             &CanonicalTextRequest {
                 request: &request,
-                messages: &ctx.messages,
+                messages: &prepared.messages,
                 cache_control: cache_ref,
             },
         )

@@ -1652,13 +1652,16 @@ impl ToolCallIndex {
 /// `function_call_output`; sending only the latter is the source of the
 /// "No tool output found for function call ..." 400 error.
 fn build_request(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Value {
-    let grammar_tool_properties = grammar_tool_properties(model, &ctx.tools);
+    // Responses carries the prompt as `instructions`; the body must not contain a system
+    // message, so the transcript is folded and collapsed exactly as for the other transports.
+    let folded = crate::transform::system::prepare(ctx);
+    let grammar_tool_properties = grammar_tool_properties(model, &folded.tools);
     let mut index = ToolCallIndex::default();
 
     // First pass: normalize and index every replayable tool call.  The second
     // pass can then resolve results even when a legacy session stores only an
     // item id or uses a foreign provider's very long id.
-    for message in &ctx.messages {
+    for message in &folded.messages {
         let Message::Assistant(assistant) = message else {
             continue;
         };
@@ -1690,8 +1693,10 @@ fn build_request(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Va
     let mut emitted_call_ids: HashSet<String> = HashSet::new();
     let mut assistant_message_index = 0usize;
 
-    for message in &ctx.messages {
+    for message in &folded.messages {
         match message {
+            // `prepare` moved every system message into `instructions`.
+            Message::System(_) => {}
             Message::User(user) => {
                 flush_pending_tool_results(&mut input, &mut pending, &mut completed, &index);
                 let content = user_content_for_model(&user.content, model);
@@ -1850,8 +1855,9 @@ fn build_request(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Va
     // transcript. Disable server-side response storage so an omitted
     // `previous_response_id` cannot change that contract.
     let mut body = json!({"model":model.id,"input":input,"stream":true,"store":false});
-    if let Some(s) = &ctx.system_prompt {
-        body["instructions"] = Value::String(s.clone());
+    let system_text = folded.system_text();
+    if !system_text.is_empty() {
+        body["instructions"] = Value::String(system_text);
     }
     // OpenAI routes cached prefixes by this key; without it, consecutive turns
     // of one session can land on hosts that never saw the prefix and miss.
@@ -1870,8 +1876,8 @@ fn build_request(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Va
             body["reasoning"] = json!({"effort":e});
         }
     }
-    if !ctx.tools.is_empty() {
-        body["tools"] = Value::Array(ctx.tools.iter().map(|t| {
+    if !folded.tools.is_empty() {
+        body["tools"] = Value::Array(folded.tools.iter().map(|t| {
             if let Some((syntax, definition, _property)) =
                 grammar_tool_spec(t, supports_openai_grammar_tools(model))
             {

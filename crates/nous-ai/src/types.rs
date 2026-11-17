@@ -783,11 +783,269 @@ impl AssistantMessage {
     }
 }
 
-/// `Message = UserMessage | AssistantMessage | ToolResultMessage`. The base
+// ----------------------------------------------------------------------------
+// System messages — mirror TS `SystemMessage` (`packages/ai/src/types.ts:569`)
+// ----------------------------------------------------------------------------
+
+/// `SystemMessage.content` — a plain string or a list of **text** blocks.
+///
+/// Narrower than [`UserContent`] on purpose: upstream's `SystemMessage` only accepts
+/// `string | TextContent[]`, and a system prompt that carries an image or a tool call is a
+/// shape we would rather reject than silently ignore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SystemContent {
+    Text(String),
+    Blocks(Vec<TextContent>),
+}
+
+impl From<String> for SystemContent {
+    fn from(text: String) -> Self {
+        SystemContent::Text(text)
+    }
+}
+
+impl From<&str> for SystemContent {
+    fn from(text: &str) -> Self {
+        SystemContent::Text(text.to_string())
+    }
+}
+
+/// The `role` marker: serializes as the literal `"system"`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SystemRole;
+impl Serialize for SystemRole {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str("system")
+    }
+}
+impl<'de> Deserialize<'de> for SystemRole {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        if s != "system" {
+            return Err(serde::de::Error::custom(format!(
+                "expected \"system\", got {s:?}"
+            )));
+        }
+        Ok(Self)
+    }
+}
+
+/// A named slice of the prompt that later system messages patch by name.
+///
+/// # Why not `BTreeMap`
+///
+/// Upstream keeps `sections` in a JS object and renders them in **insertion** order; a
+/// `null` value deletes the name, and a name that comes back lands at the end. A `BTreeMap`
+/// would sort the names and change the order the model reads them in — the exact class of
+/// silent drift this crate keeps guarding against. So this is an ordered list of pairs that
+/// **serializes as a JSON object** (the workspace runs `serde_json` with `preserve_order`,
+/// so object order survives a round trip).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Sections(Vec<(String, Option<String>)>);
+
+impl Sections {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Build a section map from raw entries, **keeping `null` entries**.
+    ///
+    /// A `null` in a *message* means "delete this section when the transcript is replayed",
+    /// so it must survive as data until replay — collapsing it away at construction time
+    /// silently turns every deletion into a no-op.
+    pub fn with(pairs: impl IntoIterator<Item = (String, Option<String>)>) -> Self {
+        Self(pairs.into_iter().collect())
+    }
+
+    /// Set one section in place (or append), the way replay accumulates a live map.
+    pub fn set(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        let name = name.into();
+        let value = Some(value.into());
+        match self.0.iter_mut().find(|(key, _)| *key == name) {
+            Some(slot) => slot.1 = value,
+            None => self.0.push((name, value)),
+        }
+    }
+
+    /// Delete one section (replay semantics for a `null`).
+    pub fn remove(&mut self, name: &str) {
+        self.0.retain(|(key, _)| key != name);
+    }
+
+    /// The raw entries, `null`s included — this is what a *message* carries.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, Option<&str>)> {
+        self.0
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_deref()))
+    }
+
+    /// The entries as a replayed map reads them: `null` applied as a deletion, later
+    /// re-additions landing at the end.
+    pub fn live(&self) -> Sections {
+        let mut live = Sections::new();
+        for (name, value) in self.iter() {
+            match value {
+                Some(value) => live.set(name, value),
+                None => live.remove(name),
+            }
+        }
+        live
+    }
+
+    pub fn get(&self, name: &str) -> Option<String> {
+        self.live().0.iter().find(|(key, _)| key == name).and_then(|(_, value)| value.clone())
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The replayed values, in order, deletions applied. This is what
+    /// [`get_system_message_text`](crate::transform::system::get_system_message_text) joins.
+    pub fn values(&self) -> Vec<String> {
+        self.live()
+            .0
+            .into_iter()
+            .filter_map(|(_, value)| value)
+            .collect()
+    }
+}
+
+impl FromIterator<(String, Option<String>)> for Sections {
+    fn from_iter<T: IntoIterator<Item = (String, Option<String>)>>(iter: T) -> Self {
+        Self::with(iter)
+    }
+}
+
+impl Serialize for Sections {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.0.len()))?;
+        for (name, value) in &self.0 {
+            map.serialize_entry(name, value)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Sections {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor;
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Sections;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("an object of section name to text or null")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut access: A,
+            ) -> Result<Sections, A::Error> {
+                let mut entries = Vec::new();
+                while let Some((name, value)) =
+                    access.next_entry::<String, Option<String>>()?
+                {
+                    entries.push((name, value));
+                }
+                Ok(Sections::with(entries))
+            }
+        }
+        deserializer.deserialize_map(Visitor)
+    }
+}
+
+/// A reference to a tool by name. Mirrors TS `ToolReference` (`types.ts:786`).
+///
+/// Used by `toolsRemoved`: the model is told a tool is gone, and the removal replays by name
+/// rather than by re-declaring the whole definition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolReference {
+    pub name: String,
+}
+
+impl From<&str> for ToolReference {
+    fn from(name: &str) -> Self {
+        Self { name: name.to_string() }
+    }
+}
+
+/// A system message. Mirrors TS `SystemMessage` (`types.ts:569`).
+///
+/// The first system message of a transcript carries the prompt and the tool set
+/// (`toolsAdded`); later ones patch it (`sections`) or change the tool set
+/// (`toolsAdded` / `toolsRemoved`). `rpi-ai@v0.24.2` shipped without this variant — the
+/// engine writes these records into `entries.model`, so a transcript read through
+/// `Message` used to fail outright on every `pi.system` entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemMessage {
+    #[serde(rename = "role")]
+    pub role: SystemRole,
+    pub content: SystemContent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sections: Option<Sections>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools_added: Option<Vec<Tool>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools_removed: Option<Vec<ToolReference>>,
+    pub timestamp: i64,
+}
+
+impl SystemMessage {
+    /// A leading prompt: `content` plus, when non-empty, the tool declarations.
+    pub fn new(content: impl Into<SystemContent>, timestamp: i64) -> Self {
+        Self {
+            role: SystemRole,
+            content: content.into(),
+            sections: None,
+            tools_added: None,
+            tools_removed: None,
+            timestamp,
+        }
+    }
+
+    /// The text of this message *alone* (not of the replayed transcript): content first,
+    /// then the live `sections` values, joined by a blank line.
+    pub fn text(&self) -> String {
+        let mut parts = Vec::new();
+        let content = system_content_text(&self.content);
+        if !content.is_empty() {
+            parts.push(content);
+        }
+        if let Some(sections) = &self.sections {
+            for value in sections.values() {
+                if !value.is_empty() {
+                    parts.push(value);
+                }
+            }
+        }
+        parts.join("\n\n")
+    }
+}
+
+/// The text of a system content value: a string as-is, or the text blocks joined by newlines.
+pub fn system_content_text(content: &SystemContent) -> String {
+    match content {
+        SystemContent::Text(text) => text.clone(),
+        SystemContent::Blocks(blocks) => blocks
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+/// `Message = SystemMessage | UserMessage | AssistantMessage | ToolResultMessage`. The base
 /// provider-facing message type.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "role", rename_all = "camelCase")]
 pub enum Message {
+    System(Box<SystemMessage>),
     User(UserMessage),
     Assistant(Box<AssistantMessage>),
     ToolResult(Box<ToolResultMessage>),
@@ -806,6 +1064,9 @@ impl<'de> Deserialize<'de> for Message {
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| serde::de::Error::missing_field("role"))?;
         match role {
+            "system" => serde_json::from_value(value)
+                .map(|message| Message::System(Box::new(message)))
+                .map_err(serde::de::Error::custom),
             "user" => serde_json::from_value(value)
                 .map(Message::User)
                 .map_err(serde::de::Error::custom),
@@ -817,12 +1078,17 @@ impl<'de> Deserialize<'de> for Message {
                 .map_err(serde::de::Error::custom),
             other => Err(serde::de::Error::unknown_variant(
                 other,
-                &["user", "assistant", "toolResult"],
+                &["system", "user", "assistant", "toolResult"],
             )),
         }
     }
 }
 
+impl From<SystemMessage> for Message {
+    fn from(m: SystemMessage) -> Self {
+        Message::System(Box::new(m))
+    }
+}
 impl From<UserMessage> for Message {
     fn from(m: UserMessage) -> Self {
         Message::User(m)

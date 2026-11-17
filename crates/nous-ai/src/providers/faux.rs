@@ -629,6 +629,11 @@ fn serialize_context(ctx: &Context) -> String {
     }
     for msg in &ctx.messages {
         match msg {
+            // The faux provider has no wire format; it renders the transcript for assertions.
+            // A system message is rendered the way a collapsed leading prompt reads.
+            crate::types::Message::System(s) => {
+                parts.push(format!("system:{}", s.text()));
+            }
             crate::types::Message::User(u) => {
                 parts.push(format!("user:{}", user_content_text(&u.content)));
             }

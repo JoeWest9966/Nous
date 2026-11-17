@@ -307,8 +307,13 @@ async fn run_stream(
 }
 
 fn build_request(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Value {
+    // Fold + collapse first: one leading prompt, no system messages in the body, and the
+    // replayed tool set (so `toolsRemoved` actually removes).
+    let folded = crate::transform::system::prepare(ctx);
     let mut messages = Vec::new();
-    if let Some(system) = ctx.system_prompt.as_deref().filter(|s| !s.is_empty()) {
+    let system_text = folded.system_text();
+    if !system_text.is_empty() {
+        let system = system_text.as_str();
         let role = if model.reasoning && supports_developer_role(model) {
             "developer"
         } else {
@@ -318,11 +323,13 @@ fn build_request(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Va
     }
     let mut pending_tool_images = Vec::new();
     let mut last_was_tool_result = false;
-    for message in &ctx.messages {
+    for message in &folded.messages {
         if !matches!(message, Message::ToolResult(_)) {
             flush_tool_result_images(model, &mut messages, &mut pending_tool_images);
         }
         match message {
+            // `prepare` moved every system message into the leading prompt.
+            Message::System(_) => {}
             Message::User(message) => {
                 if last_was_tool_result && requires_assistant_after_tool_result(model) {
                     messages.push(json!({
@@ -489,11 +496,11 @@ fn build_request(model: &Model, ctx: &Context, opts: &SimpleStreamOptions) -> Va
             body.insert("reasoning_effort".into(), Value::String(effort));
         }
     }
-    if !ctx.tools.is_empty() {
+    if !folded.tools.is_empty() {
         body.insert(
             "tools".into(),
             Value::Array(
-                ctx.tools
+                folded.tools
                     .iter()
                     .map(|tool| {
                         json!({

@@ -45,37 +45,6 @@
 | `packages/chord/src/delta` 的 `t` op（`tracker.ts`、`apply-immutable-trusted.ts`、`index.ts` 三处一致） | `t` 是「从头截掉 count 个 **UTF-16 码元**」，不是 Unicode 标量，也不是字节。Rust 里顺手写 `chars().count()` 或按字节切，会在含 emoji / 代理对的文本上**静默**让副本与权威分叉 —— 没有 TS 那套字符串语义兜底 | **中** | chord delta 落地那张票（#10）第一次实现 `T` 时必须做两件事：① 按 `encode_utf16` 计数再切；② 在 `apply` 那个分支上写一条注释，明说为什么**不能**用 `chars()`/字节下标，并引这一行。测试必须含 emoji 与代理对用例 |
 | `tracker.ts` 的 `appendText` 多 chunk 合并（`tracker.ts:363-388`） | 逐 chunk 追加若退回「比较新旧字符串前缀」，流式写入从 O(N×chunk) 变成 O(N×length)；800KB / 2 万次从 ~1ms 变 ~2.4s | **中** | Nous 的 SSE 合帧铁律就是逐 token 流。Rust 版必须提供 `append_text` 等价 API，emit 时直接发 `a` op；同一条注释里写清「前缀检测只在没有 append 记录时才走」 |
 
-## 2026-11-16 · `nous_ai::Message` 比引擎写进库里的数据窄
-
-**判定：中（已中，不是预判）**。这条比「某个字段暂时用 `Value` 凑合」严重，因为它会被下一次「顺手类型化」再踩一遍。
-
-**症状**：拿 `nous_ai::Message` 解析 `entries.record.model` 里的 message，两种坏法：
-
-1. `pi.system` 的 message **整条解析失败** —— `unknown variant "system"`。`rpi-ai` 的 `Message` 只有
-   `user` / `assistant` / `toolResult` 三种，而 `pi` 引擎往同一张表里还写 `role: "system"`。
-2. `pi.assistant` / `pi.tool-result` 的 message 能解析，但 **`durationMs` 静默消失** —— serde 默认忽略
-   未知键，解析成功、字段没了，没有报错、没有日志。
-
-**根因**：`nous-ai` 是 `rpi-ai@v0.24.2` 的冻结拷贝，它的消息类型是 **rpi 的字段集**，不是 `pi` 引擎的。
-`pi` 引擎往同一个 `model` 列里写它自己扩展过的 message（`pi.system` 多一个 `role: system` 变体，
-assistant 多 `durationMs`，tool-result 多 `durationMs`）。冻结的那份不知道这些扩展，于是：
-认不出的变体 → 拒绝；认得出的变体里多出来的键 → 吞掉。
-
-**解**（三条，按顺序）：
-
-- **存储层不动**：`EntryRecord.model` 保持 `Vec<serde_json::Value>`，原样存原样取（#13 已落地，
-  `crates/nous-durable/src/types/records.rs`）。
-- **#14 harness 读 message 时不许** `serde_json::from_value::<nous_ai::Message>`。要么继续 `Value`
-  透传（渲染、拼请求体时再按需取字段），要么先给 `nous_ai` 的消息类型加 `#[serde(flatten)] extra`
-  兜底，**并证明未知键往返不丢**（判据：解析 → 序列化 → 与源 JSON 相等，`toolsAdded` 与
-  `durationMs` 都在）。没做到第二条之前，一律走透传。
-- **#17 接 google 方言的输入侧同理**：请求体由 `Message` 生成，`Message` 丢键就等于把用户库里的扩展
-  信息丢掉再发出去 —— 丢的是数据，不是格式。
-
-**守卫（机器判据）**：`crates/nous-durable/tests/records_fixture.rs::nous_ai_message_is_narrower_than_what_the_engine_stored`
-**故意断言「解析不了 / 会丢键」**。哪天 `nous-ai` 补上了 system 变体和未知键兜底，这条会红 —— 那时是
-好事：该删的是这条断言和这一节，不是改断言让它继续绿。
-
 ## 2026-11-16 · 中途 system 的两档处理（#23 的范围刀）
 
 **起因**：`#23` 票面最初把「anthropic → 顶层 `system` 参数」当成 system 的全部通路，并写了「`toolsAdded`
@@ -104,6 +73,10 @@ assistant 多 `durationMs`，tool-result 多 `durationMs`）。冻结的那份�
 （各 4 个工具）、14 条带 `sections`（`preamble` / `cwd` / `prompts`）、`toolsRemoved` 从未出现。
 真数据里的「中途 system」只有两处：会话 2（entry 12 → 410）、会话 14（entry 23 → 457）。
 **要验「content 按序追加」只能用构造数据**，测试里必须标出是构造的，别假装 fixture 有。
+
+**坑已填（2026-11-16，票 #23 落地）**：`nous-ai` 补上了 `Message::System`（含 `ToolReference`），
+原来那节「`nous_ai::Message` 比引擎写进库里的数据窄」和它的守卫测试按我们自己的规矩**删掉**
+（不是改断言）：17 条 `pi.system` 现在逐字段读得进、写回去与源 JSON 相等。
 
 **由此定的范围（用户刀）**：`#23` 只做「表示 + collapse」—— 原生 flush 分支（`renderSystemMessageUpdate`
 + anthropic 的 `pendingSystemMessages`）**不做**，因为我们手上没有「吃原生中途 system」的模型能对照，
