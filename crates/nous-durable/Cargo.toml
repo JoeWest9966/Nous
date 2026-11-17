@@ -13,14 +13,15 @@ readme = "README.md"
 # 12a 只用到 chord 的 sqlite / json 两层，其余等真用到再加，不预先绑。
 [dependencies]
 nous-chord = { workspace = true }
+# `harness`（#14）用它的 `AssistantMessageEvent` / `utils::streaming_json`。
+# 契约面允许这一条（`AGENTS.md` §二：`nous-durable → chord, ai, wire, telemetry, env`）。
+nous-ai = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-# 只有一条测试用：证明 `nous_ai::Message` 比引擎存的数据窄（`docs/pitfalls-from-pi.md`）。
-# 生产代码**不**拿它解析库里存的 `model` —— 那正是那条坑。
-[dev-dependencies]
-nous-ai = { workspace = true }
+# 生产代码**不**拿 `nous_ai::Message` 解析库里存的 `model` —— 那正是
+# `docs/pitfalls-from-pi.md` 里那条「引擎写进库的数据比类型宽」的坑（#23 已删掉那条断言）。
 
 # `verify.sh` 的 1b 按这个名字找一致性套件；文件放在 `conformance/` 下，不混进 `tests/`。
 [[test]]

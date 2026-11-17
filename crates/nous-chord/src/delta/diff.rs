@@ -195,6 +195,20 @@ fn diff_array(before: &[Value], after: &[Value], path: &mut Path, operations: &m
     if prefix == before_end && prefix == after_end {
         return;
     }
+    // 变动区域恰好 1 对 1：**递归进那个元素**，不发 `p`。
+    //
+    // 上游 `diff.ts:376-379` 同一分支（`beforeCount === 1 && afterCount === 1` →
+    // `diffValue(before[beforeStart], after[afterStart], [...path, outputStart])`）。
+    // 这条不是优化，是流式回答的命根子：`content` 里一个文本块在自己的 `text` 上变长，
+    // 折成 `p` 就是把**整块**（整段已经流出来的文本）重新存一遍、发布一遍 —— 100 ms 一次
+    // 节流下每次提交都带全文，正好是 `#14` 要消灭的那种 O(n²)。递归之后那条 `a` 才活得下来
+    // （`harness/json.rs` 的 append 记录按路径覆盖 diff 的 op，路径对不上就白记）。
+    if before_end - prefix == 1 && after_end - prefix == 1 {
+        path.push(Seg::Index(prefix as u64));
+        diff_value(&before[prefix], &after[prefix], path, operations);
+        path.pop();
+        return;
+    }
     emit(
         operations,
         Op::Splice(
@@ -314,6 +328,49 @@ mod tests {
 
     fn diff_ops(before: &Value, after: &Value) -> Vec<Op> {
         diff_revisions(before, after).into_ops()
+    }
+
+    /// 单元素变动必须递归，不许折成 `p`：否则流式文本的每次提交都带整块全文。
+    #[test]
+    fn a_single_changed_array_element_is_diffed_in_place_not_spliced() {
+        let before = json!({"content": [{"type": "text", "text": "Hel"}]});
+        let after = json!({"content": [{"type": "text", "text": "Hello"}]});
+        assert_eq!(
+            diff_ops(&before, &after),
+            vec![Op::Append(
+                vec![Seg::key("content"), Seg::index(0), Seg::key("text")],
+                "lo".to_string()
+            )]
+        );
+
+        // 两端对齐后中间只剩一个元素：同样递归。
+        let before = json!({"content": ["head", {"text": "a"}, "tail"]});
+        let after = json!({"content": ["head", {"text": "ab"}, "tail"]});
+        assert_eq!(
+            diff_ops(&before, &after),
+            vec![Op::Append(
+                vec![Seg::key("content"), Seg::index(1), Seg::key("text")],
+                "b".to_string()
+            )]
+        );
+
+        // 元素里的字符串整个换掉（只共享一个后缀）也还是递归：发 `t` + `a`，不是 `p`。
+        let before = json!({"content": [{"type": "text"}]});
+        let after = json!({"content": [{"type": "thinking"}]});
+        let ops = diff_ops(&before, &after);
+        assert!(
+            !ops.iter().any(|op| matches!(op, Op::Splice(..))),
+            "不该折成 `p`，实际是 {ops:?}"
+        );
+        assert_eq!(diff_and_apply(&before, &after), after);
+
+        // 区域不是 1 对 1（长出来/删掉了）仍旧发一条 `p`。
+        let before = json!({"content": [{"text": "a"}]});
+        let after = json!({"content": [{"text": "a"}, {"text": "b"}]});
+        assert!(matches!(
+            diff_ops(&before, &after).as_slice(),
+            [Op::Splice(..)]
+        ));
     }
 
     #[test]

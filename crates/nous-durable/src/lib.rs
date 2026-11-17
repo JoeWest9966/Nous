@@ -1,8 +1,8 @@
 //! `durable` 的语义自己写（`AGENTS.md` §一：**只借语义和坑，不借结构**）。
 //!
 //! 已落地：`storage`（只读导入 + 九张表的行/语句 + 会话树渲染 + 提交语义 + 文档修订重放
-//! + 一致性套件）、`types`（记录与草稿的形状）。
-//! 进行中：`session`（#13；`Session` 本身还差一个 commit）、待落地：`harness`（#14）。
+//! + 一致性套件）、`types`（记录与草稿的形状）、`session`（#13）。
+//! 进行中：`harness`（#14）—— `json` 已落，`partial` / `live` / `generation` / `abort` 未落。
 //!
 //! ## 契约面（AGENTS.md §二）
 //!
@@ -10,6 +10,7 @@
 //! 所以 `cargo tree -p nous-durable` 里**永远不该出现 `nous-tools`**。
 
 pub mod error;
+pub mod harness;
 pub mod session;
 pub mod storage;
 pub mod types;

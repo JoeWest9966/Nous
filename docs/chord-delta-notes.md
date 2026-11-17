@@ -85,9 +85,25 @@
 |---|---|---|---|
 | `MAX_DELTA_OPERATIONS=4096` 溢出 → 整批退回 `[["r", after]]`；否则按估算的 op 体积与整根快照体积比大小，选更省的一种。 | diff.ts:5–14, diff.ts:490–524 | 巨大编辑时发出比 snapshot 还大的 delta。 | 照搬两个阈值与 `jsonCost/opCost` 估算；不必照搬常量名以外的细节。 |
 | 字符串 diff：前缀相同发 `a`、公共前后缀重叠发 `t`+`a`（带上限 65,536/候选 8 的启发式）、否则 `s`；`ownedSlice` 让切片成为独立字符串。 | diff.ts:63–79, index.ts:85–121 | 从长字符串切出的 op 在 V8 里持有整条 rope（内存泄漏）；或字符串副本不同。 | Rust `String`/`&str` 的 `to_owned()` 天然是独立分配；`t` 必须与 1.4 一样按 UTF-16 计数。 |
-| 数组 diff 按 identity（引用相等）→ semantic alignment → LCS 的优先级选锚点，最后才发 `p`；置换只在长度>1、首尾都变且能构成双射时发 `m`。 | diff.ts:88–405, diff.ts:405–420 | diff 发出的 op 不稳定/不够紧凑，或产生与 draft 不同的顺序。 | 保留「精确但不规范」豁免：Rust 可以先用更简单的 LCS/splice，只要重放结果相同；`m` 的双射校验不可省。 |
+| 数组 diff 按 identity（引用相等）→ semantic alignment → LCS 的优先级选锚点，最后才发 `p`；置换只在长度>1、首尾都变且能构成双射时发 `m`。 | diff.ts:88–405, diff.ts:405–420 | diff 发出的 op 不稳定/不够紧凑，或产生与 draft 不同的顺序。 | 保留「精确但不规范」豁免：Rust 可以先用更简单的 LCS/splice，只要重放结果相同；`m` 的双射校验不可省。**但「重放结果相同」不足以让这一条豁免成立，见 1.7。** |
+| 变动区域恰好 1 对 1 时**递归进那个元素**，不发 `p`。 | diff.ts:376–379（`beforeCount === 1 && afterCount === 1` → `diffValue(before[beforeStart], after[afterStart], [...path, outputStart])`） | 流式回答每次提交都带整块全文：`content[0].text` 变长被折成 `p`，整块重新存一遍、发布一遍（`#14` 要消灭的正是这个）；顺带 `PartialChanges` 记的 `a` 路径对不上 diff 的 `p`，那条追加白记。 | 已在 `diff.rs::diff_array` 实现（`#14` 落地时发现并补的）。**别为了「更简单」删掉它** —— 重放结果仍然相同，测试里看不出差别，只有出帧体积会变。 |
 | reserved key 的对象不能逐键 diff，整块折成祖先 `s`（变化时）或空。 | diff.ts:422–433 | 发出带危险段的路径。 | 同 1.5 保留段折叠。 |
 | Wire 压缩只有三种：路径第二次使用时定义 id（`#`）、id 引用、短写复用上一 op 的路径；`r` 恢复点清空两侧字典；**短写作用域按批次，不跨批**；一个 encoder/decoder 对只服务一条有序状态流。 | index.ts:52–73, index.ts:565–663, index.ts:665–742 | 跳批/换流后解到错误路径；恢复后引用了读者没见过的 id。 | `Codec{ seen, ids, next_id, previous: Option<Path> }` 每批重置 previous、遇 R 全清；解码器逐 op 校验并拒绝未知动词。 |
+
+### 1.7 已知缺口：数组锚点只认「完全相等的元素」
+
+上游选锚点的顺序是 identity（引用相等）→ semantic alignment（同 `type`/同结构视为对齐）→
+LCS，**对齐上的元素两两递归**，只有对不上的区域才折 `p`（`processArrayMatches`）。本库目前
+只对齐「完全相等的元素」这一种，所以：
+
+- 稳定前缀/后缀之间的变动区域若恰好 1 对 1 → 递归（见 §1.6 新行），流式文本的每提交追加**成立**；
+- 区域不是 1 对 1（例如消息里**新出现一个块**，`content` 从 1 项变 2 项）→ 整段折成一条 `p`，
+  这一次提交带整个区域的全文。
+
+也就是说：**每个 partial 提交的成本跟着新文本走，块边界那一次除外**（那是有限次事件，不是每
+次提交）。触发再提货的条件：`#22` 出帧时若观察到「块边界那一帧的体积 = 整个 `content`」且
+客户端的重绘因此可见地卡，再提货上游的 `identityAnchors` / `semanticallyAligned` /
+`lcsMatches` / `processArrayMatches` 四段（≈150 行 TS）。
 
 ## 二、TS/Node 偶然 —— Rust 里该换的形状
 

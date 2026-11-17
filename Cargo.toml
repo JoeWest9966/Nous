@@ -34,7 +34,13 @@ futures = "0.3"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
 schemars = { version = "0.8", features = ["preserve_order"] }
-jsonschema = "0.18"
+# `default-features = false`：默认开的是 `cli`（→ clap）、`resolve-http`（→ reqwest → hyper、
+# tower-http）、`resolve-file`，都是 JSON Schema **命令行工具**和**远程 `$ref` 抓取**才要的。
+# 我们用它的只有 `JSONSchema::compile` + `validate`（`nous-ai/src/schema.rs`，工具参数校验，
+# schema 自包含）。不关的话 `cargo tree -p nous-durable` 里会冒出 hyper/tower-http ——
+# 语义层就"绑上传输"了（`scripts/verify.sh` 4e），而那是纯粹从依赖默认值漏进来的。
+# 副作用（有意）：外部 `$ref` 不再被自动抓取，校验会明确报错而不是悄悄发网络请求。
+jsonschema = { version = "0.18", default-features = false }
 indexmap = { version = "2", features = ["serde"] }
 # SQLite：`bundled` 自带一份 libsqlite3，不依赖系统库（部署机各不相同）。
 # 版本照 `pi-rust@v0.24.2` 的 workspace.dependencies pin 住。
