@@ -22,12 +22,12 @@ WHAT="${1:-all}"
 
 # 0. 提货体检：crates 一个都没有时，别让人误以为"全都过了"
 step "0. 提货体检"
-if [ -z "$(ls -d crates/*/ 2>/dev/null)" ]; then
+if [ -z "$(ls -d crates/*/*/ 2>/dev/null)" ]; then
 	bad "crates/ 是空的 —— #14 搬迁没做完，下面全部失去判据载体"
 	printf '\n\033[31m未通过：等 #14 搬迁\033[0m\n'
 	exit 2
 else
-	ok "crates/ 已存在 $(ls -d crates/*/ | wc -l) 个 crate（层见 docs/plugins.md）"
+	ok "crates/*/* 已存在 $(ls -d crates/*/*/ | wc -l) 个 crate（层见 docs/plugins.md）"
 fi
 
 # 1. 单元测试 + 一致性套件
@@ -43,13 +43,13 @@ if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	fi
 
 	step "1c. conformance 用例数下限（防止套件被瘦成三行）"
-	FLOOR=crates/nous-durable/conformance/FLOOR.tsv
+	FLOOR=crates/nous/durable/conformance/FLOOR.tsv
 	if [ -f "$FLOOR" ]; then
 		THIN=0; FILES=0
 		while IFS=$'\t' read -r file min; do
 			case "$file" in ''|'#'*) continue ;; esac
 			FILES=$((FILES+1))
-			N=$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "crates/nous-durable/conformance/$file" 2>/dev/null || true)
+			N=$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "crates/nous/durable/conformance/$file" 2>/dev/null || true)
 			N=${N:-0}
 			if [ "$N" -ge "$min" ] 2>/dev/null; then
 				ok "$file：$N ≥ $min"
