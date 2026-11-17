@@ -201,7 +201,7 @@ impl Session {
                 // 存储失败 → 会话自己关掉（上游同一语义）。先放掉锁再收场，否则 `settle` 会撞锁。
                 let storage = guard.take();
                 drop(guard);
-                if let Some(storage) = storage {
+                if let Some(mut storage) = storage {
                     let _ = storage.close();
                 }
                 self.end_all(&WatchEnd::Failed {
@@ -238,7 +238,7 @@ impl Session {
     /// 关会话：密封入场、等**在飞的提交走完**、然后关存储。幂等。
     pub async fn close(&self) -> Result<(), SessionError> {
         let mut guard = self.storage.lock().await;
-        let Some(storage) = guard.take() else {
+        let Some(mut storage) = guard.take() else {
             // 已经关过（或已经失败收场）：第二次 `close()` 返回 `Ok`。
             return Ok(());
         };

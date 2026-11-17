@@ -29,6 +29,8 @@ pub enum StorageError {
     MissingMetadata,
     /// 迁移后版本与代码期望不一致。
     SchemaVersion { found: i64, supported: i64 },
+    /// 库已经关了：`close()` 之后的每一次调用都明确失败，不「装作还能用」。
+    Closed,
 }
 
 impl From<SqliteError> for StorageError {
@@ -88,6 +90,7 @@ impl std::fmt::Display for StorageError {
                 f,
                 "schema version {found} is not the supported version {supported}"
             ),
+            StorageError::Closed => f.write_str("storage is closed"),
         }
     }
 }

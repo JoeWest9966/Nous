@@ -7,7 +7,7 @@
 //! - 一份**真后端**（临时文件 SQLite）上跑，不造假后端：假后端通过什么也证明不了。
 //! - 减法都要有理由：砍掉的案进票 #21，不无声消失。
 //!
-//! 上游 32 个 `createCase(`，这里 20 个；`FLOOR.tsv` 记的正是这个数字。
+//! 上游 32 个 `createCase(`，这里 21 个；`FLOOR.tsv` 记的正是这个数字。
 //!
 //! ## 八个上游文件，为什么这里只有一份规范
 //!
@@ -16,8 +16,9 @@
 //! `createCase(` 调用点是 0（benchmark / 断言 / 注册器 / 类型 / 出口 / 提交辅助），不设下限，
 //! 也不为凑文件数造空文件。
 //!
-//! 于是 32 案 = **20 已落** + **9 等真后端**（`scan_tasks` / `scan_submissions` / `scan_documents` /
-//! `close()`，票 #21）+ **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与 `docs/not-ported.md`）。
+//! 于是 32 案 = **21 已落** + **8 等真后端**（`scan_tasks` / `scan_submissions` / `scan_documents` /
+//! fork 链的 entry 扫描，票 #21）+ **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与
+//! `docs/not-ported.md`）。
 //! `env_conformance.rs` **不做**：本库 `nous-env` 只有 trait、没有一个实现，而 conformance 测的是
 //! **真后端** —— 造个假后端让用例通过，什么也证明不了（票 #15）。逐文件的判定见 `FLOOR.tsv` 文件头。
 //!
@@ -153,7 +154,7 @@ fn count(storage: &Storage, sql: &str, params: &[nous_chord::sqlite::SqliteValue
         .unwrap()
 }
 
-// ───────────────────────────── 上游的 32 个 createCase( 里已抄的 20 个 ─────────────────────────────
+// ───────────────────────────── 上游的 32 个 createCase( 里已抄的案 ─────────────────────────────
 
 #[test]
 fn receives_a_durable_commit_once_before_resolving_and_never_a_refused_one() {
@@ -835,4 +836,33 @@ fn resolves_a_batched_copy_against_the_state_the_earlier_batches_left() {
         fixture.storage.materialize(101, DocumentPoint::Current).unwrap().unwrap().value,
         v2
     );
+}
+
+#[test]
+fn rejects_every_operation_after_close() {
+    // 上游 case 32（`rejects every operation after close`）：关掉之后，读、提交、取 id 全都明确失败。
+    //
+    // 上游的 `close()` 不消费自己，所以「关完之后还调它」是一条能写的测试；本库照抄这个形状 ——
+    // `close()` 只置一个门闩（`StorageError::Closed`），不消费 `self`。消费掉 `self` 的写法根本
+    // 测不到这条语义，也就不该声称支持它。
+    let mut fixture = backend("closed");
+    fixture.storage.commit(&[vec![conversation(2)]], |_, _| {}).unwrap();
+
+    fixture.storage.close().unwrap();
+
+    let error = fixture.storage.conversation(2).unwrap_err();
+    assert!(matches!(error, StorageError::Closed), "{error}");
+    assert!(error.to_string().contains("closed"), "{error}");
+
+    let error = fixture
+        .storage
+        .commit(&[vec![conversation(3)]], |_, _| panic!("关掉的存储不该有回执"))
+        .unwrap_err();
+    assert!(matches!(error, StorageError::Closed), "{error}");
+
+    let error = fixture.storage.mint_id().unwrap_err();
+    assert!(matches!(error, StorageError::Closed), "{error}");
+
+    // 关掉之后「再关一次」不是错误：已经关了就是已经关了。
+    fixture.storage.close().unwrap();
 }
