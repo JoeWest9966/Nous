@@ -1,21 +1,58 @@
-# Nous
+# Nous · 内核
 
-一个会开很多对话的 AI 面板：会话引擎（qrd3wh）、模板仓（Nous-Template）、触发器仓（Nous-Trigger）三边协作，把「什么时候、起一条什么对话」这件事说清并跑起来。
+会话内核的领域词表。这里的词是**语义**的词，不是实现词：`/v1/*` 的字段名、表名、
+crate 名在 `wire.md` 与 `docs/storage.md`，不在这里。
 
-## 触发器与血缘
+**这份文件只加新词，不改已定义的词。** 与 `wire.md` 冲突时以 `wire.md` 为准；
+与 spec 冲突时按 spec 分：形状听 `wire.md`，语义听 spec。
 
-**触发器**：
-Nous-Trigger 仓里的一个独立程序（一个目录 = 一个 Rust 项目），只回答「现在该不该 fire」。契约：stdin 一行 `{now, params}`，stdout 一行 `{fire, reason}`；退出码 0 = 正常（fire 不 fire 都算）。
-_Avoid_: 启动器、launcher
+## Language
 
-**终极模板**：
-Nous-Template 的 Ultimate-Template 段里的一条，等于「触发器 + 参数 + 会话模板」，钉「什么时候起、起什么」。
-_Avoid_: 定时任务、cron、计划
+**内核层**:
+`crates/kernel/*`：换个产品还能用的那一层，只出 pub API，不认识进程、路由、产品语义。
+_Avoid_: 引擎、Package、Nous-Package、服务端、后端
 
-**会话模板**：
-Nous-Template 的 Session-Template 段里的一条，管「起什么对话」（模型、技能、提示词模板等初值）。
-_Avoid_: 预设（两段条目共用的泛指）
+**应用层**:
+`crates/app/*`：只有 Nous 用的那一层，持有客户端契约、路由、鉴权、扩展运行时与部署决策。
+_Avoid_: nous-app、宿主、壳
 
-**血缘**：
-一条会话由哪条终极模板 fire 出来的历史事实，记在会话引擎 Sessions 文档的 `origins` 键里：`{ ultimate, trigger, at, forced }`。fire 当时抄下，不随引用删改而变；名字里的 `▶` 前缀只是它的投影。
-_Avoid_: 出处、来源、启动记录
+**提交**:
+库内单库全局单调的 seq，是唯一的真相单位；原子性来自事务，事务边界就是提交。
+_Avoid_: 事务、事件、op、写入
+
+**会话**:
+有身份的文档（名字可为 `""`、`model`、`skills`、fork 血缘）加一条命名空间。
+_Avoid_: 对话、聊天、线程、分支
+
+**投影**:
+任何能从提交日志重算的东西 —— 列表树、SSE 帧、客户端 UI 状态、置顶、未读。
+_Avoid_: 缓存、视图、快照、状态
+
+**终态**:
+一次生成结束时写下的归因，取值 `done | user_cancel | timeout | extension_crash | abandoned`；一条 entry 只有一个，写下即不可变。
+_Avoid_: 结束原因、结局、status、结果
+
+**扩展**:
+由应用层通过**接缝**调用、贡献能力的外部程序；一个扩展 = 一份清单 + 一个入口。
+_Avoid_: 插件、plugin、addon、模块
+
+**调用**:
+扩展被调用一次的那个实例，有生命周期、可取消、唯一可归因。
+_Avoid_: 请求、函数调用、任务、job
+
+**接缝**:
+应用层与扩展之间唯一的那层协议；跨进程，应用层发起，扩展应答。
+内核层与应用层之间没有协议 —— 同进程，只有 pub API。
+_Avoid_: 接口、API、SDK、钩子
+
+**协议版本**:
+`resolve` 返回的那个 `version`：它是 `/v1` 的形状版本，不是应用版本；客户端遇到不认识的即拒绝连接。
+_Avoid_: 版本号、semver、build
+
+**块**:
+面板时代的目录兼进程单位；v1 里**不再有这个概念** —— 一个块要么是扩展，要么是内容，要么被删。
+_Avoid_: block、模块、插件包
+
+**名牌**:
+扩展注册进会话、由应用层按会话选中集装配的具名槽位（`skill:<名>`、`prompt:<名>`）。
+_Avoid_: 占位符、注册项、token、挂载点
