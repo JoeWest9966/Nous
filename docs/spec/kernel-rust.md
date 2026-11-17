@@ -10,6 +10,13 @@
 - 一层一目录：`crates/kernel/*`（内核层，换个产品还能用）/ `crates/app/*`（应用层，只有 Nous 用）。**两层只是目录约定，不是仓库边界，不是第二个部署单元。**
 - 术语以 `GLOSSARY.md` 为准。本 spec 只加词，不改已定义的词。
 - 每章三样齐：**判据**（红/绿明确）/ **反悔点** / **不许做什么**。
+- **判据不许空跑绿。** 任何判据引用的路径不存在时，结果是 **SKIP（打印出来）**，不是 PASS。`git grep -n "x" -- <不存在的目录>` 会返回 rc=0、无输出——那就是 `0 ≥ 0` 的假绿，明令禁止。每条判据都套这三行前缀：
+
+  ```bash
+  test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"; exit 0; }
+  ```
+
+  只允许"打印出 SKIP 然后退出"，不许静默 `exit 0`。判据跑完必须能在输出里数出红/绿/SKIP 各多少条。
 
 ## 章目
 
@@ -32,7 +39,16 @@
 
 **结论**：一个仓（`Nous`）、一个 workspace、一个产物（`nous-app` 进一个 systemd 单元）。内核层与应用层是目录约定。
 
-**判据（11 条，全进 `scripts/verify.sh`）**
+**判据（13 条，全进 `scripts/verify.sh`）**
+
+判据引用的 `crates/kernel` / `crates/app` 在 #14 搬迁完成前**不存在**。契约：**路径不存在 = SKIP（打印出来），不是 PASS。** 下面 13 条每条都以这三行为前缀：
+
+```bash
+test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"; exit 0; }
+```
+
+- 覆盖范围：以 `git grep … -- crates/kernel` / `-- crates/app` 为载体的（3、4、5、6、8、11、12、13）与 `cargo tree` / `cargo metadata` 类（1、2、9、10）。
+- **#14 的验收里必须包含"这 13 条从 SKIP 变真绿"**；搬迁完成后仍 SKIP 即红。
 
 1. 正向依赖：`cargo tree -p nous-app --depth 1 -e normal` 含内核层的 `durable` / `wire` / `tools` / `runtime`，不含 `chord` / `rusqlite`。
 2. 反向依赖：内核层任一 crate `--depth 1` 都不依赖应用层。
@@ -76,7 +92,7 @@
 
 ## 3 · 客户端面与部署
 
-**结论**：客户端只有 **NousDesk（桌面）** 与 **bjes6b（手机）** 两个；面板不存在。客户端只看 `resolve` 给出的那一个 `/v1` 面，不链接库。内核层与应用层是**一个** systemd 单元、一个 musl 静态二进制，跑在 j1900。
+**结论**：客户端**现在只有一个**：NousDesk。移动端将来**复用 NousDesk 的 core**，不另建客户端；`bjes6b` 删除。客户端只看 `resolve` 给出的那一个 `/v1` 面，不链接库。内核层与应用层是**一个** systemd 单元、一个 musl 静态二进制，跑在 j1900。
 
 ### 3.1 客户端只剩一个（面板死、手机端也死）
 
