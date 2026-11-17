@@ -17,4 +17,3 @@
 | `s9hzsp` | `Nous/Nous-Functions/alpha.1` | alpha.1 | 块 |
 | `mcfpqm` | `Nous/Nous-Functions/storage-Archive` | storage-Archive | 块 |
 | `vq0f03` | `Nous/vps` | vps | 块 |
-| `bjes6b` | `Nous/Nous-Mobile` | Nous-Mobile | 块 |
