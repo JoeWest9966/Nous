@@ -66,12 +66,52 @@ tasks / submissions / durable_metadata / durable_schema
 - `?since=` 是**全局游标**，重连语义 = `WHERE commit_seq > since`。
 - **这是内部量，这一版不进 `wire.md`。** SSE 重连对外仍靠第一帧 `snapshot`（`wire.md` 的 SSE 段本来就是这么写的）。将来要把它变成对外契约，先改 `wire.md`（§4.4 的顺序），不是先改代码。
 
-## 6. 进度落库：500 ms
+## 6. 进度落库：闸是 100 ms，**没有**「每 N 毫秒一个 revision」这种东西
 
-- `pi.live` 每 **500 ms** 一个 revision。落库粒度 = **一次 append 一个 revision**。
-- 为什么不是上游默认的 1000 ms：桌面端盯着屏幕，崩溃丢约一秒可见文字太刺眼。
-- 为什么不是 100 ms：写放大换不到可感知的收益。
-- 反悔点：有用户抱怨「崩了丢一坨」→ 降到 100–200 ms；写盘成为瓶颈 → 回到 1000 ms 并写清丢失窗口。
+上一版这里写的是「`pi.live` 每 **500 ms** 一个 revision」。**那个数是错的，已作废**：它假装
+`pi.live` 有一支自己的节拍，而上游没有。上游的三个原文数字（`harness/agent.ts:36-40`）：
+
+```ts
+export const DEFAULT_PROGRESS_POLICY: ProgressPolicy = {
+    partialIntervalMs: 100,   // 流式 partial 的闸
+    outputIntervalMs: 100,    // 工具输出流的闸（外加按字节配速）
+    persistWithinMs: 1_000,   // deferred 提交的最长窗口 —— 不是节拍
+};
+```
+
+`pi.live` 的 revision 来自下面三处，**只有前两处有节拍，且都是 100 ms**：
+
+| 来源 | 上游 | 我们 |
+|---|---|---|
+| 流式 partial（`generation.message`） | 闸 `partialIntervalMs = 100` | **已落**（`harness/generation.rs`）：每帧一次真提交 = 一条 revision |
+| 工具输出（`tools[].output` / `droppedBytes` / `diagnostics`） | 闸 `outputIntervalMs = 100`，另按「每写 1 字节歇 1/100 KiB 秒」配速（`chord/src/output.ts:306` `PROGRESS_BYTES_PER_SECOND = 100 * 1024`，`:395` 用它算下一次） | **未落**（属工具执行票）。落的时候照抄这两个数，别自创 |
+| 书签类变更（`run` / `compactions` / `compactionFailure` / `runFailure` / `retry` / abort） | **无自家节拍**：都走 `PROGRESS_COMMIT`（deferred），攒到下一次读或写 `pi.live` 的提交顺手带走，最迟 `persistWithinMs = 1000` | **无窗口**：deferred 被砍（`docs/decisions.md`），这些变更落在调用方那次提交里，一次提交一条 revision。它们本来就低频（工具起止、压缩状态、重试标记、abort） |
+
+`live.rs` 的 7 个函数（`end_run` / `add_compaction_status` / `remove_compaction_status` /
+`fail_compaction_status` / `tool_slot` / `finish_slot` / `clear_progress`）**不提交**，只改
+`Draft<LiveState>`（与上游签名一致）。所以「书签类变更的节拍」不在 `#14` 里，它等于**调用方
+的提交节奏**；`#22` 的 SSE 出帧频率要从这里推出来，不能反过来假设。
+
+为什么能这么定：
+
+- **100 ms 的写放大已经付过一次了。** partial 就是 100 ms 一写；实测（`docs/bench-commit.md`）
+  16 秒流 = 160 次提交、ext4 `NORMAL` 下 **110 ms 总墙钟**。所以「100 ms 太贵」「500 ms 换更多
+  收益」这个理由当初没有证据，现在也没有。
+- **崩溃丢失窗口比上游更小。** 上游最坏丢 `persistWithinMs = 1 s` 的可见文字；我们最坏丢**一个
+  闸周期（100 ms）**。这是砍 deferred 白拿的，不是付代价换的。
+- **`500` 从没落地过任何代码。** 它是「以为 `pi.live` 有自家节拍」时的猜测；`#23`/`#14` 落完
+  之后，`pi.live` 只有 partial 一路在写。
+
+反悔点：
+
+1. 若真实桌面进程里测出 partial 100 ms 让盘饱和 → **先给 partial 加按字节配速**（上游
+   `PROGRESS_BYTES_PER_SECOND` 那套），**不要**回到「500 ms 定时器」：定时器分不清「小增量」与
+   「大增量」，配速分得清。改的时候把本条反悔点一起改写。
+2. 若工具输出实测打满盘（例如 1 000 行/秒的日志）→ 加 `100 ms + 100 KiB/s` 配速（上游就这两个
+   数）。仍不够才重开 deferred，那要同时改 `#13` 的「明确拒绝」决定。
+3. 若以后真需要「一个窗口内合并所有 `pi.live` 变更」→ 那是 **deferred**，不是给 `pi.live` 加节拍。
+   **不许在 `live.rs` 里加定时器**：`live.rs` 一旦自己起定时器，就有第二个写者与 partial 的闸打架，
+   而 `pi.live` 的单写者前提（`docs/harness.md` §1 ③ 附 (1)）会当场破掉。
 
 ## 7. 失败 / 半写 / 多进程
 

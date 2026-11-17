@@ -112,6 +112,13 @@ harness 是本库最后一个大未知，先出形状能省掉两轮返工。
 `CommitPersistence::Deferred` 明确拒绝（`docs/decisions.md` deferred 那节）。所以每次 partial
 都是一次真提交，节拍只由 100 ms 时间闸与单飞决定。
 
+上游那三个数一并记在这里，免得再猜（`harness/agent.ts:36-40` `DEFAULT_PROGRESS_POLICY`）：
+`partialIntervalMs = 100`、`outputIntervalMs = 100`（工具输出，另按
+`PROGRESS_BYTES_PER_SECOND = 100 KiB/s` 配速，`chord/output.ts:306`）、`persistWithinMs = 1_000`
+（deferred 的**最长窗口，不是节拍**）。**`pi.live` 没有「每 N 毫秒一个 revision」这种节拍** ——
+我们这边 revision 只有两个来源：这次 partial 闸，和调用方自己的提交。完整表格见
+`docs/storage.md` §6。
+
 **(2) 尾帧必交是错的 —— 上游故意丢最后那一批增量。** `generation.ts:735-770`：
 
 ```ts
