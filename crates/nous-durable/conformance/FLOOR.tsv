@@ -25,4 +25,4 @@
 # 于是「没做」看起来像「做完了」。理由写在这里，等本地 `FileSystem` + `Shell` 真后端落地（票还没开，`nous-env` 目前只有 trait）。
 #
 # file	min
-storage_conformance.rs	24
+storage_conformance.rs	27

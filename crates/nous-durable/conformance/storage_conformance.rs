@@ -7,7 +7,7 @@
 //! - 一份**真后端**（临时文件 SQLite）上跑，不造假后端：假后端通过什么也证明不了。
 //! - 减法都要有理由：砍掉的案进票 #21，不无声消失。
 //!
-//! 上游 32 个 `createCase(`，这里 24 个；`FLOOR.tsv` 记的正是这个数字。
+//! 上游 32 个 `createCase(`，这里 27 个；`FLOOR.tsv` 记的正是这个数字。
 //!
 //! ## 八个上游文件，为什么这里只有一份规范
 //!
@@ -16,9 +16,8 @@
 //! `createCase(` 调用点是 0（benchmark / 断言 / 注册器 / 类型 / 出口 / 提交辅助），不设下限，
 //! 也不为凑文件数造空文件。
 //!
-//! 于是 32 案 = **24 已落** + **5 等真后端**（`scan_submissions` / `scan_documents` / fork 链的
-//! entry 扫描，票 #21）+ **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与
-//! `docs/not-ported.md`）。
+//! 于是 32 案 = **27 已落** + **2 等真后端**（`scan_documents` 与 fork 链的 entry 扫描，票 #21）
+//! + **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与 `docs/not-ported.md`）。
 //! `env_conformance.rs` **不做**：本库 `nous-env` 只有 trait、没有一个实现，而 conformance 测的是
 //! **真后端** —— 造个假后端让用例通过，什么也证明不了（票 #15）。逐文件的判定见 `FLOOR.tsv` 文件头。
 //!
@@ -1114,4 +1113,254 @@ fn stores_and_scans_sleeping_tasks_by_status() {
         .unwrap();
     assert_eq!(tasks_with_status(&fixture.storage, "sleeping"), Vec::<Value>::new());
     assert_eq!(tasks_with_status(&fixture.storage, "running"), vec![running]);
+}
+
+fn submissions_of(
+    storage: &Storage,
+    query: nous_durable::SubmissionQuery,
+    limit: usize,
+    cursor: Option<&nous_durable::Cursor>,
+) -> nous_durable::Page<Value> {
+    storage
+        .scan_submissions(&query, limit, cursor)
+        .unwrap()
+        .unwrap()
+}
+
+/// 一条一条翻完整个筛选结果（上游那几条案里的 `ids(query)`）。
+fn submission_ids(storage: &Storage, query: nous_durable::SubmissionQuery) -> Vec<i64> {
+    let mut found = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = submissions_of(storage, query.clone(), 1, cursor.as_ref());
+        found.extend(ids_of(&page));
+        match page.next {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+    }
+    found
+}
+
+#[test]
+fn indexes_request_ids_per_conversation_and_replaces_complete_submission_records() {
+    // 上游 case：`requestId` 的幂等键**按会话**索引（两个会话可以有同一个 requestId），整条提交记录
+    // 被后写的覆盖，状态一换就从旧的扫描里消失。
+    let mut fixture = backend("submission-request");
+    let (first_id, second_id, other_conversation_id) = (11, 12, 13);
+    let first = json!({
+        "id": first_id, "conversationId": 2, "requestId": "same", "type": "input", "status": "queued"
+    });
+    let second = json!({
+        "id": second_id, "conversationId": 2, "requestId": "other", "type": "input", "status": "queued"
+    });
+    let other = json!({
+        "id": other_conversation_id, "conversationId": 3, "requestId": "same", "type": "input", "status": "queued"
+    });
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                conversation(2),
+                conversation(3),
+                StorageWrite::Submission(first.clone()),
+                StorageWrite::Submission(second.clone()),
+                StorageWrite::Submission(other.clone()),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+
+    // 同一个 requestId 在两个会话里各有一条：幂等键是 (conversationId, requestId)。
+    assert_eq!(fixture.storage.submission_by_request(2, "same").unwrap().unwrap(), first);
+    assert_eq!(fixture.storage.submission_by_request(3, "same").unwrap().unwrap(), other);
+
+    // 覆盖成 placed：`entry` 是这一条新拿到的 entry id。
+    let placed_second = json!({
+        "id": second_id, "conversationId": 2, "requestId": "other", "type": "input",
+        "status": "placed", "entry": 14
+    });
+    fixture
+        .storage
+        .commit(&[vec![StorageWrite::Submission(placed_second.clone())]], |_, _| {})
+        .unwrap();
+    assert_eq!(fixture.storage.submission(second_id).unwrap().unwrap(), placed_second);
+    assert_eq!(
+        fixture.storage.submission_by_request(2, "other").unwrap().unwrap(),
+        placed_second
+    );
+
+    let every = nous_durable::SubmissionQuery::default();
+    assert_eq!(
+        submission_ids(&fixture.storage, every.clone()),
+        vec![first_id, second_id, other_conversation_id]
+    );
+    let in_root = nous_durable::SubmissionQuery {
+        conversation_id: Some(2),
+        ..Default::default()
+    };
+    assert_eq!(submission_ids(&fixture.storage, in_root), vec![first_id, second_id]);
+
+    // 状态一变就换边。
+    let queued = nous_durable::SubmissionQuery {
+        status: Some("queued".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        submission_ids(&fixture.storage, queued.clone()),
+        vec![first_id, other_conversation_id]
+    );
+    let placed = nous_durable::SubmissionQuery {
+        status: Some("placed".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(submission_ids(&fixture.storage, placed.clone()), vec![second_id]);
+
+    let other_queued = nous_durable::SubmissionQuery {
+        conversation_id: Some(3),
+        status: Some("queued".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(submission_ids(&fixture.storage, other_queued), vec![other_conversation_id]);
+    let other_placed = nous_durable::SubmissionQuery {
+        conversation_id: Some(3),
+        status: Some("placed".to_string()),
+        ..Default::default()
+    };
+    assert!(
+        submission_ids(&fixture.storage, other_placed).is_empty(),
+        "会话 3 里没有 placed"
+    );
+
+    // 扫出来的整条记录与按 id 读出来的一模一样（不是「挑几个字段」）。
+    let page = submissions_of(&fixture.storage, placed, 10, None);
+    assert_eq!(page.items, vec![placed_second]);
+}
+
+#[test]
+fn stores_passive_write_submissions_without_input_only_lifecycle_states() {
+    // 上游 case：`write` 型提交不走 `input` 那条生命周期 —— 它可以从 `queued` 直接到 `done` 或
+    // `unanswered`（带着 `reason` 与 `detail`），中间没有 `placed`。
+    let mut fixture = backend("submission-passive");
+    let (done_id, failed_id) = (11, 12);
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                conversation(2),
+                StorageWrite::Submission(json!({
+                    "id": done_id, "conversationId": 2, "requestId": "passive-done",
+                    "type": "write", "status": "queued"
+                })),
+                StorageWrite::Submission(json!({
+                    "id": failed_id, "conversationId": 2, "requestId": "passive-failed",
+                    "type": "write", "status": "queued"
+                })),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+
+    let done = json!({
+        "id": done_id, "conversationId": 2, "requestId": "passive-done",
+        "type": "write", "status": "done", "entry": 13
+    });
+    let unanswered = json!({
+        "id": failed_id, "conversationId": 2, "requestId": "passive-failed",
+        "type": "write", "status": "unanswered", "reason": "closed", "detail": { "retryable": false }
+    });
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                StorageWrite::Submission(done.clone()),
+                StorageWrite::Submission(unanswered.clone()),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+
+    assert_eq!(fixture.storage.submission(done_id).unwrap().unwrap(), done);
+    assert_eq!(
+        fixture.storage.submission_by_request(2, "passive-done").unwrap().unwrap(),
+        done
+    );
+    assert_eq!(fixture.storage.submission(failed_id).unwrap().unwrap(), unanswered);
+    assert_eq!(
+        fixture
+            .storage
+            .submission_by_request(2, "passive-failed")
+            .unwrap()
+            .unwrap(),
+        unanswered
+    );
+}
+
+#[test]
+fn stores_continue_submissions_which_have_no_entry_and_are_never_queued() {
+    // 上游 case：`continue` 型提交起点就是 `placed`（它从不排队），成功时用 `answer` 而不是 `entry`。
+    let mut fixture = backend("submission-continue");
+    let (done_id, failed_id) = (11, 12);
+    let placed_done = json!({
+        "id": done_id, "conversationId": 2, "requestId": "continue-done",
+        "type": "continue", "status": "placed"
+    });
+    let placed_failed = json!({
+        "id": failed_id, "conversationId": 2, "requestId": "continue-failed",
+        "type": "continue", "status": "placed"
+    });
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                conversation(2),
+                StorageWrite::Submission(placed_done.clone()),
+                StorageWrite::Submission(placed_failed.clone()),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+    assert_eq!(fixture.storage.submission(done_id).unwrap().unwrap(), placed_done);
+    let placed = nous_durable::SubmissionQuery {
+        status: Some("placed".to_string()),
+        ..Default::default()
+    };
+    assert_eq!(
+        submissions_of(&fixture.storage, placed, 10, None).items,
+        vec![placed_done.clone(), placed_failed.clone()]
+    );
+
+    let done = json!({
+        "id": done_id, "conversationId": 2, "requestId": "continue-done",
+        "type": "continue", "status": "done", "answer": 13
+    });
+    let unanswered = json!({
+        "id": failed_id, "conversationId": 2, "requestId": "continue-failed",
+        "type": "continue", "status": "unanswered", "reason": "nothing_to_answer"
+    });
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                StorageWrite::Submission(done.clone()),
+                StorageWrite::Submission(unanswered.clone()),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+
+    assert_eq!(fixture.storage.submission(done_id).unwrap().unwrap(), done);
+    assert_eq!(
+        fixture.storage.submission_by_request(2, "continue-done").unwrap().unwrap(),
+        done
+    );
+    assert_eq!(fixture.storage.submission(failed_id).unwrap().unwrap(), unanswered);
+    assert_eq!(
+        fixture
+            .storage
+            .submission_by_request(2, "continue-failed")
+            .unwrap()
+            .unwrap(),
+        unanswered
+    );
 }
