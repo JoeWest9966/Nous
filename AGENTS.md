@@ -65,6 +65,15 @@ nous-server        → durable, wire, telemetry
 
 ## 三、开动之前
 
+**第零步：一票一 worktree。** 主树 `/opt/Nous-Package` 永远停在 `master`，且不接任何未提交的活。
+开工先 `git worktree add /opt/Nous-Package-<主题> -b feat/<主题> origin/master`，在自己的目录里改，
+完工合并后 `git worktree remove`。
+
+为什么是硬要求（2026-11-17 一天内真发生两次）：同一棵树上两条线，`git add <路径>` 会把别人没写完
+的文件一起吞进你的 commit —— 那天 `f3c5b4d` 一个 commit 里同时出现 `harness/project.rs` 和另一张
+票的整个 `crates/nous-tools/`（33 个文件），事后 `git show` 再也分不清哪半属于哪张票；同一时段主树
+还停在 `feat/25-materialize-cache` 上，`master` 根本不在工作区里。一条规矩抵掉两种事故。
+
 三步，每次都要走：
 
 1. 读 `SOURCES.md` 里你要碰的那个文件那一行 —— 它从哪来、抄了多少、改了什么。
