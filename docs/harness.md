@@ -225,6 +225,10 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
    (a) 提货进 `nous-ai/src/utils/streaming_json.rs`，并把 §一 那行改成「+ `utils/streaming-json.ts`」。
    (b) 不提：harness 里每次提交把 `arguments` 整块重写（`Set`，落 `Block`）。正确性一样，代价是长
        参数工具调用每次部分提交都写整个参数对象。
-   **我倾向 (a)**：它是纯函数、有上游测试可对拍，而且 (b) 会让「提交成本跟着新文本走」这个性质
-   在工具调用上失效 —— 那正是这条路径存在的理由。
+   **已定 (a)**（用户 2026-11-17，`AGENTS.md` §一 随之改了 `223cf61`）。更正一句我原来写错的话：
+   **上游没有它的测试** —— `packages/ai` 里 `find . -name '*.test.ts' | xargs grep StreamingJsonParser`
+   零命中。所以判据自建三条：(1) 完整合法输入上 `snapshot()` 等于 `serde_json` 的解析结果；
+   (2) 把 `append()` 返回的 `JsonChange` 依次应用到空值，**结果必须等于**同一时刻的 `snapshot()` ——
+   这正是 `PartialChanges` 依赖的性质；(3) 任意前缀都不 panic、快照只增不减（流式的容错规则）。
+   (b) 会让「提交成本跟着新文本走」在工具调用上失效 —— 那正是这条路径存在的理由。
 3. **3 条 delta 变体用构造数据**（§2.3）—— 认还是不认？不认的话这 3 行就永远没人验。
