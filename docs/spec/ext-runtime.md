@@ -17,7 +17,7 @@
 | # | 章 | 一句话结论 |
 |---|---|---|
 | 1 | 边界与形态 | 一个扩展 = 一份清单 + 一个入口 + 一个进程；句柄 / 值 / 内容三分 |
-| 2 | 通道与调用 | 一对管道 + 长度前缀 JSON；call id 路由；一轮一次；帧里只有三样 |
+| 2 | 通道与调用 | 一对管道 + 长度前缀 JSON；call id 路由；一轮一次；帧里只有三样；单帧 1MB 双向 |
 | 3 | 四件能力 | section / tool / 名牌 / 句柄，每件 判据·反悔点·不许做 |
 | 4 | 失败、熔断与预算 | 两条阶梯；诊断去重但计数不清零；三个预算数；两个硬顶 |
 | 5 | 热加载与生命周期 | 常驻；三个触发源一个实现；重载不动命名空间 |
@@ -66,6 +66,61 @@
 ### 1.4 与内核 spec 的边界
 
 本文件不重复内核的判据。对内核的任何修改都走 `seams-open.md`（S1–S11，已签 · 2026-11-17，已贴进 `kernel-rust.md`）。**已签 = 定案**：以后要改这些条款，走反悔点，不许重新讨论。
+
+---
+
+## 2 · 通道与调用
+
+**结论**：一对管道 + **长度前缀 JSON 帧**；帧里只有三样（`conversationId` / `cwd` / `extensions`）；**call id 路由，不靠 pid**；一轮内每扩展只调一次；**单帧上限 1MB，双向各自计数**，超限按崩溃处理。
+
+通道本体是附录 A 外已拍板的（`seams-open` 无关，见内核附录 A 的 Q8）：一对管道、长度前缀帧、**不开第二个端口、不引入第二种编码、不做心跳**——管道断开即死亡。本章只定**帧里装什么、多大、归谁**。
+
+**字段是后果，不是起点。** 下面的三条序列是唯一起草依据（用例先于字段）：
+
+```
+A · 一轮请求    A→E {call, kind:"section", input:{conversationId,cwd,extensions}}
+                E→A {call, kind:"result", sections:[{key,text,tag}…]} | {call, kind:"result", error}
+B · 一次工具    A→E {call, kind:"tool", tool, args, cwd}
+                E→A {call, seq:0..N, kind:"output"} ×N  然后  {call, seq:N, kind:"final", result|cancelled:true}
+取消（同一条 host→ext 管道，不是第二个通道）  A→E {call, kind:"cancel"}
+C · 重载        A→E'{kind:"hello", protocol, manifestHash}   E'→A{kind:"hello", protocol}
+                A→E' 内容（内核代读）              E'→A{kind:"nameplates", names:[…]}
+```
+
+### 2.1 帧里只有三样
+
+`{conversationId, cwd, extensions}`。**`shown` 不进帧**（它是上一轮的输出，递进去等于允许扩展有跨轮状态，与"状态必须可丢弃"直接矛盾；它留在应用层的 `renderSections` 兜底）；**`read` 不进帧**（那是内核的文档读口，递过去等于给扩展开一个跨会话查询面）；**`model` 也不进**（模型选择是会话配置，扩展按模型分支就是产品决策渗进扩展的第一步）；`agent` 全量更不行（它带着这一轮所有工具，含别的扩展的工具）。
+
+- **判据**：EX-08（键集合相等）· EX-12（`shown`/`read`/`model`/绝对路径 逐行空）。
+- **反悔点**：某个扩展说"我需要 `shown`" → 那说明它想做状态机，答案是**把那份状态做成内核的提交**，不是把 `shown` 递过去。
+- **不许做**：`E4`。
+
+### 2.2 call id 路由，不靠 pid
+
+调用的归属只认 `call` 字段。这是重载时在飞调用能活下来的**唯一**原因：进程换了、调用不换，旧调用的输出仍投给它自己。
+
+- **判据**：EX-11（重载期在飞 tool：输出不丢、不乱序、不串到新调用）· EX-39（call id 递增不变、`seq` 不重置）。
+- **反悔点**：出现"同一个 call id 被两个进程同时应答"—— 那不是并发，是路由错，先修路由。
+- **不许做**：`E12`。
+
+### 2.3 一轮内每扩展只许调一次
+
+否则热路径变成可嵌套的循环：扩展在同一轮里再问宿主、宿主再叫它，预算与归因全部失效。
+
+- **判据**：EX-09（每扩展 = 1 次）。
+- **反悔点**：出现"一段 section 必须分两次拿"的真用例 → 那是"内容"的形状不够（第 6 章），不是加往返。
+- **不许做**：`E12`。
+
+### 2.4 单帧上限 1MB，**双向各自计数**
+
+没有上限的长度前缀帧 = 一个 500MB 的 section 能把宿主撑死。
+
+- 上限与 SSE 未发送上限**同数**（1MB），`host→ext` 与 `ext→host` **各算各的**；只管一侧的话，一个恶意扩展仍能用一个 frame 打穿宿主。
+- 超限**不是截断、不是丢弃**，而是**按崩溃处理**：杀掉、重启一次、归因 `extension_crash`。截断会产生"看起来正常但内容少了一半"的帧 —— 那是这类协议最难查的一类 bug，也是**假绿**的温床。
+- 拒绝必须发生在**读入之前**：先看长度前缀，超限就不读 payload。
+- **判据**：EX-58（发 2MB 单帧的假扩展 → 被杀、归因 `extension_crash`、宿主 RSS 涨幅 < 一个上限量）。
+- **反悔点**：出现"真的有一条合法 section 超过 1MB"（有实测数据）→ 调数不改形状；仍不许改为"截断"。
+- **不许做**：不许无限缓冲；不许把超限当成"明确错误"（那会让模型看到一条正常但残缺的段）。
 
 ---
 
@@ -140,8 +195,9 @@
 | EX-55 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh two-sessions-isolated \| tee` A 的输出不含 B 的任何字节 | T5 | 待人拍 |
 | EX-56 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh disable-extension \| tee` 0 次调用 + 名牌全 `missing()` + 诊断写"已禁用" | T5 | 待人拍 |
 | EX-57 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; diff <(grep -oE 'judge\.sh [a-z0-9-]+' docs/spec/ext-runtime.md \| awk '{print $2}' \| sort -u) <(./scripts/judge.sh --list \| sort -u) \| tee` 空 diff（判据表引用的 case 名与 `--list` 集合相等） | T5 | 待人拍 |
+| EX-58 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh oversized-frame \| tee` 扩展被杀、归因 `extension_crash`、宿主 RSS 涨幅 < 1MB | T5 | 待人拍 |
 
-**统计**：57 条。55 条挂 T5（扩展运行时本体）、1 条挂 T1（编目搬迁）、1 条挂 T5（case 名集合自检）。
+**统计**：58 条。57 条挂 T5（扩展运行时本体），1 条挂 T1（编目搬迁）。
 **已签 3 条**（EX-49 / EX-50 / EX-54，来自 S1/S9/S10/S11）；其余待签。**T5 未开票之前，全表 SKIP** —— 这是如实状态，不是"接近完成"。
 
 ## 附录 B · 不许做清单
