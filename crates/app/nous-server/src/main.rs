@@ -4,7 +4,7 @@
 //!
 //! | 变量 | 默认 | 说明 |
 //! |---|---|---|
-//! | `NOUS_SERVER_ADDR` | `127.0.0.1:4789` | 监听地址。端口给 0 时由内核选，实际地址打到 stdout |
+//! | `NOUS_LISTEN` | `127.0.0.1:4789` | 监听地址。端口给 0 时由内核选，实际地址打到 stdout |
 //! | `NOUS_DB` | `./nous.db` | 库路径（**本库自己写的 v1 库**） |
 //! | `NOUS_ADOPT_LEGACY` | 不设 | `1` = 把一份**上游 v2 副本**领养成本库可写库（见下） |
 //!
@@ -70,7 +70,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let address = std::env::var("NOUS_SERVER_ADDR").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+    // spec §3.4：监听地址是本进程自己的配置，不是「服务器地址发现」。生产配置里
+    // 不许出现 `NOUS_SERVER_ADDR`（spec ch1 判据 11：发现唯一，走 resolve），所以
+    // 这个变量叫 `NOUS_LISTEN`。测试与 verify.sh 冷启动段用它给临时端口。
+    let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let actual = listener.local_addr()?;
     // 脚本抓这一行：先写行、再 flush，之后的 serve 才可能阻塞。

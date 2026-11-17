@@ -360,6 +360,21 @@ async fn windows_probe_bash() -> Option<ShellConfig> {
 /// (used only by shell detection). Returns `None` on spawn failure / timeout /
 /// empty stdout.
 async fn run_command(cmd: &str, args: &[&str], timeout: std::time::Duration) -> Option<String> {
+    run_quick(cmd, args, timeout).await
+}
+
+/// S1 收敛点：nous-tools 里**唯一**的工具子进程创建点（与 `execute` 的 shell
+/// spawn、`taskkill` 并列在本文件）。任何「跑一条一次性命令拿输出」的需求
+/// 都走这里，不许在别的文件里自己 `Command::new`（spec ch1 判据 6 / S1：
+/// 进程创建点全仓恰好两处，工具子进程就这一个适配文件）。
+///
+/// 与 `run_command` 同一个实现；单独留名是为了让 `output_decode`（Windows
+/// 控制台代码页探测，不在 async 上下文里）有一块独立的阻塞门。
+pub(crate) async fn run_quick(
+    cmd: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Option<String> {
     let mut command = tokio::process::Command::new(cmd);
     command.args(args);
     command.stdout(std::process::Stdio::piped());
@@ -386,6 +401,19 @@ async fn run_command(cmd: &str, args: &[&str], timeout: std::time::Duration) -> 
     } else {
         Some(s)
     }
+}
+
+/// `run_quick` 的阻塞版：给**不在 async 上下文**里的调用方用（目前只有
+/// `output_decode::console_code_page` —— Windows 控制台代码页探测，在
+/// `OnceLock` 惰性初始化里跑）。内部起一个一次性 runtime；调用频率是每
+/// 进程一次，开销可忽略。Linux/macOS 上没有任何调用方（`dead_code` 允许）。
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn run_quick_blocking(cmd: &str, args: &[&str]) -> Option<String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    rt.block_on(run_quick(cmd, args, std::time::Duration::from_secs(5)))
 }
 
 /// One job object per running shell, by root pid. `taskkill /T` walks parent

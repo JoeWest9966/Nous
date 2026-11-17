@@ -187,22 +187,16 @@ pub fn console_encoding() -> &'static Encoding {
 
 /// The console output code page, read from `chcp` (a child inherits our
 /// console, or gets a new one in the OEM code page — the same page our own
-/// children write in). Spawning keeps this crate free of `unsafe` FFI, as
-/// `taskkill` does for process trees; it runs once, when a pending span first
-/// requires fallback (including an incomplete UTF-8 span at EOF or the limit).
+/// children write in).
+///
+/// The spawn lives in `os_env::run_quick`（S1：全仓工具子进程只有
+/// `os_env.rs` 一个创建点，这里只留输出解析，不自己起进程）。
+/// 注意 `run_quick` 内部会调本模块的 `decode_output` 解 `cmd` 的输出 ——
+/// 此时代码页还没探出来，输出是纯 ASCII 的 `chcp` 行，UTF-8 路径足够。
 #[cfg(windows)]
 fn console_code_page() -> Option<u16> {
-    use std::os::windows::process::CommandExt;
-    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
-
-    let out = std::process::Command::new("cmd")
-        .args(["/d", "/c", "chcp"])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .ok()?;
-    parse_chcp(&out.stdout)
+    let out = crate::os_env::run_quick_blocking("cmd", &["/d", "/c", "chcp"])?;
+    parse_chcp(out.as_bytes())
 }
 
 /// The number at the end of `chcp`'s localized "Active code page: 936".

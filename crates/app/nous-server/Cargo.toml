@@ -14,6 +14,12 @@ description = "wire.md 的端点层：/v1/* 的 HTTP + SSE 传输（AGENTS.md §
 # 也不许在本 crate 的测试里出现 `FauxProvider`（判据在 issue #22 评论）。
 #
 # 传输绑在这里、且只在这里：`nous-durable` 永久禁 HTTP（`scripts/verify.sh` 4e）。
+# spec §1：一个产物 —— 进 systemd 的 bin 叫 `nous-app`（S4：bin target 恰好 1 个）。
+# crate 名仍叫 `nous-server`（它是 wire.md 的端点层 lib），改的只是 bin 名。
+[[bin]]
+name = "nous-app"
+path = "src/main.rs"
+
 [dependencies]
 nous-durable = { workspace = true }
 nous-wire = { workspace = true }

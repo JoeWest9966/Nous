@@ -28,7 +28,6 @@ pub mod truncate;
 
 pub mod utils {
     pub mod git;
-    pub mod open_browser;
 }
 
 pub mod tools;

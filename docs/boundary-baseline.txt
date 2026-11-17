@@ -1,0 +1,91 @@
+本文件只减不增（S8）
+# 词表基线 —— spec 第 1 章判据 3（Q18）
+#
+# 生成命令（在本仓根，路径随 #14 三层目录已更新）：
+#   git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- crates/kernel \
+#     | grep -v -i licenses
+#
+# 规则（逐字实现 spec 判据 3）：
+#   - verify.sh 第 5 段把上面命令的输出与本文件的正文行（去掉 # 注释与本行）逐行比对；
+#     出现本文件没有的新行即红。删除行不红（本文件只减不增）。
+#   - 改基线必须单独一张票，并在该行重写「为什么留着」。
+#   - 基线被绕过两次 → 换整文件哈希（S8 的反悔点）。
+#
+# 每行尾部 # 后的一句话是「为什么留着」。当前 73 行命中归为四类：
+#
+# ── A 类：消息内容「块」（block）——这是 wire.md 契约的事件字段与类型名
+#    （text_start / thinking_start / toolcall_start / block 都带一个 block 字段），
+#    内核按 Q19「原样存取、不解释」持有它。删它 = 改契约，不是清理词表。
+crates/kernel/nous-chord/src/context.rs:502:            .expect("cancelled() must resolve")  # A？否 —— 见 B 类（resolve）
+crates/kernel/nous-chord/src/delta/draft.rs:207:        resolve(&self.value, path)  # B：delta 路径解析函数名（JSON 指针），与「地址发现」无关
+crates/kernel/nous-chord/src/delta/draft.rs:211:        resolve(&self.base, path)  # B：同上
+crates/kernel/nous-chord/src/delta/draft.rs:215:fn resolve<'a>(root: &'a Value, path: &[Seg]) -> Option<&'a Value> {  # B：同上
+crates/kernel/nous-durable/src/harness/partial.rs:189:            let Some(block) = message  # A
+crates/kernel/nous-durable/src/harness/partial.rs:196:            if block.get("type").and_then(Value::as_str) != Some("toolCall") {  # A
+crates/kernel/nous-durable/src/harness/partial.rs:199:            let snapshot = block  # A
+crates/kernel/nous-durable/src/harness/partial.rs:203:            if let Some(object) = block.as_object_mut() {  # A
+crates/kernel/nous-durable/src/harness/partial.rs:249:            let block = message.get("content").and_then(|content| content.get(index));  # A
+crates/kernel/nous-durable/src/harness/partial.rs:250:            let is_tool_call = block  # A
+crates/kernel/nous-durable/src/harness/partial.rs:251:                .and_then(|block| block.get("type"))  # A
+crates/kernel/nous-durable/src/harness/partial.rs:278:            let Some(block) = content.get(index) else {  # A
+crates/kernel/nous-durable/src/harness/partial.rs:281:            if block.get("type").and_then(Value::as_str) != Some("toolCall") {  # A
+crates/kernel/nous-durable/src/harness/partial.rs:309:fn apply_change(draft: &mut Draft, block: &[Seg], change: &JsonChange) -> Result<(), OpError> {  # A：参数名沿用 wire 形状
+crates/kernel/nous-durable/src/harness/partial.rs:310:    let arguments = child(block, &Seg::key("arguments"));  # A：参数名沿用 wire 形状
+crates/kernel/nous-durable/src/harness/project.rs:276:                        block: item.clone(),  # A
+crates/kernel/nous-durable/src/harness/project.rs:284:                    for (index, block) in blocks.iter().enumerate() {  # A
+crates/kernel/nous-durable/src/harness/project.rs:287:                            block: block.clone(),  # A
+crates/kernel/nous-durable/src/harness/project.rs:304:        Op::Set(_, block) if rest.is_empty() => {  # A
+crates/kernel/nous-durable/src/harness/project.rs:308:                    block: block.clone(),  # A
+crates/kernel/nous-durable/src/harness/project.rs:313:                frames.push(start_of(index, block));  # A
+crates/kernel/nous-durable/src/harness/project.rs:370:        Some(block) => {  # A
+crates/kernel/nous-durable/src/harness/project.rs:373:                block,  # A
+crates/kernel/nous-durable/src/harness/project.rs:399:fn start_of(index: usize, block: &Value) -> MessageChange {  # A
+crates/kernel/nous-durable/src/harness/project.rs:401:    match block.get("type").and_then(Value::as_str) {  # A
+crates/kernel/nous-durable/src/harness/project.rs:404:            block: block.clone(),  # A
+crates/kernel/nous-durable/src/harness/project.rs:408:            block: block.clone(),  # A
+crates/kernel/nous-durable/src/harness/project.rs:412:            block: block.clone(),  # A
+crates/kernel/nous-durable/src/harness/project.rs:416:            block: block.clone(),  # A
+crates/kernel/nous-durable/src/harness/project.rs:454:/// 只有 `Set(["content", i], block)` 的"新块还是旧块"需要它。三条事实：  # A：注释解释 wire 形状
+crates/kernel/nous-durable/src/storage/sessions.rs:18://! `thinkingLevels` / `skills` / `template` / `readOnly` / `archived` / `updatedAt` 在旧库里  # C
+crates/kernel/nous-durable/src/storage/sessions.rs:57:    pub template: Option<String>,  # C：会话记录字段，Q19 原样存取
+crates/kernel/nous-durable/src/storage/sessions.rs:124:            template: None,  # C
+crates/kernel/nous-durable/src/storage/sessions.rs:479:        assert_eq!(item.template, None);  # C
+crates/kernel/nous-durable/tests/harness_generation.rs:269:        .and_then(|block| block.get("text"))  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:59:fn block_type(block: &Value) -> &str {  # A：测试辅助
+crates/kernel/nous-durable/tests/harness_projection.rs:60:    block.get("type").and_then(Value::as_str).unwrap_or("")  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:160:            .map(|(index, block)| Op::Set(content_path(index), block.clone()))  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:169:        for (index, (frame, block)) in frames.iter().zip(content.iter()).enumerate() {  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:170:            let expected = match block_type(block) {  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:173:                    block: block.clone(),  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:177:                    block: block.clone(),  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:181:                    block: block.clone(),  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:186:            kinds.insert(block_type(block).to_string());  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:218:    let (index, block) = messages  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:224:                .position(|block| block_type(block) == "text")?;  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:230:        !block  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:239:    let mut replacement = block.clone();  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:250:            block: replacement,  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:306:    let (index, block) = messages  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:312:                .position(|block| {  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:313:                    block_type(block) == "text"  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:314:                        && block  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:324:    let text = block  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:333:    let mut committed = block.clone();  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:335:    let mut grown = block.clone();  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:517:                MessageChange::Block { block, .. } => {  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:518:                    arguments = block  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:523:                other => panic!("参数流只该产出 toolcall_delta 或 block，拿到 {other:?}"),  # A：测试
+crates/kernel/nous-durable/tests/harness_projection.rs:602:                block: partial_block,  # A：测试
+crates/kernel/nous-durable/tests/storage_roundtrip.rs:179:    assert_eq!(json.get("template"), Some(&serde_json::Value::Null));  # C：测试
+crates/kernel/nous-wire/src/event.rs:176:    /// 块的开头。`block.text` 已经是全文 —— **跳过它就等于把第一段吞掉**。  # A：wire 事件文档
+crates/kernel/nous-wire/src/event.rs:177:    TextStart { content_index: u64, block: Value },  # A：wire 事件字段
+crates/kernel/nous-wire/src/event.rs:179:    ThinkingStart { content_index: u64, block: Value },  # A：wire 事件字段
+crates/kernel/nous-wire/src/event.rs:181:    ToolcallStart { content_index: u64, block: Value },  # A：wire 事件字段
+crates/kernel/nous-wire/src/event.rs:195:    Block { content_index: u64, block: Value },  # A：wire 事件字段（MessageChange::Block）
+crates/kernel/nous-wire/src/event.rs:213:            MessageChange::Block { .. } => Some("block"),  # A：wire 事件名
+crates/kernel/nous-wire/tests/event_json.rs:20:        "changes":[{"type":"text_start","contentIndex":0,"block":{"type":"text","text":"Hello there"}}]}"#;  # A：测试（线上形状快照）
+crates/kernel/nous-wire/tests/event_json.rs:30:                MessageChange::TextStart { content_index, block } => {  # A：测试
+crates/kernel/nous-wire/tests/event_json.rs:33:                    assert_eq!(block["text"], "Hello there");  # A：测试
+crates/kernel/nous-wire/tests/event_json.rs:99:        {"type":"block","contentIndex":0,"block":{"type":"text","text":"superseded"}},  # A：测试
+crates/kernel/nous-wire/tests/event_json.rs:105:                MessageChange::Block { content_index: 0, block } if block["text"] == "superseded"  # A：测试
+crates/kernel/nous-wire/tests/event_json.rs:282:            block: json!({"type":"toolCall"})  # A：测试
