@@ -7,7 +7,7 @@
 //! - 一份**真后端**（临时文件 SQLite）上跑，不造假后端：假后端通过什么也证明不了。
 //! - 减法都要有理由：砍掉的案进票 #21，不无声消失。
 //!
-//! 上游 32 个 `createCase(`，这里 27 个；`FLOOR.tsv` 记的正是这个数字。
+//! 上游 32 个 `createCase(`，这里 28 个；`FLOOR.tsv` 记的正是这个数字。
 //!
 //! ## 八个上游文件，为什么这里只有一份规范
 //!
@@ -16,8 +16,8 @@
 //! `createCase(` 调用点是 0（benchmark / 断言 / 注册器 / 类型 / 出口 / 提交辅助），不设下限，
 //! 也不为凑文件数造空文件。
 //!
-//! 于是 32 案 = **27 已落** + **2 等真后端**（`scan_documents` 与 fork 链的 entry 扫描，票 #21）
-//! + **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与 `docs/not-ported.md`）。
+//! 于是 32 案 = **28 已落** + **1 等真后端**（fork 链的 entry 扫描，票 #21）+ **3 不做**
+//! （对象别名两条 + 不种根会话；理由在票 #21 与 `docs/not-ported.md`）。
 //! `env_conformance.rs` **不做**：本库 `nous-env` 只有 trait、没有一个实现，而 conformance 测的是
 //! **真后端** —— 造个假后端让用例通过，什么也证明不了（票 #15）。逐文件的判定见 `FLOOR.tsv` 文件头。
 //!
@@ -1363,4 +1363,165 @@ fn stores_continue_submissions_which_have_no_entry_and_are_never_queued() {
             .unwrap(),
         unanswered
     );
+}
+
+fn documents_of(
+    storage: &Storage,
+    query: nous_durable::DocumentQuery,
+    limit: usize,
+    cursor: Option<&nous_durable::Cursor>,
+) -> nous_durable::Page<Value> {
+    storage
+        .scan_documents(&query, limit, cursor)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn indexes_logical_addresses_and_exact_scope_scans_independently() {
+    // 上游 case：**按地址找**（`kind` + `scope` + `key`，五个索引列全要相等）与**按作用域扫**
+    // （`kind` 可选、`key` 不参与）是两条独立的路。`__proto__` / `constructor` 这种 key 在这里只是
+    // 普通字符串（`serde_json::Value` 是树，没有原型链）。
+    let mut fixture = backend("document-address");
+    let (first_id, second_id, conversation_document_id) = (20, 21, 22);
+    let (singleton_id, family_id, other_kind_id) = (23, 24, 25);
+    let created_at = fixture
+        .storage
+        .commit(
+            &[vec![
+                conversation(2),
+                StorageWrite::Task(pending_task(11, 2)),
+                StorageWrite::DocumentCreate {
+                    id: first_id,
+                    record: json!({
+                        "id": first_id, "kind": "cache", "scope": { "kind": "session" }, "key": "__proto__"
+                    }),
+                    content: DocumentContent::Base { version: 1, value: json!({ "owner": "first" }) },
+                },
+                StorageWrite::DocumentCreate {
+                    id: second_id,
+                    record: json!({
+                        "id": second_id, "kind": "cache", "scope": { "kind": "session" }, "key": "constructor"
+                    }),
+                    content: DocumentContent::Base { version: 1, value: json!({ "owner": "second" }) },
+                },
+                StorageWrite::DocumentCreate {
+                    id: conversation_document_id,
+                    record: json!({
+                        "id": conversation_document_id, "kind": "cache",
+                        "scope": { "kind": "conversation", "conversationId": 2 },
+                        "history": "latest", "fork": "current", "key": "__proto__"
+                    }),
+                    content: DocumentContent::Base { version: 1, value: json!({ "owner": "conversation" }) },
+                },
+                StorageWrite::DocumentCreate {
+                    id: singleton_id,
+                    record: json!({
+                        "id": singleton_id, "kind": "task.cache", "scope": { "kind": "task", "taskId": 11 }
+                    }),
+                    content: DocumentContent::Base { version: 1, value: json!({ "owner": "singleton" }) },
+                },
+                StorageWrite::DocumentCreate {
+                    id: family_id,
+                    record: json!({
+                        "id": family_id, "kind": "task.cache", "scope": { "kind": "task", "taskId": 11 },
+                        "key": "member"
+                    }),
+                    content: DocumentContent::Base { version: 1, value: json!({ "owner": "family" }) },
+                },
+                StorageWrite::DocumentCreate {
+                    id: other_kind_id,
+                    record: json!({
+                        "id": other_kind_id, "kind": "task.other", "scope": { "kind": "task", "taskId": 11 }
+                    }),
+                    content: DocumentContent::Base { version: 1, value: json!({ "owner": "other" }) },
+                },
+            ]],
+            |_, _| {},
+        )
+        .unwrap()
+        .batches
+        .first()
+        .map(|batch| batch.seq)
+        .unwrap();
+
+    let session = json!({ "kind": "session" });
+
+    // 按地址找：`__proto__` 与 `constructor` 是两个不同的地址，各回各的。
+    let found = fixture
+        .storage
+        .find_document(
+            &json!({ "kind": "cache", "scope": session, "key": "__proto__" }),
+            DocumentPoint::Current,
+        )
+        .unwrap()
+        .expect("session 作用域里有一份 cache/__proto__");
+    assert_eq!(found["id"], json!(first_id));
+
+    // 按作用域扫：一页一条，两页拼起来是 id 序。
+    let scope_query = || nous_durable::DocumentQuery {
+        scope: json!({ "kind": "session" }),
+        kind: None,
+        at: DocumentPoint::Current,
+    };
+    let first_page = documents_of(&fixture.storage, scope_query(), 1, None);
+    assert_eq!(first_page.items.len(), 1);
+    let next = first_page.next.expect("session 作用域里有两份");
+    let second_page = documents_of(&fixture.storage, scope_query(), 1, Some(&next));
+    let mut seen = ids_of(&first_page);
+    seen.extend(ids_of(&second_page));
+    assert_eq!(seen, vec![first_id, second_id]);
+
+    // 作用域带 owner：只看得见这个会话的那一份。
+    let conversation_query = nous_durable::DocumentQuery {
+        scope: json!({ "kind": "conversation", "conversationId": 2 }),
+        kind: None,
+        at: DocumentPoint::Current,
+    };
+    assert_eq!(
+        ids_of(&documents_of(&fixture.storage, conversation_query, 10, None)),
+        vec![conversation_document_id]
+    );
+
+    // 单例（无 key）与家族成员（有 key）是两个地址：单例按「三个字段的地址」找得到。
+    let singleton = fixture
+        .storage
+        .find_document(
+            &json!({ "kind": "task.cache", "scope": { "kind": "task", "taskId": 11 } }),
+            DocumentPoint::Current,
+        )
+        .unwrap()
+        .expect("task 作用域里有一个 task.cache 单例");
+    assert_eq!(singleton["id"], json!(singleton_id));
+    let family = fixture
+        .storage
+        .find_document(
+            &json!({ "kind": "task.cache", "scope": { "kind": "task", "taskId": 11 }, "key": "member" }),
+            DocumentPoint::Current,
+        )
+        .unwrap()
+        .expect("task 作用域里有一个 task.cache/member");
+    assert_eq!(family["id"], json!(family_id));
+
+    // 作用域 + kind：`task.other` 不跟着 `task.cache` 出来。
+    let task_query = nous_durable::DocumentQuery {
+        scope: json!({ "kind": "task", "taskId": 11 }),
+        kind: Some("task.cache".to_string()),
+        at: DocumentPoint::Current,
+    };
+    assert_eq!(
+        ids_of(&documents_of(&fixture.storage, task_query, 10, None)),
+        vec![singleton_id, family_id]
+    );
+
+    // 只留最新态的文档（session 作用域）没有历史可读：在那个 seq 上读它是伪造。
+    let error = fixture
+        .storage
+        .materialize(singleton_id, DocumentPoint::At(created_at))
+        .unwrap_err();
+    assert!(
+        matches!(error, StorageError::HistoryNotRetained { document_id } if document_id == singleton_id),
+        "{error}"
+    );
+    assert!(error.to_string().contains("does not retain historical content"), "{error}");
 }
