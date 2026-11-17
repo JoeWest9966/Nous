@@ -1,4 +1,4 @@
-// session-pins.js —— 会话置顶：一份提交日志，不是手机端的私有 pins.json。
+// session-pins.js —— 会话置顶：一份提交日志，不是客户端私有的一份 pins.json。
 //
 // 票 #15 / spec §3.7：置顶进内核。同一 requestId 重放十次只落一条提交，重启还在，
 // 删客户端配置也不变。状态在 durable 的 Sessions 文档里（names/machines/archived
@@ -91,7 +91,7 @@ export const openSessionPins = ({ commit, peek }) => {
     return { ...response };
   };
 
-  /** 置顶在前（ids 的先后），其余保持输入顺序 —— 等价于 bjes6b 的 pins.ids 语义。 */
+  /** 置顶在前（ids 的先后），其余保持输入顺序 —— 置顶进内核之前那套 pins.ids 的语义。 */
   const order = (records, ids) => {
     const rank = (record) => {
       const at = ids.indexOf(String(record.id));

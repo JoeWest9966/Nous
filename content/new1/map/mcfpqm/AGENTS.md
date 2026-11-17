@@ -13,7 +13,7 @@
 
 | 用途 | 请求 | 回什么 |
 |---|---|---|
-| 地址 | 宿主的 `__nous/ctx` → `blocks[].url`（页面上一个 `/p/...` 都没拼） | — |
+| 地址 | 宿主的 `__nous/resolve/qrd3wh` → `{url}`（页面上一个 `/p/...` 都没拼） | — |
 | 归档库 | `GET  <qrd3wh>/v1/archive` | `{gens:[{gen, items:[{id, name, parent, entries, last, archived, live}]}]}` |
 | 撕原件 | `POST <qrd3wh>/v1/sessions/:id/purge` | `{purged:[id], gen, rows}` |
 | 打捞 | `POST <qrd3wh>/v1/archive/:id/restore {gen}` | `{restored:[id], gen, rows}` |

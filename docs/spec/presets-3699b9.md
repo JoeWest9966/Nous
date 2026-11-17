@@ -3,8 +3,12 @@
 **这份是唯一的约定来源。** 别的票/文档只写「执行本 spec 第几节 + 自己的验收」，不复制这里的形状。
 改形状先改这里。
 
-被引用的既有实现：`content/new1/map/6ysg01/`（面板骨架，抄它）、`content/new1/map/vbe4pt/`（管理页版式，抄它）、
-`content/new1/map/qrd3wh/prompts-api.js`（写入口模板，抄它）、`docs/spec/skills-own-store.md`（仓库纪律，同一套）。
+被引用的既有实现：`content/new1/map/qrd3wh/prompts-api.js`（写入口模板，抄它）、
+`docs/spec/skills-own-store.md`（仓库纪律，同一套）。
+
+> **2026-11-17（票 #16 B 段）**：这份 spec 当年抄的那两个页面块 —— `6ysg01`（面板骨架）与 `vbe4pt`（管理页版式）——
+> 代码已被块清算删掉（`git show dcd4d97:content/new1/map/6ysg01/`），下面凡是「抄 `6ysg01` / 照 `vbe4pt`」的写法，
+> 现在只能当**设计记录**读：那些页面不再存在，也没有页面块是这页该长成的样子。
 
 ---
 
@@ -337,7 +341,7 @@ const setOrigin = (conversationId, preset) =>
 | `qrd3wh` | 唯一写入口 + 唯一校验口（`/v1/presets*`、`/v1/sessions`） |
 | `Nous-Template` 仓 | 唯一真相 |
 
-- 地址**只**从宿主 `__nous/ctx` 找 `qrd3wh`；这一块里一个 `/p/…` 都不拼。
+- 地址**只**从宿主 `__nous/resolve/<id>` 拿 `qrd3wh`；这一块里一个 `/p/…` 都不拼。
 - `server.js` 直接拷 `6ysg01/server.js`：剥 `NOUS_SELF`、目录穿越 403、目录→`index.html`、`no-store`。
   **默认端口 `4786`**（4780/4781/4782/4784/4785 已占），且只当兜底 —— 真端口是宿主给的 `PORT`。
 - 没有 `data/`、没有配置、没有 token、没有后端状态。
@@ -505,7 +509,7 @@ git 失败要看得见，不是白屏。专属私仓的地址显在左栏底部�
       │   ├─ model.js  纯计算：cardState / facet 计数 / 排序 / 引用 chip 文案    │
       │   └─ api.js    ctx 解析、错误信封、409、类别 debounce、发布后重读        │
       └──────┬────────────────────────────────────────────────────────────────-┘
-             │ 只走 HTTP，地址只从 __nous/ctx 来
+             │ 只走 HTTP，地址只从 __nous/resolve 来
              ▼
    qrd3wh  GET /v1/presets ──── 读 /opt/Nous-Template（repo + 扫盘 + load 状态）
            POST /v1/presets/* ─ 串行锁 → 写盘 → regenIndex（不过就整体回滚）→ load()
