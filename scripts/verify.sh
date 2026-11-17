@@ -668,6 +668,7 @@ for p in m['packages']:
 		# 哨兵：部署产物 `nous-app` 必须在集合里（排干净之后不能把真的也排掉）
 		printf '%s\n' "$KEPT" | grep -qx 'nous-app' \
 			|| { echo "哨兵丢了：bin 集合里没有 nous-app（$(printf '%s' "$KEPT" | tr '\n' ' ')）"; return 1; }
+		echo "       哨兵：部署产物在集合里 —— nous-app（排完只剩 $(printf '%s\n' "$KEPT" | grep -c .) 个 bin）"
 		NBINS=$(printf '%s\n' "$KEPT" | grep -c . || true)
 		[ "$NROOT" -eq 1 ] && [ "$NBINS" -eq 1 ] \
 			|| { echo "根 Cargo.toml 数=$NROOT（应为 1）；systemd bin 数=$NBINS（应为 1）：$(printf '%s' "$KEPT" | tr '\n' ' ')"; return 1; }
@@ -696,6 +697,7 @@ for p in m['packages']:
 		# 哨兵：探针给子进程设环境变量的那一行**必须被命中**（证明排除活着，且排的是测试用途）
 		printf '%s\n' "$DROPPED" | grep -q '^crates/nous/ext-probe/src/server.rs:36:' \
 			|| { echo "哨兵丢了：ext-probe/src/server.rs:36 没命中（排除规则没抓到它，或探针被挪走）"; return 1; }
+		echo "       哨兵：$(printf '%s\n' "$DROPPED" | grep '^crates/nous/ext-probe/src/server.rs:36:' | sed 's/^ *//')"
 		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
 
@@ -716,6 +718,7 @@ for p in m['packages']:
 			printf '%s\n' "$KEPT" | sed 's/^/       /'
 			return 1
 		fi
+		echo "       哨兵：进程创建点文件 == $(printf '%s\n' "$KEPT")"
 	}
 
 	# 13. 无文件锁（Q26：单进程不需要文件锁）—— spec 字面：flock / fs2 / File::lock / `.lock()` 为空
