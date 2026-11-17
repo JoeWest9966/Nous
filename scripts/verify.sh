@@ -143,10 +143,15 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ]; then
 		bad "没有 $BIN 这个 target —— 冷启动对象被删了，先改这里再改代码"
 	else
 		if cargo build --release --quiet -p "$BIN" >/dev/null 2>&1; then
-			timeout 5 "./target/release/$BIN" >/tmp/nous-boot.log 2>&1
+			# 端口用 0（临时端口）：固定 4789 会和「你自己桌面上正在跑的那个服务」撞车，
+			# 于是判据在你演示功能的时候必红 —— 那不是代码坏了，是判据挑了个会撞的端口。
+			# 顺手把「到底 bind 上了没有」变成断言：只打日志不看 rc 的话，起不来也算过。
+			timeout 5 env NOUS_SERVER_ADDR=127.0.0.1:0 "./target/release/$BIN" >/tmp/nous-boot.log 2>&1
 			rc=$?
+			if ! grep -q "listening on 127.0.0.1:" /tmp/nous-boot.log; then
+				bad "没打出 listening 行 —— 起来了但没 bind，或启动日志变了：$(head -3 /tmp/nous-boot.log)"
 			# 124 = 被 timeout 杀掉 = 一直活着，这是好的
-			if [ $rc -eq 124 ] || [ $rc -eq 0 ]; then ok "起得来（rc=$rc）"; else bad "启动失败 rc=$rc：$(head -3 /tmp/nous-boot.log)"; fi
+			elif [ $rc -eq 124 ] || [ $rc -eq 0 ]; then ok "起得来并 bind 上了（rc=$rc）"; else bad "启动失败 rc=$rc：$(head -3 /tmp/nous-boot.log)"; fi
 		else
 			bad "编译失败"
 		fi

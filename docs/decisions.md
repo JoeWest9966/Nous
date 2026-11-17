@@ -189,6 +189,12 @@ durable-until-acked），把这条 pragma 去掉，同时重跑 `commit_throughp
 **反悔点**：哪天真的需要同时验两个 bin（例如给 `nous-fixture` 单独做退出码判据），就写成显式列表
 `for BIN in nous-server nous-fixture`，每个对象一条断言——仍然不许回到「取第一个」。
 
+**同一条判据的第二次修正（同日晚，假红逼出来的）**：改完立刻撞上一个假红 —— 我为了给你演示把服务
+挂在 `0.0.0.0:4789` 上，于是 `verify.sh` 第 3 段报 `Address already in use (os error 98)`。
+**那不是代码坏了，是判据挑了个会和真实服务抢的端口。** 改成 `NOUS_SERVER_ADDR=127.0.0.1:0`（临时端口），
+并把「到底 bind 上了没有」变成断言：日志里必须出现 `listening on 127.0.0.1:`。
+旧写法只看 `rc`，起不来但退出码是 0 也算过 —— 那是判据的另一半漏洞，一起补了。
+
 ---
 
 ## 2026-11-17 · `Draft` 的克隆成本过线 → 开 `overlay` 树，不做 `piece tree`
