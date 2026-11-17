@@ -177,7 +177,14 @@ different_sources() {
 # 名单对得上附录 A（EX-57 的自检口径）。
 ex_id_set_selfcheck() {
   # 附录 A 的编号集合与 --ids 的集合相等。
-  want=$(sed -n '/^| EX-[0-9]/s/^| \(EX-[0-9]*\) .*/\1/p' docs/spec/ext-runtime.md | sort -u)
+  # spec 的唯一真相在仓外（`/opt/Nous-spec`，本仓 `docs/spec/` 只留指针）：附录 A 的 EX 编号从那里读。
+  # `NOUS_SPEC` 可覆盖（CI / 别的机器上 spec 不在 /opt 时）。
+  local spec_dir="${NOUS_SPEC:-/opt/Nous-spec}/docs/spec"
+  if [ ! -f "$spec_dir/ext-runtime.md" ]; then
+    echo "ids_equal=0（spec 不在 $spec_dir：ext-runtime.md 缺失）"
+    return
+  fi
+  want=$(sed -n '/^| EX-[0-9]/s/^| \(EX-[0-9]*\) .*/\1/p' "$spec_dir/ext-runtime.md" | sort -u)
   have=$(./scripts/judge.sh --ids | sort -u)
   if [ "$want" = "$have" ]; then
     echo "ids_equal=1 count=$(printf '%s\n' "$have" | wc -l)"

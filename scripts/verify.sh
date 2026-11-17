@@ -517,25 +517,50 @@ PY
 		[ -z "$F" ] || { echo "$F"; return 1; }
 	}
 
-	# 6. 进程归应用层（S1 + S12）：内核层逐行为空；全仓进程创建点按**文件**数 == baseline 的 spawn_files=N。
-	#    S1 的验收口径（spec ch1 §6）：S12 签字前结论写 SKIP: 等 S12 签字，并打印出来。
+	# 6. 进程归应用层（S1 + S12）：内核层逐行为空；全仓进程创建点按**文件**数，
+	#    集合必须与 `docs/boundary-baseline.txt` 的 `spawn_files=N` + 成员清单**逐行相等**
+	#    （S12 已落地，不再打 SKIP）。成员与排除项都从 baseline 读，本脚本不写死模块名。
 	c6() {
 		local F
 		F=$(git grep -nE 'std::process|tokio::process|Command::new|Child' -- $K \
 			| grep -v 'ExitCode' | grep -v '/tests/' | grep -v '/conformance/' || true)
 		if [ -n "$F" ]; then echo "内核层出现进程："; printf '%s\n' "$F"; return 1; fi
+
 		local BASE=docs/boundary-baseline.txt
 		[ -f "$BASE" ] || { echo "$BASE 不存在"; return 1; }
-		local NOW BASEFILES N_BASE DIFF
+		local N_BASE MEMBERS EXCLUDED NOW DIFF
+		N_BASE=$(grep -c '^spawn_files=' "$BASE" || true)
+		[ "$N_BASE" -eq 1 ] || { echo "baseline 里 spawn_files 行有 $N_BASE 条（应为 1）"; return 1; }
+		local N_VAL
+		N_VAL=$(sed -n 's/^spawn_files=\([0-9]*\).*/\1/p' "$BASE")
+		# 成员 = spawn_files 行之后、第一个空行之前的 `#   crates/…` 行（取第一个字段 = 路径）
+		MEMBERS=$(awk '/^spawn_files=/{f=1;next}
+			f && /^[[:space:]]*$/ {exit}
+			f && /^#[[:space:]]+crates\// {sub(/^#[[:space:]]+/,""); print $1}' "$BASE")
+		# 排除项 = 「排除项」小节里的 `#   crates/…` 行（目录以 / 结尾；文件可带 :行号）
+		EXCLUDED=$(awk '/^# 排除项/{g=1;next}
+			g && /^#[[:space:]]+crates\// {sub(/^#[[:space:]]+/,""); print $1}' "$BASE")
+
 		NOW=$(grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
 			| grep -vE '(/tests/|tests\.rs$)' | sort || true)
-		BASEFILES=$(awk '/^spawn_files=/{f=1;next} f && /^crates\//{sub(/[[:space:]]*#.*$/, ""); print; next} f{exit}' "$BASE" \
-			| sed 's/[[:space:]]*$//' | sort || true)
-		N_BASE=$(grep -c '^spawn_files=' "$BASE" || true)
-		DIFF=$(printf '%s\n%s\n' "$NOW" "$BASEFILES" | grep -v '^$' | sort | uniq -u || true)
-		echo "6a 内核层零进程；6b spawn 文件集合 $(printf '%s\n' "$NOW" | grep -c .) 个 / baseline spawn_files 行 $N_BASE 条"
-		[ -n "$DIFF" ] && { echo "集合差异（签字后再判红）："; printf '%s\n' "$DIFF" | sed 's/^/       ± /'; }
-		return 2
+		local ex
+		while IFS= read -r ex; do
+			[ -z "$ex" ] && continue
+			ex=${ex%:*}
+			case "$ex" in
+			*/) NOW=$(printf '%s\n' "$NOW" | grep -v "^${ex}" || true) ;;
+			*)  NOW=$(printf '%s\n' "$NOW" | grep -vx -- "$ex" || true) ;;
+			esac
+		done <<< "$EXCLUDED"
+
+		DIFF=$(printf '%s\n%s\n' "$NOW" "$MEMBERS" | grep -v '^$' | sort | uniq -u || true)
+		if [ -n "$DIFF" ]; then
+			echo "spawn 文件集合与 baseline 不相等（± = 差集）："
+			printf '%s\n' "$DIFF" | sed 's/^/       ± /'
+			echo "实测集合（$(printf '%s\n' "$NOW" | grep -c .) 个）：$(printf '%s' "$NOW" | tr '\n' ' ')"
+			return 1
+		fi
+		echo "spawn 文件集合逐行相等（$(printf '%s\n' "$NOW" | grep -c .) 个 == baseline 的 spawn_files=$N_VAL）：$(printf '%s' "$NOW" | tr '\n' ' ')"
 	}
 
 	# 6b. 依赖方向：真相层不许依赖会 sleep 的那个 crate —— `cargo tree -p nous-durable --depth 2 | grep providers` 为空。
@@ -624,9 +649,10 @@ for p in m['packages']:
 	# 10. 旧仓清空：代码与文档里 'Nous-Package' 为 0（检查者自己那一行不算，content/ 是已死面板的数据）
 	c10() {
 		local F
-		# 排除：检查者自己；已死面板的 content/ 数据；`docs/spec/`（判据来源本身，spec 不可能不写它）；
+		# 排除：检查者自己（它就是那条判据的字符串）；已死面板的 content/ 数据；
 		# 词表里的 `_Avoid_:` 行（那是"别用这个词"的清单，不是引用）。
-		F=$(git grep -n 'Nous-Package' -- ':!content/**' ':!scripts/verify.sh' ':!docs/spec/**' | grep -v '_Avoid_' || true)
+		# spec 的正文不在本仓（`docs/spec/README.md` 只留一句指针），所以不再需要排除 docs/spec/。
+		F=$(git grep -n 'Nous-Package' -- ':!content/**' ':!scripts/verify.sh' | grep -v '_Avoid_' || true)
 		[ -z "$F" ] || { echo "$F"; return 1; }
 	}
 

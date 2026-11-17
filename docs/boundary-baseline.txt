@@ -3,24 +3,30 @@
 # 新增一行 = 红；删一行 = 可以，但要说明。改下面的 spawn_files 要签字。
 
 # ── 进程创建点（S1 / S12）───────────────────────────────────────────────
-# 判据：出现真实 spawn 的**文件集合**必须 == 下面这一行。
+# 判据：出现真实 spawn 的**文件集合**必须 == `spawn_files=N` + 紧跟的成员清单（逐行相等）。
 # 只数文件，不数入口——同一个文件里 3 个入口是欠账，不是 3 个边界。
 #
-# ⚠ 与 S12 的差（需要签字，本票不改判据）：S12 记的是 `spawn_files=2`
-#   （os_env.rs + utils/open_browser.rs）。`crates/nous/tools/src/utils/open_browser.rs`
-#   已由上一轮 #14 删除（当时判为「无调用方的 CLI 遗留」，见 `/opt/_wf/kernel-rust/S14.md`），
-#   本仓今天的集合只有 1 个文件。这里按**今天的真值**记 1，并把差写在这里 ——
-#   签字（= 把 S12 的 N=2 改成 N=1）之后这条注才能删。
-spawn_files=1
-#   crates/nous/tools/src/os_env.rs            为什么留着：终端会话的唯一执行面（shell 与 taskkill）
+# 集合的生成命令（S12 字面，`scripts/verify.sh` 第 5 段判据 6 逐字执行）：
+#   grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
+#     | grep -vE '(/tests/|tests\.rs$)' | sort
+#   再从结果里减掉下面「排除项」里逐行列出的路径（目录以 / 结尾，文件可带 :行号）。
+spawn_files=2
+#   crates/nous/tools/src/os_env.rs   为什么留着：终端会话的唯一执行面（shell 与 taskkill）
+#   crates/nous/ext/src/spawn.rs      为什么留着：扩展子进程的唯一创建处（S1 白名单第二个位置）
+# 成员变更（2026-11-17 签字）：
+#   - crates/nous/tools/src/utils/open_browser.rs  上一轮判定无调用方，已删
+#   + crates/nous/ext/src/spawn.rs                 扩展运行时落地（#17–#37）
+
+# 排除项（不数；逐行写理由。判据 6 会从集合里减掉这些路径）
+#   crates/nous/ext-probe/                       为什么排除：探针 binary（起一个 nous-server 逐帧验协议），不进 systemd，不是生产路径
+#   crates/nous/ext/src/runtime.rs:537           为什么排除：`scope.spawn(move || …)` 是 `std::thread::scope` 的**线程**，不是进程创建（S1 只数进程）
+#   crates/nous/tools/src/output_decode.rs:198   为什么排除：在 `#[cfg(windows)] fn console_code_page` 里（Linux 不编，判据排除该块）
+#   tests/ 与 *_test(s).rs                       为什么排除：测试夹具（S12 明写不算；生成命令里已 grep -vE '(/tests/|tests\.rs$)'）
 #
 # 已知欠账（不设判据，只记账）：
 #   os_env.rs 一个文件里有 3 个入口（363 主命令 / 412 taskkill / 915 shell），
 #   理想形状是"其余工具一律经它"，但今天它就是那个"它"本身。
-#
-# 排除：
-#   crates/nous/tools/src/output_decode.rs:198 在 #[cfg(windows)] fn console_code_page 里 —— 判据排除该块（Linux 不编）。
-#   tests/ 与 *_test.rs 一律不算（tests.rs 里的 current_exe 那种是测试夹具）。
+#   ext/src/spawn.rs 一个文件里有 1 个入口（90 建命令 / 127 spawn），是 S1 的第二位。
 
 # ── 词表（S8）──────────────────────────────────────────────────────────
 # 由 #14 随 `crates/<vendor>/<module>` + `docs/plugins.md` 的 layer 列一起落。
