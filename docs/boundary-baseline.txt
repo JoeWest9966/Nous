@@ -20,10 +20,15 @@ spawn_files=2
 #   + crates/nous/ext/src/spawn.rs                 扩展运行时落地（#17–#37）
 
 # 排除项（不数；逐行写理由。判据 6 会从集合里减掉这些路径）
-#   crates/nous/ext-probe/                       为什么排除：探针 binary（起一个 nous-server 逐帧验协议），不进 systemd，不是生产路径
 #   crates/nous/tools/src/output_decode.rs:198   为什么排除：在 `#[cfg(windows)] fn console_code_page` **整块**里（Linux 不编）。
 #                                               现状：该文件已无构造点（0 命中）；留着是给那个 block 备案，不是它在挡什么
 #   tests/ 与 *_test(s).rs                       为什么排除：测试夹具（S12 明写不算；生成命令里已 grep -vE '(/tests/|tests\.rs$)'）
+#
+# 减 `dev` 层（测试夹具与探针，`docs/plugins.md` 里 layer=dev 的模块）：不写在这里，
+# 由判据从 `scripts/layer-paths.sh dev` 现算 —— 名单只有一处真相，不点名目录。
+#
+# 已删的一条（2026-11-17 留痕）：`crates/nous/ext/src/runtime.rs:537`
+#   —— 那是单行豁免（`scope.spawn(move || …)` 是线程），按下面的规矩撤回。
 #
 # 排除项的规矩（2026-11-17 签字）：
 #   排除只许是**目录**或**整块**（`#[cfg]` 关掉的那种）。**单行排除一律当 smell** ——

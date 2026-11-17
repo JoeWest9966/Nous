@@ -8,8 +8,10 @@
 
 1. **归位制**：新增任何东西（crate、扩展、数据目录、管理面），先在本文件加一行，再落代码。
    清单里没有的模块目录 = 红；清单里写了但目录不存在 = 红（`待建` 行除外，见第 4 列）。
-2. **`layer` 三值**：`kernel`（真相层，零进程零网络零直接时钟）· `platform`（能力层，允许 IO
-   与进程，但必须有"无 IO 替身"）· `app`（应用层，唯一 spawn 处、唯一监听处）。
+2. **`layer` 四值**：`kernel`（真相层，零进程零网络零直接时钟）· `platform`（能力层，允许 IO
+   与进程，但必须有"无 IO 替身"）· `app`（应用层，唯一 spawn 处、唯一监听处）· `dev`（见下）。
+   > `dev` = 测试夹具与探针，**不进任何产品产物**（不进 systemd、不进发布包）。
+   > 判据里凡是"排掉探针/夹具"的地方，一律改成"减 `dev` 层"，不许点名目录。
 3. **依赖判据**：`layer = kernel` 的 crate，依赖闭包不许出现 `layer = platform` 或 `layer = app`
    的 crate（`cargo metadata` 可查）。
 4. **`crate` 列的三种写法**：
@@ -40,11 +42,11 @@
 | `sessions` | nous | (待建) `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**，今天埋在 `server.js` |
 | `prompts` | nous | (待建) `nous-prompts` | app | 编译期 | `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
 | `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 | 否 | 已落地（#17–#37）；`ext-host` 行是它后续的重划 |
-| `ext-probe` | nous | `nous-ext-probe` | app | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary，不进 systemd（S4） |
+| `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
 | `ext-sdk` | nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
 | `ext-host` | nous | (待建) `nous-ext-host` | app | 编译期 | 帧协议 + 进程监管 + 熔断 + 热加载 | 是 | slice 1（`#20`） |
 | `server` | nous | `nous-server` | app | 编译期 | `/v1/*` 端点 + SSE | 是 | 唯一监听处；bin 叫 `nous-app` |
-| `fixture` | nous | `nous-fixture` | app | 编译期 | fixture 库 → `/v1/sessions` 同形 JSON | 否 | 测试夹具 binary，不进 systemd（S4） |
+| `fixture` | nous | `nous-fixture` | dev | 编译期 | fixture 库 → `/v1/sessions` 同形 JSON | 否 | 测试夹具 binary（`dev`：不进 systemd、不进发布包） |
 | `audit` | nous | (待建) `nous-audit` | app | 编译期 | 事件追加与投影 | 否 | 今天 `activity.js`（55 行） |
 | `dispatcher` | nous | (待建) `nous-dispatcher` | app | 编译期 | 调度节拍（trigger → 会话） | 否 | 内核算核心三件之一，见下注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |

@@ -40,12 +40,20 @@ else
 	PLATFORM_PATHS=$(scripts/layer-paths.sh platform)
 	APP_PATHS=$(scripts/layer-paths.sh app)
 	DIRS=$(ls -d crates/*/*/ 2>/dev/null | sed 's:/$::' | sort)
-	LISTED=$(printf '%s %s %s' "$KERNEL_PATHS" "$PLATFORM_PATHS" "$APP_PATHS" | tr ' ' '\n' | sed '/^$/d' | sort)
+	DEV_PATHS=$(scripts/layer-paths.sh dev)
+	LISTED=$(printf '%s %s %s %s' "$KERNEL_PATHS" "$PLATFORM_PATHS" "$APP_PATHS" "$DEV_PATHS" | tr ' ' '\n' | sed '/^$/d' | sort)
 	if [ "$DIRS" = "$LISTED" ]; then
 		ok "目录集合 == 清单模块集合（$(printf '%s\n' "$DIRS" | grep -c .) 个，双向逐行相等）"
 	else
 		bad "目录与清单不一一对应（< 目录有、清单没写；> 清单写了、目录不在）："
 		diff <(printf '%s\n' "$DIRS") <(printf '%s\n' "$LISTED") | grep -E '^[<>]' | sed 's/^/       /'
+	fi
+	# dev 层正集哨兵：dev 为空会让所有"减 dev 层"的排除静默失效，所以这里钉死它的成员。
+	DEV_SORTED=$(printf '%s\n' $DEV_PATHS | sed '/^$/d' | sort | tr '\n' ' ' | sed 's/ *$//')
+	if [ "$DEV_SORTED" = "crates/nous/ext-probe crates/nous/fixture" ]; then
+		ok "dev 层正集哨兵：$DEV_SORTED（探针 + 夹具；空 dev 会让排除静默失效）"
+	else
+		bad "dev 层集合不是「fixture + ext-probe」（实得：${DEV_PATHS:-空}）—— 减 dev 层的排除会跟着失效"
 	fi
 	LAYER_BAD=$(K="$KERNEL_PATHS" P="$PLATFORM_PATHS" A="$APP_PATHS" python3 - <<'PYLAYER'
 import json, os, subprocess
@@ -403,9 +411,14 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
 		if [ ! -x scripts/layer-paths.sh ]; then
 			GUARD_MSG="RED: scripts/layer-paths.sh 缺失"; return 1
 		fi
-		K=$(scripts/layer-paths.sh kernel 2>/dev/null) && A=$(scripts/layer-paths.sh app 2>/dev/null) || {
-			K=""; A=""; GUARD_MSG="RED: docs/plugins.md 不可解析（scripts/layer-paths.sh 读不出来）"; return 1
+		K=$(scripts/layer-paths.sh kernel 2>/dev/null) && A=$(scripts/layer-paths.sh app 2>/dev/null) \
+			&& D=$(scripts/layer-paths.sh dev 2>/dev/null) || {
+			K=""; A=""; D=""; GUARD_MSG="RED: docs/plugins.md 不可解析（scripts/layer-paths.sh 读不出来）"; return 1
 		}
+		# `dev` 层（测试夹具与探针）是判据的**信号源**：空 dev 会让"减 dev 层"静默失效。
+		if [ -z "$D" ]; then
+			GUARD_MSG="RED: dev 层为空（docs/plugins.md 里没有 layer=dev 的行）—— 排除会静默失效"; return 1
+		fi
 		if ! ls -d crates/*/*/ >/dev/null 2>&1; then
 			GUARD_MSG="SKIP: crates/*/* 一个都没有，等 #14 搬迁"; return 2
 		fi
@@ -443,6 +456,17 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
 			return 1
 		fi
 		echo "$who 排掉了 $n 行，来自：$(printf '%s\n' "$dropped" | cut -d"$sep" -f1 | sort | uniq -c | awk '{printf "%s×%s ", $2, $1}')"
+	}
+
+	# 把属于 `dev` 层的行减掉：名单来自 `$D`（`scripts/layer-paths.sh dev`），**不点名任何目录**。
+	# 输入/输出都是 "路径:行号:内容" 或纯路径；按 `<dev 模块路径>/` 前缀匹配整行。
+	dev_reject() {
+		local out p
+		out=$(cat)
+		for p in ${D:-}; do
+			out=$(printf '%s\n' "$out" | grep -v "^${p}/" || true)
+		done
+		printf '%s\n' "$out"
 	}
 
 	# 1. 正向依赖：进 systemd 的那个 bin（`nous-app`，包名 `nous-server`）
@@ -520,12 +544,12 @@ PY
 		local ex=() p RAW KEPT DROPPED
 		for p in $K; do ex+=(":(exclude)$p"); done
 		RAW=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- crates "${ex[@]}" || true)
-		# 只算**生产**路径：.rs 代码行、去掉注释、去掉 tests/ 与两个测试夹具 crate
-		# （`fixture` / `ext-probe` 是测试用二进制，spec 判据 11 的「只许测试用」同样对待它们）。
+		# 只算**生产**路径：.rs 代码行、去掉注释、去掉 tests/，再**减 `dev` 层**
+		# （测试夹具与探针；spec 判据 11 的「只许测试用」同样对待它们）。
 		KEPT=$(printf '%s\n' "$RAW" | grep '\.rs:' | grep -v '/tests/' | grep -vE '_tests?\.rs:' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' \
 			| grep -v 'DEFAULT_FIXTURE' | grep -v 'fixtures/agent.sqlite' | grep -v '<legacy.sqlite>' \
-			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' || true)
+			| dev_reject || true)   # 排掉的是 `dev` 层（探针/夹具），名单来自清单
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
 		report_dropped "5." "$DROPPED" || return 1
 		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
@@ -569,6 +593,8 @@ PY
 			*)  NOW=$(printf '%s\n' "$NOW" | grep -vx -- "$ex" || true) ;;
 			esac
 		done <<< "$EXCLUDED"
+		# 减 `dev` 层（探针/夹具），名单来自清单；不点名目录。
+		NOW=$(printf '%s\n' "$NOW" | dev_reject | sed '/^$/d' | sort || true)
 		DROPPEDF=$(comm -23 <(printf '%s\n' "$PRE" | sed '/^$/d' | sort) <(printf '%s\n' "$NOW" | sed '/^$/d' | sort) || true)
 		report_dropped "6." "$DROPPEDF" || return 1
 
@@ -643,7 +669,7 @@ PY
 		[ -z "$F" ] || { echo "$F"; return 1; }
 	}
 
-	# 9. 一个 workspace 根；进 systemd 的 bin target 恰好 1 个（排除 nous-fixture，S4）
+	# 9. 一个 workspace 根；进 systemd 的 bin target 恰好 1 个（减 `dev` 层，S4）
 	c9() {
 		local NROOT RAW RAWN KEPT DROPPEDN DROPPED NBINS
 		NROOT=$(git ls-files | grep -xc 'Cargo.toml' || true)
@@ -656,9 +682,11 @@ for p in m['packages']:
     for t in p['targets']:
         if 'bin' in t['kind']: print(t['name']+'\\t'+d)")
 		RAWN=$(printf '%s\n' "$RAW" | cut -f1 | sed '/^$/d' | sort)
-		# 「进 systemd 的」= `crates/*/*` 里的生产模块：`nous-fixture`（测试夹具，S4 明写排除）
-		# 与 `nous-ext-probe`（探针）都不是部署产物；`exts/*` 不是本表里的模块（运行时外挂，按需加载）。
-		KEPT=$(printf '%s\n' "$RAW" | awk -F'\t' '$1!="nous-fixture" && $1!="nous-ext-probe" && $2 ~ /^crates\// {print $1}' | sed '/^$/d' | sort)
+		# 「进 systemd 的」= 清单里**非 dev 层**的模块的 bin：`dev` 层（探针/夹具）不进产品产物，
+		# 名单来自 `$D`；`exts/*` 不是本表里的模块（运行时外挂，按需加载），不在 `crates/*/*` 里。
+		KEPT=$(printf '%s\n' "$RAW" | awk -F'\t' -v dev="$D" '
+			BEGIN { n=split(dev, a, " "); for (i=1;i<=n;i++) if (a[i] != "") isdev[a[i]]=1 }
+			{ if ($2 ~ /^crates\// && !($2 in isdev)) print $1 }' | sed '/^$/d' | sort)
 		DROPPEDN=$(comm -23 <(printf '%s\n' "$RAWN") <(printf '%s\n' "$KEPT") || true)
 		DROPPED=$(printf '%s\n' "$DROPPEDN" | while IFS= read -r n; do
 			[ -z "$n" ] && continue
@@ -687,16 +715,16 @@ for p in m['packages']:
 	# 11. 发现唯一：生产路径不许出现 NOUS_SERVER_ADDR（只许测试用；注释里提一句不算配置）
 	c11() {
 		local RAW KEPT DROPPED
-		RAW=$(git grep -n 'NOUS_SERVER_ADDR' -- $A || true)
-		# spec：`NOUS_SERVER_ADDR` **只许测试用**。测试 = `tests/` + 两个测试夹具 crate。
-		KEPT=$(printf '%s\n' "$RAW" | grep -v '/tests/' \
-			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' \
+		# 扫 `应用层 ∪ dev 层`：dev 层是**信号源**（探针给子进程设环境变量那一行必须在里面），
+		# 减掉之后才是"生产路径"。名单全部来自清单，不点名目录。
+		RAW=$(git grep -n 'NOUS_SERVER_ADDR' -- $A $D || true)
+		KEPT=$(printf '%s\n' "$RAW" | dev_reject | grep -v '/tests/' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' || true)
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
 		report_dropped "11." "$DROPPED" || return 1
-		# 哨兵：探针给子进程设环境变量的那一行**必须被命中**（证明排除活着，且排的是测试用途）
+		# 哨兵：dev 层里那条"测试用配置"必须被命中（排除活着，且排的正是测试用途）
 		printf '%s\n' "$DROPPED" | grep -q '^crates/nous/ext-probe/src/server.rs:36:' \
-			|| { echo "哨兵丢了：ext-probe/src/server.rs:36 没命中（排除规则没抓到它，或探针被挪走）"; return 1; }
+			|| { echo "哨兵丢了：dev 层的 ext-probe/src/server.rs:36 没命中（减 dev 层的规则失效，或探针被挪走）"; return 1; }
 		echo "       哨兵：$(printf '%s\n' "$DROPPED" | grep '^crates/nous/ext-probe/src/server.rs:36:' | sed 's/^ *//')"
 		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
@@ -705,10 +733,9 @@ for p in m['packages']:
 	c12() {
 		local RAW KEPT DROPPED NF
 		# 与判据 6 共用一条 pattern：数**构造点**的文件集合，不数 `.spawn()`（`cmd.status()` 也是进程）。
-		RAW=$(grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' $A --include=*.rs 2>/dev/null | sort || true)
-		# 探针 / 夹具是测试用二进制（它们起 nous-server 验协议），不是生产路径。
-		KEPT=$(printf '%s\n' "$RAW" | grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' \
-			| grep -vE '(/tests/|tests\.rs$)' | sed '/^$/d' | sort || true)
+		# 扫 `应用层 ∪ dev 层` 再减 `dev` 层：探针是信号源，不是要放宽的对象；不点名目录。
+		RAW=$(grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' $A $D --include=*.rs 2>/dev/null | sort || true)
+		KEPT=$(printf '%s\n' "$RAW" | dev_reject | grep -vE '(/tests/|tests\.rs$)' | sed '/^$/d' | sort || true)
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT") || true)
 		report_dropped "12." "$DROPPED" || return 1
 		# 哨兵：**恰好 1 个文件**，且就是扩展监管的 `crates/nous/ext/src/spawn.rs`
