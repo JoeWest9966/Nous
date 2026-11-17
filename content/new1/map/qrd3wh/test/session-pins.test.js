@@ -107,3 +107,61 @@ test("pin：并发两次置顶不丢更新 —— 后一单看到前一单写下
   const current = ids(state);
   assert.deepEqual([...current].sort(), ["496", "710"]);
 });
+
+test("pin：version 是全局提交序号 —— 跨会话单调，重放不涨", async () => {
+  const { pins, state } = commitLog();
+  assert.deepEqual(await post(pins, 1694, true, "g1"), {
+    id: 1694,
+    pinned: true,
+    changed: true,
+    requestId: "g1",
+    version: 1,
+  });
+  assert.equal((await post(pins, 1694, true, "g2")).version, 2);
+  assert.equal((await post(pins, 1694, true, "g3")).version, 3);
+  assert.equal((await post(pins, 2, true, "g4")).version, 4); // 跨会话继续涨
+  assert.deepEqual(await post(pins, 2, true, "g4"), {
+    id: 2,
+    pinned: true,
+    changed: true,
+    requestId: "g4",
+    version: 4,
+  });
+});
+
+test("pin：每会话只留最近 50 个锚 —— 文档体积有界，置顶状态不受淘汰影响", async () => {
+  const { pins, state } = commitLog();
+  // 先置顶，再打满 50 个锚，记录体积（后续锚都 pinned=true，置顶状态不该被改动）。
+  await post(pins, 1694, true, "pin-on");
+  for (let i = 1; i < 50; i++) await post(pins, 1694, true, `old-${i}`);
+  const sizeAt50 = JSON.stringify(state.doc).length;
+
+  // 同一会话再打 11 个不同锚（总数超过限额）。
+  for (let i = 50; i < 59; i++) await post(pins, 1694, true, `old-${i}`);
+  const newest = await post(pins, 1694, true, "newest");
+  const anchors = Object.keys(state.doc.pins.requests);
+
+  assert.ok(anchors.length <= 50, `该会话锚数 ${anchors.length} 应 ≤ 50`);
+  assert.ok(anchors.includes("newest"), "最新那个锚必须在");
+  assert.ok(!anchors.includes("pin-on"), "最旧的锚应已淘汰");
+  assert.equal(state.doc.pins.requests["newest"].version, newest.version);
+
+  // 淘汰只丢重放锚，不丢置顶状态：ids 里还有这个会话，列表仍排最前。
+  assert.deepEqual(ids(state), ["1694"]);
+  const ordered = pins.decorate([{ id: 2 }, { id: 1694 }], ids(state));
+  assert.deepEqual(ordered.map((item) => item.id), [1694, 2]);
+  assert.equal(ordered[0].pinned, true);
+
+  // 文档体积不随锚数量无限增长：打满 50 后再打 11 个，体积应基本不动。
+  const sizeAfter = JSON.stringify(state.doc).length;
+  console.log(`[pin 保留策略] 50 锚时 ${sizeAt50}B → 61 锚后 ${sizeAfter}B（同一会话锚数 ${anchors.length}）`);
+  assert.ok(sizeAfter < sizeAt50 * 1.15, `体积从 ${sizeAt50}B 涨到 ${sizeAfter}B，没被限额压住`);
+});
+
+test("pin：淘汰后 version 仍全局单调（不能拿 requests 数量当计数）", async () => {
+  const { pins, state } = commitLog();
+  for (let i = 0; i < 60; i++) await post(pins, 1694, true, `a${i}`);
+  const afterPrune = await post(pins, 2, true, "b1");
+  assert.equal(afterPrune.version, 61);
+  assert.equal(Object.keys(state.doc.pins.requests).length, 51);
+});

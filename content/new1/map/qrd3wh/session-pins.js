@@ -8,6 +8,33 @@
 //   POST /v1/sessions/:id/pin  { pinned: boolean, requestId: string }
 //   → { id, pinned, changed, requestId, version }
 //   GET  /v1/sessions          items[].pinned + 排序：置顶在前，其余保持原顺序
+//
+// `version` 是置顶日志的**全局**第几次真提交（跨会话单调；重放不涨）。
+// 重放锚按会话限额保留（每个会话最近 50 个），淘汰只影响极旧请求的重放幂等，
+// 不影响 pins.ids 里的置顶状态。
+
+/** 每个会话保留最近 50 个重放锚；更老的按插入顺序（= version 顺序）淘汰。 */
+const KEEP_PER_SESSION = 50;
+
+/**
+ * 淘汰每个会话最旧的重放锚。置顶状态在 pins.ids，不在这里 —— 丢锚只是让极旧请求
+ * 不再幂等（再来一次会落成新提交），不影响任何会话的置顶/排序。
+ */
+const pruneRequests = (requests) => {
+  const bySession = new Map();
+  for (const [anchor, response] of Object.entries(requests)) {
+    const key = String(response?.id);
+    if (!bySession.has(key)) bySession.set(key, []);
+    bySession.get(key).push({ anchor, version: Number(response?.version) || 0 });
+  }
+  for (const entries of bySession.values()) {
+    if (entries.length <= KEEP_PER_SESSION) continue;
+    entries.sort((a, b) => a.version - b.version);
+    for (const { anchor } of entries.slice(0, entries.length - KEEP_PER_SESSION)) {
+      delete requests[anchor];
+    }
+  }
+};
 
 /** 老盘没有这些键：和 machines / archived 一个待遇，一律 `??=`。 */
 const ensure = (doc) => {
@@ -35,7 +62,8 @@ export const openSessionPins = ({ commit, peek }) => {
     const seen = await peek(token, anchor);
     if (seen) return { ...seen };
 
-    // version 是这条会话的置顶日志里的第几次真提交：单调、重放不涨。
+    // version = 置顶日志的全局第几次真提交（跨会话单调；重放不涨）。
+    // 从现存锚的最大 version 推：淘汰会删旧锚，不能再用 Object.keys(requests).length。
     // 不报 durable 的 commit_seq —— 提交线里别人也在推，事务里读不到这一单的真值。
     let response;
     const result = await commit(async (tx) => {
@@ -50,12 +78,13 @@ export const openSessionPins = ({ commit, peek }) => {
         pinned: Boolean(pinned),
         changed: was !== Boolean(pinned),
         requestId: anchor,
-        version: Object.keys(pins.requests ?? {}).length + 1,
+        version: Object.values(pins.requests).reduce((max, r) => Math.max(max, Number(r?.version) || 0), 0) + 1,
       };
       if (pinned && !was) ids.unshift(key); // 新置顶的排最前 —— 跟微信一致
       if (!pinned && was) ids.splice(ids.indexOf(key), 1);
       pins.ids = ids;
       pins.requests[anchor] = response;
+      pruneRequests(pins.requests);
       return {};
     });
     if (result.cached) return { ...result.cached };
