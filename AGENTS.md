@@ -74,6 +74,10 @@ nous-server        → durable, wire, telemetry
 票的整个 `crates/nous-tools/`（33 个文件），事后 `git show` 再也分不清哪半属于哪张票；同一时段主树
 还停在 `feat/25-materialize-cache` 上，`master` 根本不在工作区里。一条规矩抵掉两种事故。
 
+**`master` 只由合并进入。** 干活的 agent 不许往 `master` 上直接提交或 push —— 做完在分支上 push 就停，
+等人合并（`git merge --no-ff`，保留分支这条证据）。同日还有一次直接推 `master`（`41e3d48`，2,157 行
+没经过 review 就进了主线）：内容是好的，但「谁验过」这件事没了记录。
+
 三步，每次都要走：
 
 1. 读 `SOURCES.md` 里你要碰的那个文件那一行 —— 它从哪来、抄了多少、改了什么。
