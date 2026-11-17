@@ -20,6 +20,8 @@
 //! 一旦某个 id 进了 `record_ids`（哪怕记录后来被删），它**永远不会**再被分配：`next_id` 只会
 //! 往前推，而且和 `record_ids` 的插入在同一个事务里。
 
+use std::sync::Mutex;
+
 use serde_json::Value;
 
 use nous_chord::sqlite::{SqliteDatabase, SqliteExecutor, SqliteValue as Cell};
@@ -28,7 +30,7 @@ use super::commit::{
     resolve_copies, stored_batch, CommitResult, CommitState, ConversationQuery, PendingWrites,
     StoredBatch,
 };
-use super::documents::{materialize, DocumentPoint, StoredDocument};
+use super::documents::{materialize_cached, DocumentCache, DocumentPoint, StoredDocument};
 use super::cursor::{cut_page, scan_start, Cursor, Page, ScanOrder};
 use super::sqlite::rows::{parse_json, required_i64};
 use super::sqlite::schema::SqliteSchema;
@@ -52,6 +54,9 @@ pub struct Storage {
     next_id: i64,
     /// 本次调用里已经取走的 id 的下界 —— 提交时 `next_id` 取它和库里的较大者。
     base_next_id: i64,
+    /// `materialize(Current)` 的结果，按文档 id 存（`#25`）。有效性每次提交都在事务里对着库校准：
+    /// 库是真相，缓存只是「上次算过的值」，不是第二份真相。
+    cache: Mutex<DocumentCache>,
 }
 
 impl Storage {
@@ -65,6 +70,7 @@ impl Storage {
             store,
             next_id,
             base_next_id: next_id,
+            cache: Mutex::new(DocumentCache::new()),
         })
     }
 
@@ -79,6 +85,7 @@ impl Storage {
             store,
             next_id,
             base_next_id: next_id,
+            cache: Mutex::new(DocumentCache::new()),
         })
     }
 
@@ -153,10 +160,16 @@ impl Storage {
                     next_seq += 1;
                     state.apply(writes, &actions, seq)?;
                     pending.add(writes, &actions, seq, &state)?;
-                    // 先落，再从库里读回「这批之后的值」—— 见 `commit` 的模块文档。
+                    // 这批要碰的文档：把缓存对着库校准（写锁在手上，校准与使用之间没人能插进来），
+                    // 于是 delta 的「批前值」通常直接来自缓存，不必重放整条链（`#25`）。
+                    let before =
+                        super::documents::refresh(tx, &schema, &self.cache, &touched_documents(writes))?;
                     pending.flush(tx, &schema)?;
+                    // 这批之后的值（publication 的 `value`）：缓存 + 本批 ops，同一条 apply。
+                    let values =
+                        super::documents::values_after_batch(tx, &schema, &self.cache, &actions, seq, &before)?;
                     seqs.push(seq);
-                    stored.push(stored_batch(tx, &schema, writes, &actions, seq, &state)?);
+                    stored.push(stored_batch(tx, &schema, writes, &actions, seq, &state, &values)?);
                     candidate_next_id = candidate_next_id.max(candidate_next_id_of(writes, base_next_id)?);
                 }
                 pending.flush(tx, &schema)?;
@@ -305,9 +318,24 @@ impl Storage {
         })))
     }
 
-    /// 一份文档在 `at` 上的值（base + 其后的 delta 重放）。不存在 / 不在世 → `None`。
+    /// 一份文档在 `at` 上的值。不存在 / 不在世 → `None`。
+    ///
+    /// `Current` 走缓存（[`materialize_cached`]）：命中与否**只看库里这份文档最新一条 revision
+    /// 的 `seq`**，所以外部连接写过的文档会当场失效。`At(seq)` 永远重放，不缓存。
     pub fn materialize(&self, id: i64, at: DocumentPoint) -> Result<Option<StoredDocument>> {
-        materialize(self.store.db(), self.schema(), id, at)
+        materialize_cached(self.store.db(), self.schema(), &self.cache, id, at)
+    }
+
+    /// 缓存里现在留了几份文档。**给判据用**：`#25` 要求上限机器可判（`tests/materialize_cache.rs`），
+    /// 不然「不会永不释放」只能靠读代码。上限本身是 [`super::documents::CACHED_DOCUMENTS`]。
+    pub fn cached_documents(&self) -> usize {
+        super::documents::cache_len(&self.cache)
+    }
+
+    /// 这份文档现在在缓存里吗。**给判据用**：`#25` 的淘汰策略是 LRU，而 LRU 与 FIFO 只差一句
+    /// 「命中是否推时间戳」—— 差别只有读得到它才能判。
+    pub fn caches_document(&self, id: i64) -> bool {
+        super::documents::caches_document(&self.cache, id)
     }
 
     /// 一份文档的记录（不重放内容）。
@@ -388,6 +416,23 @@ fn seq_floor(executor: &dyn SqliteExecutor, schema: &SqliteSchema) -> Result<Seq
     let entry_floor = row.get("entry_floor").and_then(Cell::as_i64).unwrap_or(0);
     let revision_floor = row.get("revision_floor").and_then(Cell::as_i64).unwrap_or(0);
     Ok(entry_floor.max(revision_floor))
+}
+
+/// 一批写碰到的文档 id（去重）：缓存只用得着这些。
+fn touched_documents(writes: &[StorageWrite]) -> Vec<i64> {
+    let mut ids: Vec<i64> = writes
+        .iter()
+        .filter_map(|write| match write {
+            StorageWrite::DocumentCreate { id, .. }
+            | StorageWrite::DocumentCopy { id, .. }
+            | StorageWrite::DocumentChange { id, .. }
+            | StorageWrite::DocumentRetire { id } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 /// 一批写里最大的 id + 1，和库里的 `next_id` 取大者。
