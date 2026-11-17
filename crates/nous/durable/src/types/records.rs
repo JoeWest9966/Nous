@@ -96,6 +96,40 @@ pub struct EntryRecord {
     /// 追加这条 entry 的任务（durable 工作产出时才有）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub by_task_id: Option<Id>,
+    /// 这一轮为什么结束（issue #38，`/opt/Nous-spec/docs/spec/kernel-rust.md` ch5）。
+    ///
+    /// **一个字段、五值**，归因不靠第二种 entry kind：客户端只看「有没有终态」，
+    /// 熔断 / 告警 / 启动扫孤儿各读一个字面量。缺席 = 还在跑（或这一条不是一轮的结局）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<TerminalReason>,
+}
+
+/// 一轮的终态。五个值，全在一处（ch5：一个字段五个值，不是两种 entry）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalReason {
+    /// 正常答完。
+    Done,
+    /// 客户端中止。
+    UserCancel,
+    /// 可重试错误、超时用尽后的归因。
+    Timeout,
+    /// 扩展进程死亡 / 熔断。
+    ExtensionCrash,
+    /// 整机崩 / 重启留下的孤儿，由启动扫描补写。
+    Abandoned,
+}
+
+impl TerminalReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::UserCancel => "user_cancel",
+            Self::Timeout => "timeout",
+            Self::ExtensionCrash => "extension_crash",
+            Self::Abandoned => "abandoned",
+        }
+    }
 }
 
 /// 对一条更早的可见 entry 的**不可变**上下文覆盖。上游 `ContextEdit`。

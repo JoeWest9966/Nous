@@ -26,8 +26,9 @@ use nous_chord::context::Context;
 use nous_chord::watch::WatchEnd;
 use serde_json::{json, Value};
 
+use crate::harness::generation::LIVE_KIND;
 use crate::storage::writes::StorageWrite;
-use crate::types::DocumentScope;
+use crate::types::{DocumentScope, EntryRecord, TerminalReason};
 use crate::{DocumentContent, Id, Storage, StorageError};
 
 use super::{publication_of, CommitPublication, Session, SessionEnd, SessionError};
@@ -147,7 +148,10 @@ pub async fn submit_message(
     commit_and_publish(
         session,
         &mut guard,
-        vec![StorageWrite::Entry(entry), StorageWrite::Submission(submission)],
+        vec![
+            StorageWrite::Entry(entry),
+            StorageWrite::Submission(submission),
+        ],
     )
     .await?;
 
@@ -158,46 +162,286 @@ pub async fn submit_message(
     })
 }
 
-/// 中止结果。`tasks` 是被打上 `abortRequested` 的任务 id。
+/// 取消结果。`tasks` 是这次被打上 `abortRequested` 的任务；`terminal_entry` 是终态那条 entry。
+///
+/// 两次取消返回**同一个结构**（同任务、同 entry id、同 reason），所以响应逐字节相等。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AbortOutcome {
+pub struct CancelOutcome {
     pub tasks: Vec<Id>,
+    pub terminal_entry: Id,
 }
 
-/// `POST /v1/sessions/:id/abort`：给这个会话的**每一个**活跃任务打 abort 标记。
+/// 终止的形状对调用方（abort / 超时 / 扩展死）暴露的只有这三个字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CancelRequest {
+    pub conversation: Id,
+    pub reason: TerminalReason,
+}
+
+/// 唯一的取消实现：客户端 abort、内核超时、扩展进程死都调这里。
 ///
-/// 只改 `abortRequested`，不动 `state`：任务状态机是不透明 JSON（`docs/storage.md` §12.5），
-/// 由任务自己在下一个 checkpoint 读这个标记。没有活跃任务时是 409 —— 「中止一个闲会话」
-/// 不是成功，客户端拿它当成功会以为停下来了。
-pub async fn abort(session: &Session, conversation: Id) -> Result<AbortOutcome, CommandError> {
+/// ## 一条通道、一个实现（S7）
+///
+/// 触发源只造 `CancelRequest`。token 的 `cancel()` 由本函数发起，落库也只在这里。
+/// 全库唯一的 `abortRequested` 写点是 [`mark_abort_requested`]。
+///
+/// ## 事务与终态
+///
+/// 取消不打断事务：它**在事务结束之后**作为一条新提交落下。终态与它的正文写在
+/// 同一条 entry、同一次提交里 —— 否则 kill -9 会切出「有正文无终态」。
+///
+/// ## 幂等
+///
+/// 已经有终态 entry 就原样返回（第一个写下的归因赢），不报错、不改写。
+pub async fn cancel(
+    session: &Session,
+    request: CancelRequest,
+) -> Result<CancelOutcome, CommandError> {
+    // 唯一的取消动作：三个触发源共用这一个 handle（clone 出去仍是同一个 token）。
+    // 后面落库的终态 entry 是这次取消的可见事实，不是第二套「取消实现」。
+    session.cancellation.cancel();
+
     let mut guard = session.storage.lock().await;
-    let (aborted, writes) = {
+    let (outcome, writes) = {
         let storage = storage_mut(&mut guard)?;
-        if storage.conversation(conversation)?.is_none() {
+        if storage.conversation(request.conversation)?.is_none() {
             return Err(CommandError::NotFound(format!(
-                "session {conversation} not found"
+                "session {} not found",
+                request.conversation
             )));
         }
-        let mut aborted = Vec::new();
-        let mut writes = Vec::new();
-        for mut task in storage.tasks(conversation)? {
-            if is_terminal(&task) {
+        if let Some(existing) = terminal_entry(storage, request.conversation)? {
+            return Ok(existing);
+        }
+
+        let tasks = live_task_ids(storage, request.conversation)?;
+        if tasks.is_empty() {
+            return Err(CommandError::Conflict(
+                "session has no running task to abort".to_string(),
+            ));
+        }
+        let entry_id = storage.mint_id()?;
+        // 终态与正文同一条 entry、同一次提交。若 pi.live 里已有落库的 partial，
+        // 把它搬进来（并清 generation）—— 重连看到的是「有结局的一段文本」。
+        let (body, clear) = terminal_body(storage, request.conversation)?;
+        let mut writes = vec![StorageWrite::Entry(json!({
+            "id": entry_id,
+            "conversationId": request.conversation,
+            "kind": "pi.assistant",
+            "model": [body],
+            "reason": request.reason.as_str(),
+        }))];
+        if let Some(write) = clear {
+            writes.push(write);
+        }
+        for id in &tasks {
+            let Some(mut task) = storage.task(*id)? else {
                 continue;
-            }
-            let id = id_of(&task)?;
-            task["abortRequested"] = Value::Bool(true);
-            aborted.push(id);
+            };
+            mark_abort_requested(&mut task);
             writes.push(StorageWrite::Task(task));
         }
-        (aborted, writes)
+        (
+            CancelOutcome {
+                tasks,
+                terminal_entry: entry_id,
+            },
+            writes,
+        )
     };
-    if writes.is_empty() {
-        return Err(CommandError::Conflict(
-            "session has no running task to abort".to_string(),
-        ));
-    }
     commit_and_publish(session, &mut guard, writes).await?;
-    Ok(AbortOutcome { tasks: aborted })
+    Ok(outcome)
+}
+
+/// `POST /v1/sessions/:id/abort`：客户端触发源，只把语义翻成 `user_cancel` 后调 [`cancel`]。
+pub async fn abort(session: &Session, conversation: Id) -> Result<CancelOutcome, CommandError> {
+    cancel(
+        session,
+        CancelRequest {
+            conversation,
+            reason: TerminalReason::UserCancel,
+        },
+    )
+    .await
+}
+
+/// 全库**唯一**的 `abortRequested` 写点。任务状态机是不透明 JSON（docs/storage.md §12.5），
+/// 所以只改这一个标记，不碰 `state`。
+fn mark_abort_requested(task: &mut Value) {
+    task["abortRequested"] = Value::Bool(true);
+}
+
+/// 从 `pi.live.generation.message` 取已落库的正文，并生成一条清掉 `generation` 的写。
+/// 没有 live / 没有 partial 时给一条空的 assistant 消息，不清任何文档。
+fn terminal_body(
+    storage: &Storage,
+    conversation: Id,
+) -> Result<(Value, Option<StorageWrite>), CommandError> {
+    let documents = storage
+        .scan_documents(
+            &crate::DocumentQuery {
+                scope: json!({ "kind": "conversation", "conversationId": conversation }),
+                kind: Some(LIVE_KIND.to_string()),
+                at: crate::DocumentPoint::Current,
+            },
+            10_000,
+            None,
+        )?
+        .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+    for record in documents.items {
+        let document_id = id_of(&record)?;
+        let Some(doc) = storage.materialize(document_id, crate::DocumentPoint::Current)? else {
+            continue;
+        };
+        let Some(message) = doc.value.get("generation").and_then(|g| g.get("message")) else {
+            continue;
+        };
+        if message.is_null() {
+            continue;
+        }
+        let mut body = message.clone();
+        if let Some(object) = body.as_object_mut() {
+            object.insert("stopReason".to_string(), json!("aborted"));
+        }
+        let current = nous_chord::delta::Revision::new(doc.version as u64);
+        let mut draft = nous_chord::delta::draft::Draft::new(&doc.value, current);
+        draft
+            .remove(&[nous_chord::delta::Seg::key("generation")])
+            .map_err(|error| CommandError::Session(SessionError::Shape(error.to_string())))?;
+        let trusted = draft
+            .prepare(current)
+            .map_err(|error| CommandError::Session(SessionError::Shape(error.to_string())))?;
+        let clear = StorageWrite::DocumentChange {
+            id: document_id,
+            content: DocumentContent::Delta {
+                version: doc.version,
+                ops: Value::Array(nous_chord::delta::codec::Encoder::new().encode(&trusted.into_ops())),
+            },
+        };
+        return Ok((body, Some(clear)));
+    }
+    Ok((
+        json!({ "role": "assistant", "content": [], "stopReason": "aborted" }),
+        None,
+    ))
+}
+
+/// 这个会话里第一条带终态的 entry；顺便还原当时的 tasks（幂等返回值）。
+fn terminal_entry(
+    storage: &Storage,
+    conversation: Id,
+) -> Result<Option<CancelOutcome>, CommandError> {
+    for record in storage
+        .scan_entries(
+            &crate::EntryQuery {
+                conversation_id: conversation,
+                min_entry_id: None,
+                max_entry_id: None,
+                order: None,
+            },
+            10_000,
+            None,
+        )?
+        .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?
+        .items
+    {
+        let entry: EntryRecord = serde_json::from_value(record)
+            .map_err(|error| CommandError::Session(SessionError::Shape(error.to_string())))?;
+        if entry.reason.is_some() {
+            // 幂等返回值不读 `abortRequested`：那个字段全库只有一处能碰（S7）。
+            // 同一个会话第二次取消时，第一次打过标记的任务还在，按「还活着的」报回去
+            // 与第一次逐字节相等（状态机由任务自己走，读它的标记就是第二处写语义）。
+            let tasks = live_task_ids(storage, conversation)?;
+            return Ok(Some(CancelOutcome {
+                tasks,
+                terminal_entry: entry.id,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn live_task_ids(storage: &Storage, conversation: Id) -> Result<Vec<Id>, CommandError> {
+    storage
+        .tasks(conversation)?
+        .into_iter()
+        .filter(|task| !is_terminal(task))
+        .map(|task| id_of(&task))
+        .collect()
+}
+
+/// 启动扫描：整机崩 / 重启留下的孤儿补一条 `abandoned`（spec ch7）。
+///
+/// **幂等**：先写终态 entry（first-wins），再清 `pi.live.generation`；下次启动看不到
+/// 有正文无终态的 live，就不会再补。连重启三次只多一条。
+/// 进程熔断**不调这里** —— 那是 `extension_crash`，两件事（S6）。
+pub async fn scan_orphans(session: &Session) -> Result<usize, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let (writes, count) = {
+        let storage = storage_mut(&mut guard)?;
+        let conversations = storage
+            .scan_conversations(
+                &crate::ConversationQuery {
+                    owner_conversation_id: None,
+                    owner_task_id: None,
+                    order: None,
+                },
+                10_000,
+                None,
+            )?
+            .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+        let mut writes = Vec::new();
+        let mut count = 0usize;
+        for conversation in conversations.items {
+            let conversation_id = id_of(&conversation)?;
+            if terminal_entry(storage, conversation_id)?.is_some() {
+                continue;
+            }
+            let documents = storage
+                .scan_documents(
+                    &crate::DocumentQuery {
+                        scope: json!({ "kind": "conversation", "conversationId": conversation_id }),
+                        kind: Some(LIVE_KIND.to_string()),
+                        at: crate::DocumentPoint::Current,
+                    },
+                    10_000,
+                    None,
+                )?
+                .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+            for record in documents.items {
+                let document_id = id_of(&record)?;
+                let Some(doc) = storage.materialize(document_id, crate::DocumentPoint::Current)?
+                else {
+                    continue;
+                };
+                let Some(message) = doc.value.get("generation").and_then(|g| g.get("message"))
+                else {
+                    continue;
+                };
+                if message.is_null() {
+                    continue;
+                }
+                let entry_id = storage.mint_id()?;
+                let (body, clear) = terminal_body(storage, conversation_id)?;
+                writes.push(StorageWrite::Entry(json!({
+                    "id": entry_id,
+                    "conversationId": conversation_id,
+                    "kind": "pi.assistant",
+                    "model": [body],
+                    "reason": TerminalReason::Abandoned.as_str(),
+                })));
+                if let Some(write) = clear {
+                    writes.push(write);
+                }
+                count += 1;
+            }
+        }
+        (writes, count)
+    };
+    if !writes.is_empty() {
+        commit_and_publish(session, &mut guard, writes).await?;
+    }
+    Ok(count)
 }
 
 /// `POST /v1/sessions/:id/fork` 的入参。`at == None` 表示从最后一条 entry 分叉。

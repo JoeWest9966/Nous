@@ -39,6 +39,7 @@ use nous_chord::delta::{Revision, Seg};
 use serde_json::{json, Value};
 
 use crate::session::{CommitOptions, Session, SessionError};
+use crate::types::TerminalReason;
 use crate::{DocumentContent, Id, StorageWrite};
 
 use super::clock::Clock;
@@ -326,6 +327,8 @@ pub struct ClassifyRequest {
     pub retryable: bool,
     /// 上下文溢出（上游在 `generate` 里算出来的，`classify` 只消费）。
     pub overflow: Option<String>,
+    /// 这一轮为什么结束（issue #38）。终态与正文写进**同一条** `pi.assistant` entry。
+    pub reason: TerminalReason,
 }
 
 /// `classify` 的结论。上游是 `Next`；本库只落这四种去向。
@@ -431,6 +434,7 @@ fn assistant_entry(
         "conversationId": request.conversation,
         "kind": "pi.assistant",
         "model": [message_json(message)?],
+        "reason": request.reason.as_str(),
     }))
 }
 
