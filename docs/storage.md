@@ -155,7 +155,7 @@ with the transaction.`
 |---|---|---|
 | `sqlite/schema.rs` | 九张表 + 十六个索引的名字（可带前缀） | 键写错在开发期 panic；`every_key_is_present_exactly_once` |
 | `sqlite/migrations.rs` | v1 = 最终形状（含 `sleeping`）+ `writer` 列；27 条语句 | 9 表 / 16 索引 / `writer='nous'` / `version=1` 全断言 |
-| `sqlite/rows.rs` | `record` 原样、索引字符串 JSON 编码、哨兵 `0` / `""` | 孤立代理对与 ` ` 往返无损 |
+| `sqlite/rows.rs` | `record` 原样、索引字符串 JSON 编码、哨兵 `0` / `""` | 孤立代理对与 `\u0000` 往返无损 |
 | `sqlite/statements.rs` | 一条 JSON 数组 + `json_each` 批量写；大行走多行 `VALUES` | 500 行 = **1 条语句**；20 个大行 ≤ 2 条 |
 | `sqlite/tables.rs` | 四张记录表 + `record_ids` / `documents` / `revisions` 的行构造 | 每张表一条单测 |
 | `import.rs` | 只读导入 + **重算索引列再逐列对齐** | fixture 七表 19,689 单元读→写→读 diff = 0 |
