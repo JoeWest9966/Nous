@@ -64,6 +64,26 @@ if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	fi
 fi
 
+# 1d. providers 门后那半：默认构建不带网络，测试不能跟着一起不跑
+if [ "$WHAT" = all ] || [ "$WHAT" = test ]; then
+	step "1d. nous-ai 在 --features providers 下重跑（不发真网络，全 mock）"
+	PROV=$(cargo test -p nous-ai --features providers 2>&1) || {
+		printf '%s\n' "$PROV" | tail -20; bad "providers 门后的测试挂了（默认构建看不见的那半）"
+	}
+	if [ -n "${PROV:-}" ]; then
+		# 只跑不查等于没跑：钉两条锚点测试，名字改了/被删了就红
+		for ANCHOR in leading_system_goes_to_the_system_parameter_for_anthropic \
+		              collapse_carries_the_whole_current_tool_set_not_the_last_batch; do
+			if printf '%s' "$PROV" | grep -q "test providers.*$ANCHOR\|$ANCHOR \.\.\." || \
+			   printf '%s' "$PROV" | grep -q "$ANCHOR"; then
+				ok "锚点跑到了：$ANCHOR"
+			else
+				bad "锚点 $ANCHOR 没跑 —— providers 这半被静默跳过了"
+			fi
+		done
+	fi
+fi
+
 # 2. fixture：线上那份 agent.sqlite 读得出 /v1/sessions 同形的 JSON
 if [ "$WHAT" = all ] || [ "$WHAT" = fixture ]; then
 	step "2. agent.sqlite fixture"
