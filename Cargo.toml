@@ -7,6 +7,7 @@ members = [
     "crates/nous-env",
     "crates/nous-chord",
     "crates/nous-durable",
+    "crates/nous-fixture",
 ]
 # `packages/env/daemon` 自带 Cargo.toml / Cargo.lock / rust-toolchain.toml，不是本 workspace 的成员。
 # 不 exclude 掉，cargo 会直接罢工。
@@ -55,3 +56,4 @@ nous-telemetry = { path = "crates/nous-telemetry", version = "0.1.0" }
 nous-chord = { path = "crates/nous-chord", version = "0.1.0" }
 nous-ai = { path = "crates/nous-ai", version = "0.1.0" }
 nous-durable = { path = "crates/nous-durable", version = "0.1.0" }
+nous-fixture = { path = "crates/nous-fixture", version = "0.1.0" }

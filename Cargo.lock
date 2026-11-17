@@ -946,6 +946,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-fixture"
+version = "0.1.0"
+dependencies = [
+ "nous-durable",
+ "serde_json",
+]
+
+[[package]]
 name = "nous-telemetry"
 version = "0.1.0"
 dependencies = [

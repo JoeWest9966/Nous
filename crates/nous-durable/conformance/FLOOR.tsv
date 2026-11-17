@@ -1,0 +1,10 @@
+# conformance 用例数下限（骗不了人的那一半：套件可以被写瘦，数字不能）。
+#
+# 复算命令（本表每行的 min 必须从这里能算出来）：
+#   grep -cE '^[[:space:]]*#\[(tokio::)?test' crates/nous-durable/conformance/storage_conformance.rs
+#
+# 上游出处：packages/durable/src/testing/storage-conformance.ts，32 个 createCase( 里的 20 个。
+# 剩余 12 个的判定与理由见票 #21（以及 #12 的那张表）。
+#
+# file	min
+storage_conformance.rs	20
