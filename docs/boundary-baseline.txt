@@ -1,5 +1,20 @@
 本文件只减不增（S8）
-# 词表基线 —— spec 第 1 章判据 3（Q18）
+# 词表基线 —— spec 第 1 章判据 3（Q18）；进程文件集合基线 —— 判据 6（S12，待签）
+#
+# spawn_files=1 —— 实测（2026-11-17）只有 os_env.rs 一个文件命中进程创建模式。
+# S12 记的是 N=2（os_env.rs + utils/open_browser.rs），比今天多一个：
+# open_browser.rs 已由 S14（票 #14）删除（无调用方，CLI 时代桌面遗留，自带两处
+# Command::new().spawn()），本仓今天的文件集合因此比 S12 记录少一个。改这一行要签字。
+#
+# spawn 集合的判据（逐行相等，多一个即红；S12 追加二，状态待签）：
+#   grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
+#     | grep -vE '(/tests/|tests\.rs$)' | sort
+# output_decode.rs 的唯一 spawn 在 #[cfg(windows)] 里（Linux 不可达），按 S12 排除。
+# os_env.rs 一个文件 3 入口（363/412/915 的历史行号）是已知欠账，不设判据、不 red。
+spawn_files=1
+crates/platform/nous-tools/src/os_env.rs        # 工具子进程适配文件；同一文件多入口是已知欠账（S12），不 red
+#
+# ── 以下是判据 3 的词表基线 ──
 #
 # 生成命令（在本仓根，路径随 #14 三层目录已更新）：
 #   git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- crates/kernel \

@@ -5,17 +5,20 @@ import assert from "node:assert/strict";
 
 import { openSessionPins } from "../session-pins.js";
 
-/** 假的 durable：读-改-写在一次 commit 内，提交后 seq +1，像 pi-durable 的 publication.seq。 */
+/** 假的 durable 的 commit 回调：请求数涨了就落一条提交，seq +1（像 pi-durable 的 publication.seq）。 */
+const fakeCommit = (state) => async (change) => {
+  const before = Object.keys(state.doc.pins?.requests ?? {}).length;
+  const result = await change({ doc: async () => state.doc });
+  const after = Object.keys(state.doc.pins?.requests ?? {}).length;
+  if (after > before) state.commits.push(++state.seq);
+  return result;
+};
+
+/** 假的 durable：读-改-写在一次 commit 内；复用 fakeCommit，新实例接同一份文档时锚不丢。 */
 const commitLog = () => {
   const state = { seq: 100, commits: [], doc: {} };
   const pins = openSessionPins({
-    commit: async (change) => {
-      const before = Object.keys(state.doc.pins?.requests ?? {}).length;
-      const result = await change({ doc: async () => state.doc });
-      const after = Object.keys(state.doc.pins?.requests ?? {}).length;
-      if (after > before) state.commits.push(++state.seq);
-      return result;
-    },
+    commit: fakeCommit(state),
     peek: async (_token, anchor) => state.doc.pins?.requests?.[anchor],
   });
   return { state, pins };
@@ -61,13 +64,7 @@ test("pin：重放锚是持久化状态 —— 新实例读同一份文档也不
   const { pins, state } = commitLog();
   const first = await post(pins, 14, true, "restart-anchor");
   const again = openSessionPins({
-    commit: async (change) => {
-      const before = Object.keys(state.doc.pins?.requests ?? {}).length;
-      const result = await change({ doc: async () => state.doc });
-      const after = Object.keys(state.doc.pins?.requests ?? {}).length;
-      if (after > before) state.commits.push(++state.seq);
-      return result;
-    },
+    commit: fakeCommit(state),
     peek: async (_token, anchor) => state.doc.pins?.requests?.[anchor],
   });
   assert.deepEqual(await post(again, 14, true, "restart-anchor"), first);
