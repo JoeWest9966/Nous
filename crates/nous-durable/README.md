@@ -57,9 +57,11 @@ fixture 不在时这些测试**跳过并打印**，不假绿。
 ## 一致性套件（`conformance/`）
 
 ```bash
-cargo test -p nous-durable --test conformance        # 20 案
+cargo test -p nous-durable --test conformance        # 29 案
 ```
 
 `conformance/FLOOR.tsv` 记用例数下限（`verify.sh` 1c 用它防瘦身），文件头写了复算命令。
 案名逐字照抄上游 `testing/storage-conformance.ts` 的 `createCase(`；改动方式：`createCase` →
-`#[test]`、夹具 → 临时文件真后端。**没抄的 12 案在 #21**，不无声消失。
+`#[test]`、夹具 → 临时文件真后端。**32 = 29 已落 + 3 不做**（对象别名两条 + 不种根会话，理由在
+`docs/not-ported.md`）—— 清单在 #21 清零，不无声消失。文件头还有十条变异实测（含两条「不红」的
+如实记录），说明这 29 条不是恒绿。

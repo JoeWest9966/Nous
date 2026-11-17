@@ -17,12 +17,13 @@
 #   runner.ts                     38    0            无                                   —     不设下限（注册器，#15）
 #   index.ts                      28    0            无                                   —     不设下限（出口，#15）
 #
-# 32 = 20 已落 + 9 等真后端（scan_tasks / scan_submissions / scan_documents / close()，#21）
-#      + 3 不做（#21，理由见 docs/not-ported.md）
+# 32 = 29 已落 + 3 不做（#21 收尾后：`scan_tasks` / `scan_submissions` / `scan_documents` /
+#      fork 链 entry 扫描 / `close()` 全部落地，剩下 3 条是「不做」，理由见 docs/not-ported.md）。
+#      这个数字与 docs/storage.md §10.7 的表对得上；再有人抄回来一条，1c 会先红。
 #
 # 为什么 env 那行没有机器判据：`nous-env` 只有 trait，一个实现都没有；conformance 测的是真后端，
 # 没有后端能测的只有假后端，而假后端通过什么也证明不了。给它写一行 `0` 反而更糟 —— 0 ≥ 0 是绿的，
 # 于是「没做」看起来像「做完了」。理由写在这里，等本地 `FileSystem` + `Shell` 真后端落地（票还没开，`nous-env` 目前只有 trait）。
 #
 # file	min
-storage_conformance.rs	20
+storage_conformance.rs	29

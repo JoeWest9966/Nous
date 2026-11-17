@@ -319,6 +319,41 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 「一个窗口一条 delta revision」。判据在 `a_window_of_streamed_appends_is_one_op_and_one_revision`：
 纯增长的两段文字折成**一条** `a`，一个窗口一条 revision，两个窗口两条。
 
+### 10.7 `#21` 落地的部分（四个 `scan_*` + `close()`）
+
+读的那一半从 `storage.rs` 挪进 `storage/scans.rs`：扫描是纯读，只依赖表名 + 索引列 + 不透明游标，
+和提交 / id 分配器 / 缓存没有关系。`storage.rs` 里剩下的是几行委托。
+
+| 入口 | 语义 | 默认方向 |
+|---|---|---|
+| `scan_conversations` | owner 两列可过滤 | 升序 |
+| `scan_entries` | **fork 链**：自己那一段 + 每一代祖先到 `parent.at` 为止 | **降序**（最新的先） |
+| `scan_tasks` | `conversationId` / `kind` / `status` / `abortRequested` / `background` | 升序 |
+| `scan_submissions` | `conversationId` / `status` | 升序 |
+| `scan_documents` | **作用域**（`kind` 可选、`key` 不参与）+ 在世判定 | 升序（没有降序这条路） |
+| `find_document` | **地址**：`kind` + `scope` + `key` 五个索引列全相等 | — |
+| `find_latest_head_marker` | fork 链上最新的带 `head` 的 entry = 一段历史的真实下界 | — |
+| `entry_in_conversation` | 一条 entry 在这个会话的 fork 链上**看得见**吗 | — |
+
+**「多取一条」的 `+ 1` 在调用方**（`fetch_records` 的 `rows` 是原样 `LIMIT`）。分页判据就靠多出来
+的那一条，藏在 helper 里读代码时看不出来 —— 所以它不藏在 helper 里。
+
+**过滤列是编码体**：`tasks.kind` / `submissions.request_id` 存的是 `encode_indexed_string` 之后的
+索引字符串（§12.6 的「严格编码」），拿原文去比会**一条都匹配不上而且不报错**。
+
+**两条默认方向不同不是口味**：任务/提交是最老的先（队列），entry 是最新的先（历史）。写反了翻页
+照样能翻，只是顺序错，所以两条各写一遍、各测一遍。
+
+**fork 链两条方向的做法不一样**：降序从自己往下读，读满就停，没读满就把上界收到 `parent.at` 换去
+父会话（`upper` 一路取 `min`）；升序必须先把链走完再**反过来**从最老的读 —— 升序的第一页来自根，
+而根是走到链尾才知道的。两者的下界都对 `after + 1` 取 `max`。
+
+**`close()` 只加一个门闩，不做生命周期管理**：`closed: bool` + 每个入口 `ensure_open()`，关掉之后
+读、写、取 id 全失败（`StorageError::Closed`，Display 里有 `closed`）。上游还做「等 flight 走完、
+放掉声明」，本库单进程单写者，flight 的等待由 `&mut self` 借用本身保证。`Drop` 仍是收尾正路；
+`close()` 存在的理由只有一个：**关掉之后还拿着这个值的代码必须报错**。所以它不消费 `self`
+（消费掉就写不出那条判据了 —— 上游 `rejects every operation after close` 就是关完再调三个入口）。
+
 ## 11. 记录字段的对齐
 
 对外记录的字段名由 `wire.md` 决定；内部存的东西可以和它不同，但**同名字段必须同义**。`pi.*` 记录里 assistant 消息的字段名（`stopReason` / `responseId` / `responseModel` / `rawStopReason` / `usage`）来自上游，`nous-ai` 的 `#[serde(rename_all = "camelCase")]` 已经对齐，改这里之前先看 `wire.md` 对应段。
@@ -327,14 +362,17 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 
 `crates/nous-durable/conformance/storage_conformance.rs`，`[[test]] name = "conformance"`。
 
-- **来源**：`packages/durable/src/testing/storage-conformance.ts` 的 32 个 `createCase(` 抄了 **20** 个。
+- **来源**：`packages/durable/src/testing/storage-conformance.ts` 的 32 个 `createCase(` 抄了 **29** 个。
   案名逐字照抄（改名就是换判据）；`createCase` → 一条 `#[test]`，`storage` 夹具 → 临时文件真后端。
 - **不造假后端**：套件跑在真 SQLite 上。`nous-env` 只有 trait、没有真后端，所以
   `env_conformance.rs` 现在不做 —— 测一个假后端什么也证明不了。它的判据随本地后端一起进 #13。
-- **`FLOOR.tsv` 记 20**，文件头写了复算命令
+- **`FLOOR.tsv` 记 29**，文件头写了复算命令
   （`grep -cE '^[[:space:]]*#\[(tokio::)?test' …`），所以「套件被悄悄写瘦」这件事是机器判的。
-- **没抄的 12 案**在 #21，每条写明卡在哪（`scan_tasks` / `scan_submissions` / `scan_documents` /
-  fork 回溯 / `close()` / 本库不存在的 JS 别名与原型语义）；票 #12 有一张 32 行的「已抄 / 未抄」表。
+- **32 = 29 已落 + 3 不做**（`#21` 清零）。3 条不做的是对象别名两条（Rust 里记录以 `Value` 交出、
+  没有共享引用，也没有原型链）与「不种根会话一条」（本库迁移只建表，证据：真 fixture 里
+  `conversations where id=1` 是 0 行）。理由都在 `docs/not-ported.md`，票 #21 留着那张 32 行的表。
+- **十条变异实测**在文件头（改被测实现、跑完还原）：六条各自红该红的那几条；两条**不红**的也写在
+  那里并给了原因 —— 「这条案测不到这个面」比「假装它测到了」有用。
 
 `nous-fixture`（`verify.sh` 第 2/3 段的对象）只干一件事：读 `agent.sqlite`（只读）→ 打
 `{ items: [...] }` → exit 0。无子命令、无 flag、不写库。
@@ -529,3 +567,15 @@ v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）。
   **不要**把领养扩成通用路径。领养是破坏性的：跑完那份文件在本库眼里就是 v1，真上游再打开
   会看到旧版本号。
 
+### 12.10 `scan_entries` 走 fork 链；找不到会话是**错误**，不是空页
+
+两条都与上游一致，写在这里是因为它们容易被当成「我们的怪癖」：
+
+- **fork 链**：`scan_entries({conversationId})` 读的是「这个会话 + 祖先到各自 fork 点为止」的全部
+  entry，不是只有自己那一段。fork 出来的会话只存自己那一段，之前的历史住在父会话里 —— 只读自己
+  那一段会得到一个「历史凭空从中间开始」的会话。
+- **未知会话报错**（`UnknownConversation`）：空页要留给「会话在、但历史到头了」。两者混成一个结果，
+  客户端就分不出「翻完了」与「id 写错了」。同理 `entry_in_conversation` / `find_latest_head_marker`。
+
+**反悔点**：某天要给「不存在的会话」返回 404 而不是 500 时，改的是端点层的映射，不是这里的语义
+（`StorageError::UnknownConversation` 是给端点层分类用的）。

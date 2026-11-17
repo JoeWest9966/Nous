@@ -291,10 +291,11 @@ async fn commit_and_publish(
     let result = match committed {
         Ok(result) => result,
         Err(error) => {
-            // 存储失败 → 会话自己关掉（与 `Session::commit` 同一条语义）。先把存储取出来，
-            // `close` 消费自己；`settle` 用的是另一个 mutex，不会撞锁。
+            // 存储失败 → 会话自己关掉（与 `Session::commit` 同一条语义）。先把存储从槽里取出来，
+            // 关掉的存储之后每次调用都失败（`StorageError::Closed`）；`settle` 用的是另一个 mutex，
+            // 不会撞锁。
             let message = error.to_string();
-            if let Some(storage) = guard.take() {
+            if let Some(mut storage) = guard.take() {
                 let _ = storage.close();
             }
             session.end_all(&WatchEnd::Failed {

@@ -18,6 +18,7 @@ pub mod commit;
 pub mod documents;
 pub mod cursor;
 pub mod import;
+pub mod scans;
 pub mod sessions;
 pub mod storage;
 pub mod writes;

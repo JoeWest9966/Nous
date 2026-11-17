@@ -57,6 +57,9 @@ pub struct Storage {
     /// `materialize(Current)` 的结果，按文档 id 存（`#25`）。有效性每次提交都在事务里对着库校准：
     /// 库是真相，缓存只是「上次算过的值」，不是第二份真相。
     cache: Mutex<DocumentCache>,
+    /// `close()` 之后为 true。**这就是「关了」的全部状态**：没有连接池、没有重连、没有后台任务，
+    /// 只有一个门闩（理由见 [`Storage::close`]）。
+    closed: bool,
 }
 
 impl Storage {
@@ -71,6 +74,7 @@ impl Storage {
             next_id,
             base_next_id: next_id,
             cache: Mutex::new(DocumentCache::new()),
+            closed: false,
         })
     }
 
@@ -86,6 +90,7 @@ impl Storage {
             next_id,
             base_next_id: next_id,
             cache: Mutex::new(DocumentCache::new()),
+            closed: false,
         })
     }
 
@@ -99,6 +104,7 @@ impl Storage {
 
     /// 取一个 id。**不落盘**：跟着下一次 [`commit`](Self::commit) 一起推上去。
     pub fn mint_id(&mut self) -> Result<i64> {
+        self.ensure_open()?;
         if self.next_id >= i64::MAX {
             return Err(StorageError::Shape("ID space is exhausted".to_string()));
         }
@@ -107,9 +113,35 @@ impl Storage {
         Ok(id)
     }
 
-    /// 关库。**消费自己**：关掉的存储不该再被用到，所以不留一个「已关」状态让人误用。
-    pub fn close(mut self) -> Result<()> {
+    /// 关库：**之后每一次调用都明确失败**（[`StorageError::Closed`]），包括提交与取 id。
+    ///
+    /// ## 这里只有一个门闩，不是生命周期管理
+    ///
+    /// 上游 `StoreStorage.close()` 做三件事：拒绝新调用、等正在飞的提交走完、放掉声明。本库是
+    /// **单进程 + 单写者**，flight 的等待由调用方本来的 `&mut self` 借阅保证（一次只能有一个提交
+    /// 在跑），所以这里只剩第一件：置 [`Storage::closed`]，随后每个入口 `ensure_open()`。
+    ///
+    /// **`Drop` 仍然是收尾的正路**：不开 `close()` 时连接由 [`SqliteStore`] 的析构关掉，语义与这里
+    /// 一样（SQLite 会自己关）。`close()` 存在的理由是「关掉之后还拿着这个值的代码必须报错」——
+    /// 例如一个已经收摊的 `Session` 手里漏出来的 `Storage`，它的下一次提交该失败，而不是悄悄写进
+    /// 一份已经交给别人的库。所以它**不消费 `self`**：消费掉 `self` 的写法根本测不到这条语义
+    /// （上游那条案 `rejects every operation after close` 就是关完之后再调三个入口）。
+    ///
+    /// **重复调用返回 `Ok(())`**：已经关了就不是错误。
+    pub fn close(&mut self) -> Result<()> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
         self.store.db_mut().close()?;
+        Ok(())
+    }
+
+    /// 关过之后一切入口都走这里。`Ok` 之后调用方才继续。
+    fn ensure_open(&self) -> Result<()> {
+        if self.closed {
+            return Err(StorageError::Closed);
+        }
         Ok(())
     }
 
@@ -118,6 +150,7 @@ impl Storage {
     where
         F: FnMut(usize, Seq),
     {
+        self.ensure_open()?;
         let schema = self.store.schema().clone();
         let base_next_id = self.next_id;
 
@@ -195,6 +228,7 @@ impl Storage {
 
     /// 一条会话的记录。
     pub fn conversation(&self, id: i64) -> Result<Option<Value>> {
+        self.ensure_open()?;
         let row = self.store.db().get(
             &format!("SELECT record FROM {} WHERE id = ?", self.schema().table("conversations")),
             &[Cell::Integer(id)],
@@ -209,6 +243,7 @@ impl Storage {
         limit: usize,
         cursor: Option<&Cursor>,
     ) -> Result<std::result::Result<Page<Value>, Refusal>> {
+        self.ensure_open()?;
         let (order, after) = match scan_start(query.order, cursor, ScanOrder::Ascending) {
             Ok(start) => start,
             Err(refusal) => return Ok(Err(refusal)),
@@ -251,6 +286,7 @@ impl Storage {
 
     /// 一条 entry 与它的 `commit_seq`。
     pub fn entry(&self, id: i64) -> Result<Option<(Value, Seq)>> {
+        self.ensure_open()?;
         let row = self.store.db().get(
             &format!(
                 "SELECT record, commit_seq FROM {} WHERE id = ?",
@@ -267,55 +303,42 @@ impl Storage {
         Ok(Some((record, seq)))
     }
 
-    /// 一个会话的 entry，按 id 升/降序，游标不透明。
+    /// 一条 entry，**只在它于这个会话的 fork 链上看得见时**返回。
+    ///
+    /// 与 [`entry`](Self::entry) 的差别是「可见性」：`entry(id)` 是全局按 id 取（导入器与测试要它），
+    /// 这一条问的是「这个会话的历史里有没有它」—— fork 点之后写在别的分支上的 entry 不在其中。
+    /// 会话不存在 → [`StorageError::UnknownConversation`]。
+    pub fn entry_in_conversation(&self, conversation_id: i64, id: i64) -> Result<Option<(Value, Seq)>> {
+        self.ensure_open()?;
+        let found = super::scans::visible_entry(self.store.db(), self.schema(), conversation_id, id)?;
+        Ok(found.map(|(record, seq)| (record, seq as Seq)))
+    }
+
+    /// 这个会话的 fork 链上最新的、带 `head` 的那条 entry —— 一段历史的**真实下界**。
+    ///
+    /// `at_or_before` 给了就在那个 id（含）以下找。压缩/重置留下的 `head` 标记就是靠它定位的：
+    /// 调用方拿 `minEntryId = marker.head` 去扫，才不会把已经压缩掉的正文再读一遍。
+    pub fn find_latest_head_marker(
+        &self,
+        conversation_id: i64,
+        at_or_before: Option<i64>,
+    ) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::latest_head_marker(self.store.db(), self.schema(), conversation_id, at_or_before)
+    }
+
+    /// 一条会话（含它的 fork 祖先链）的 entry，按 id 升/降序，游标不透明。
+    ///
+    /// **不只是一条会话**：fork 出来的会话只存自己那一段，之前的历史住在父会话里。链怎么走、
+    /// 两条方向为什么不对称，见 [`super::scans::scan_entry_chain`] 的模块文档。
     pub fn scan_entries(
         &self,
         query: &EntryQuery,
         limit: usize,
         cursor: Option<&Cursor>,
     ) -> Result<std::result::Result<Page<Value>, Refusal>> {
-        let (order, after) = match scan_start(query.order, cursor, ScanOrder::Descending) {
-            Ok(start) => start,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        let mut clauses = vec!["conversation_id = ?".to_string()];
-        let mut params = vec![Cell::Integer(query.conversation_id)];
-        clauses.push(
-            match order {
-                ScanOrder::Ascending => "id > ?",
-                ScanOrder::Descending => "id < ?",
-            }
-            .to_string(),
-        );
-        params.push(Cell::Integer(after.unwrap_or(match order {
-            ScanOrder::Ascending => -1,
-            ScanOrder::Descending => i64::MAX,
-        })));
-        if let Some(min) = query.min_entry_id {
-            clauses.push("id >= ?".to_string());
-            params.push(Cell::Integer(min));
-        }
-        if let Some(max) = query.max_entry_id {
-            clauses.push("id <= ?".to_string());
-            params.push(Cell::Integer(max));
-        }
-        params.push(Cell::Integer(limit as i64 + 1));
-        let rows = self.store.db().all(
-            &format!(
-                "SELECT record FROM {} WHERE {} ORDER BY id {} LIMIT ?",
-                self.schema().table("entries"),
-                clauses.join(" AND "),
-                order.direction()
-            ),
-            &params,
-        )?;
-        let records = rows
-            .iter()
-            .map(record_of)
-            .collect::<Result<Vec<Value>>>()?;
-        Ok(Ok(cut_page(records, limit, order, |record| {
-            record.get("id").and_then(Value::as_i64).unwrap_or(0)
-        })))
+        self.ensure_open()?;
+        super::scans::scan_entry_chain(self.store.db(), self.schema(), query, limit, cursor)
     }
 
     /// 一个会话的提交记录（`submissions.record`），按 id 升序。
@@ -323,6 +346,7 @@ impl Storage {
     /// `request_id` 的幂等查找要走这条：`#22` 的 `POST /messages` 同一个 `requestId` 打两次
     /// 必须拿到同一条 submission（表里不建唯一索引的理由见 `docs/storage.md`）。
     pub fn submissions(&self, conversation_id: i64) -> Result<Vec<Value>> {
+        self.ensure_open()?;
         let rows = self.store.db().all(
             &format!(
                 "SELECT record FROM {} WHERE conversation_id = ? ORDER BY id",
@@ -335,6 +359,7 @@ impl Storage {
 
     /// 一个会话的任务记录（`tasks.record`），按 id 升序。状态是不透明 JSON，这里不解释。
     pub fn tasks(&self, conversation_id: i64) -> Result<Vec<Value>> {
+        self.ensure_open()?;
         let rows = self.store.db().all(
             &format!(
                 "SELECT record FROM {} WHERE conversation_id = ? ORDER BY id",
@@ -347,6 +372,7 @@ impl Storage {
 
     /// 会话里 id 最大的那条 entry（fork 不给 `entryId` 时用）。
     pub fn latest_entry_id(&self, conversation_id: i64) -> Result<Option<i64>> {
+        self.ensure_open()?;
         latest_entry_id(self.store.db(), self.schema(), conversation_id)
     }
 
@@ -355,6 +381,7 @@ impl Storage {
     /// `Current` 走缓存（[`materialize_cached`]）：命中与否**只看库里这份文档最新一条 revision
     /// 的 `seq`**，所以外部连接写过的文档会当场失效。`At(seq)` 永远重放，不缓存。
     pub fn materialize(&self, id: i64, at: DocumentPoint) -> Result<Option<StoredDocument>> {
+        self.ensure_open()?;
         materialize_cached(self.store.db(), self.schema(), &self.cache, id, at)
     }
 
@@ -370,8 +397,69 @@ impl Storage {
         super::documents::caches_document(&self.cache, id)
     }
 
+    /// 一条任务记录。`state` 是不透明 JSON：这一层不解释它，状态机的语义在调用方。
+    pub fn task(&self, id: i64) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::task(self.store.db(), self.schema(), id)
+    }
+
+    /// 一条提交记录。
+    pub fn submission(&self, id: i64) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::submission(self.store.db(), self.schema(), id)
+    }
+
+    /// `(conversationId, requestId)` 的幂等查找 —— `POST /messages` 的幂等键。
+    pub fn submission_by_request(&self, conversation_id: i64, request_id: &str) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::submission_by_request(self.store.db(), self.schema(), conversation_id, request_id)
+    }
+
+    /// 按 id 升/降扫任务。过滤条件全是拆出来的索引列（`kind` 与 `request_id` 是编码体）。
+    pub fn scan_tasks(
+        &self,
+        query: &super::scans::TaskQuery,
+        limit: usize,
+        cursor: Option<&Cursor>,
+    ) -> Result<std::result::Result<Page<Value>, Refusal>> {
+        self.ensure_open()?;
+        super::scans::scan_tasks(self.store.db(), self.schema(), query, limit, cursor)
+    }
+
+    /// 按 id 升/降扫提交记录。
+    pub fn scan_submissions(
+        &self,
+        query: &super::scans::SubmissionQuery,
+        limit: usize,
+        cursor: Option<&Cursor>,
+    ) -> Result<std::result::Result<Page<Value>, Refusal>> {
+        self.ensure_open()?;
+        super::scans::scan_submissions(self.store.db(), self.schema(), query, limit, cursor)
+    }
+
+    /// 按**作用域**扫在世的文档（`key` 不参与）。
+    pub fn scan_documents(
+        &self,
+        query: &super::scans::DocumentQuery,
+        limit: usize,
+        cursor: Option<&Cursor>,
+    ) -> Result<std::result::Result<Page<Value>, Refusal>> {
+        self.ensure_open()?;
+        super::scans::scan_documents(self.store.db(), self.schema(), query, limit, cursor)
+    }
+
+    /// 按**地址**（`kind` + `scope` + `key`）精确找一份在世的文档。
+    ///
+    /// 与 [`scan_documents`](Self::scan_documents) 是两条独立的路：一个比五个索引列，一个比作用域
+    /// 三列。混成一条就会出现「按地址找」返回一串候选，调用方还得自己挑。
+    pub fn find_document(&self, address: &Value, at: DocumentPoint) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::find_document(self.store.db(), self.schema(), address, at)
+    }
+
     /// 一份文档的记录（不重放内容）。
     pub fn document(&self, id: i64) -> Result<Option<Value>> {
+        self.ensure_open()?;
         let row = self.store.db().get(
             &format!("SELECT record FROM {} WHERE id = ?", self.schema().table("documents")),
             &[Cell::Integer(id)],
