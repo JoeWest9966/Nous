@@ -19,7 +19,9 @@ nous-durable = { workspace = true }
 nous-wire = { workspace = true }
 nous-telemetry = { workspace = true }
 axum = { workspace = true }
+async-trait = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 # SSE 的流：`futures::stream::unfold` 把 mpsc 的接收端包成 `Stream`。axum 的
 # `Sse` 认的是 `futures_core::Stream`，不为这一件事自己手写 `poll_next`。

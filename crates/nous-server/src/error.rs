@@ -14,6 +14,9 @@ use serde_json::json;
 pub enum ServerError {
     BadRequest(String),
     NotFound(String),
+    /// 状态冲突：会话已关闭、正在跑、没有可中止的任务。**不许降级成 400** ——
+    /// 400 是「参数这么写不行」，409 是「现在不行」。
+    Conflict(String),
     Internal(String),
 }
 
@@ -22,6 +25,7 @@ impl ServerError {
         match self {
             ServerError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ServerError::NotFound(_) => StatusCode::NOT_FOUND,
+            ServerError::Conflict(_) => StatusCode::CONFLICT,
             ServerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -30,6 +34,7 @@ impl ServerError {
         match self {
             ServerError::BadRequest(message)
             | ServerError::NotFound(message)
+            | ServerError::Conflict(message)
             | ServerError::Internal(message) => message,
         }
     }

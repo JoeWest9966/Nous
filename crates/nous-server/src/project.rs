@@ -90,21 +90,41 @@ fn document_events(document: &DocumentCommitChange) -> Result<Vec<RemoteEvent>> 
     Ok(events)
 }
 
-/// `Entry` 是「定稿」：assistant 收尾气泡，其余是「别的标签页追加的 entry」。
+/// `Entry` 是「定稿」：assistant 收尾气泡；user 先开一条 `message_start` 再报
+/// `entry_appended`；其余只报 `entry_appended`。
+///
+/// 为什么 user 要两条：`wire.md` 明说 `message_start` **user / system 也会发**，而
+/// `POST /messages` 之后客户端要靠第一条 `message_start` 开气泡（issue #22 的判据）。
+/// 同一个 entry 再发 `entry_appended` 是给**别的标签页**的（它们没有本次提交的上下文），
+/// 客户端按 `id` 去重。顺序必须是 start 在前 —— 反过来就等于没开气泡先收到内容。
 fn entry_events(entry: &EntryRecord) -> Vec<RemoteEvent> {
     let value = match serde_json::to_value(entry) {
         Ok(value) => value,
         // 记录刚从库里读出来，序列化不该失败；真失败时宁可不发，也不发一个空 entry。
         Err(_) => return Vec::new(),
     };
-    if entry.kind == "pi.assistant" {
-        vec![RemoteEvent::MessageEnd {
+    match entry.kind.as_str() {
+        "pi.assistant" => vec![RemoteEvent::MessageEnd {
             entry: Some(value),
             message: None,
             message_id: None,
-        }]
-    } else {
-        vec![RemoteEvent::EntryAppended { entry: value }]
+        }],
+        "pi.user" => {
+            let message = entry
+                .model
+                .as_ref()
+                .and_then(|messages| messages.last())
+                .cloned()
+                .unwrap_or_else(|| json!({ "role": "user" }));
+            vec![
+                RemoteEvent::MessageStart {
+                    message,
+                    message_id: Some(entry.id.to_string()),
+                },
+                RemoteEvent::EntryAppended { entry: value },
+            ]
+        }
+        _ => vec![RemoteEvent::EntryAppended { entry: value }],
     }
 }
 

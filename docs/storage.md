@@ -330,6 +330,28 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 「抛错」这个通道，`panic` 会冒到 `commit()` 的调用方 —— 我们**不** `catch_unwind` 兜住：把库里的
 bug 变成「事件静默丢失」比崩掉更难查。
 
+### 10.5.1 `#22` 撑大的公开面（Rust 里 `pub` 就是契约）
+
+`#22`（端点层）需要三件 durable 里**原本没有公开**的东西。加在这里不是「顺手 export」，是
+`#13` 那张 5 方法表之外**第二张**要有人负责的表。记住这一条：`Session` 的五个方法没变，
+下面这些都是 **sibling 模块 / 自由函数**，但它们在 Rust 里同样是契约。
+
+| 新增 | 形状 | 为什么住 durable 而不是 `nous-server` | `#22` 之后谁来用 |
+|---|---|---|---|
+| `session::commands::{submit_message, abort, fork}` | `async fn(&Session, …) -> Result<…, CommandError>`；配套 `SubmitRequest` / `SubmitOutcome` / `AbortOutcome` / `ForkRequest` / `ForkOutcome` | 三条命令都要「铸 id + 一次提交 + 把 publication 交给观察者」。id 分配器与提交锁在 `Session` 里（`Storage::mint_id` 不落盘，必须和下一次提交在同一个事务里推进）；把这三步拆到端点层等于让 `nous-server` 重做一遍提交语义 | `nous-server` 的 `POST /messages` / `abort` / `fork` 直接调；将来 harness 起生成时也走 `submit_message` 的同一份受理语义 |
+| `harness::project::{tool_changes, ToolChange}` | `fn(&CommitChange) -> Result<Vec<ToolChange>, HarnessError>`；`ToolChange::{Start, Update}` | 工具启动必须解 `ops` 才知道「谁刚开始跑」；`nous-server` 的契约面**不含 `nous-chord`**（§二），所以解码只能在 durable 这边做。从批后 `value.tools` 反推会把「每次提交都把整轮工具重发一遍」当成正确行为 | `nous-server` 的 `message_update` 旁边的 `tool_execution_start/update`（issue #22 的 ≤1 拍判据钉着） |
+| `storage::sessions::{render_entries, render_entries_page, render_live_message, ENTRIES_MAX_LIMIT, LIVE_DOCUMENT_KIND}` | 只读：entries 的 `/v1` 形状（`model` 原样透传）、一页 + 不透明游标、`pi.live.generation.message` | 这是「旧引擎文档 → `wire.md` 形状」的知识（`qrd3wh.sessions` / `pi.agent` / `pi.live` 的文档布局）。端点层不知道这些 kind，也不该知道 | `nous-server` 的 `GET /entries` 与 SSE `snapshot`；将来 12c 落自己的文档契约时替换掉 |
+| `session::publish::{Context, WatchEnd}` 重新导出 | `pub use nous_chord::{context::Context, watch::WatchEnd}` | 它们是 `CommitObserver` 签名的一部分。不 re-export，`nous-server` 为了写一个 `impl CommitObserver` 就得直接依赖 `nous-chord`，而 §二 没有那条边（`verify.sh` 4e 会红） | `nous-server` 的观察者适配层；`#19` 的订阅实现同理 |
+| `Storage::{submissions, tasks, latest_entry_id}` | 只读查询：一个会话的 submission / task 记录（按 id 升序）、最后一条 entry id | `requestId` 幂等要按 `conversationId + requestId` 查库；abort/fork 的前置条件要读活跃任务。这些是存储语义，不是端点的 | `session::commands`；将来 `#25` 的缓存失效判定也会读同两条 |
+
+**不进这张表的东西**：`Session` 的 5 个方法一个没加（`tests/session.rs` 扫源码钉着）；
+`commands` 是子模块，所以扫描器看不到它 —— 这不是绕过判据，判据的意图是「不许悄悄给 `Session`
+加方法」，而这三条命令本来就不该是 `Session` 的方法：它们要**先读后写**（幂等查找、活跃任务
+检查），而 `Session::commit` 只收一批已经定好的写。
+
+**代价**：公开面多一行就多一条兼容义务。`#22` 之后要改 `CommandError` 的四个分类、或去掉
+`ToolChange` 的某个变体，都得先看 `nous-server` 的路由映射与 `tests/{commands,harness_projection}.rs`。
+
 ## 12. 与上游的故意差别
 
 这四条是**我们和上游不一样的地方**，不是还没做完的地方。写在这里的唯一理由：以后最容易撞车的就是它们，

@@ -147,6 +147,43 @@ pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
 ///
 /// 没有分页：`#22` 的 snapshot 要整份历史；`?limit=` 的游标留给 `/v1/entries` 那张票。
 pub fn render_entries(store: &ImportedStore, conversation_id: i64) -> Result<Vec<Value>> {
+    Ok(entry_items(store, conversation_id)?
+        .into_iter()
+        .map(|(_, item)| item)
+        .collect())
+}
+
+/// `GET /v1/sessions/:id/entries` 的一页：`(items, next)`，新的在前。
+///
+/// `limit` 由调用方夹到 `1..=`[`ENTRIES_MAX_LIMIT`]；`cursor` 只带 `id` 与方向（不透明，
+/// 客户端原样回传）。`next` 只在后面还有东西时出现。
+pub fn render_entries_page(
+    store: &ImportedStore,
+    conversation_id: i64,
+    limit: usize,
+    cursor: Option<&crate::storage::cursor::Cursor>,
+) -> Result<(Vec<Value>, Option<crate::storage::cursor::Cursor>)> {
+    use crate::storage::cursor::{Cursor, ScanOrder};
+    let after = cursor.map(|cursor| cursor.after).unwrap_or(i64::MAX);
+    let mut items: Vec<(i64, Value)> = entry_items(store, conversation_id)?
+        .into_iter()
+        .filter(|(id, _)| *id < after)
+        .collect();
+    let next = if items.len() > limit {
+        items.truncate(limit);
+        items
+            .last()
+            .map(|(id, _)| Cursor::new(*id, ScanOrder::Descending))
+    } else {
+        None
+    };
+    Ok((items.into_iter().map(|(_, item)| item).collect(), next))
+}
+
+/// `wire.md` 的 `/v1/entries` 单条上限。超了**截断不报错**。
+pub const ENTRIES_MAX_LIMIT: usize = 1000;
+
+fn entry_items(store: &ImportedStore, conversation_id: i64) -> Result<Vec<(i64, Value)>> {
     let mut items: Vec<(i64, Value)> = Vec::new();
     for row in &store.entries {
         if integer(row, "conversation_id")? != conversation_id {
@@ -171,7 +208,7 @@ pub fn render_entries(store: &ImportedStore, conversation_id: i64) -> Result<Vec
         items.push((id, Value::Object(item)));
     }
     items.sort_by(|left, right| right.0.cmp(&left.0));
-    Ok(items.into_iter().map(|(_, item)| item).collect())
+    Ok(items)
 }
 
 /// `snapshot.generation.message`：会话里正在生成的那条消息（没有就是 `None`）。

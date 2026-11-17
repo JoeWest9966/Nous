@@ -27,6 +27,7 @@
 //! `#19`。本模块只交发布侧的**回调契约**（[`CommitObserver`]），挂在构造器入参上 ——
 //! 谁要观察提交，自己造 [`ObserverRegistry`] 并留着那个 `Arc`。
 
+pub mod commands;
 pub mod entries;
 pub mod publish;
 

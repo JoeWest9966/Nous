@@ -1285,11 +1285,13 @@ dependencies = [
 name = "nous-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum",
  "futures",
  "nous-durable",
  "nous-telemetry",
  "nous-wire",
+ "serde",
  "serde_json",
  "tokio",
  "tower",

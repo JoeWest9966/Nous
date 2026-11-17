@@ -9,29 +9,64 @@ use std::sync::Arc;
 use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCommitChange};
 use nous_wire::RemoteEvent;
 
+use crate::commands::{CommandSource, DurableCommands, ReadOnlyCommands};
 use crate::error::Result;
 use crate::hub::Hub;
+use crate::observer::SessionObserver;
 use crate::project;
-use crate::source::SessionSource;
+use crate::source::{ImportedSource, SessionSource};
 
 /// 路由共享的状态。
 pub struct AppState {
     source: Arc<dyn SessionSource>,
+    commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
 }
 
 impl AppState {
-    pub fn new(source: Arc<dyn SessionSource>, hub: Arc<Hub>) -> Arc<Self> {
-        Arc::new(Self { source, hub })
+    pub fn new(
+        source: Arc<dyn SessionSource>,
+        commands: Arc<dyn CommandSource>,
+        hub: Arc<Hub>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            source,
+            commands,
+            hub,
+        })
     }
 
-    /// 用默认 `Hub` 装配。
+    /// 只读装配：读端点可用，写端点一律 409（不假装能写）。
+    pub fn read_only(source: Arc<dyn SessionSource>) -> Arc<Self> {
+        Self::new(source, Arc::new(ReadOnlyCommands), Hub::new())
+    }
+
+    /// 读 + 写都接在**同一份库**上。写走 `Session`，`CommitObserver` 挂到同一个 hub ——
+    /// 提交落库后帧立刻进 SSE，端点不用自己补发。
+    pub fn durable(path: impl AsRef<std::path::Path>) -> Result<Arc<Self>> {
+        let path = path.as_ref();
+        let source = ImportedSource::open(path)?;
+        let commands = DurableCommands::open(path)?;
+        let state = Arc::new(Self {
+            source,
+            commands: commands.clone(),
+            hub: Hub::new(),
+        });
+        commands.attach(SessionObserver::new(state.clone()));
+        Ok(state)
+    }
+
+    /// 用默认 `Hub` 的只读装配（判据里读快照/SSE 用）。
     pub fn with_source(source: Arc<dyn SessionSource>) -> Arc<Self> {
-        Self::new(source, Hub::new())
+        Self::read_only(source)
     }
 
     pub fn source(&self) -> &Arc<dyn SessionSource> {
         &self.source
+    }
+
+    pub fn commands(&self) -> &Arc<dyn CommandSource> {
+        &self.commands
     }
 
     pub fn hub(&self) -> &Arc<Hub> {

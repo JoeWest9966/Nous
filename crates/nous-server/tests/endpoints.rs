@@ -208,3 +208,145 @@ async fn a_published_event_reaches_the_open_stream_in_order() {
     assert_eq!(frame["changes"][0]["type"], json!("text_delta"));
     assert_eq!(frame["changes"][0]["delta"], json!("hi"));
 }
+
+#[tokio::test]
+async fn entries_are_newest_first_and_follow_an_opaque_cursor() {
+    use std::collections::HashMap;
+
+    let mut entries = HashMap::new();
+    entries.insert(
+        1,
+        vec![
+            json!({"id": 11, "kind": "pi.assistant", "text": "c", "parent": null}),
+            json!({"id": 10, "kind": "pi.user", "text": "b", "parent": null}),
+            json!({"id": 9, "kind": "pi.user", "text": "a", "parent": null}),
+        ],
+    );
+    let source = Arc::new(FakeSource {
+        sessions: vec![common::item(1, "first")],
+        entries,
+        live: Default::default(),
+    });
+    let app = router(AppState::with_source(source));
+
+    let page = |uri: &str| {
+        let app = app.clone();
+        let uri = uri.to_string();
+        async move {
+            let response = app
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice::<Value>(&bytes).unwrap()
+        }
+    };
+
+    let first = page("/v1/sessions/1/entries?limit=2").await;
+    assert_eq!(first["items"][0]["id"], json!(11));
+    assert_eq!(first["items"][1]["id"], json!(10));
+    let next = first["next"].as_str().expect("还有下一页").to_string();
+    // 不透明：只许原样回传，不许是明文 `after=10` 或裸 id。
+    assert!(!next.contains('='), "游标里不该有键值对，实测 {next}");
+    assert_ne!(next, "10", "游标不是裸 id");
+
+    let second = page(&format!("/v1/sessions/1/entries?limit=2&cursor={next}")).await;
+    assert_eq!(second["items"].as_array().unwrap().len(), 1);
+    assert_eq!(second["items"][0]["id"], json!(9));
+    assert_eq!(second["next"], Value::Null, "最后一页 next 是 null");
+}
+
+#[tokio::test]
+async fn entries_are_capped_at_a_thousand_without_an_error() {
+    use std::collections::HashMap;
+
+    let items: Vec<Value> = (1..=1_200)
+        .rev()
+        .map(|id| json!({"id": id, "kind": "pi.user", "text": "", "parent": null}))
+        .collect();
+    let mut entries = HashMap::new();
+    entries.insert(1, items);
+    let source = Arc::new(FakeSource {
+        sessions: vec![common::item(1, "first")],
+        entries,
+        live: Default::default(),
+    });
+    let app = router(AppState::with_source(source));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/sessions/1/entries?limit=5000")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "超上限是截断，不是报错");
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["items"].as_array().unwrap().len(), 1_000);
+}
+
+#[tokio::test]
+async fn a_broken_cursor_or_limit_is_400_not_500() {
+    let app = router(AppState::with_source(FakeSource::two_sessions()));
+    for uri in [
+        "/v1/sessions/1/entries?cursor=not-a-cursor",
+        "/v1/sessions/1/entries?cursor=a10",
+        "/v1/sessions/1/entries?limit=0",
+        "/v1/sessions/1/entries?limit=many",
+        "/v1/sessions/not-a-number/entries",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(body["error"].is_string(), "{uri} 的错误形状");
+    }
+}
+
+/// 内部错误也是 `{ error: string }` + 500，不是纯文本、不是 200 里带 error。
+struct BrokenSource;
+
+impl nous_server::SessionSource for BrokenSource {
+    fn sessions(&self) -> nous_server::Result<Vec<nous_durable::storage::sessions::SessionItem>> {
+        Err(nous_server::ServerError::Internal("boom".to_string()))
+    }
+    fn entries(&self, _: i64) -> nous_server::Result<Vec<Value>> {
+        Err(nous_server::ServerError::Internal("boom".to_string()))
+    }
+    fn live_message(&self, _: i64) -> nous_server::Result<Option<Value>> {
+        Err(nous_server::ServerError::Internal("boom".to_string()))
+    }
+}
+
+#[tokio::test]
+async fn internal_errors_are_500_with_the_error_shape() {
+    let app = router(AppState::with_source(Arc::new(BrokenSource)));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/sessions")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["error"], json!("boom"));
+}
