@@ -31,6 +31,7 @@ pub(crate) mod strict_schema;
 pub mod tool;
 pub mod transform;
 pub mod types;
+pub mod utils;
 
 // Flat re-exports — consumers do `use nous_ai::Message` not `nous_ai::types::Message`.
 pub use error::AiError;
