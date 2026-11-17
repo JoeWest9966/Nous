@@ -1,7 +1,7 @@
 # 模型管家：看 provider、填密钥、刷模型
 
-`templates/models/` —— 拷进一个块就是一个「模型配置台」。活样本在 `new1 / k5411g`：
-**http://100.106.43.81:4790/p/new1/k5411g/**
+`templates/models/` —— 拷进一个块就是一个「模型配置台」。
+当年那个活样本（`new1 / k5411g`）已随块清算删掉（票 #16），模板本身还在。
 
 管的是 pi 那份 **`~/.pi/agent/models.json`**（`PI_MODELS` 可以指到别处）：
 

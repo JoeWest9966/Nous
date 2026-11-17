@@ -73,7 +73,7 @@
 <div id="stage"><div id="canvas"></div></div>
 
 <script type="module">
-// 块之间只走 HTTP，地址只从宿主的 ctx 来 —— 这里一个 `/p/...` 都不拼。
+// 块之间只走 HTTP，地址只从宿主的 `__nous/resolve` 来 —— 这里一个 `/p/...` 都不拼。
 const self = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
 const $ = (id) => document.getElementById(id);
 const get = (url) => fetch(url).then(async (r) => {
@@ -91,15 +91,12 @@ const post = (url, body) => fetch(url, {
 
 let tag = null;
 try {
-  const ctx = await get(self + "__nous/ctx");
-  tag = ctx.blocks.find((b) => b.id === "qrd3wh")
-     ?? ctx.blocks.find((b) => b.name === "session" && b.kind === "group")
-     ?? null;
-  if (!tag) throw new Error("这一盘里没有 qrd3wh，鱼骨不知道挂谁的会话");
+  // 地址只有一个来源：宿主的 `__nous/resolve/<id>`。这里一个 `/p/...` 都不拼。
+  tag = await get(self + "__nous/resolve/qrd3wh");
   $("open").href = tag.url;
   $("open").hidden = false;
   // 同一份会话的另一种摆法（pxbgng 那棵树）：它在就挂个入口，不在就当没这回事。
-  const list = ctx.blocks.find((b) => b.id === "pxbgng");
+  const list = await get(self + "__nous/resolve/pxbgng").catch(() => null);
   if (list) {
     $("list").href = list.url;
     $("list").hidden = false;

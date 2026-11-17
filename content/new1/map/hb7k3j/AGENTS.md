@@ -196,6 +196,7 @@ fork 和 new sessions 都是「开启一个新对话」。区别只在入口：
 
 ## 块间规则
 
-- 地址只从 `__nous/ctx` 拿（先按 id `qrd3wh`，认不出按组名 `session` 找）。
+- 地址只从 `__nous/resolve/<id>` 拿（`qrd3wh`、`68kazk`、`6ysg01`、`vbe4pt` 各问一次；
+  认不出就少一个入口，不拼路径、也不按名字猜）。
 - 只走 HTTP，不 import 别的块、不读别的块文件夹。
 - 链接写相对路径，页面才能 `cp -r` 走了照样跑。

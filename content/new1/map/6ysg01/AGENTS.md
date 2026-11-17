@@ -6,8 +6,8 @@
 
 ## 为什么只剩发静态文件
 
-数据不走这个进程。页面自己去问 `qrd3wh` 的 `GET /v1/prompts`，地址从宿主的 `__nous/ctx`
-里找 —— **这一块里不拼任何绝对路径，也不跑 git**。所以 `server.js` 只做一件事：把
+数据不走这个进程。页面自己去问 `qrd3wh` 的 `GET /v1/prompts`，地址从宿主的 `__nous/resolve/qrd3wh`
+里取 —— **这一块里不拼任何绝对路径，也不跑 git**。所以 `server.js` 只做一件事：把
 `public/` 发出去（剥 `NOUS_SELF`、目录穿越 403、目录 → `index.html`、`cache-control: no-store`）。
 
 | 谁 | 干什么 |

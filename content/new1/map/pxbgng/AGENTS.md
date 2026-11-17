@@ -8,7 +8,7 @@
 
 | 用途 | 请求 |
 |---|---|
-| 地址 | 宿主的 `__nous/ctx` → `blocks[].url`（页面上一个 `/p/...` 都没拼） |
+| 地址 | 宿主的 `__nous/resolve/qrd3wh` → `{url}`（页面上一个 `/p/...` 都没拼） |
 | 列表 | `GET  <qrd3wh>/v1/sessions` |
 | 现在是谁 | `GET  <qrd3wh>/v1/selection` → `{ id, at }` |
 | 换人 | `POST <qrd3wh>/v1/selection { id }` |
