@@ -16,6 +16,9 @@ nous-chord = { workspace = true }
 # `harness`（#14）用它的 `AssistantMessageEvent` / `utils::streaming_json`。
 # 契约面允许这一条（`AGENTS.md` §二：`nous-durable → chord, ai, wire, telemetry, env`）。
 nous-ai = { workspace = true }
+# `harness::project` 的产出类型是 `nous_wire::MessageChange`（`wire.md` 的 Rust 投影）。
+# 契约面里有这一条；事件只在这一层"成形"，传输仍然在 `nous-server`（#22）。
+nous-wire = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

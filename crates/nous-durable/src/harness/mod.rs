@@ -8,6 +8,7 @@ pub mod generation;
 pub mod json;
 pub mod live;
 pub mod partial;
+pub mod project;
 
 use nous_ai::utils::streaming_json::PathSegment;
 use nous_chord::delta::{Path, Seg};

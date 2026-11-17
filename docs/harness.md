@@ -219,39 +219,70 @@ DocumentCommitChange::{ Change{record, conversation_id, version, value, ops}, Re
 只有 `pi.live.generation.message` 那一路发。反过来，`#22` 也不能根据 `changes.is_empty()` 判断
 「安静」—— `Entry` 变化照样要发 `message_end` / `entry_appended`。
 
-### 2.2 op → `MessageChange`（`DocumentCommitChange::Change.ops` 是 `nous_chord::delta::Op`）
+### 2.2 op → `MessageChange`（实现在 `crates/nous-durable/src/harness/project.rs`）
+
+`ops` 是**这次提交**的那批 `nous_chord::delta::Op`，`value` 是**批后**的完整文档值。表里的路径
+都省略了 `generation.message` 前缀（`P = ["generation","message"]`）。
 
 | op（`Op` 变体 + 路径） | 产出 | 规则/理由 |
 |---|---|---|
-| `Append(path, text)`，`path == ["content", i, "text"]` | `TextDelta { content_index: i, delta: text }` | 节流提交的主力：`PartialChanges::take` 的 `AssignPlan::Append` 就落在这一条 |
-| `Append`，`path == ["content", i, "thinking"]` | `ThinkingDelta { content_index: i, delta: text }` | 思考不是正文，客户端不要塞气泡（`wire.md:112`） |
-| `Append`，`path == ["content", i, "arguments", ..rest]` | `ToolcallDelta { content_index: i, path: rest 拼成 "arguments.…", delta: text }` | `path` 是 JSON 指针式子路径、`delta` 是追加文本 —— **只有 `a` 能这样表达** |
-| `Set(["content", i], block)`，`i == 已发生过的 content 长度`（**新块**） | `TextStart` / `ThinkingStart` / `ToolcallStart`，`block` 取 `value.content[i]` | 按 `block.type` 选变体。`*_start` 带全文，**跳过它等于把第一段吞掉** |
-| `Set(["content", i], block)`，`i` 已存在，或 `d` / `p` / `m` / `t` 动了 `content` | `Block { content_index: i, block: value.content[i] }` | 整块替换。**保守但不会错**：客户端以它为准 |
-| `Replace(value)`，或任何触及根的 op | `Message { message: value }` | 整条替换 |
-| `Set` / `Splice` / `Move` / `Truncate` / `Remove` 落在 `generation.message` **之外**（`run.*`、`tools.*`） | 0 | 见 §2.1 第二行 |
+| `Append`，`[P, "content", i, "text"]` | `TextDelta { content_index: i, delta }` | 节流提交的主力：`PartialChanges::take` 的 `AssignPlan::Append` 就落在这一条 |
+| `Append`，`[P, "content", i, "thinking"]` | `ThinkingDelta { content_index: i, delta }` | 思考不是正文，客户端不要塞气泡（`wire.md:112`） |
+| `Append`，`[P, "content", i, "arguments", …]` | `ToolcallDelta { content_index: i, path: "arguments.…", delta }` | 增量**只**来自 `StreamingJsonParser`（`harness/partial.rs::apply_change` 落到 `arguments` 上的 `a`）。**不许自己切字符串**：切出来的每一帧都合法，拼起来不是合法 JSON |
+| `Set`，`[P, "content", i]`，`i == 本批第一个可能创建块的下标`（**新块**） | `TextStart` / `ThinkingStart` / `ToolcallStart`（按 `block.type`），`block` 取**该 op 的值** | `*_start` 带全文，**跳过它等于把第一段吞掉** |
+| `Set`，`[P, "content", i]`，`i` 更靠后（**已有块**） | `Block { i, 该 op 的 block }` | 整块替换，取 op 自己的值 —— 后面同一批的追加还能接上 |
+| `Splice`，`[P, "content"]`，`delete == 0` | 每个插入的块一条 `Block { start + k, items[k] }`，`content_index` 用**应用这条 op 时**的下标 | 真实流里「新块出现」就是这条形状（`assign_json` 的 `splice`）。整块替换对客户端永远成立 |
+| `Set` 落在块**内部**（`content[i].text` / `content[i].arguments.x`）、`Append` 落在块内部但字段认不出、`Splice` 在块内部 | `Block { i, **批后**块 }`，然后**停下** | 表达不了单字段更新；整块永远对。停下见下面第 ① 条 |
+| `Set` / `Remove` 落在 `[P]` 之上（`["generation"]`、`[P]` 本身）、或 `Replace(v)` | `Message { message: 批后的消息 }`，然后**停下** | 整条替换，「以 `message` 为准」 |
+| `Remove` 落在 `[P]` 之上、或 `Set(…, null)` | **0 帧**，然后停下 | `wire.md` 没有「消息消失」帧；硬发一条空 `message` 会让气泡凭空清空。终态靠 `message_end` 收场 |
+| `Set`，`[P, "content", i]`，`i > 下标`（中间缺块） | `Message`，然后停下 | 客户端没有 `下标..i` 这些块，只给它一个会静默丢字 |
+| `Remove` / `Move` / `Truncate` 在块或 `["content"]` 上（删块、置换、截断整段） | `Message`，然后停下 | `MessageChange` 里没有「删掉第 i 个」 |
+| 路径在 `generation.message` **之外**（`run.*` / `tools.*` / `compactions.*` / `generation.attempt`） | 0 | 见 §2.1 第二行 |
 | `AssignPlan::Keep`（上游「arguments 由 changes 写，不整块重写」） | 0 | 它的效果已经体现在同一批的 `Append` 上 |
+
+**三条配套规则**（都在代码注释里，别只写在这儿）：
+
+① **`Message` / `Block(批后)` 之后要停下。** 这些帧带的是**批后**的值，同一批里后面的 op 已经
+算在它里面；再发那些增量，客户端会把同一段文本追加两次。停下是"不重复"的唯一做法 ——
+`Set(content[i])` 与 `Splice(content)` 那两行取的是 **op 自己的值**，所以它们可以继续（后面接
+`TextDelta` 正好接上，这正是用户点名的那条判据）。
+
+② **"新块"的下标从哪来。** 只有顶层 `Set([P,"content",i])` 与 `Splice([P,"content"], start…)`
+**可能创建**块；落在块内部的 op 说明块一定已经存在。长度取「批后长度」与「所有创建候选下标」
+里的最小值，然后按 op 顺序推进。用**批后的长度**当"应用时的长度"会漏掉新块那一帧，客户端就拿到
+一个它还没创建的块号 —— 然后静默丢字。
+
+③ **一处诚实的含糊。** 某个实现若用顶层 `s` 重写一个**已存在**的块，这里会读成新块，发
+`*_start`。两种帧都带全文，客户端重置累加器后接着收增量仍然正确；更精确的推断做不到 ——
+op 里没有 base 长度。
 
 **一条铁律**（写进代码注释，别只写在文档里）：**`Set` 永远不编码成 `*_delta`。**
 `toolcall_delta` 的语义是「追加文本」，用 `set` 去表达「设值」会让客户端拼出坏 JSON，
 而且不会报错 —— 就是那种「谁都查不出来」的降级。`set` 一律落 `Block` / `Message`。
 
-### 2.3 8 个变体的证据来源（**3 条 fixture 给不了**）
+### 2.3 判据：5 条真数据 + 3 条构造 + 2 条（`tests/harness_projection.rs`，10 条）
 
 fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True)`）：
 
 - `document_revisions` **969 行，全部 `kind = 'base'`，`0` 条 delta** —— 真库里没有一个 delta op 可读。
 - `entries.record.model[0].content` 的块类型：`text` 88、`thinking` 76、`toolCall` 36。
 
-| 变体 | 证据档 | 怎么验 |
+| 判据 | 证据档 | 钉住什么 |
 |---|---|---|
-| `TextStart` / `ThinkingStart` / `ToolcallStart` | **真数据** | 从 fixture 取真 assistant 消息，喂「一次提交写下 `/content` 该值」的 op，按真实 `block.type` 产出 start |
-| `Block` | **真数据** | 同一批数据，第二次覆盖已存在的 index |
-| `Message` | **真数据** | 同一批数据 + 根替换 `Replace(value)` |
-| `TextDelta` / `ThinkingDelta` / `ToolcallDelta` | **构造**（标注为构造） | 输入 op 必须来自 `PartialChanges::take` 的真实产出，不是手写 op —— 这样至少「谁产出 `Append`」有真代码在验 |
+| `the_three_start_variants_come_from_the_real_blocks_of_fixture_messages` | **真数据**（遍历全部 assistant 消息） | 三种 `*_start` 按真块类型选，一帧不少；顺带证明三种块在 fixture 里都真出现过 |
+| `an_existing_block_is_replaced_whole_when_one_of_its_fields_is_set` | **真数据** | 块内 `s` → 整块 `Block`（真形状是 provider 换掉整段文本） |
+| `a_root_replace_yields_one_message_frame_with_the_real_message` | **真数据** | `r` → 一条 `Message`，且 `r` 之后的 op 不再发 |
+| `a_real_text_append_becomes_one_text_delta` | **真数据** | 真中文文本按字符边界追加 → 一条 `TextDelta` |
+| `a_terminal_commit_that_removes_the_generation_produces_no_frames` | **真数据** | 终态删 `generation` → 0 帧 |
+| `_constructed_a_thinking_append_becomes_one_thinking_delta` | 构造 | `thinking` 字段的追加 |
+| `_constructed_toolcall_deltas_are_the_parser_increments_not_sliced_text` | 构造（走 `PartialChanges` + `Draft` 真路径） | 增量**逐条等于** `StreamingJsonParser` 的 `Append`；把这些帧按客户端规则应用回去正好是最终参数 |
+| `_constructed_a_splice_and_a_growing_text_in_one_batch_keep_the_apply_time_index` | 构造（op 手写，但先重放证明这批合法） | **应用时下标**：`[Block(i), TextDelta(i)]`，顺序与下标都不许错 |
+| `a_live_change_that_misses_the_message_produces_no_frames` | 负向 | 触及 `run` / `tools` / `attempt` 的提交 → 0 帧（不能"反正有 changes 就发一帧"） |
+| `the_dispatch_table_yields_no_frames_outside_a_live_document_change` | 分派表 | `Retire` / `Copy` / 非 `pi.live` → 0 帧；同一份 ops 在 `pi.live` 上会发（反证上面不是空转） |
 
-所以你要的那条「8 个变体每个至少一条 fixture 驱动测试」**做不到 8 条，只能 5 条**。剩下 3 条
-要么构造（我倾向这个，测试名带 `_constructed_`），要么承认这 3 行没人验。你说哪个。
+**四条实测可红的变异**（跑过，改回去才提交）：① `Splice` 不认 → 下标那条红；② `toolcall_delta`
+自己切字符串（取首字符）→ 增量那条红；③ 长度用**批后**值 → `*_start` 那条红；④ "只要这一批有
+op 就发一帧" → 0 帧负向红。
 
 ---
 
@@ -295,7 +326,7 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 
 ---
 
-## 5. `#14` 落地的判据名（先定名，代码跟着走）
+## 5. `#14` 的判据名（已全部落地）
 
 | 判据 | 验什么 |
 |---|---|
@@ -312,9 +343,7 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 | `an_overflow_is_never_retried` | 溢出即使 `retryable` 也不重试（上游 `!overflow` 那一项） |
 | `an_empty_partial_never_commits` | 第一条 `start` 不落空帧（上游 `partial.content.length === 0` 那条 `continue`） |
 | `an_abort_after_the_terminal_commit_writes_nothing` | abort 落在终态之后不写第二条 entry（「committed state stays consistent」） |
-| `projection_covers_every_message_change_variant` | 8 变体逐个（5 真数据 + 3 构造） |
-| `projection_emits_no_change_for_storage_only_commits` | §2.1 的 7 行「不产出」各一条 |
-| `projection_never_encodes_a_set_as_a_delta` | §2.2 那条铁律 |
+| `harness_projection.rs`（10 条，逐个见 §2.3） | 8 变体逐个；「`Set` 不编码成 `*_delta`」不单开一条，而是**每条**判据都在验它（`Block` / `Message` / `*_start` 三种落法各出现多次）；0 帧负向与分派表各一条 |
 | `harness_stream_commits_partials_at_most_every_interval` | 节流 + 单飞 + `finally` 等飞完（时间线见证，不用 `sleep` 猜）+ **「终态之后没有 partial」**（出现「先终态、后 partial」即红）+ **次数等号**：`== 3`，且三次时刻逐个等于 110 / 210 / 310 ms —— 于是「在 finally 里补一帧」是 4，红。不判「尾帧必交」：上游 `finally` 故意不提交 pending（§1 ③ 附 (2)）；不补是行为，「补了会红」是成本面，两条别混 |
 
 ---
