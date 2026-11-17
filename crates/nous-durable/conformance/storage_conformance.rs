@@ -8,6 +8,34 @@
 //! - 减法都要有理由：砍掉的案进票 #21，不无声消失。
 //!
 //! 上游 32 个 `createCase(`，这里 20 个；`FLOOR.tsv` 记的正是这个数字。
+//!
+//! ## 八个上游文件，为什么这里只有一份规范
+//!
+//! 上游 `packages/durable/src/testing/` 八个文件里**只有两个是规范**：`storage-conformance.ts`
+//! （2,099 行 / 32 个 `createCase(`）与 `env-conformance.ts`（633 行 / 20 个）。其余六个的
+//! `createCase(` 调用点是 0（benchmark / 断言 / 注册器 / 类型 / 出口 / 提交辅助），不设下限，
+//! 也不为凑文件数造空文件。
+//!
+//! 于是 32 案 = **20 已落** + **9 等真后端**（`scan_tasks` / `scan_submissions` / `scan_documents` /
+//! `close()`，票 #21）+ **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与 `docs/not-ported.md`）。
+//! `env_conformance.rs` **不做**：本库 `nous-env` 只有 trait、没有一个实现，而 conformance 测的是
+//! **真后端** —— 造个假后端让用例通过，什么也证明不了（票 #15）。逐文件的判定见 `FLOOR.tsv` 文件头。
+//!
+//! ## 这个文件不是恒绿：四条变异实测
+//!
+//! 「20 条全绿」本身不说明套件有牙齿 —— 得有人把被测实现改坏，它必须红。四条现改现跑，改的是
+//! `crates/nous-durable/src/storage/**`，跑完立刻 `git checkout` 还原（提交的 diff 里没有这些行，
+//! 一个断言都没动过；红全部来自被测实现）：
+//!
+//! | 变异（改哪一行） | 红的案 |
+//! |---|---|
+//! | `storage.rs:160` 删掉 `next_seq += 1`（每批不推进 seq） | **8 条**，含 `commits_batches_in_order_each_with_its_seq_checked_against_the_earlier_ones`、`receives_a_durable_commit_once_before_resolving_and_never_a_refused_one`、`reconstructs_rewindable_documents_and_preserves_half_open_incarnations` |
+//! | `writes.rs:301-303` 让 `IdWrittenTwice` 永不返回 | **2 条**：`receives_a_durable_commit_once_before_resolving_and_never_a_refused_one`、`stores_the_batches_before_the_first_one_refused_and_none_after_it` |
+//! | `documents.rs:427` `entry.deltas_since_base + 1` → `entry.deltas_since_base` | **2 条**：`commits_batches_in_order_each_with_its_seq_checked_against_the_earlier_ones`、`streams_long_document_tails_across_root_replacement_deltas` |
+//! | `cursor.rs:89` 让「游标方向与请求方向不一致」不再拒绝 | **1 条**：`scans_tables_in_either_id_order_and_continues_a_cursor_in_its_order` |
+//!
+//! 行号对的是 `origin/master`（`64dc4de`）上那些行。第一条有 8 条红不是「判据糊」：seq 是每批的
+//! 身份，掉了它半张套件都该红；后三条各自只红该红的那一两条，说明它们钉的是具体行为。
 
 use std::path::PathBuf;
 

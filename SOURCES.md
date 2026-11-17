@@ -120,11 +120,8 @@
 | `crates/nous-durable/src/types/draft.rs` | pi@v1.5.2 | `packages/durable/src/types.ts` | 已改（只摘三样）：`EntryDraft`（`head` 允许字面量 `"self"`）、`SubmissionCreate`（= 记录去掉 id，复用同一份矩阵校验）、`SubmissionSettlement`。同上的取舍清单 | 已改 |
 | `crates/nous-durable/src/types/records.rs`（`ContextEdit` 手写 `Deserialize`） | pi@v1.5.2 | `packages/durable/src/types.ts` | 已改：上游靠 `messages?: never` 表达的两条约束，serde 的内部标签枚举不认 `deny_unknown_fields`，所以手写反序列化，`omit` 带 `messages` / `replace` 不带都直接报错 | 已改 |
 | `crates/nous-durable/tests/records_domains.rs` | pi@v1.5.2 | `packages/durable/src/types.ts` | 自写判据：取值域逐格验（合法值往返 + 非法组合明确报错），格子取自上游类型定义，不是自创 | 已改 |
-| `crates/nous-durable/conformance/storage_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-conformance.ts` | 已改：上游 32 个 `createCase(` 里**抄了 20 个**，案名逐字照抄（`FLOOR.tsv` 记 20，可复算）；剩下 12 个的判定与理由在票 #21，票 #12 有一张 32 行的对照表。改写方式：`createCase` 函数 → 一条 `#[test]`，`storage` 夹具 → 临时文件真后端，`receive` 回执 → 闭包 | 已改 |
+| `crates/nous-durable/conformance/storage_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-conformance.ts` | 已改：上游 32 个 `createCase(` 里**抄了 20 个**，案名逐字照抄（`FLOOR.tsv` 记 20，可复算）；剩下 12 个的判定与理由在票 #21，票 #12 有一张 32 行的对照表。改写方式：`createCase` 函数 → 一条 `#[test]`，`storage` 夹具 → 临时文件真后端，`receive` 回执 → 闭包。**四条变异实测记在文件头**（改坏 `storage.rs:160` / `writes.rs:301-303` / `documents.rs:427` / `cursor.rs:89`，分别红 8 / 2 / 2 / 1 条，改完即还原）；`FLOOR.tsv` 只留这一行，其余七个上游文件的判定写在它的文件头（两个规范文件里 `env_conformance.rs` 决定不做，理由见 `docs/not-ported.md`） | 已改 |
 | `crates/nous-fixture/src/main.rs` | 无 | 无 | **自写**：`verify.sh` 第 2/3 段的那个 bin。只干一件事 —— 读 `agent.sqlite`（只读）→ 打 `/v1/sessions` 形状的 JSON → exit 0；没有子命令、没有 flag、不写库（票 #16） | 自写 |
-| `crates/nous-durable/conformance/env_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/env-conformance.ts` | 改写成 Rust：**≥ 10 个 `#[test]`**（上游 633 行 / **20 个 `createCase(`**，取一半；同上命令可复算）。案名照抄（票 #15） | 待提货 |
-| `crates/nous-durable/conformance/storage_benchmark.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-benchmark.ts` | 改写成 Rust：**benchmark 不是规范**，`createCase` 调用点 0，不参与 `FLOOR.tsv` 的用例数下限；只用来定本库的性能基线（票 #15） | 待提货 |
-| `crates/nous-durable/conformance/{assertions,runner,types,mod,commit_writes}.rs` | pi@v1.5.2 | `packages/durable/src/testing/{assertions,runner,types,index,commit-writes}.ts` | **自写**薄门面：用例注册器 + 断言门面 + 用例类型 + 出口 + 提交写入辅助。上游这五个共 169 行，它们是**工具**，`createCase` 调用点 0 —— 不为凑数逐行翻译，只作形状参考 | 自写 |
 
 ## 四、只用不改
 
