@@ -6,3 +6,6 @@ fixtures/*.sqlite
 fixtures/*.sqlite-wal
 fixtures/*.sqlite-shm
 data/
+
+# vendor 里那个自带 Cargo.toml 的 daemon 单编会生成 target/
+vendor/**/target/
