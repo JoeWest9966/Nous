@@ -1,10 +1,28 @@
 # conformance 用例数下限（骗不了人的那一半：套件可以被写瘦，数字不能）。
 #
-# 复算命令（本表每行的 min 必须从这里能算出来）：
-#   grep -cE '^[[:space:]]*#\[(tokio::)?test' crates/nous-durable/conformance/storage_conformance.rs
+# 复算命令（本表每一行都必须能这样算出来，`min` 只能从「现在真跑通的条数」往下定）：
+#   while IFS=$'\t' read -r f m; do case "$f" in ''|'#'*) continue;; esac;
+#     echo -e "$f\t$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "crates/nous-durable/conformance/$f")"; done \
+#     < crates/nous-durable/conformance/FLOOR.tsv
 #
-# 上游出处：packages/durable/src/testing/storage-conformance.ts，32 个 createCase( 里的 20 个。
-# 剩余 12 个的判定与理由见票 #21（以及 #12 的那张表）。
+# 上游八个文件，逐个的判定（只有两个是规范，其余六个 createCase( 调用点是 0）：
+#
+#   上游文件                    行数   createCase(   本库文件                            下限   判定
+#   storage-conformance.ts      2099   32            conformance/storage_conformance.rs   20    就是这一行
+#   env-conformance.ts           633   20            无                                   —     不做（#15）
+#   storage-benchmark.ts         500    0            无                                   —     不提货（#15）
+#   commit-writes.ts              18    0            无                                   —     不设下限（工具，#15）
+#   assertions.ts                 39    0            无                                   —     不设下限（工具，#15）
+#   types.ts                      46    0            无                                   —     不设下限（工具，#15）
+#   runner.ts                     38    0            无                                   —     不设下限（注册器，#15）
+#   index.ts                      28    0            无                                   —     不设下限（出口，#15）
+#
+# 32 = 20 已落 + 9 等真后端（scan_tasks / scan_submissions / scan_documents / close()，#21）
+#      + 3 不做（#21，理由见 docs/not-ported.md）
+#
+# 为什么 env 那行没有机器判据：`nous-env` 只有 trait，一个实现都没有；conformance 测的是真后端，
+# 没有后端能测的只有假后端，而假后端通过什么也证明不了。给它写一行 `0` 反而更糟 —— 0 ≥ 0 是绿的，
+# 于是「没做」看起来像「做完了」。理由写在这里，等真后端（#20 / 本地的 FileSystem+Shell 实现）落地。
 #
 # file	min
 storage_conformance.rs	20

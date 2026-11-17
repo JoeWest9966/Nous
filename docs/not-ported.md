@@ -17,6 +17,10 @@
 
 四列：上游路径 / 来源 / 理由 + 决定票号 / 日期。
 
+下面几行有**两种粒度**，理由列自己写清是哪种：`案 …` 是某个上游文件里的一条用例（文件本身仍在提货，
+只是那一条不抄），其余是整个文件不提货。行首路径重复出现是故意的 —— 判据按「一行的上游路径能不能
+在 pin 的 tag 上 `git cat-file -e` 对上」验，重复的路径照样要真存在。
+
 | 上游路径 | 来源 | 理由（决定票号） | 日期 |
 |---|---|---|---|
 | `packages/chord/src/sqlite/cloudflare.ts` | pi@v1.5.2 | Cloudflare Durable Objects 的 SQLite 适配器（192 行）；本库单进程，走 `local.rs`（决定：#9） | 2026-11-16 |
@@ -25,3 +29,9 @@
 | `packages/durable/src/storage/sqlite/cloudflare.ts` | pi@v1.5.2 | 15 行的 Durable Objects SQLite 绑定，本库走 `nous-chord::sqlite::LocalDatabase`（决定：#12） | 2026-11-16 |
 | `packages/durable/src/storage/jsonl/**` | pi@v1.5.2 | 986 行的 JSONL 后端，本库只要 SQLite 一份（决定：#12） | 2026-11-16 |
 | `crates/rpi-tools/src/env.rs` | rpi@v0.24.2 | 四样 JSONL 专用方法：`open_append_file` / `append_with_receipt` + `AppendFile` / `AppendReceipt`（可复用追加句柄 + 回执，为 rpi-durable 的 JSONL 日志服务，本库写 SQLite）；`WriterLease` / `try_acquire_writer_lease` / `verify_fence`（跨进程写者租约，单写者由 SQLite 的 `BEGIN IMMEDIATE` 保证）；`sync_file` / `sync_directory`（手写 fsync，契约面只留 TS 的 `flush_file`）；`ShellOverride`（自定义解释器，TS 用 `string[]` 表达「不经 shell 的 argv」，两套并存就是两套契约）（决定：#6） | 2026-11-16 |
+| `packages/durable/src/testing/storage-conformance.ts` | pi@v1.5.2 | **案** `detaches retained writes and every returned record`（32 案里的一条，不是整个文件 —— 其余 20 条已在 `conformance/storage_conformance.rs`）：JS 的对象别名问题，同一个对象既能被调用方改、又能被后来的提交改。Rust 里记录以 `Value` 交出、行以 `Vec<SqliteRow>` 克隆，不存在共享引用，照抄只能写成恒真断言（决定：#21） | 2026-11-17 |
+| `packages/durable/src/testing/storage-conformance.ts` | pi@v1.5.2 | **案** `detaches prototype-like JSON keys without changing object prototypes`：同上的别名问题的另一半 —— `serde_json::Value` 是树，没有原型链，`__proto__` 只是一个普通键（决定：#21） | 2026-11-17 |
+| `packages/durable/src/testing/storage-conformance.ts` | pi@v1.5.2 | **案** `reserves ID 1 for the immutable root conversation`：**本库不种根会话**。上游迁移写死一条 id = 1 的根会话，本库迁移只建表、不写记录 —— 这是故意差别，不是漏了。证据：`fixtures/agent.sqlite` 里 `select count(*) from conversations where id=1` = **0**，`min(id)` = 2（决定：#21） | 2026-11-17 |
+| `packages/durable/src/testing/env-conformance.ts` | pi@v1.5.2 | 633 行 / 20 个 `createCase(` —— **是规范，但没有可测的真后端**：本库 `nous-env` 只有 trait（`FileSystem` / `Shell` / `ExecutionEnv`），一个实现都没有，而 conformance 测的正是真后端。造个假后端让它绿，什么也证明不了，那就是「绿得浅」。等本地 `FileSystem` + `Shell` 实现落地再抄（决定：#15） | 2026-11-17 |
+| `packages/durable/src/testing/storage-benchmark.ts` | pi@v1.5.2 | 500 行 benchmark，`createCase(` 调用点 **0** —— 不是规范，与 `FLOOR.tsv` 的用例数下限无关。本库的性能基线是 `docs/bench-commit.md` 里那几条，按本库的写路径重写（1,000 次即时提交、每 100 次打一次 base、链长 200/400/800 的单次提交中位数）；照抄上游 benchmark 量的是上游实现（决定：#15） | 2026-11-17 |
+| `packages/durable/src/testing/{assertions,runner,types,index,commit-writes}.ts` | pi@v1.5.2 | 五个**工具**文件（共 169 行）：断言门面 / 用例注册器 / 用例类型 / 出口 / 提交写入辅助，`createCase(` 调用点 0。本库只有一张规范文件，夹具与断言就内联在 `conformance/storage_conformance.rs` 顶部（`backend` / `conversation` / `count` / `revision_count` / `delta` …），照抄注册器等于给不存在的东西造一层间接（决定：#15） | 2026-11-17 |
