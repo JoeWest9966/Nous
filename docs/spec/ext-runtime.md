@@ -18,7 +18,7 @@
 |---|---|---|
 | 1 | 边界与形态 | 一个扩展 = 一份清单 + 一个入口 + 一个进程；句柄 / 值 / 内容三分 |
 | 2 | 通道与调用 | 一对管道 + 长度前缀 JSON；call id 路由；一轮一次；帧里只有三样；单帧 1MB 双向 |
-| 3 | 四件能力 | section / tool / 名牌 / 句柄，每件 判据·反悔点·不许做 |
+| 3 | 四件能力 | 三个定义（同一轮 / 名牌冲突 / 内容形状）+ section / tool / 名牌 / 句柄，每件 判据·反悔点·不许做 |
 | 4 | 失败、熔断与预算 | 两条阶梯；诊断去重但计数不清零；三个预算数；两个硬顶 |
 | 5 | 热加载与生命周期 | 常驻；三个触发源一个实现；重载不动命名空间 |
 | 6 | 句柄与代读 | 装载时一次快照 + watch debounce；解析失败留旧 |
@@ -124,6 +124,70 @@ C · 重载        A→E'{kind:"hello", protocol, manifestHash}   E'→A{kind:"h
 
 ---
 
+## 3 · 四件能力
+
+**结论**：四件能力里三件是**纯函数**（section / 名牌声明 / 句柄内容的投影），一件会**产生副作用**（tool）。副作用那一件因此多两样东西：`mutations` 与取消。
+
+### 3.0 先把三个词钉死
+
+写到各自小节才发现定义不在，就晚了 —— 三个词先定，且每个都给可观测形状。
+
+| 词 | 定义 | 可观测形状（判据靠它） |
+|---|---|---|
+| **同一轮** | **同一个 `(conversationId, generation)`**。`generation` 从生成开始到终态落库为止；没有活跃生成时，"同一轮"= 同一次请求 | 两次调用之间 `generation` **没变**，且两次之间**没有新的 `pi.system` 提交**。否则"两次相等"可以靠"这两次之间什么都没发生"作弊 |
+| **名牌冲突** | 两个扩展声明同一个具名槽位（如都叫 `skill:tdd`） | **后装载的那个拒载**，并指名「`skill:tdd` 已被 X 占用」；**先装的那个照常工作**。不许静默去重、不许覆盖、不许改名、也**不许"按清单顺序优先"**（那只是把隐形规则换了个说法） |
+| **内容** | 内核按句柄的值代读后交给扩展的已解析数据，形状固定为 `{ files: [{ path, text }], truncated: bool }` | `path` 是**相对句柄值目录**的相对路径，**不许出现 `..`、不许绝对路径**；`truncated=true` 表示撞了体积上限（**上限进配置，不进清单**）。所以扩展拼不出句柄之外的任何东西 —— 这让"看不见路径"从口号变成机械可验 |
+
+- **判据**：EX-14（同一轮：`generation` 未变 + 无新 `pi.system` 提交）· EX-59（名牌冲突）· EX-60（内容路径越界）。
+- **反悔点**：① 若出现"同一 `generation` 内合法地需要两次不同结果" → 那是这个段的入参不够（补 `input`），不是放宽"同一轮"。② 若真出现"一份内容要跨句柄拼路径" → 那是内容形状不够（加字段），**不是**允许 `..`。
+- **不许做**：`E13`（名牌带默认值）。
+
+### 3.1 ① section（纯函数）
+
+本节挂 **EX-13 · EX-14 · EX-15 · EX-16**。
+
+**结论**：同输入 → 同字节输出。它每轮都跑，所以它碰盘、看时钟、发网络任何一样，都会让每轮请求追加一条 `pi.system` 增量并打掉 provider 的提示词缓存 —— 账单上看不出来，缓存命中率上看得很清楚。
+
+- **判据**：EX-13（两次逐字节相等）· EX-14（同一轮内 `generation` 未变、无新提交）· EX-15（**打乱应答顺序**，输出不变）· EX-16（**`tag` 故意写错**，输出不变 —— 顺序与 `tag` 只认清单）。
+- **失败时的形状**是第 4 章的事（崩 → 保留 `shown` → 3 次进熔断），这里只钉"它本身必须是纯的"。
+- **反悔点**：若"两次逐字节相等"在真机上不可达 → 说明这个段不纯，**先修纯度，不许放宽判据**。
+- **不许做**：`E5`（后台长驻定时器）、`E10`（fail-closed 段 —— 需要"崩了就立刻不能出现"的段一律进内核层，扩筭的段永远 fail-open）。
+
+### 3.2 ② tool（唯一有副作用的一件）
+
+本节挂 **EX-17 · EX-18 · EX-19 · EX-20 · EX-21 · EX-22**。
+
+**结论**：接入第二个工具时**内核零改动**。工具会写东西，所以它比 section 多三样：流式（`seq`）、取消（`final.cancelled`）、申请写（`mutations`）。
+
+- **判据**：EX-17（`seq` 单调、无缺号）· EX-18（取消 → 终帧 `cancelled:true`）· EX-19（**取消之后只许发 `final`**，晚期 `output` 被拒且不落库）· EX-20（`result` 与 `mutations` **同一次提交**）· EX-21（同一组 mutation 重放只落一次）· EX-22（被拒的 mutation = 一条 error result 回给模型）。
+- **`final` 二选一**：`result` 或 `cancelled:true`。**两者都没有 = 崩溃**（按 `extension_crash`）。
+- **反悔点**：接入第二个工具要改内核 → 接缝形状错，**本章重开**（附录 A · Q10）。
+- **不许做**：`E11`（申请第四种写形状 —— 只能追加 entry 或写文档，终态不在申请范围内）、`E3`（直写库）。
+
+### 3.3 ③ 名牌（具名槽位）
+
+本节挂 **EX-23 · EX-24 · EX-25 · EX-59**。
+
+**结论**：名牌由**扩展在应答里自报**（`{kind:"nameplates", names:[…]}`），应用层装；因为名字是扫盘后才知道的（`skill:<名>` / `prompt:<名>`），清单里写不出来。
+
+- **判据**：EX-23（杀进程 → 名牌全消失且 `missing()` **逐个点名**）· EX-24（重启 → 恢复，会话选择**未被改**）· EX-25（差集以"清单 **+** 应答"两份为准 —— 只算应答的话，应答丢了就是崩溃路径）· EX-59（同名冲突：后装拒载并指名双方、先装的照常工作）。
+- **不自动改选**：盘上删掉一条，会话里的 `prompt:<名>` 留着静默失效，等用户自己换 —— 一次扫盘不许替人改选择。
+- **反悔点**：出现"会话选了某名牌，但该扩展从未在这台机器上装过"的合法场景 → 才允许离线声明；仍不许带默认值。
+- **不许做**：`E13`（名牌带默认值）。
+
+### 3.4 ④ 句柄（内核代读）
+
+本节挂 **EX-26 · EX-27 · EX-60**。
+
+**结论**：扩展声明句柄名，内核按值代读并交付**内容**（形状见 3.0）。扩展一个文件句柄都没有。
+
+- **判据**：EX-26（`/proc/<pid>/fd` 里没有句柄的值）· EX-27（同一目录两次交付逐字节一致）· EX-60（造一条 `../../etc/passwd` 的文件项 → **内核在代读时**就拒掉并落诊断，不是交给扩展再检查）。
+- **新鲜度**是第 6 章的事（装载时一次快照 + watch debounce），本节只钉"路径不出内核"。
+- **反悔点**：出现"几十 MB 内容、必须两个实例共享一份"（§Q22 反悔点）→ 才允许一个进程挂两个值，且要写清为什么不能装两次。
+- **不许做**：`E1`（自己 open 路径）。
+
+---
+
 ## 附录 · 索引
 
 - **A · 判据总表**（**正文的唯一判据来源**，57 条）：四列 `编号 | 判据（可跑的命令）| 票号 | 谁签字`。正文各章只写"见附录 A · EX-nn"，**改判据只改附录 A，正文不抄命令**。
@@ -151,7 +215,7 @@ C · 重载        A→E'{kind:"hello", protocol, manifestHash}   E'→A{kind:"h
 | EX-11 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh inflight-across-reload \| tee` 输出不丢、不乱序、不串 | T5 | 待人拍 |
 | EX-12 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh dump-frame-keys \| tee \| grep -E '"/\|shown\|read\|model"'` 逐行空 | T5 | 待人拍 |
 | EX-13 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh section-twice \| tee \| uniq \| wc -l` = 1（两次逐字节相等） | T5 | 待人拍 |
-| EX-14 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh pi-system-count \| tee` 两轮后条目数不变 | T5 | 待人拍 |
+| EX-14 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh pi-system-count \| tee` 两轮后条目数不变，且两次之间 `generation` 未变 | T5 | 待人拍 |
 | EX-15 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh shuffle-order \| diff - <(./scripts/judge.sh baseline) \| tee` 空 diff | T5 | 待人拍 |
 | EX-16 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh wrong-tag \| diff - <(./scripts/judge.sh baseline) \| tee` 空 diff | T5 | 待人拍 |
 | EX-17 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh tool-stream-seq \| tee` 单调递增、无缺号 | T5 | 待人拍 |
@@ -196,8 +260,10 @@ C · 重载        A→E'{kind:"hello", protocol, manifestHash}   E'→A{kind:"h
 | EX-56 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh disable-extension \| tee` 0 次调用 + 名牌全 `missing()` + 诊断写"已禁用" | T5 | 待人拍 |
 | EX-57 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; diff <(grep -oE 'judge\.sh [a-z0-9-]+' docs/spec/ext-runtime.md \| awk '{print $2}' \| sort -u) <(./scripts/judge.sh --list \| sort -u) \| tee` 空 diff（判据表引用的 case 名与 `--list` 集合相等） | T5 | 待人拍 |
 | EX-58 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh oversized-frame \| tee` 扩展被杀、归因 `extension_crash`、宿主 RSS 涨幅 < 1MB | T5 | 待人拍 |
+| EX-59 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh nameplate-conflict \| tee` 第二个拒载并点名双方，第一个照常工作 | T5 | 待人拍 |
+| EX-60 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh handle-path-escape \| tee` 内核代读时拒掉 `..`/绝对路径并落诊断 | T5 | 待人拍 |
 
-**统计**：58 条。57 条挂 T5（扩展运行时本体），1 条挂 T1（编目搬迁）。
+**统计**：60 条。59 条挂 T5（扩展运行时本体），1 条挂 T1（编目搬迁）。
 **已签 3 条**（EX-49 / EX-50 / EX-54，来自 S1/S9/S10/S11）；其余待签。**T5 未开票之前，全表 SKIP** —— 这是如实状态，不是"接近完成"。
 
 ## 附录 B · 不许做清单
