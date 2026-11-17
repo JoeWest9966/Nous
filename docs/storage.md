@@ -274,3 +274,17 @@ fixtures/agent.sqlite
 当成**判据**而不是搬运。
 
 改这条规则 = 改 `tables.rs` + 改导入器的重算，两边必须同时动，否则老库读出来会和自己的索引列打架。
+
+### 12.5 这三处是「我们比上游弱」的地方：原样存、原样取的不透明 JSON
+
+不是「以后再说」，是**当前就弱一档**，故意留在这一节里 —— 不写下来，下一个人会以为我们实现了 `TaskState`。
+
+| 字段 | 上游是什么 | 本库是什么 | 为什么暂时不追上 |
+|---|---|---|---|
+| `TaskRecord.state` | 泛型判别联合 `TaskState<S, R>`：`pending` / `running` / `waiting` / `sleeping` / `completing` / `terminal`，每种状态带自己的字段（`mem$`、`checkpoint`、`waitingFor`…） | **不透明 JSON**：写进来什么原样存，读出去原样给，不校验、不解释 | 本库没有 task runner（`tasks` 表只存记录）；搬这套判别联合等于把 task 引擎的状态机也搬进来，而引擎不在本库的四个 crate 里 |
+| `TaskRecord.memos` | `Readonly<Record<string, JsonValue>>`，first-writer-wins 的语义由上游 runner 维护 | **不透明 JSON** | 同上：语义的维护者不在本库 |
+| 记录上的 `trace?: TelemetryCarrier` | 类型来自 `pi-telemetry` 包（`SubmissionRecord`、`TaskRecord`、`TaskOptions` 都有） | **不透明 JSON**：adapter 塞进来什么就存什么 | 本库 `nous-telemetry` 是 `rpi-telemetry@v0.24.2` 的冻结版，没有同名类型；造一个形状不同的 `TelemetryCarrier` 只会让两份名字打架 |
+
+**判据**：这三处的测试只断言「写进去的 JSON 与读出来的一字不差」，**不**断言字段内部结构。
+哪天要追上（比如 #14 之后开始有 task runner），是**删掉这节**并同时改 `docs/storage.md` §11 与
+`SOURCES.md`，不是悄悄加类型。
