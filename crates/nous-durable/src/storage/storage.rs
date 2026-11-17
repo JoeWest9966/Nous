@@ -24,7 +24,10 @@ use serde_json::Value;
 
 use nous_chord::sqlite::{SqliteDatabase, SqliteExecutor, SqliteValue as Cell};
 
-use super::commit::{resolve_copies, CommitResult, CommitState, ConversationQuery, PendingWrites};
+use super::commit::{
+    resolve_copies, stored_batch, CommitResult, CommitState, ConversationQuery, PendingWrites,
+    StoredBatch,
+};
 use super::documents::{materialize, DocumentPoint, StoredDocument};
 use super::cursor::{cut_page, scan_start, Cursor, Page, ScanOrder};
 use super::sqlite::rows::{parse_json, required_i64};
@@ -97,6 +100,12 @@ impl Storage {
         Ok(id)
     }
 
+    /// 关库。**消费自己**：关掉的存储不该再被用到，所以不留一个「已关」状态让人误用。
+    pub fn close(mut self) -> Result<()> {
+        self.store.db_mut().close()?;
+        Ok(())
+    }
+
     /// 一次提交若干批，每批盖自己的 seq。第一段被拒的批到此为止，**前面通过的照常提交**。
     pub fn commit<F>(&mut self, batches: &[Vec<StorageWrite>], mut receive: F) -> Result<CommitResult>
     where
@@ -105,8 +114,8 @@ impl Storage {
         let schema = self.store.schema().clone();
         let base_next_id = self.next_id;
 
-        let (seqs, refused, candidate_next_id) = self.store.db_mut().transaction(
-            |tx| -> Result<(Vec<Seq>, Option<Refusal>, i64)> {
+        let (seqs, refused, candidate_next_id, batches) = self.store.db_mut().transaction(
+            |tx| -> Result<(Vec<Seq>, Option<Refusal>, i64, Vec<StoredBatch>)> {
                 let (stored_next_id, mut next_seq) = read_metadata(tx, &schema)?;
                 let floor = seq_floor(tx, &schema)?;
                 // 负例二：seq 绝不倒退、绝不复用。
@@ -116,6 +125,7 @@ impl Storage {
                 let mut state = CommitState::read(tx, &schema, batches)?;
                 let mut pending = PendingWrites::default();
                 let mut seqs: Vec<Seq> = Vec::new();
+                let mut stored: Vec<StoredBatch> = Vec::new();
                 let mut refused: Option<Refusal> = None;
                 let mut candidate_next_id = base_next_id.max(stored_next_id);
                 for writes in batches {
@@ -131,9 +141,9 @@ impl Storage {
                         break;
                     }
                     let mut actions = actions;
-                    // 复制要读源文档：先把前面已接受的批写下去，源才看得见（上游 `checkBatch`）。
+                    // 复制要读源文档：每批结束都会 flush，所以此刻前面几批已经在库里了（上游
+                    // `checkBatch` 的顺序：先写前面的，再解复制）。
                     if actions.values().any(|action| action.needs_copy()) {
-                        pending.flush(tx, &schema)?;
                         if let Some(refusal) = resolve_copies(tx, &schema, &mut actions)? {
                             refused = Some(refusal);
                             break;
@@ -143,14 +153,17 @@ impl Storage {
                     next_seq += 1;
                     state.apply(writes, &actions, seq)?;
                     pending.add(writes, &actions, seq, &state)?;
+                    // 先落，再从库里读回「这批之后的值」—— 见 `commit` 的模块文档。
+                    pending.flush(tx, &schema)?;
                     seqs.push(seq);
+                    stored.push(stored_batch(tx, &schema, writes, &actions, seq, &state)?);
                     candidate_next_id = candidate_next_id.max(candidate_next_id_of(writes, base_next_id)?);
                 }
                 pending.flush(tx, &schema)?;
                 if !seqs.is_empty() {
                     write_metadata(tx, &schema, candidate_next_id.max(stored_next_id), next_seq)?;
                 }
-                Ok((seqs, refused, candidate_next_id))
+                Ok((seqs, refused, candidate_next_id, stored))
             },
         )?;
 
@@ -163,6 +176,7 @@ impl Storage {
         Ok(CommitResult {
             stored: seqs.len(),
             refused,
+            batches,
         })
     }
 

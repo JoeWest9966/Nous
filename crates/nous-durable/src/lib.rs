@@ -15,7 +15,10 @@ pub mod storage;
 pub mod types;
 
 pub use error::{Result, StorageError};
-pub use storage::commit::{CommitResult, CommitState, ConversationQuery, PendingWrites};
+pub use storage::commit::{
+    CommitResult, CommitState, ConversationQuery, PendingWrites, StoredBatch, StoredChange,
+    StoredDocumentChange,
+};
 pub use storage::cursor::{Cursor, Page, ScanOrder};
 pub use storage::storage::{EntryQuery, Storage};
 pub use storage::documents::{DocumentPoint, StoredDocument};

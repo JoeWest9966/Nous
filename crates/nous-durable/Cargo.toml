@@ -13,6 +13,7 @@ readme = "README.md"
 # 12a 只用到 chord 的 sqlite / json 两层，其余等真用到再加，不预先绑。
 [dependencies]
 nous-chord = { workspace = true }
+tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

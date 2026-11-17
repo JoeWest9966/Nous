@@ -4,8 +4,13 @@
 //!
 //! 上游的注释值得抄一遍：检查要读的状态**一次读全**（[`CommitState::read`]，三条语句），之后
 //! 每一批只在内存里对着「前面几批留下的状态」检查（[`CommitState::check`]），通过的批按表攒成
-//! 净效果（[`PendingWrites`]），最后一次写出去。远端 SQLite 上每条语句一次往返，而写锁一直被
-//! 握着 —— 所以「一批一次往返」是不能接受的成本。
+//! 净效果（[`PendingWrites`]），再写出去。远端 SQLite 上每条语句一次往返，而写锁一直被握着 ——
+//! 所以「一条写一次往返」是不能接受的成本。
+//!
+//! **每批 flush 一次**（不是整个调用一次）：每批的 [`StoredBatch`] 要说出「这份文档这一批之后
+//! 的值」，而 delta 的值 = base + 到这一批为止的重放 —— 不 flush 就得在内存里再维护一份文档值，
+//! 那就是第二份真相。`Session` 的常态是一次调用一批，语句数与「整个调用 flush 一次」完全相同；
+//! 只有一次调用多批时多几条语句。
 //!
 //! ## 检查在前、写在后的原因
 //!
@@ -41,11 +46,61 @@ use super::writes::{
 };
 use crate::error::{Result, StorageError};
 
-/// 一次提交的结果。`stored` 是真正落库的批数，`refused` 是第一段被拒的原因。
+/// 一次提交的结果。`stored` 是真正落库的批数，`refused` 是第一段被拒的原因，
+/// `batches` 是**存进去的样子**（被拒的那些不在里面）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommitResult {
     pub stored: usize,
     pub refused: Option<Refusal>,
+    pub batches: Vec<StoredBatch>,
+}
+
+/// 一批落库的写，按「存进去的样子」给出。**不是** publication（那是 `session` 的类型）：
+/// 这里只有 JSON 与表名，`session` 负责翻成类型的 `CommitChange`。
+///
+/// 分开的理由：`storage` 不认识 `DocumentRecord` / `EntryRecord` 这些类型（`docs/storage.md`
+/// §12.5：记录内容对存储层是不透明 JSON）。让存储层直接产出 publication 会把「记录的语义」搬进
+/// 「记录怎么存」那一层。
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredBatch {
+    pub seq: Seq,
+    pub changes: Vec<StoredChange>,
+}
+
+/// 一条存进去的改动。顺序与这批里写的顺序一致；文档按 id 升序排在表的记录之后。
+#[derive(Debug, Clone, PartialEq)]
+pub enum StoredChange {
+    Conversation(Value),
+    Entry(Value),
+    Task(Value),
+    Submission(Value),
+    Document(StoredDocumentChange),
+}
+
+/// 文档这一批发生了什么。对应上游 `DocumentCommitChange` 的三个分支。
+#[derive(Debug, Clone, PartialEq)]
+pub enum StoredDocumentChange {
+    /// 新建或改内容。`ops` 是**这一批交上来的那批**：创建 / base 更新是空数组，delta 就是那批 op。
+    Change {
+        record: Value,
+        /// 拥有它的会话。session 作用域的文档是 `None`。
+        conversation_id: Option<Id>,
+        version: i64,
+        /// 这一批之后的值（delta 按 base + 重放算出来，不是把 ops 原样端出去）。
+        value: Value,
+        ops: Value,
+    },
+    /// 这一批把它退役了（记录里已带 `retiredAt`）。
+    Retire {
+        record: Value,
+        conversation_id: Option<Id>,
+    },
+    /// 这一批造了一份复制。`conversationId` 必填。
+    Copy {
+        record: Value,
+        conversation_id: Id,
+        source: CopySource,
+    },
 }
 
 /// 一次调用里所有批会碰到的状态，**开始前读一次**，之后每一批在内存里推进。
@@ -462,6 +517,125 @@ impl PendingWrites {
         self.cleared.clear();
         self.revisions.clear();
         Ok(())
+    }
+}
+
+/// 这一批**存进去的样子**（[`StoredBatch`]）。调用前这一批必须已经 flush：delta 的值要从库里读回来。
+///
+/// 顺序：表记录按写的顺序，文档按 id 升序（`actions` 是 `HashMap`，不排序就等于让发布顺序随机）。
+pub(crate) fn stored_batch(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    writes: &[StorageWrite],
+    actions: &HashMap<Id, DocumentAction>,
+    seq: Seq,
+    state: &CommitState,
+) -> Result<StoredBatch> {
+    let mut changes: Vec<StoredChange> = Vec::new();
+    for write in writes {
+        changes.push(match write {
+            StorageWrite::Conversation(record) => StoredChange::Conversation(record.clone()),
+            StorageWrite::Entry(record) => StoredChange::Entry(record.clone()),
+            StorageWrite::Task(record) => StoredChange::Task(record.clone()),
+            StorageWrite::Submission(record) => StoredChange::Submission(record.clone()),
+            _ => continue,
+        });
+    }
+    let mut ids: Vec<Id> = actions.keys().copied().collect();
+    ids.sort_unstable();
+    for id in ids {
+        let action = &actions[&id];
+        let record = state
+            .document(id)
+            .cloned()
+            .ok_or_else(|| StorageError::Shape(format!("document {id} has no record")))?;
+        let change = if let Some(copy) = &action.copy {
+            StoredDocumentChange::Copy {
+                conversation_id: publishing_conversation(executor, schema, &record)?
+                    .ok_or_else(|| {
+                        StorageError::Shape(format!(
+                            "document {id} copy has no owning conversation"
+                        ))
+                    })?,
+                record,
+                source: copy.clone(),
+            }
+        } else if action.retire {
+            // 退役只发退役：这一批同时改了内容也不发内容（上游 observeCommits 的同一句话）。
+            StoredDocumentChange::Retire {
+                conversation_id: publishing_conversation(executor, schema, &record)?,
+                record,
+            }
+        } else if let Some(content) = &action.content {
+            let (version, value, ops) = match content {
+                DocumentContent::Base { version, value } => {
+                    (*version, value.clone(), Value::Array(Vec::new()))
+                }
+                DocumentContent::Delta { version, ops } => {
+                    // 读 `Current` 而不是 `At(seq)`：session 作用域的文档没有历史（只留最新态），
+                    // 在 `At` 上读它会明确报 `HistoryNotRetained`。这一批已经 flush，所以 `Current`
+                    // 看到的就是「这批之后」的值。
+                    let stored = super::documents::materialize(
+                        executor,
+                        schema,
+                        id,
+                        super::documents::DocumentPoint::Current,
+                    )?
+                    .ok_or_else(|| {
+                        StorageError::Shape(format!("document {id} vanished right after commit"))
+                    })?;
+                    (*version, stored.value, ops.clone())
+                }
+            };
+            StoredDocumentChange::Change {
+                conversation_id: publishing_conversation(executor, schema, &record)?,
+                record,
+                version,
+                value,
+                ops,
+            }
+        } else {
+            continue;
+        };
+        changes.push(StoredChange::Document(change));
+    }
+    Ok(StoredBatch { seq, changes })
+}
+
+/// 这份文档归哪条会话：session 作用域 → `None`；conversation → 自己的 id；task → **问那条 task**。
+///
+/// 上游也这么推（`conversationId` 的注释：「task documents derive it from their task record」）。
+/// task 记录不在库里就报错 —— 悄悄给 `None` 会让 publication 看起来像 session 文档。
+fn publishing_conversation(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    record: &Value,
+) -> Result<Option<Id>> {
+    let scope = record
+        .get("scope")
+        .ok_or_else(|| StorageError::Shape("document record has no scope".to_string()))?;
+    match scope.get("kind").and_then(Value::as_str) {
+        Some("session") => Ok(None),
+        Some("conversation") => Ok(Some(required_i64(scope, "conversationId")?)),
+        Some("task") => {
+            let task_id = required_i64(scope, "taskId")?;
+            let row = executor.get(
+                &format!(
+                    "SELECT conversation_id FROM {} WHERE id = ?",
+                    schema.table("tasks")
+                ),
+                &[Cell::Integer(task_id)],
+            )?;
+            let row = row.ok_or_else(|| {
+                StorageError::Shape(format!(
+                    "document of task {task_id} has no task record to derive its conversation"
+                ))
+            })?;
+            Ok(Some(integer(&row, "conversation_id")?))
+        }
+        other => Err(StorageError::Shape(format!(
+            "document scope kind must be session/conversation/task, got {other:?}"
+        ))),
     }
 }
 

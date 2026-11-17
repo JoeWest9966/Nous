@@ -241,7 +241,7 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 |---|---|---|
 | ① | `src/types/{records,draft}.rs`（14 个类型 + 取值域枚举） | 五种记录从**真 fixture** 读进来再写回去，逐字段相等（189 / 209 / 128 / 56 / 961）；取值域逐格验 |
 | ② | `src/session/publish.rs` + `src/session/entries.rs` | publication 的 JSON 形状与上游 `types.ts` 逐字段相同；一次提交里三种记录各一次、只有一个 `seq`；文档 `ops` 原样透传 |
-| ③ | `src/session/mod.rs`（`Session`） | 见票 #13 |
+| ③ | `src/session/mod.rs`（`SessionEnd` + `Session`）+ `src/storage/commit.rs` 的 `StoredBatch` 回执 | 12 条（见下） |
 
 **publication 不是 SSE**（写在这里是因为这条最容易被顺手破坏）：
 
@@ -255,6 +255,31 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 - `conversationId` 在 **session 作用域**的文档上**键缺席**（上游 `ConversationId | undefined`），
   不是 `null`；`document.copy` 的那个是必填。
 - 反序列化**逐键对账**：多一个键就是错（§12.6 的同一条规矩）。
+
+**`Session` 公开面 = 5 个方法**（判据是扫源码数的，`tests/session.rs`，多一个就红）：
+
+| 方法 | 语义 |
+|---|---|
+| `async fn commit(&self, Vec<StorageWrite>, CommitOptions) -> Result<CommitOutcome, SessionError>` | 落库 → 发布给观察者 → 返回。**只收一批写**：`Tx` 回调不进 Rust，事务只有 `Storage::commit` 一处 |
+| `async fn close(&self) -> Result<(), SessionError>` | 幂等；密封入场、等**在飞的提交走完**（同一把锁）、关存储、观察者收 `end(ended)` |
+| `async fn closed(&self) -> SessionEnd` | **一个 settle 点**（`SessionEnd::Closed` / `Failed{error}`），不是 watch 通道；`#19` 要 watch 时再改签名 |
+| `async fn snapshot(&self, id) -> Result<Option<StoredDocument>>` | 一份文档的当前值（`materialize(Current)`），按 `id` 定位 |
+| `async fn get_entry(&self, id) -> Result<Option<(EntryRecord, Seq)>>` | 一条 entry 与它落库的 `seq` |
+
+`observe_doc` / `watch_doc` / `observe_commits` / `subscribe_close` **属 #19**。发布侧的**回调契约**
+（`CommitObserver`）本票交，挂在构造器入参上（`Session::with_observers`）——所以公开面是 5 个方法而不是 7 个。
+
+**关闭的三条语义**（票面钉死，`tests/session.rs` 逐条测）：
+1. `close()` 之后 `commit()` 得到 `SessionError::Closed` —— 明确错误，不 panic、不挂住；
+2. `close()` 幂等 —— 第二次返回 `Ok`（不是「已经关过」的错误）；
+3. 在飞的提交走完再关 —— 提交与关共用一把异步锁；测试用「发布时刻晚于 `close()` 调用时刻」见证
+   （批次太小会让这条测试白跑，断言里直接写着别删）。
+
+**存储失败 = 会话自己关掉**（上游同一语义）：失败后 `closed()` 是 `Failed{error}`，之后的调用一律
+`Closed`，但 `close()` 仍幂等地返回 `Ok`。
+
+**`CommitPersistence.deferred` 明确拒绝**（`SessionError::DeferredUnsupported`），不静默按
+`immediate` 存：上游的延后提交只对「丢了也无所谓」的流式进度成立，静默降级正好是崩溃丢数据那类差别。
 
 **观察者**：`CommitObserver::advance` 是同步回调（签名钉住，不许 await），先快照名单再逐个调，
 所以观察者可以在回调里 `detach()` 自己。上游把观察者抛的错接住并 `end(listener_error)`；Rust 没有

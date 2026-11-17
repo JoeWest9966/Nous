@@ -934,6 +934,7 @@ dependencies = [
  "nous-chord",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
