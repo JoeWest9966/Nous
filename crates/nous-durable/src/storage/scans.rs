@@ -344,6 +344,130 @@ fn alive_clauses(at: DocumentPoint, clauses: &mut Vec<String>, params: &mut Vec<
     }
 }
 
+/// 一条会话记录；不存在 → [`StorageError::UnknownConversation`]。
+fn conversation_record(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    id: i64,
+) -> Result<Value> {
+    record_by_id(executor, schema.table("conversations"), id)?
+        .ok_or(StorageError::UnknownConversation { id })
+}
+
+/// 一条 entry 与它的 `commit_seq`（不经过 `Storage`，链上每一段都要读）。
+fn entry_record(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    id: i64,
+) -> Result<Option<(Value, i64)>> {
+    let row = executor.get(
+        &format!(
+            "SELECT record, commit_seq FROM {} WHERE id = ?",
+            schema.table("entries")
+        ),
+        &[Cell::Integer(id)],
+    )?;
+    let Some(row) = row else { return Ok(None) };
+    let record = parse_json(
+        row.get("record")
+            .and_then(Cell::as_str)
+            .ok_or_else(|| StorageError::Shape("entry row has no record".to_string()))?,
+    )?;
+    let commit_seq = row
+        .get("commit_seq")
+        .and_then(Cell::as_i64)
+        .ok_or_else(|| StorageError::Shape("entry has no commit_seq".to_string()))?;
+    Ok(Some((record, commit_seq)))
+}
+
+/// 一条 entry 在 `conversation_id` 的 fork 链上**看得见**时返回它（上游 `#visibleEntry`）。
+///
+/// 「看得见」= 这条 entry 所在的那一段，在链上被某个 fork 点裁掉之后仍然留着：
+///
+/// ```text
+/// 孙(自己) --parent.at--> 子 --parent.at--> 根
+/// upper = min(每个 fork 点)      entry.id 必须 <= upper
+/// ```
+///
+/// 于是「根会话里 fork 点**之后**写的东西」在孙会话里读不到（那是别的分支的历史），而 fork 点
+/// **本身**读得到（区间左闭）。这一条与 [`scan_entry_chain`] 是同一套边界，两处都对不上就会出现
+/// 「扫得到、读不到」。
+pub fn visible_entry(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    conversation_id: i64,
+    id: i64,
+) -> Result<Option<(Value, i64)>> {
+    let mut conversation = conversation_record(executor, schema, conversation_id)?;
+    let Some((record, commit_seq)) = entry_record(executor, schema, id)? else {
+        return Ok(None);
+    };
+    let home = required_i64(&record, "conversationId")?;
+    let mut upper = i64::MAX;
+    while required_i64(&conversation, "id")? != home {
+        let Some((parent_id, parent_at)) = parent_of(&conversation) else {
+            // 链走到头还没到 entry 的家：这条 entry 不在这个会话的历史里。
+            return Ok(None);
+        };
+        upper = upper.min(parent_at);
+        conversation = conversation_record(executor, schema, parent_id)?;
+    }
+    Ok(if id > upper { None } else { Some((record, commit_seq)) })
+}
+
+/// 会话的 fork 链上最新的、带 `head` 的那条 entry（上游 `#latestHeadMarker`）。
+///
+/// `head` 是「压缩/重置之后，历史从这个 id 起算」的标记 —— 所以它是一段区间的**真实下界**，
+/// 与 `minEntryId` 那个「调用方希望的下界」不是一回事。`at_or_before` 给了就在它（含）以下找。
+pub fn latest_head_marker(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    conversation_id: i64,
+    at_or_before: Option<i64>,
+) -> Result<Option<Value>> {
+    let mut conversation = conversation_record(executor, schema, conversation_id)?;
+    let mut upper = at_or_before;
+    loop {
+        let sql = match upper {
+            Some(_) => format!(
+                "SELECT id FROM {entries} WHERE conversation_id = ? AND head IS NOT NULL AND id <= ?
+                 ORDER BY id DESC LIMIT 1",
+                entries = schema.table("entries")
+            ),
+            None => format!(
+                "SELECT id FROM {entries} WHERE conversation_id = ? AND head IS NOT NULL
+                 ORDER BY id DESC LIMIT 1",
+                entries = schema.table("entries")
+            ),
+        };
+        let row = match upper {
+            Some(upper) => executor.get(
+                &sql,
+                &[Cell::Integer(required_i64(&conversation, "id")?), Cell::Integer(upper)],
+            )?,
+            None => executor.get(&sql, &[Cell::Integer(required_i64(&conversation, "id")?)])?,
+        };
+        if let Some(row) = row {
+            let id = row
+                .get("id")
+                .and_then(Cell::as_i64)
+                .ok_or_else(|| StorageError::Shape("head marker row has no id".to_string()))?;
+            let (record, _) = entry_record(executor, schema, id)?.ok_or_else(|| {
+                StorageError::Shape(format!("head marker {id} has no entry row"))
+            })?;
+            return Ok(Some(record));
+        }
+        let Some((parent_id, parent_at)) = parent_of(&conversation) else {
+            return Ok(None);
+        };
+        upper = Some(match upper {
+            Some(upper) => upper.min(parent_at),
+            None => parent_at,
+        });
+        conversation = conversation_record(executor, schema, parent_id)?;
+    }
+}
+
 /// fork 链上的一条 entry 段：`conversation_id` 的 `[lower, upper]`（两端都可缺席）。
 struct Segment {
     conversation_id: i64,
@@ -414,14 +538,9 @@ pub fn scan_entry_chain(
         Ok(start) => start,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    // 会话不在就按「空页」处理（`#21` 的取舍，写进 `docs/storage.md` §11.4）：本库不区分
-    // 「这个会话没有 entry」与「这个会话不存在」，两者都读出一页空。
-    let Some(mut conversation) = record_by_id(executor, schema.table("conversations"), query.conversation_id)? else {
-        return Ok(Ok(Page {
-            items: Vec::new(),
-            next: None,
-        }));
-    };
+    // 会话不存在是**明确失败**（上游 `Unknown conversation`），不是一页空：空页要留给「会话在、
+    // 但历史到头了」，否则客户端分不出「翻完了」与「id 写错了」。
+    let mut conversation = conversation_record(executor, schema, query.conversation_id)?;
 
     match order {
         ScanOrder::Descending => {
@@ -453,10 +572,7 @@ pub fn scan_entry_chain(
                         break;
                     }
                 }
-                conversation = record_by_id(executor, schema.table("conversations"), parent_id)?
-                    .ok_or_else(|| {
-                        StorageError::Shape(format!("conversation {parent_id} is missing from its own fork chain"))
-                    })?;
+                conversation = conversation_record(executor, schema, parent_id)?;
             }
             Ok(Ok(page_of(values, limit, order)))
         }
@@ -477,10 +593,7 @@ pub fn scan_entry_chain(
                         break;
                     }
                 }
-                conversation = record_by_id(executor, schema.table("conversations"), parent_id)?
-                    .ok_or_else(|| {
-                        StorageError::Shape(format!("conversation {parent_id} is missing from its own fork chain"))
-                    })?;
+                conversation = conversation_record(executor, schema, parent_id)?;
             }
             let lower = match (query.min_entry_id, after) {
                 (Some(min), Some(after)) => Some(min.max(after + 1)),

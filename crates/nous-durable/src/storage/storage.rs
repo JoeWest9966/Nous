@@ -303,6 +303,30 @@ impl Storage {
         Ok(Some((record, seq)))
     }
 
+    /// 一条 entry，**只在它于这个会话的 fork 链上看得见时**返回。
+    ///
+    /// 与 [`entry`](Self::entry) 的差别是「可见性」：`entry(id)` 是全局按 id 取（导入器与测试要它），
+    /// 这一条问的是「这个会话的历史里有没有它」—— fork 点之后写在别的分支上的 entry 不在其中。
+    /// 会话不存在 → [`StorageError::UnknownConversation`]。
+    pub fn entry_in_conversation(&self, conversation_id: i64, id: i64) -> Result<Option<(Value, Seq)>> {
+        self.ensure_open()?;
+        let found = super::scans::visible_entry(self.store.db(), self.schema(), conversation_id, id)?;
+        Ok(found.map(|(record, seq)| (record, seq as Seq)))
+    }
+
+    /// 这个会话的 fork 链上最新的、带 `head` 的那条 entry —— 一段历史的**真实下界**。
+    ///
+    /// `at_or_before` 给了就在那个 id（含）以下找。压缩/重置留下的 `head` 标记就是靠它定位的：
+    /// 调用方拿 `minEntryId = marker.head` 去扫，才不会把已经压缩掉的正文再读一遍。
+    pub fn find_latest_head_marker(
+        &self,
+        conversation_id: i64,
+        at_or_before: Option<i64>,
+    ) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::latest_head_marker(self.store.db(), self.schema(), conversation_id, at_or_before)
+    }
+
     /// 一条会话（含它的 fork 祖先链）的 entry，按 id 升/降序，游标不透明。
     ///
     /// **不只是一条会话**：fork 出来的会话只存自己那一段，之前的历史住在父会话里。链怎么走、

@@ -7,7 +7,7 @@
 //! - 一份**真后端**（临时文件 SQLite）上跑，不造假后端：假后端通过什么也证明不了。
 //! - 减法都要有理由：砍掉的案进票 #21，不无声消失。
 //!
-//! 上游 32 个 `createCase(`，这里 28 个；`FLOOR.tsv` 记的正是这个数字。
+//! 上游 32 个 `createCase(`，这里 29 个；`FLOOR.tsv` 记的正是这个数字。
 //!
 //! ## 八个上游文件，为什么这里只有一份规范
 //!
@@ -16,26 +16,41 @@
 //! `createCase(` 调用点是 0（benchmark / 断言 / 注册器 / 类型 / 出口 / 提交辅助），不设下限，
 //! 也不为凑文件数造空文件。
 //!
-//! 于是 32 案 = **28 已落** + **1 等真后端**（fork 链的 entry 扫描，票 #21）+ **3 不做**
-//! （对象别名两条 + 不种根会话；理由在票 #21 与 `docs/not-ported.md`）。
+//! 于是 32 案 = **29 已落** + **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与
+//! `docs/not-ported.md`）。**清单清零了**：`#21` 之前那 9 条「等真后端」随 `scan_tasks` /
+//! `scan_submissions` / `scan_documents` / fork 链 entry 扫描 / `close()` 落地全部抄进来，案名
+//! 一个都没改。
 //! `env_conformance.rs` **不做**：本库 `nous-env` 只有 trait、没有一个实现，而 conformance 测的是
 //! **真后端** —— 造个假后端让用例通过，什么也证明不了（票 #15）。逐文件的判定见 `FLOOR.tsv` 文件头。
 //!
-//! ## 这个文件不是恒绿：四条变异实测
+//! ## 这个文件不是恒绿：十条变异实测
 //!
-//! 「20 条全绿」本身不说明套件有牙齿 —— 得有人把被测实现改坏，它必须红。四条现改现跑，改的是
-//! `crates/nous-durable/src/storage/**`，跑完立刻 `git checkout` 还原（提交的 diff 里没有这些行，
-//! 一个断言都没动过；红全部来自被测实现）：
+//! 「29 条全绿」本身不说明套件有牙齿 —— 得有人把被测实现改坏，它必须红。十条现改现跑，改的是
+//! `crates/nous-durable/src/**`，跑完立刻还原（提交的 diff 里没有这些行，一个断言都没动过；红全部
+//! 来自被测实现）：
 //!
 //! | 变异（改哪一行） | 红的案 |
 //! |---|---|
-//! | `storage.rs:160` 删掉 `next_seq += 1`（每批不推进 seq） | **8 条**，含 `commits_batches_in_order_each_with_its_seq_checked_against_the_earlier_ones`、`receives_a_durable_commit_once_before_resolving_and_never_a_refused_one`、`reconstructs_rewindable_documents_and_preserves_half_open_incarnations` |
-//! | `writes.rs:301-303` 让 `IdWrittenTwice` 永不返回 | **2 条**：`receives_a_durable_commit_once_before_resolving_and_never_a_refused_one`、`stores_the_batches_before_the_first_one_refused_and_none_after_it` |
-//! | `documents.rs:427` `entry.deltas_since_base + 1` → `entry.deltas_since_base` | **2 条**：`commits_batches_in_order_each_with_its_seq_checked_against_the_earlier_ones`、`streams_long_document_tails_across_root_replacement_deltas` |
-//! | `cursor.rs:89` 让「游标方向与请求方向不一致」不再拒绝 | **1 条**：`scans_tables_in_either_id_order_and_continues_a_cursor_in_its_order` |
+//! | `storage.rs` 删掉 `next_seq += 1`（每批不推进 seq） | **8 条**，含 `commits_batches_in_order_each_with_its_seq_checked_against_the_earlier_ones`、`receives_a_durable_commit_once_before_resolving_and_never_a_refused_one`、`reconstructs_rewindable_documents_and_preserves_half_open_incarnations` |
+//! | `writes.rs` 让 `IdWrittenTwice` 永不返回 | **2 条**：`receives_a_durable_commit_once_before_resolving_and_never_a_refused_one`、`stores_the_batches_before_the_first_one_refused_and_none_after_it` |
+//! | `documents.rs` `entry.deltas_since_base + 1` → `entry.deltas_since_base` | **2 条**：`commits_batches_in_order_each_with_its_seq_checked_against_the_earlier_ones`、`streams_long_document_tails_across_root_replacement_deltas` |
+//! | `cursor.rs` 让「游标方向与请求方向不一致」不再拒绝 | **1 条**：`scans_tables_in_either_id_order_and_continues_a_cursor_in_its_order` |
+//! | `storage.rs` 让 `ensure_open` 永不返回 `Closed` | **1 条**：`rejects_every_operation_after_close` |
+//! | `scans.rs` 让 `scan_tasks` 丢掉 `status` 过滤 | **3 条**：`replaces_complete_task_records_and_pages_filtered_task_scans`、`stores_owners_and_scans_waiting_and_completing_tasks_by_status`、`stores_and_scans_sleeping_tasks_by_status` |
+//! | `scans.rs` `submission_by_request` 拿原文而不是编码体去比 `request_id` | **3 条**：`indexes_request_ids_…`、`stores_passive_write_submissions_…`、`stores_continue_submissions_…` |
+//! | `scans.rs` `find_document` 的 WHERE 去掉 `key_value` | **1 条**：`indexes_logical_addresses_and_exact_scope_scans_independently` |
+//! | `scans.rs` `find_document` 的 WHERE 去掉 `family` | **1 条**：同上 |
+//! | `scans.rs` 降序链去掉 `upper = min(upper, parent.at)` | **1 条**：`scans_deep_fork_history_newest_first_through_every_ancestor_cap` |
 //!
-//! 行号对的是 `origin/master`（`64dc4de`）上那些行。第一条有 8 条红不是「判据糊」：seq 是每批的
-//! 身份，掉了它半张套件都该红；后三条各自只红该红的那一两条，说明它们钉的是具体行为。
+//! 两条**不红**的，如实记下来（它们不是失败，是「这条案测不到这个面」）：
+//!
+//! - `scans.rs` 的 `scan_documents` 去掉 `owner_id` 过滤 → 全绿。**原因**：夹具里每个 `scope_kind`
+//!   只有一个 owner（`session` 恒为 0、`conversation` 只有 2、`task` 只有 11），少比一列不改变结果。
+//!   要钉住它得再造一条同 kind 不同 owner 的作用域，那是上游这条案**没有**的形状 —— 记着，不编。
+//! - 第一版 `indexes_logical_addresses_…` 只断言了 `__proto__` 一处 `find_document`，那时把
+//!   `key_value` 从 WHERE 里拿掉**也是全绿**：两份文档是**同一次提交**建的，`created_at` 打平，
+//!   `ORDER BY created_at DESC` 恰好还是先建的那份。补上 `constructor` 与 `key: ""` 两个地址之后才红
+//!   —— 「绿」和「有牙齿」的差别就在这一处，是**变异测试**找出来的，不是读代码看出来的。
 
 use std::path::PathBuf;
 
@@ -1448,6 +1463,9 @@ fn indexes_logical_addresses_and_exact_scope_scans_independently() {
     let session = json!({ "kind": "session" });
 
     // 按地址找：`__proto__` 与 `constructor` 是两个不同的地址，各回各的。
+    //
+    // 两次都断言（上游只断言了前者）：只断言一个的话，把 `key` 从 WHERE 里拿掉也不会红 ——
+    // 两份文档是**同一次提交**建的，`created_at` 打平，`ORDER BY created_at DESC` 恰好还是先建的那份。
     let found = fixture
         .storage
         .find_document(
@@ -1457,6 +1475,15 @@ fn indexes_logical_addresses_and_exact_scope_scans_independently() {
         .unwrap()
         .expect("session 作用域里有一份 cache/__proto__");
     assert_eq!(found["id"], json!(first_id));
+    let other_key = fixture
+        .storage
+        .find_document(
+            &json!({ "kind": "cache", "scope": session, "key": "constructor" }),
+            DocumentPoint::Current,
+        )
+        .unwrap()
+        .expect("session 作用域里有一份 cache/constructor");
+    assert_eq!(other_key["id"], json!(second_id));
 
     // 按作用域扫：一页一条，两页拼起来是 id 序。
     let scope_query = || nous_durable::DocumentQuery {
@@ -1483,6 +1510,25 @@ fn indexes_logical_addresses_and_exact_scope_scans_independently() {
         vec![conversation_document_id]
     );
 
+    // 单例（没有 `key` 这个字段）与「`key` 是空串」的家族成员是**两个地址**：索引列里 `family`
+    // 把它们分开（`0` / `1`），`key_value` 两边都是 `""` 的编码体。这一份故意晚一次提交建 ——
+    // 否则两者 `created_at` 打平，去掉 `family` 也不会红。
+    let empty_key_id = 26;
+    fixture
+        .storage
+        .commit(
+            &[vec![StorageWrite::DocumentCreate {
+                id: empty_key_id,
+                record: json!({
+                    "id": empty_key_id, "kind": "task.cache",
+                    "scope": { "kind": "task", "taskId": 11 }, "key": ""
+                }),
+                content: DocumentContent::Base { version: 1, value: json!({ "owner": "empty" }) },
+            }]],
+            |_, _| {},
+        )
+        .unwrap();
+
     // 单例（无 key）与家族成员（有 key）是两个地址：单例按「三个字段的地址」找得到。
     let singleton = fixture
         .storage
@@ -1502,6 +1548,16 @@ fn indexes_logical_addresses_and_exact_scope_scans_independently() {
         .unwrap()
         .expect("task 作用域里有一个 task.cache/member");
     assert_eq!(family["id"], json!(family_id));
+    // `key: ""` 是第三个地址，不是那个单例。
+    let empty_key = fixture
+        .storage
+        .find_document(
+            &json!({ "kind": "task.cache", "scope": { "kind": "task", "taskId": 11 }, "key": "" }),
+            DocumentPoint::Current,
+        )
+        .unwrap()
+        .expect("task 作用域里有一个 task.cache/\"\"");
+    assert_eq!(empty_key["id"], json!(empty_key_id));
 
     // 作用域 + kind：`task.other` 不跟着 `task.cache` 出来。
     let task_query = nous_durable::DocumentQuery {
@@ -1511,7 +1567,7 @@ fn indexes_logical_addresses_and_exact_scope_scans_independently() {
     };
     assert_eq!(
         ids_of(&documents_of(&fixture.storage, task_query, 10, None)),
-        vec![singleton_id, family_id]
+        vec![singleton_id, family_id, empty_key_id]
     );
 
     // 只留最新态的文档（session 作用域）没有历史可读：在那个 seq 上读它是伪造。
@@ -1524,4 +1580,280 @@ fn indexes_logical_addresses_and_exact_scope_scans_independently() {
         "{error}"
     );
     assert!(error.to_string().contains("does not retain historical content"), "{error}");
+}
+
+fn entries_of(
+    storage: &Storage,
+    query: nous_durable::EntryQuery,
+    limit: usize,
+    cursor: Option<&nous_durable::Cursor>,
+) -> nous_durable::Page<Value> {
+    storage.scan_entries(&query, limit, cursor).unwrap().unwrap()
+}
+
+/// 上游 `entry(id, conversationId, kind, extra)`：一条 entry 记录。
+fn entry_with(id: i64, conversation_id: i64, kind: &str, extra: Value) -> StorageWrite {
+    let mut record = json!({ "id": id, "conversationId": conversation_id, "kind": kind });
+    if let Some(extra) = extra.as_object() {
+        for (key, value) in extra {
+            record[key] = value.clone();
+        }
+    }
+    StorageWrite::Entry(record)
+}
+
+#[test]
+fn scans_deep_fork_history_newest_first_through_every_ancestor_cap() {
+    // 上游 case：fork 链上「一条会话的历史」= 自己那一段 + 每一代祖先到各自的 fork 点为止。
+    //
+    // ```text
+    // 根(2)  3(first) 4(fork 点, head: 3) 5(fork 点之后，同一次提交里写的)
+    //          └── 子(6, parent {2, at: 4})   7(fork 点)  8(fork 点之后)
+    //                └── 孙(10, parent {6, at: 7})  11(head 标记, head: 11)  12
+    // ```
+    //
+    // 于是「孙的历史」读出来必须是：12、11、7、4、3 —— 5 / 8 / 9 / 13 全在某个 fork 点之后，
+    // 属于别的分支，一条都不许出现。
+    let mut fixture = backend("fork-history");
+    let (root, child, grandchild) = (2, 6, 10);
+    let (root_first, root_fork_point, root_excluded_same_commit) = (3, 4, 5);
+    let (child_fork_point, child_excluded) = (7, 8);
+    let root_excluded_later = 9;
+    let (grandchild_head, grandchild_tail) = (11, 12);
+    let child_excluded_later = 13;
+
+    let root_entries_seq = fixture
+        .storage
+        .commit(
+            &[vec![
+                conversation(root),
+                entry_with(root_first, root, "message", Value::Null),
+                entry_with(
+                    root_fork_point,
+                    root,
+                    "marker",
+                    json!({ "head": root_first }),
+                ),
+                entry_with(root_excluded_same_commit, root, "message", Value::Null),
+            ]],
+            |_, _| {},
+        )
+        .unwrap()
+        .batches
+        .first()
+        .map(|batch| batch.seq)
+        .unwrap();
+    fixture
+        .storage
+        .commit(
+            &[vec![StorageWrite::Conversation(json!({
+                "id": child, "parent": { "conversationId": root, "at": root_fork_point }
+            }))]],
+            |_, _| {},
+        )
+        .unwrap();
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                entry_with(child_fork_point, child, "note", Value::Null),
+                entry_with(child_excluded, child, "message", Value::Null),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+    fixture
+        .storage
+        .commit(
+            &[vec![entry_with(root_excluded_later, root, "message", Value::Null)]],
+            |_, _| {},
+        )
+        .unwrap();
+    fixture
+        .storage
+        .commit(
+            &[vec![StorageWrite::Conversation(json!({
+                "id": grandchild, "parent": { "conversationId": child, "at": child_fork_point }
+            }))]],
+            |_, _| {},
+        )
+        .unwrap();
+    let grandchild_entries_seq = fixture
+        .storage
+        .commit(
+            &[vec![
+                entry_with(
+                    grandchild_head,
+                    grandchild,
+                    "marker",
+                    json!({ "head": grandchild_head }),
+                ),
+                entry_with(grandchild_tail, grandchild, "message", Value::Null),
+            ]],
+            |_, _| {},
+        )
+        .unwrap()
+        .batches
+        .first()
+        .map(|batch| batch.seq)
+        .unwrap();
+    fixture
+        .storage
+        .commit(
+            &[vec![entry_with(child_excluded_later, child, "message", Value::Null)]],
+            |_, _| {},
+        )
+        .unwrap();
+
+    let descending = nous_durable::EntryQuery {
+        conversation_id: grandchild,
+        min_entry_id: None,
+        max_entry_id: None,
+        order: None,
+    };
+    let first = entries_of(&fixture.storage, descending.clone(), 2, None);
+    assert_eq!(ids_of(&first), vec![grandchild_tail, grandchild_head]);
+    let second = entries_of(&fixture.storage, descending.clone(), 2, first.next.as_ref());
+    assert_eq!(ids_of(&second), vec![child_fork_point, root_fork_point]);
+    let third = entries_of(&fixture.storage, descending, 2, second.next.as_ref());
+    assert_eq!(ids_of(&third), vec![root_first]);
+    assert!(third.next.is_none());
+
+    // 最老的先：根那一段在前，每一代到下一个 fork 点为止。
+    let ascending = nous_durable::EntryQuery {
+        conversation_id: grandchild,
+        min_entry_id: None,
+        max_entry_id: None,
+        order: Some(ScanOrder::Ascending),
+    };
+    let first_up = entries_of(&fixture.storage, ascending.clone(), 2, None);
+    assert_eq!(ids_of(&first_up), vec![root_first, root_fork_point]);
+    let second_up = entries_of(&fixture.storage, ascending.clone(), 2, first_up.next.as_ref());
+    assert_eq!(ids_of(&second_up), vec![child_fork_point, grandchild_head]);
+    let third_up = entries_of(&fixture.storage, descending.clone(), 2, second_up.next.as_ref());
+    assert_eq!(ids_of(&third_up), vec![grandchild_tail]);
+    assert!(third_up.next.is_none());
+
+    // 上下界一起给：只有 fork 点这一对落在区间里。
+    let bounded = nous_durable::EntryQuery {
+        conversation_id: grandchild,
+        min_entry_id: Some(root_fork_point),
+        max_entry_id: Some(child_fork_point),
+        order: Some(ScanOrder::Ascending),
+    };
+    assert_eq!(
+        ids_of(&entries_of(&fixture.storage, bounded, 10, None)),
+        vec![root_fork_point, child_fork_point]
+    );
+
+    // 游标接的是升序，查询却**明说**要降序：请求错误，不静默改向。
+    let explicit_descending = nous_durable::EntryQuery {
+        order: Some(ScanOrder::Descending),
+        ..descending.clone()
+    };
+    let refusal = fixture
+        .storage
+        .scan_entries(&explicit_descending, 2, first_up.next.as_ref())
+        .unwrap()
+        .unwrap_err();
+    assert!(matches!(refusal, Refusal::CursorOrderMismatch), "{refusal}");
+
+    // `head` 标记替调用方给出真实下界：孙自己那条、以及「截至子 fork 点」那一条。
+    let current_marker = fixture
+        .storage
+        .find_latest_head_marker(grandchild, None)
+        .unwrap()
+        .expect("孙自己有一条 head 标记");
+    assert_eq!(current_marker["id"], json!(grandchild_head));
+    assert_eq!(current_marker["head"], json!(grandchild_head));
+    let historical_marker = fixture
+        .storage
+        .find_latest_head_marker(grandchild, Some(child_fork_point))
+        .unwrap()
+        .expect("截至子 fork 点，根那条 fork 点就是标记");
+    assert_eq!(historical_marker["id"], json!(root_fork_point));
+    assert_eq!(historical_marker["head"], json!(root_first));
+    assert!(fixture
+        .storage
+        .find_latest_head_marker(grandchild, Some(root_first))
+        .unwrap()
+        .is_none());
+
+    // 从 `head` 起算的「活跃历史」：翻完只有 12、11。
+    let active = nous_durable::EntryQuery {
+        conversation_id: grandchild,
+        min_entry_id: Some(grandchild_head),
+        max_entry_id: None,
+        order: None,
+    };
+    let active_first = entries_of(&fixture.storage, active.clone(), 1, None);
+    assert_eq!(ids_of(&active_first), vec![grandchild_tail]);
+    assert!(active_first.next.is_some());
+    let active_second = entries_of(&fixture.storage, active, 1, active_first.next.as_ref());
+    assert_eq!(ids_of(&active_second), vec![grandchild_head]);
+    assert!(active_second.next.is_none());
+
+    // 从历史标记的 `head` 起算、到子 fork 点为止：三段拼起来。
+    let historical = nous_durable::EntryQuery {
+        conversation_id: grandchild,
+        min_entry_id: Some(root_first),
+        max_entry_id: Some(child_fork_point),
+        order: None,
+    };
+    assert_eq!(
+        ids_of(&entries_of(&fixture.storage, historical, 10, None)),
+        vec![child_fork_point, root_fork_point, root_first]
+    );
+
+    // 全局按 id 读 entry：`commitSeq` 是写下它的那次提交。
+    let (record, seq) = fixture.storage.entry(root_first).unwrap().unwrap();
+    assert_eq!(record["id"], json!(root_first));
+    assert_eq!(seq, root_entries_seq);
+    assert_eq!(fixture.storage.entry(root_fork_point).unwrap().unwrap().1, root_entries_seq);
+    assert_eq!(fixture.storage.entry(grandchild_head).unwrap().unwrap().1, grandchild_entries_seq);
+    assert_eq!(fixture.storage.entry(grandchild_tail).unwrap().unwrap().1, grandchild_entries_seq);
+    assert!(fixture.storage.entry(999_999).unwrap().is_none());
+
+    // 从孙会话看：链上的都看得见，fork 点之后的全看不见。
+    let visible = |id: i64| fixture.storage.entry_in_conversation(grandchild, id).unwrap();
+    assert_eq!(visible(root_first).unwrap().1, root_entries_seq);
+    assert_eq!(visible(child_fork_point).unwrap().0["conversationId"], json!(child));
+    assert_eq!(visible(grandchild_tail).unwrap().1, grandchild_entries_seq);
+    for hidden in [
+        root_excluded_same_commit,
+        root_excluded_later,
+        child_excluded,
+        child_excluded_later,
+        999_999,
+    ] {
+        assert!(visible(hidden).is_none(), "entry {hidden} 不该从孙会话看得见");
+    }
+    // 反过来：根会话看不见孙的 entry。
+    assert!(fixture
+        .storage
+        .entry_in_conversation(root, grandchild_head)
+        .unwrap()
+        .is_none());
+
+    // 会话 id 写错是明确失败，不是空页。
+    let error = fixture
+        .storage
+        .entry_in_conversation(999_999, root_first)
+        .unwrap_err();
+    assert!(matches!(error, StorageError::UnknownConversation { id } if id == 999_999), "{error}");
+    assert!(error.to_string().contains("Unknown conversation"), "{error}");
+    let error = fixture
+        .storage
+        .scan_entries(
+            &nous_durable::EntryQuery {
+                conversation_id: 999_999,
+                min_entry_id: None,
+                max_entry_id: None,
+                order: None,
+            },
+            10,
+            None,
+        )
+        .unwrap_err();
+    assert!(matches!(error, StorageError::UnknownConversation { id } if id == 999_999), "{error}");
 }

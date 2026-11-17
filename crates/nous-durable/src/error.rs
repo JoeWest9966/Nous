@@ -31,6 +31,11 @@ pub enum StorageError {
     SchemaVersion { found: i64, supported: i64 },
     /// 库已经关了：`close()` 之后的每一次调用都明确失败，不「装作还能用」。
     Closed,
+    /// 按会话读 entry / 扫 entry 时那个会话不存在（上游 `Unknown conversation`）。
+    ///
+    /// 这一条与「会话存在但没有 entry」**必须分开**：都读成空页的话，客户端分不出「历史到头了」
+    /// 与「会话 id 写错了」。
+    UnknownConversation { id: i64 },
 }
 
 impl From<SqliteError> for StorageError {
@@ -91,6 +96,7 @@ impl std::fmt::Display for StorageError {
                 "schema version {found} is not the supported version {supported}"
             ),
             StorageError::Closed => f.write_str("storage is closed"),
+            StorageError::UnknownConversation { id } => write!(f, "Unknown conversation: {id}"),
         }
     }
 }
