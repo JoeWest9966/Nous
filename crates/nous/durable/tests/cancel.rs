@@ -230,7 +230,9 @@ async fn startup_scan_adds_exactly_one_abandoned_and_stays_idempotent() {
 
     for round in 0..3 {
         let session = Session::open(&path).unwrap();
+        let started = std::time::Instant::now();
         let count = scan_orphans(&session).await.expect("扫描成功");
+        eprintln!("启动扫描（第 {} 轮）耗时 {:?}", round + 1, started.elapsed());
         assert_eq!(count, if round == 0 { 1 } else { 0 }, "只有第一次补一条");
         session.close().await.unwrap();
     }
@@ -272,7 +274,7 @@ async fn timeout_and_crash_sources_enter_through_the_same_channel() {
         let tag = format!("source-{reason:?}").to_lowercase();
         let (session, path) = seeded(&tag).await;
         let outcome = cancel(&session, request(reason)).await.expect("能取消");
-        assert_eq!(outcome.terminal_entry > 0, true);
+        assert!(outcome.terminal_entry.is_some_and(|id| id > 0));
         let entries = terminal_entries(&session).await;
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -366,7 +368,7 @@ async fn cancel_moves_the_committed_partial_into_the_terminal_entry() {
             .await
             .expect("能取消");
         let (entry, _) = session
-            .get_entry(outcome.terminal_entry)
+            .get_entry(outcome.terminal_entry.expect("有终态 entry"))
             .await
             .unwrap()
             .unwrap();
@@ -375,5 +377,31 @@ async fn cancel_moves_the_committed_partial_into_the_terminal_entry() {
         let live = session.snapshot(100).await.unwrap().unwrap();
         assert!(live.value.get("generation").is_none(), "取消后 generation 要清掉");
     }
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 终态查找走索引：SQL 直接查 `json_extract(record,'$.reason')`，EXPLAIN 不许出现 SCAN。
+#[tokio::test]
+async fn terminal_lookup_uses_the_index_not_a_scan() {
+    use nous_chord::sqlite::SqliteExecutor;
+
+    let (session, path) = seeded("terminal-index").await;
+    cancel(&session, request(TerminalReason::UserCancel))
+        .await
+        .expect("能取消");
+    session.close().await.unwrap();
+
+    let store = Storage::open_read_only(&path).unwrap();
+    let plan = store.store().db().all(
+        "EXPLAIN QUERY PLAN SELECT id, record FROM entries \
+         WHERE conversation_id = 1 AND json_extract(record, '$.reason') IS NOT NULL \
+         ORDER BY id DESC LIMIT 1",
+        &[],
+    ).unwrap();
+    let text = format!("{plan:?}");
+    eprintln!("EXPLAIN QUERY PLAN: {text}");
+    assert!(text.contains("USING INDEX") || text.contains("SEARCH"),
+        "终态查找必须走索引：{text}");
+    assert!(!text.contains("SCAN entries"), "不许整表扫：{text}");
     let _ = std::fs::remove_file(&path);
 }

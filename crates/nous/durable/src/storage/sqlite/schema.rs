@@ -1,4 +1,4 @@
-//! 九张表与十六个索引的**名字**（上游 `storage/sqlite/schema.ts`，63 行）。
+//! 九张表与十七个索引的**名字**（上游 `storage/sqlite/schema.ts`，63 行）。
 //!
 //! 名字是**不可变历史**：迁移与运行期查询都从这张表渲染。改名 = 加新条目，不能改旧值 ——
 //! 否则历史迁移会去操作一个不存在的对象。
@@ -27,6 +27,7 @@ pub const INDEX_NAMES: &[(&str, &str)] = &[
     ("conversations_by_owner_task", "conversations_by_owner_task"),
     ("entries_by_conversation", "entries_by_conversation"),
     ("entry_heads_by_conversation", "entry_heads_by_conversation"),
+    ("entry_terminals_by_conversation", "entry_terminals_by_conversation"),
     ("tasks_by_status", "tasks_by_status"),
     ("tasks_by_conversation", "tasks_by_conversation"),
     ("tasks_by_kind", "tasks_by_kind"),
@@ -116,10 +117,10 @@ mod tests {
         for (key, name) in INDEX_NAMES {
             assert_eq!(schema.index(key), *name);
         }
-        // 九张表、十六个索引 —— 与 `docs/storage.md` §1 一致（`entry_heads` 是
-        // 部分索引，不是表；`store` 层的 `entry_heads` 表不在 v2 DDL 里）。
+        // 九张表、十七个索引 —— 与 `docs/storage.md` §10.1 一致（`entry_heads` 与
+        // `entry_terminals` 都是部分索引，不是表；后者是 #38 为终态热路径加的）。
         assert_eq!(TABLE_NAMES.len(), 9);
-        assert_eq!(INDEX_NAMES.len(), 16);
+        assert_eq!(INDEX_NAMES.len(), 17);
     }
 
     #[test]

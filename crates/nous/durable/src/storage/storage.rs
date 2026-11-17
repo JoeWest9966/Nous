@@ -303,6 +303,30 @@ impl Storage {
         Ok(Some((record, seq)))
     }
 
+    /// 这个会话最新的一条**带终态**的 entry（`record.reason` 非 null）。
+    ///
+    /// 走 `entry_terminals_by_conversation` 这个 partial expression index：
+    /// `... WHERE json_extract(record,'$.reason') IS NOT NULL ORDER BY id DESC LIMIT 1`。
+    /// 只命中带 reason 的行，普通 entry 不进索引 —— abort 热路径上不再 O(n) 扫全会话。
+    pub fn terminal_entry_in(&self, conversation_id: i64) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        let row = self.store.db().get(
+            &format!(
+                "SELECT record FROM {} WHERE conversation_id = ? \
+                 AND json_extract(record, '$.reason') IS NOT NULL \
+                 ORDER BY id DESC LIMIT 1",
+                self.schema().table("entries")
+            ),
+            &[Cell::Integer(conversation_id)],
+        )?;
+        let Some(row) = row else { return Ok(None) };
+        let text = row
+            .get("record")
+            .and_then(Cell::as_str)
+            .ok_or_else(|| StorageError::Shape("entry has no record".to_string()))?;
+        parse_json(text).map(Some)
+    }
+
     /// 一条 entry，**只在它于这个会话的 fork 链上看得见时**返回。
     ///
     /// 与 [`entry`](Self::entry) 的差别是「可见性」：`entry(id)` 是全局按 id 取（导入器与测试要它），

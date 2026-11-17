@@ -41,7 +41,11 @@ fn adopting_a_v2_copy_renumbers_and_unlocks_the_writer_gate() {
     adopt_legacy_copy(&path).expect("无 writer 列 + 版本 2 → 可以领养");
     let storage = Storage::open(&path).expect("领养后可写");
     let store = storage.store();
-    assert_eq!(store.schema_version().unwrap(), 1, "版本号记成我们自己的 1");
+    assert_eq!(
+        store.schema_version().unwrap(),
+        2,
+        "记成当前版本 2（v2 的终态索引已随库存在，写回 1 会重跑建索引并撞名）"
+    );
     assert_eq!(store.writer().unwrap().as_deref(), Some("nous"));
     drop(storage);
     let _ = std::fs::remove_file(&path);

@@ -28,7 +28,7 @@ use std::path::Path;
 
 use nous_chord::sqlite::{
     apply_sqlite_migrations, LocalDatabase, SqliteDatabase, SqliteError, SqliteErrorKind,
-    SqliteExecutor,
+    SqliteExecutor, SqliteValue as Cell,
 };
 
 use crate::error::{Result, StorageError};
@@ -186,9 +186,13 @@ pub fn adopt_legacy_copy(path: impl AsRef<Path>) -> Result<()> {
     let table = schema.table("durable_schema");
     db.transaction(|tx| -> Result<()> {
         tx.exec(&format!("ALTER TABLE {table} ADD COLUMN writer TEXT"))?;
+        // 版本记成**当前版本**：上游 v2 的表结构与本库 v2 相同（含 #38 的终态索引），
+        // 若硬写 1，下次打开会重跑 v2 迁移、撞「index already exists」。
         tx.run(
-            &format!("UPDATE {table} SET writer = ?, version = 1 WHERE singleton = 1"),
-            &[WRITER.into()],
+            &format!(
+                "UPDATE {table} SET writer = ?, version = ? WHERE singleton = 1"
+            ),
+            &[WRITER.into(), Cell::Integer(CURRENT_VERSION as i64)],
         )?;
         Ok(())
     })?;

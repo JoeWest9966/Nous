@@ -168,7 +168,7 @@ pub async fn submit_message(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CancelOutcome {
     pub tasks: Vec<Id>,
-    pub terminal_entry: Id,
+    pub terminal_entry: Option<Id>,
 }
 
 /// 终止的形状对调用方（abort / 超时 / 扩展死）暴露的只有这三个字段。
@@ -244,7 +244,7 @@ pub async fn cancel(
         (
             CancelOutcome {
                 tasks,
-                terminal_entry: entry_id,
+                terminal_entry: Some(entry_id),
             },
             writes,
         )
@@ -326,39 +326,26 @@ fn terminal_body(
     ))
 }
 
-/// 这个会话里第一条带终态的 entry；顺便还原当时的 tasks（幂等返回值）。
+/// 这个会话里最新的一条带终态的 entry；顺便还原当时的 tasks（幂等返回值）。
+///
+/// 热路径：SQL 直接走 partial index，`LIMIT 1`，不反序列化整条会话的 entry。
 fn terminal_entry(
     storage: &Storage,
     conversation: Id,
 ) -> Result<Option<CancelOutcome>, CommandError> {
-    for record in storage
-        .scan_entries(
-            &crate::EntryQuery {
-                conversation_id: conversation,
-                min_entry_id: None,
-                max_entry_id: None,
-                order: None,
-            },
-            10_000,
-            None,
-        )?
-        .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?
-        .items
-    {
-        let entry: EntryRecord = serde_json::from_value(record)
-            .map_err(|error| CommandError::Session(SessionError::Shape(error.to_string())))?;
-        if entry.reason.is_some() {
-            // 幂等返回值不读 `abortRequested`：那个字段全库只有一处能碰（S7）。
-            // 同一个会话第二次取消时，第一次打过标记的任务还在，按「还活着的」报回去
-            // 与第一次逐字节相等（状态机由任务自己走，读它的标记就是第二处写语义）。
-            let tasks = live_task_ids(storage, conversation)?;
-            return Ok(Some(CancelOutcome {
-                tasks,
-                terminal_entry: entry.id,
-            }));
-        }
-    }
-    Ok(None)
+    let Some(record) = storage.terminal_entry_in(conversation)? else {
+        return Ok(None);
+    };
+    let entry: EntryRecord = serde_json::from_value(record)
+        .map_err(|error| CommandError::Session(SessionError::Shape(error.to_string())))?;
+    // 幂等返回值不读 `abortRequested`：那个字段全库只有一处能碰（S7）。
+    // 同一个会话第二次取消时，第一次打过标记的任务还在，按「还活着的」报回去
+    // 与第一次逐字节相等（状态机由任务自己走，读它的标记就是第二处写语义）。
+    let tasks = live_task_ids(storage, conversation)?;
+    Ok(Some(CancelOutcome {
+        tasks,
+        terminal_entry: Some(entry.id),
+    }))
 }
 
 fn live_task_ids(storage: &Storage, conversation: Id) -> Result<Vec<Id>, CommandError> {
@@ -376,6 +363,8 @@ fn live_task_ids(storage: &Storage, conversation: Id) -> Result<Vec<Id>, Command
 /// 有正文无终态的 live，就不会再补。连重启三次只多一条。
 /// 进程熔断**不调这里** —— 那是 `extension_crash`，两件事（S6）。
 pub async fn scan_orphans(session: &Session) -> Result<usize, CommandError> {
+    // 启动一次的扫描上限。撞到上限必须打印 —— 否则「重启三次只多一条」在长会话上是假绿。
+    const SCAN_LIMIT: usize = 10_000;
     let mut guard = session.storage.lock().await;
     let (writes, count) = {
         let storage = storage_mut(&mut guard)?;
@@ -386,10 +375,15 @@ pub async fn scan_orphans(session: &Session) -> Result<usize, CommandError> {
                     owner_task_id: None,
                     order: None,
                 },
-                10_000,
+                SCAN_LIMIT,
                 None,
             )?
             .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+        if conversations.next.is_some() {
+            eprintln!(
+                "nous-durable: 启动扫描被 {SCAN_LIMIT} 条会话截断，可能漏了更多会话的孤儿"
+            );
+        }
         let mut writes = Vec::new();
         let mut count = 0usize;
         for conversation in conversations.items {
@@ -404,10 +398,15 @@ pub async fn scan_orphans(session: &Session) -> Result<usize, CommandError> {
                         kind: Some(LIVE_KIND.to_string()),
                         at: crate::DocumentPoint::Current,
                     },
-                    10_000,
+                    SCAN_LIMIT,
                     None,
                 )?
                 .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+            if documents.next.is_some() {
+                eprintln!(
+                    "nous-durable: 启动扫描被 {SCAN_LIMIT} 份 pi.live 文档截断，会话 {conversation_id} 可能漏了孤儿"
+                );
+            }
             for record in documents.items {
                 let document_id = id_of(&record)?;
                 let Some(doc) = storage.materialize(document_id, crate::DocumentPoint::Current)?

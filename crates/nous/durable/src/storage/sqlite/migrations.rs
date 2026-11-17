@@ -21,7 +21,7 @@ use super::schema::SqliteSchema;
 pub const WRITER: &str = "nous";
 
 /// 这一版支持的 schema 版本 = 迁移链最后一条。
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 2;
 
 /// 给 `schema` 渲染出完整的迁移链。上游 `createSqliteMigrations`。
 ///
@@ -30,7 +30,7 @@ pub const CURRENT_VERSION: u32 = 1;
 pub fn migrations(schema: &SqliteSchema) -> Vec<SqliteMigration> {
     let t = |key: &str| schema.table(key).to_string();
     let i = |key: &str| schema.index(key).to_string();
-    vec![SqliteMigration::new(
+    let mut chain = vec![SqliteMigration::new(
         1,
         [
             format!(
@@ -197,7 +197,18 @@ pub fn migrations(schema: &SqliteSchema) -> Vec<SqliteMigration> {
                 t("durable_schema")
             ),
         ],
-    )]
+    )];
+    // v2：`entries` 的终态条目索引。终态是 `EntryRecord.reason`（JSON 字段，不拆列，
+    // 不改表结构）；这个 partial expression index 让 abort 热路径上的「找终态」
+    // 变成 `SEARCH ... USING INDEX ... (conversation_id=?) ORDER BY ... LIMIT 1`。
+    // 只索引带 reason 的行 —— 普通 entry 一条都不进索引，长会话不付代价。
+    chain.push(SqliteMigration::new(2, [format!(
+        "CREATE INDEX {} ON {} (conversation_id, id DESC) \
+         WHERE json_extract(record, '$.reason') IS NOT NULL",
+        i("entry_terminals_by_conversation"),
+        t("entries"),
+    )]));
+    chain
 }
 
 #[cfg(test)]
@@ -208,8 +219,9 @@ mod tests {
     #[test]
     fn the_chain_starts_at_one_and_ends_at_current_version() {
         let chain = migrations(&SqliteSchema::unprefixed());
-        assert_eq!(chain.len(), 1);
+        assert_eq!(chain.len(), 2);
         assert_eq!(chain[0].version, 1);
+        assert_eq!(chain[1].version, 2);
         assert_eq!(chain.last().unwrap().version, CURRENT_VERSION);
         // 25 条建表/建索引 + 2 条补 writer = 27。上游是 30 条，多出来的是 v2 为了给
         // `tasks.status` 加 `sleeping` 而重建整张表的 5 条 —— 我们 v1 直接就是最终形状。
@@ -242,14 +254,14 @@ mod tests {
             .into_iter()
             .filter_map(|row| row.get("name").and_then(|v| v.as_str()).map(str::to_string))
             .collect();
-        assert_eq!(indexes.len(), 16, "{indexes:?}");
+        assert_eq!(indexes.len(), 17, "{indexes:?}");
 
-        // 认门那一列在，值是 nous；版本是 1（不是上游的 2）。
+        // 认门那一列在，值是 nous；版本是 2（v2 只加终态条目的 partial index）。
         let row = db
             .get("SELECT version, writer FROM durable_schema WHERE singleton = 1", &[])
             .unwrap()
             .unwrap();
-        assert_eq!(row.get("version").unwrap().as_i64(), Some(1));
+        assert_eq!(row.get("version").unwrap().as_i64(), Some(2));
         assert_eq!(row.get("writer").unwrap().as_str(), Some(WRITER));
 
         // `pi.live` 那一列默认值：分配器起始值照上游（next_id '2' / next_seq 1）。
@@ -270,6 +282,6 @@ mod tests {
             .get("SELECT version FROM agent_durable_schema WHERE singleton = 1", &[])
             .unwrap()
             .unwrap();
-        assert_eq!(row.get("version").unwrap().as_i64(), Some(1));
+        assert_eq!(row.get("version").unwrap().as_i64(), Some(2));
     }
 }
