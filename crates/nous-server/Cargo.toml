@@ -1,0 +1,21 @@
+[package]
+name = "nous-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "wire.md 的端点层：/v1/* 的 HTTP + SSE 传输（AGENTS.md §二：唯一允许依赖 axum 的 crate）"
+
+# 契约面（AGENTS.md §二）：nous-server → durable, wire, telemetry。
+# - `nous-durable` 出语义（存储 / 会话 / harness 投影），本层只搬运；
+# - `nous-wire` 出事件类型（`wire.md` 的 Rust 投影），本层只序列化；
+# - `nous-telemetry` 出 span/event 契约。
+# **不许**依赖 `nous-ai`：生成走 `nous_durable::session::Session`，本层不碰 provider，
+# 也不许在本 crate 的测试里出现 `FauxProvider`（判据在 issue #22 评论）。
+#
+# 传输绑在这里、且只在这里：`nous-durable` 永久禁 HTTP（`scripts/verify.sh` 4e）。
+[dependencies]
+nous-durable = { workspace = true }
+nous-wire = { workspace = true }
+nous-telemetry = { workspace = true }
+axum = { workspace = true }

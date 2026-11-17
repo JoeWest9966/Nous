@@ -151,3 +151,9 @@ pi-rust: crates/{rpi-harness, rpi-cli, rpi-tui, rpi-extensions, rpi-plugin-sdk}
 - `vendor/pi-env-daemon/daemon/**` ← `pi@v1.5.2:packages/env/daemon/**`：**已提货**，20 个文件逐字节原样（`diff -r` 无输出），只 build、不改一行、不发版跟进。根 `Cargo.toml` 的 `[workspace] exclude = ["vendor/pi-env-daemon"]` 已在基线中，members 一行未动；daemon 自带 `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`（Rust 1.96.0 / edition 2024），不并入主 workspace、不进主 `Cargo.lock`。
 - `vendor/pi-env-daemon/package.json` ← `pi@v1.5.2:packages/env/package.json`：**已提货**，逐字节原样（`cmp` 无输出）。`build.rs` 无条件读 `../package.json` 取 `version`（= `1.5.2`，上游快照的一部分，不改成我们的版本号）；放在 `vendor/pi-env-daemon/` 下，`../package.json` 从 `daemon/` 解析正好落在这里。
 - 客户端（远端实现的协议侧）按 `packages/env/docs/protocol.md` 自写，不在本票内。
+
+## 七、#22 端点层记录（追加，不改上文任何一行）
+
+| 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
+|---|---|---|---|---|
+| `crates/nous-server/**` | 自写 | — | 自写：`wire.md` 的 HTTP + SSE 传输层（端点、合帧、序列化）。形状参考 `wire.md` 与 `docs/harness.md` §2 的投影表，**不抄上游结构**（上游把传输和语义混在一个包里，本库按 §二 契约图分家）；`axum` 版本只写根 `[workspace.dependencies]` | 自写 |
