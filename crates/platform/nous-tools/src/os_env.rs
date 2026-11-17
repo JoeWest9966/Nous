@@ -239,7 +239,7 @@ impl OsExecutionEnv {
             }
             // `which bash` fallback.
             if let Some(found) =
-                run_command("which", &["bash"], std::time::Duration::from_millis(5000)).await
+                run_quick("which", &["bash"], std::time::Duration::from_millis(5000)).await
             {
                 let trimmed = found.trim();
                 if !trimmed.is_empty() && std::path::Path::new(trimmed).is_file() {
@@ -341,7 +341,7 @@ async fn windows_probe_bash() -> Option<ShellConfig> {
         }
     }
     // `where bash.exe`.
-    if let Some(found) = run_command(
+    if let Some(found) = run_quick(
         "where",
         &["bash.exe"],
         std::time::Duration::from_millis(5000),
@@ -356,20 +356,13 @@ async fn windows_probe_bash() -> Option<ShellConfig> {
     None
 }
 
-/// Run a quick command, capture stdout, with a timeout. Mirrors `runCommand`
-/// (used only by shell detection). Returns `None` on spawn failure / timeout /
-/// empty stdout.
-async fn run_command(cmd: &str, args: &[&str], timeout: std::time::Duration) -> Option<String> {
-    run_quick(cmd, args, timeout).await
-}
-
 /// S1 收敛点：nous-tools 里**唯一**的工具子进程创建点（与 `execute` 的 shell
 /// spawn、`taskkill` 并列在本文件）。任何「跑一条一次性命令拿输出」的需求
 /// 都走这里，不许在别的文件里自己 `Command::new`（spec ch1 判据 6 / S1：
 /// 进程创建点全仓恰好两处，工具子进程就这一个适配文件）。
 ///
-/// 与 `run_command` 同一个实现；单独留名是为了让 `output_decode`（Windows
-/// 控制台代码页探测，不在 async 上下文里）有一块独立的阻塞门。
+/// 一次性命令（shell 探测 / Windows 控制台代码页探测）都走这里；不在 async
+/// 上下文里的调用方用下面的阻塞版 `run_quick_blocking`。
 pub(crate) async fn run_quick(
     cmd: &str,
     args: &[&str],

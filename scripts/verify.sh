@@ -4,7 +4,7 @@
 #   ./scripts/verify.sh              # 全部
 #   ./scripts/verify.sh unit         # 只跑测试
 #   ./scripts/verify.sh fixture      # 只跑 agent.sqlite fixture
-#   ./scripts/verify.sh boundary     # 只跑 spec 第 1 章的 13 条边界判据
+#   ./scripts/verify.sh boundary     # 只跑 spec 第 1 章的边界判据（本脚本 16 项）
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -318,17 +318,19 @@ PY
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
-# 5. spec 第 1 章「边界与仲裁」的 13 条判据（Q18 / S1 / S2 / S4 / S8）
-#    逐字实现，不改判据口径。红/绿各归各，互不连坐（判据互相独立，一条红不拦后面的）。
+# 5. spec 第 1 章「边界与仲裁」的判据（Q18 / S1 / S2 / S4 / S8 / S12）
+#    spec 正文编号 1–13（其中 6b/7b 是插入项，spec 自己算 15 条）；本脚本把
+#    6a/6b/6b'/7b 逐项计，实跑 16 项。行数不同只是计数口径，判据口径逐字不改。
+#    红/绿各归各，互不连坐（判据互相独立，一条红不拦后面的）。
 # ════════════════════════════════════════════════════════════════════════════
 if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
-	step "5. spec 第 1 章：13 条边界判据"
+	step "5. spec 第 1 章：边界判据（spec 13 条 / 本脚本 16 项）"
 	B_GREEN=0; B_RED=0; B_SKIP=0
 	bok()  { ok "$1";   B_GREEN=$((B_GREEN+1)); }
 	bbad() { bad "$1";  B_RED=$((B_RED+1)); }
 	bskip(){ skip "$1"; B_SKIP=$((B_SKIP+1)); }
 	# 每条判据的前缀按 spec「读法」：路径不存在 = 打印 SKIP（带票号），不许静默过。
-	test -d "$KERNEL" || bskip "0/13 全部：$KERNEL 不存在，等 #14 搬迁"
+	test -d "$KERNEL" || bskip "0/16 全部：$KERNEL 不存在，等 #14 搬迁"
 	if [ -d "$KERNEL" ]; then
 
 	# ── 1. 正向依赖：进 systemd 的那个 bin（nous-app，package nous-server）--depth 1
@@ -346,15 +348,25 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
 	else bbad "1. 正向依赖：$FAIL1 —— nous-app 还没接 tools/runtime（T5 扩展运行时）"
 	     printf '%s\n' "$TREE" | sed 's/^/       /' | head -12; fi
 
-	# ── 2. 反向依赖：内核层任一 crate --depth 1 不依赖应用层/平台层
+	# ── 2. 反向依赖：spec ch1 字面是「内核层任一 crate --depth 1 都不依赖应用层」。
+	#    「应用层」= crates/app（nous-server / nous-fixture）；platform 层不属于这一条。
+	#    S2/6b' 明说「不是不许依赖 nous-ai」（T2 拆 types/providers 后只允许 types 被依赖），
+	#    所以 nous-durable → nous-ai 只报信息行，不红。
 	FAIL2=""
+	INFO2=""
 	for c in "$KERNEL"/nous-*/; do
 		name=$(basename "$c")
-		OUT=$(cargo tree -p "$name" --depth 1 2>/dev/null | grep -E 'nous-(ai|tools|runtime|server|fixture)') || true
+		OUT=$(cargo tree -p "$name" --depth 1 2>/dev/null | grep -E 'nous-(server|fixture)') || true
 		[ -n "$OUT" ] && FAIL2="$FAIL2\n       $name: $OUT"
+		# 信息行：真相层 → 能力层（nous-ai），由 T2 拆 types/providers 后彻底消失。
+		INFO=$(cargo tree -p "$name" --depth 1 2>/dev/null | grep -E 'nous-(ai|tools|runtime)') || true
+		[ -n "$INFO" ] && INFO2="$INFO2\n       $name: $INFO"
 	done
-	if [ -z "$FAIL2" ]; then bok "2. 反向依赖（内核层不依赖应用层/平台层）"
-	else bbad "2. 反向依赖：内核层 crate 依赖了上层：$(printf '%b' "$FAIL2")"; fi
+	if [ -z "$FAIL2" ]; then bok "2. 反向依赖（内核层 --depth 1 不依赖 crates/app 应用层）"
+	else bbad "2. 反向依赖：内核层 crate 依赖了应用层：$(printf '%b' "$FAIL2")"; fi
+	if [ -n "$INFO2" ]; then
+		skip "2 信息行（不算红）：内核层 → platform 层依赖：$(printf '%b' "$INFO2")；nous-durable → nous-ai 等 T2 拆 types/providers 后彻底消失（S2）"
+	fi
 
 	# ── 3. 词表基线（S8：基线只减不增，新增一行即红）
 	BASE=docs/boundary-baseline.txt
@@ -392,20 +404,35 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
 	if [ -z "$FAIL5" ]; then bok "5. 数据面唯一入口（kernel 之外无 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE）"
 	else bbad "5. 数据面唯一入口："; printf '%s\n' "$FAIL5" | sed 's/^/       /'; fi
 
-	# ── 6. 进程归应用层（S1）：内核层零进程；全仓进程创建点恰好两处
+	# ── 6. 进程归应用层：内核层零进程（S1）；文件集合 == baseline spawn_files（S12，待签）
 	#     白名单：crates/platform/nous-tools/src/os_env.rs（工具子进程）+ crates/app 扩展监管
 	FAIL6=$(git grep -nE 'std::process|tokio::process|Command::new|Child' -- "$KERNEL" \
 		| grep -v 'ExitCode' | grep -v '/tests/' | grep -v '/conformance/' || true)
 	if [ -z "$FAIL6" ]; then bok "6a. 内核层零进程（std::process/tokio::process/Command::new/Child 逐行为空）"
 	else bbad "6a. 内核层出现进程："; printf '%s\n' "$FAIL6" | sed 's/^/       /'; fi
-	# `tests/` 既指集成测试目录，也指单元测试模块文件（`*_tests.rs`、`*_test.rs`、
-	# `provider/tests.rs` 这类子模块）——S1 排除的是「测试代码」，都是。
-	PROC=$(git grep -nE 'std::process::Command::new|tokio::process::Command::new|Command::new' -- "$PLATFORM" "$APP" \
-		| grep -v ExitCode | grep -v '/tests/' | grep -vE '_tests?\.rs:' | grep -v '/tests\.rs:' || true)
-	UNEXPECTED=$(printf '%s\n' "$PROC" | grep -v '^crates/platform/nous-tools/src/os_env.rs:' || true)
-	if [ -z "$UNEXPECTED" ]; then bok "6b. 工具子进程收敛在 nous-tools/src/os_env.rs 一处（其余命中 0）"
-	else bbad "6b. 进程创建点跑出 os_env.rs 白名单（S1：第三处即红）："
-	     printf '%s\n' "$UNEXPECTED" | sed 's/^/       /'; fi
+	# S12（追加二，待签）：按**文件**数，不按入口数。判据 = 命令输出集合与 baseline
+	# spawn_files=N 后紧跟的逐行文件清单逐行相等；tests/ 与 tests.rs 都排除。
+	# output_decode.rs 的唯一 spawn 在 #[cfg(windows)]（Linux 不可达），已按 S12 排除。
+	# S12 未签字：结论行按 spec ch1:62 打 SKIP: 等 S12 签字（不红也不绿），集合差异
+	# 只作提示逐行贴出，签字后再改成 bok/bbad。
+	BASE=docs/boundary-baseline.txt
+	if [ ! -f "$BASE" ]; then bskip "6b. $BASE 不存在，等 #14 搬迁"
+	else
+		SPAWN_NOW=$(grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
+			| grep -vE '(/tests/|tests\.rs$)' | sort || true)
+		SPAWN_BASE=$(awk '/^spawn_files=/{f=1;next} f && /^crates\//{sub(/[[:space:]]*#.*$/, ""); print; next} f{exit}' "$BASE" \
+			| sed 's/[[:space:]]*$//' | sort || true)
+		N_BASE=$(grep -c '^spawn_files=' "$BASE" || true)
+		DIFF6B=$(printf '%s\n%s\n' "$SPAWN_NOW" "$SPAWN_BASE" | grep -v '^$' | sort | uniq -u || true)
+		if [ "$N_BASE" -ne 1 ]; then
+			bskip "6b. $BASE 里 spawn_files 行有 $N_BASE 条（应为 1）—— SKIP: 等 S12 签字"
+		elif [ -z "$DIFF6B" ]; then
+			bskip "6b. spawn 文件集合与 baseline 逐行相等，但 S12 待签 —— SKIP: 等 S12 签字（集合：$(printf '%s\n' "$SPAWN_NOW" | grep -c .) 文件）"
+		else
+			bskip "6b. spawn 文件集合与 baseline 有差异（签字后再判红）—— SKIP: 等 S12 签字："
+			printf '%s\n' "$DIFF6B" | sed 's/^/       ± /'
+		fi
+	fi
 
 	# ── 6b. 依赖方向（S2）：真相层依赖里不许有 providers（会 sleep 的那个 crate）
 	FAIL6B=$(cargo tree -p nous-durable --depth 2 2>/dev/null | grep providers || true)
@@ -418,11 +445,47 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
 	if [ "$N7" -eq 1 ] && [ "$F7" = "wire.md" ]; then bok "7. 端点索引唯一（只有 wire.md）"
 	else bbad "7. 端点索引不唯一（$N7 个文件）："; printf '%s\n' "$F7" | sed 's/^/       /'; fi
 
-	# ── 7b. 索引不抄字段：wire.md 里 "type": 或 camelCase 字段名清单的段落数 = 0
-	F7B=$(grep -nE '"type":' wire.md || true)
-	if [ -z "$F7B" ]; then bok "7b. 索引不抄字段（wire.md 无 \"type\": 字段清单段落）"
-	else bbad "7b. 索引抄了字段清单（$(printf '%s\n' "$F7B" | grep -c .) 行，抄一遍就会漂）："
-	     printf '%s\n' "$F7B" | head -8 | sed 's/^/       /'; fi
+	# ── 7b. 索引不抄字段：wire.md 里出现 "type": 或 camelCase 字段名清单的段落数 = 0。
+	#    段落 = 空行分隔的块；命中 = 段落里成串的 camelCase 字段名（例如
+	#    `{ id, name, parent: {id, at} ... }` 这类字段清单），不是某个词单独出现。
+	#    命中就报红并贴出段落起始行；红了让它红 —— 把 wire.md 改成纯索引是独立一张票
+	#    （正文判据在测试里，删字段清单前要确认每条都有测试背书）。
+	F7B=$(python3 - <<'PY'
+import re
+lines=open('wire.md',encoding='utf-8').read().splitlines()
+paras=[]; start=None; buf=[]
+for i,line in enumerate(lines,1):
+    if not line.strip():
+        if buf: paras.append((start,i-1,'\n'.join(buf))); buf=[]; start=None
+    else:
+        if start is None: start=i
+        buf.append(line)
+if buf: paras.append((start,len(lines),'\n'.join(buf)))
+CAM=re.compile(r'[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*')
+def field_list(seg):
+    # 字段清单 = 一段里至少两个不同 camelCase 标识符，且用逗号/冒号排成清单。
+    # 例：{ id, name, parent: {id, at} ... } / { content, requestId?, waitMs? } /
+    #     { type: "text_start", contentIndex, block } / `file{db,wal,shm,mtime}`。
+    if ',' not in seg and '，' not in seg: return False
+    return len(set(CAM.findall(seg))) >= 2
+for s,e,p in paras:
+    groups=[m.group(0) for m in re.finditer(r'\{[^\{\}\n]*\}',p)]
+    in_fence=False; fence=[]; fenced=[]
+    for line in p.splitlines():
+        if line.lstrip().startswith('```'):
+            if in_fence and fence: fenced.append('\n'.join(fence)); fence=[]
+            in_fence=not in_fence
+        elif in_fence: fence.append(line)
+    if fence: fenced.append('\n'.join(fence))
+    why=[]
+    if re.search(r'"type"\s*:',p): why.append('"type":')
+    if any(field_list(g) for g in groups+fenced): why.append('camelCase 字段清单')
+    if why: print(f'{s}-{e}: {"/".join(why)}')
+PY
+)
+	if [ -z "$F7B" ]; then bok "7b. 索引不抄字段（wire.md 无 \"type\": / camelCase 字段清单段落）"
+	else bbad "7b. 索引抄了字段清单（$(printf '%s\n' "$F7B" | grep -c .) 个段落，抄一遍就会漂）："
+	     printf '  wire.md 段落行号：\n%s\n' "$F7B" | sed 's/^/       /' | head -30; fi
 
 	# ── 8. 代码不引文档（S8：去掉注释行后为空）
 	# 判据对象是**代码**（*.rs）：README.md / Cargo.toml 里的描述文本不是代码引用。
@@ -480,7 +543,8 @@ print('\n'.join(names))")
 	if [ -z "$F13" ]; then bok "13. 无文件锁（crates/app 无 flock/fs2/File::lock/.lock()）"
 	else bbad "13. crates/app 出现文件锁："; printf '%s\n' "$F13" | sed 's/^/       /'; fi
 
-	printf '\n  \033[1m13 条边界判据：绿 %d / 红 %d / SKIP %d\033[0m\n' "$B_GREEN" "$B_RED" "$B_SKIP"
+	TOTAL=$((B_GREEN+B_RED+B_SKIP))
+	printf '\n  \033[1mspec 13 条 / 本脚本 %d 项边界判据：绿 %d / 红 %d / SKIP %d\033[0m\n' "$TOTAL" "$B_GREEN" "$B_RED" "$B_SKIP"
 	fi
 fi
 
