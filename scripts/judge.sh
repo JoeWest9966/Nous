@@ -93,7 +93,6 @@ EX-77 atomic-swap-20x
 EX-78 canary-cross-extension
 EX-79 canary-cross-request
 EX-80 clock-invisible
-EX-81 different-sources
 '
 
 usage() {
@@ -106,9 +105,25 @@ resolve() {
   printf '%s\n' "$TABLE" | awk -v k="$1" '$1==k || $2==k { print $1; exit }'
 }
 
+TOOL='
+EX-81 different-sources'
+PENDING='EX-14 EX-20 EX-21 EX-31 EX-37 EX-40 EX-43 EX-48 EX-51 EX-53 EX-62 EX-63 EX-66 EX-70 EX-75'
+
 case "${1-}" in
-  --list|-l|"")
-    printf '%s\n' "$TABLE" | awk 'NF { print $1 }'
+  --list|-l)
+    # 两段分开输出：全表全 SKIP 是一个信号，混进工具判据就失真了
+    echo "[behavior]"
+    printf '%s\n' "$TABLE"   | awk 'NF { print $1 }'
+    echo "[tool]"
+    printf '%s\n' "$TOOL"    | awk 'NF { print $1 }'
+    exit 0
+    ;;
+  --ids)
+    { printf '%s\n' "$TABLE"; printf '%s\n' "$TOOL"; } | awk 'NF { print $1 }'
+    exit 0
+    ;;
+  --pending|-p)
+    printf '%s\n' "$PENDING" | tr ' ' '\n' | awk 'NF'
     exit 0
     ;;
 esac
