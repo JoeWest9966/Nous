@@ -218,6 +218,36 @@ PY
 		skip "没有 docs/not-ported.md（决定不做的上游东西记在哪里？）"
 	fi
 
+	# 4e 依赖边：只许 AGENTS.md §二 表里那几条（机器版在这条命令旁边，改表同时改这里）
+	ALLOWED=$(python3 - <<'PY'
+import json,subprocess
+allow={
+ 'nous-telemetry': set(),
+ 'nous-chord': set(),
+ 'nous-wire': set(),
+ 'nous-env': {'nous-chord'},
+ 'nous-ai': {'nous-telemetry'},
+ 'nous-tools': {'nous-ai','nous-env'},
+ 'nous-runtime': {'nous-ai'},
+ 'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env'},
+}
+meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
+                               capture_output=True,text=True).stdout)
+bad=[]
+for pkg in meta['packages']:
+    name=pkg['name']
+    if name not in allow: continue
+    for dep in pkg['dependencies']:
+        d=dep['name']
+        if not d.startswith('nous-') or d==name: continue
+        if d not in allow[name]: bad.append(f'{name} → {d}')
+print('\n'.join(bad))
+PY
+)
+	if [ -z "$ALLOWED" ]; then ok "依赖边全在 AGENTS.md §二 表里"; else
+		while read -r e; do [ -n "$e" ] && bad "依赖边不在 §二 表里：$e"; done <<< "$ALLOWED"
+	fi
+
 	# 4c 占位桩
 	if [ -d crates ]; then
 		if command -v rg >/dev/null 2>&1; then RG=rg; else RG="grep -rnE"; fi
