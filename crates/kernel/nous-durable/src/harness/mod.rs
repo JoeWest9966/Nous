@@ -4,13 +4,14 @@
 //! `watch` 那套事件流不要（事件走 `nous-wire`），`Session` 那层的回调也不进来。
 
 pub mod abort;
+pub mod clock;
 pub mod generation;
 pub mod json;
 pub mod live;
 pub mod partial;
 pub mod project;
 
-use nous_ai::utils::streaming_json::PathSegment;
+use nous_ai_types::utils::streaming_json::PathSegment;
 use nous_chord::delta::{Path, Seg};
 
 use crate::session::SessionError;
@@ -74,7 +75,7 @@ pub fn seg(path: &[PathSegment]) -> Path {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nous_ai::utils::streaming_json::{index, key};
+    use nous_ai_types::utils::streaming_json::{index, key};
 
     #[test]
     fn the_path_conversion_maps_both_segment_kinds() {

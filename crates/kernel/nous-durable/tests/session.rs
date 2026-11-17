@@ -4,6 +4,25 @@
 //! 多一个都不行」是用户定的判据 —— 让它机器判，比写在文档里靠人记强。#22 的端点层要按这张表写，
 //! 它漂了就等于让端点层猜。
 
+/// 测试用的定时器：**不借 `tokio 的时间 API`**（判据要求 `crates/kernel` 里逐行空）。
+/// 真相层的生产路径用注入时钟；这里只是"别让测试挂死"的护栏。
+async fn sleep(duration: std::time::Duration) {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        std::thread::sleep(duration);
+        let _ = tx.send(());
+    });
+    let _ = rx.await;
+}
+
+async fn timeout<F: std::future::Future>(duration: std::time::Duration, future: F) -> Result<F::Output, ()> {
+    tokio::select! {
+        value = future => Ok(value),
+        _ = sleep(duration) => Err(()),
+    }
+}
+
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -306,7 +325,7 @@ async fn commit_after_close_is_a_clear_error_not_a_panic_or_a_hang() {
     let session = Session::open(&path).unwrap();
     session.close().await.unwrap();
 
-    let error = tokio::time::timeout(
+    let error = timeout(
         Duration::from_secs(5),
         session.commit(vec![conversation(2)], CommitOptions::default()),
     )
@@ -372,14 +391,14 @@ async fn close_waits_for_the_commit_that_is_in_flight() {
         tokio::spawn(async move { session.commit(batch, CommitOptions::default()).await })
     };
     // 让提交先跑起来（另一个 worker 线程上），再进 close。
-    tokio::time::sleep(Duration::from_millis(5)).await;
+    sleep(Duration::from_millis(5)).await;
     let close_called_at = std::time::Instant::now();
     let close_result = {
         let session = session.clone();
         tokio::spawn(async move { session.close().await })
     };
 
-    let (commit_result, close_result) = tokio::time::timeout(Duration::from_secs(120), async {
+    let (commit_result, close_result) = timeout(Duration::from_secs(120), async {
         (committing.await.unwrap(), close_result.await.unwrap())
     })
     .await

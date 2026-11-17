@@ -379,6 +379,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "exts-combo"
+version = "0.1.0"
+dependencies = [
+ "nous-ext-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "exts-evil"
+version = "0.1.0"
+dependencies = [
+ "nous-ext-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "exts-handle"
+version = "0.1.0"
+dependencies = [
+ "nous-ext-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "exts-nameplate"
+version = "0.1.0"
+dependencies = [
+ "nous-ext-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "exts-section"
+version = "0.1.0"
+dependencies = [
+ "nous-ext-sdk",
+ "serde_json",
+]
+
+[[package]]
+name = "exts-tool"
+version = "0.1.0"
+dependencies = [
+ "nous-ext-sdk",
+ "serde_json",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1213,6 +1261,7 @@ dependencies = [
  "eventsource-stream",
  "futures",
  "jsonschema",
+ "nous-ai-types",
  "nous-telemetry",
  "regex",
  "reqwest",
@@ -1224,6 +1273,17 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "nous-ai-types"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1240,7 +1300,9 @@ dependencies = [
 name = "nous-durable"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "nous-ai",
+ "nous-ai-types",
  "nous-chord",
  "nous-wire",
  "serde",
@@ -1256,6 +1318,43 @@ dependencies = [
  "nous-chord",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "nous-ext"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "nous-durable",
+ "nous-ext-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "nous-ext-probe"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "libc",
+ "nous-durable",
+ "nous-ext",
+ "nous-ext-sdk",
+ "nous-server",
+ "nous-wire",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "nous-ext-sdk"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

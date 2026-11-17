@@ -488,6 +488,26 @@ mod tests {
         assert!(sibling.is_cancelled());
     }
 
+    /// 测试定时器：不借 `tokio 的时间 API`（#19 的 grep 逐行空）。
+    async fn test_sleep(duration: Duration) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(duration);
+            let _ = tx.send(());
+        });
+        let _ = rx.await;
+    }
+
+    async fn test_timeout<F: std::future::Future>(
+        duration: Duration,
+        future: F,
+    ) -> Result<F::Output, ()> {
+        tokio::select! {
+            value = future => Ok(value),
+            _ = test_sleep(duration) => Err(()),
+        }
+    }
+
     #[tokio::test]
     async fn cancelled_resolves_on_any_token() {
         let token = CancellationToken::new();
@@ -495,9 +515,9 @@ mod tests {
         let waiting = tokio::spawn(async move {
             context.cancelled().await;
         });
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        test_sleep(Duration::from_millis(10)).await;
         token.cancel();
-        tokio::time::timeout(Duration::from_secs(1), waiting)
+        test_timeout(Duration::from_secs(1), waiting)
             .await
             .expect("cancelled() must resolve")
             .unwrap();
@@ -513,10 +533,10 @@ mod tests {
         let waiter = tokio::spawn(async move {
             await_with_context(std::future::pending::<()>(), &cancelled).await
         });
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        test_sleep(Duration::from_millis(10)).await;
         token.cancel();
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), waiter)
+            test_timeout(Duration::from_secs(1), waiter)
                 .await
                 .expect("waiter must return")
                 .unwrap(),

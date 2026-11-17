@@ -1,0 +1,11 @@
+{
+  "name": "tool",
+  "version": "0.1.0",
+  "protocol": 3,
+  "file": "exts-tool",
+  "entry": "exts-tool",
+  "sections": [{ "key": "tools", "tag": "tools" }],
+  "handles": ["probe"],
+  "summary": "流式 + 取消 + 申请写的样例工具",
+  "category": "sample"
+}

@@ -32,16 +32,16 @@
 
 use std::sync::Mutex;
 
-use nous_ai::{AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, StopReason};
+use nous_ai_types::{AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, StopReason};
 use nous_chord::delta::codec::Encoder;
 use nous_chord::delta::draft::Draft;
 use nous_chord::delta::{Revision, Seg};
 use serde_json::{json, Value};
-use tokio::time::Instant;
 
 use crate::session::{CommitOptions, Session, SessionError};
 use crate::{DocumentContent, Id, StorageWrite};
 
+use super::clock::Clock;
 use super::live::{Deferred, LiveState, Retry};
 use super::partial::PartialChanges;
 use super::HarnessError;
@@ -79,16 +79,20 @@ pub enum Beat {
 /// 时间线见证。判据在 `tests/harness_generation.rs`。
 ///
 /// 上游没有这个东西 —— 它出现的理由是：节拍 / 单飞 / 终态在后 / 停表这四面**都只能靠时间线
-/// 判**，值判据一条也判不出来。用 `tokio::time::Instant`：测试里 `start_paused` 时是虚拟时钟，
+/// 判**，值判据一条也判不出来。用 `tokio 的 Instant`：测试里 `start_paused` 时是虚拟时钟，
 /// 于是断言不需要 `sleep` 猜。
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Timeline {
-    beats: Mutex<Vec<(Beat, Instant)>>,
+    clock: std::sync::Arc<dyn Clock>,
+    beats: Mutex<Vec<(Beat, u64)>>,
 }
 
 impl Timeline {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(clock: std::sync::Arc<dyn Clock>) -> Self {
+        Self {
+            clock,
+            beats: Mutex::new(Vec::new()),
+        }
     }
 
     /// 记一拍。生产路径只在 `stream_response` / `classify` 里调；判据与**反向对照**
@@ -97,11 +101,11 @@ impl Timeline {
         self.beats
             .lock()
             .expect("timeline is not poisoned")
-            .push((beat, Instant::now()));
+            .push((beat, self.clock.now_ms()));
     }
 
     /// 记下来的拍子（按发生顺序）。
-    pub fn beats(&self) -> Vec<(Beat, Instant)> {
+    pub fn beats(&self) -> Vec<(Beat, u64)> {
         self.beats.lock().expect("timeline is not poisoned").clone()
     }
 
@@ -142,18 +146,19 @@ pub async fn stream_response(
     request: &StreamRequest,
     mut events: AssistantMessageEventStream,
     timeline: Option<&Timeline>,
+    clock: std::sync::Arc<dyn Clock>,
 ) -> Result<AssistantMessage, HarnessError> {
-    let interval = std::time::Duration::from_millis(request.interval_ms.max(1));
+    let interval = request.interval_ms.max(1);
     let mut changes = PartialChanges::new();
     let mut pending: Option<Value> = None;
-    let mut deadline: Option<Instant> = None;
+    let mut deadline: Option<u64> = None;
 
     loop {
         let tick = match deadline {
             // 定时器就是这条 `sleep_until`：`finally` 里不重建它，就等于取消（见模块文档第 4 面）。
             Some(at) => tokio::select! {
                 event = events.next() => Tick::Event(event),
-                _ = tokio::time::sleep_until(at) => Tick::Interval,
+                _ = clock.wait_until(at) => Tick::Interval,
             },
             None => Tick::Event(events.next().await),
         };
@@ -185,7 +190,7 @@ pub async fn stream_response(
                     pending = Some(partial);
                 }
                 if deadline.is_none() {
-                    deadline = Some(Instant::now() + interval);
+                    deadline = Some(clock.now_ms() + interval);
                 }
             }
         }

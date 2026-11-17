@@ -23,6 +23,7 @@ content/**/*.sqlite-wal
 
 # ── Rust workspace（#14 搬迁）────────────────────────────
 /target
+# 扩展的判据执行器也会生成 target/
 **/*.rs.bk
 
 # 真实用户数据，永不入库（spec：fixture 那份 agent.sqlite 是线上数据）

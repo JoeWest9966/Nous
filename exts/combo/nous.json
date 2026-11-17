@@ -1,0 +1,11 @@
+{
+  "name": "combo",
+  "version": "0.1.0",
+  "protocol": 3,
+  "file": "exts-combo",
+  "entry": "exts-combo",
+  "sections": [{ "key": "roster", "tag": "roster" }],
+  "handles": ["skills", "prompts"],
+  "summary": "四件能力压在一个扩展里",
+  "category": "sample"
+}

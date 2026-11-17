@@ -21,6 +21,7 @@ pub mod coalesce;
 pub mod commands;
 pub mod error;
 pub mod hub;
+pub mod machines;
 pub mod observer;
 pub mod project;
 pub mod routes;
