@@ -13,14 +13,21 @@
 //! 3. [`the_cache_does_not_leak_between_documents`] —— 同一 store 里两份文档交替读，值各归各的。
 //! 4. [`a_cached_value_equals_a_fresh_read_only_read`] —— 缓存的值与「另开一条只读连接直接读库」
 //!    逐字段相等。`#13` 那条「publication `value` 等于直接读回」不因为加了缓存而放松。
+//! 5. [`the_cache_stops_at_its_cap_and_an_evicted_document_still_reads_back_correctly`] —— 缓存
+//!    **有上限**，且淘汰**不污染正确性**：1,000 份文档之后条目数正好是上限，被淘汰那几份读回来
+//!    仍等于直接读库的值。没有这一条，「不释放」是个沉默的漏而不是一个决定。
+//! 6. [`the_cache_keeps_what_was_read_recently_not_what_was_written_first`] —— 淘汰是 LRU 不是
+//!    FIFO：命中会推「最近用过」。差别只有读得到它才能判（所以 `Storage::caches_document` 存在）。
+//!
+//! 前四条守「读到旧值」，后两条守「永不释放」—— 缓存的两个方向都得有判据。
 
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
 use nous_durable::{
-    CommitResult, DocumentContent, DocumentPoint, Storage, StorageWrite, StoredChange,
-    StoredDocumentChange,
+    storage::documents::CACHED_DOCUMENTS, CommitResult, DocumentContent, DocumentPoint, Storage,
+    StorageWrite, StoredChange, StoredDocumentChange,
 };
 
 fn temp_db(tag: &str) -> PathBuf {
@@ -254,5 +261,104 @@ fn a_cached_value_equals_a_fresh_read_only_read() {
     assert_eq!(
         text_of(&cached.value),
         (0..20).map(|round| format!("{round},")).collect::<String>()
+    );
+}
+
+/// 上限 + 「淘汰不污染正确性」。
+///
+/// 这份判据守的是**两个方向里的另一个**：前四条守「读到旧值」，这条守「永不释放」。没有它，缓存
+/// 会安静地长到「每个会话一份长答案」的规模（5,000 × 100 KB = 500 MB），而每一步都不报错。
+#[test]
+fn the_cache_stops_at_its_cap_and_an_evicted_document_still_reads_back_correctly() {
+    const COUNT: i64 = 1_000;
+    let path = temp_db("cap");
+    let mut storage = Storage::open(&path).expect("打开");
+    for index in 0..COUNT {
+        let id = 100 + index;
+        // id 是全库唯一的（九张表共享一个分配器）：会话不能和文档同号，否则整批被拒
+        // `IdWrittenTwice`。
+        let conversation = 10_000 + index;
+        let result = storage
+            .commit(
+                &[vec![
+                    StorageWrite::Conversation(json!({ "id": conversation })),
+                    create(id, conversation, "latest", &format!("doc {id}")),
+                ]],
+                |_, _| {},
+            )
+            .expect("建文档");
+        assert!(result.refused.is_none(), "第 {index} 份被拒绝了: {:?}", result.refused);
+        assert_eq!(text_of(&read(&storage, id)), format!("doc {id}"));
+    }
+
+    // 1,000 份 > 上限，所以它必须**正好**停在上限：既不许继续涨，也不许「其实一份都没留」。
+    assert_eq!(
+        storage.cached_documents(),
+        CACHED_DOCUMENTS,
+        "{COUNT} 份文档之后缓存该停在上限 {CACHED_DOCUMENTS} 条"
+    );
+
+    // 淘汰只影响成本，不影响正确性：被淘汰的文档下次读走的是完整重放，那条路一直在。
+    let reader = Storage::open_read_only(&path).expect("只读连接");
+    for id in [100, 101, 600, 100 + COUNT - 1] {
+        let cached = storage
+            .materialize(id, DocumentPoint::Current)
+            .expect("materialize")
+            .expect("文档在");
+        let fresh = reader
+            .materialize(id, DocumentPoint::Current)
+            .expect("materialize")
+            .expect("文档在");
+        assert_eq!(cached.record, fresh.record, "文档 {id}：record 不一致");
+        assert_eq!(
+            cached.value, fresh.value,
+            "文档 {id}：淘汰之后读回来的值与直接读库不一致 —— 淘汰污染了正确性"
+        );
+        assert_eq!(cached.deltas_since_base, fresh.deltas_since_base, "文档 {id}");
+        assert_eq!(text_of(&cached.value), format!("doc {id}"));
+    }
+}
+
+/// 淘汰是 LRU 不是 FIFO：**读也算用过**。
+///
+/// 差别只有一句话（命中是否推时间戳），后果差很远：FIFO 下「每一轮都在读的那一份」会因为写得早被
+/// 淘汰，于是每次读都重放一遍；而真正冷的那份一直占着格子。
+#[test]
+fn the_cache_keeps_what_was_read_recently_not_what_was_written_first() {
+    let path = temp_db("lru");
+    let mut storage = Storage::open(&path).expect("打开");
+    let fill = |storage: &mut Storage, from: i64, count: i64| {
+        for index in 0..count {
+            let id = from + index;
+            let conversation = 20_000 + id;
+            let result = storage
+                .commit(
+                    &[vec![
+                        StorageWrite::Conversation(json!({ "id": conversation })),
+                        create(id, conversation, "latest", &format!("doc {id}")),
+                    ]],
+                    |_, _| {},
+                )
+                .expect("建文档");
+            assert!(result.refused.is_none(), "{:?}", result.refused);
+        }
+    };
+
+    // 灌满到上限：此时最老的是 100。
+    fill(&mut storage, 100, CACHED_DOCUMENTS as i64);
+    assert_eq!(storage.cached_documents(), CACHED_DOCUMENTS);
+
+    // 读一次最老的那份（它因此变成「最近用过」），再建 60 份新的把上限顶出去。
+    read(&storage, 100);
+    fill(&mut storage, 100 + CACHED_DOCUMENTS as i64, 60);
+
+    assert_eq!(storage.cached_documents(), CACHED_DOCUMENTS, "上限不该被顶破");
+    assert!(
+        storage.caches_document(100),
+        "刚读过的文档被淘汰了 —— 淘汰看的是「写过」而不是「用过」（FIFO，不是 LRU）"
+    );
+    assert!(
+        !storage.caches_document(101),
+        "更早写过、更早读过的 101 反而留着，说明淘汰没按「最久没用」挑"
     );
 }

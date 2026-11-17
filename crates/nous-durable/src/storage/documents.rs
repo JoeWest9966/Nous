@@ -124,9 +124,90 @@ pub(crate) struct CachedDocument {
     pub deltas_since_base: usize,
 }
 
-/// `materialize(Current)` 的结果，按文档 id 存。**每个 `Storage` 一份**：它属于一条连接的生命，
-/// 跨连接（= 跨进程）的失效靠 [`materialize_cached`] 每次对库的那一问。
-pub(crate) type DocumentCache = HashMap<Id, CachedDocument>;
+/// 缓存最多留几份文档。**按条目数，不按字节数**：一份值有多大由调用方决定（`pi.live` 在长答案
+/// 期间就是整段正文），把字节数写进判据只会变成一个「按负载调的数字」。最坏情况的算术在
+/// `docs/storage.md` §10.6。
+pub const CACHED_DOCUMENTS: usize = 256;
+
+/// `materialize(Current)` 的结果，按文档 id 存，**最多 [`CACHED_DOCUMENTS`] 条**。
+///
+/// 满了两件事同时成立：① **最近用过的留**（LRU，`Slot::touched` 是单调计数，命中也会推它 ——
+/// 否则「最近」只记得写过谁，读一次就再也不读的文档会被反复留下）；② **淘汰只影响成本，不影响
+/// 正确性**：被淘汰的文档下次读走的是完整重放，那条路一直在（缓存不是唯一的读法）。
+///
+/// **每个 `Storage` 一份**：它属于一条连接的生命，跨连接（= 跨进程）的失效靠
+/// [`materialize_cached`] 每次对库的那一问。
+///
+/// 为什么要有上限：没有上限的话「不释放」是个沉默的漏，而不是一个决定。fixture 里 961 份文档
+/// 加起来才 53 KB，看不出问题；长驻进程里 5,000 个会话 × 一份 100 KB 的 `pi.live` 就是 500 MB，
+/// 永不释放，且没有任何一步会报错。
+#[derive(Debug, Default)]
+pub(crate) struct DocumentCache {
+    entries: HashMap<Id, Slot>,
+    /// 单调递增的「第几次碰」，用来挑最久没被碰过的那个。
+    clock: u64,
+}
+
+#[derive(Debug)]
+struct Slot {
+    touched: u64,
+    document: CachedDocument,
+}
+
+impl DocumentCache {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// 读一条，**命中就推一次「最近用过」**。
+    fn get(&mut self, id: Id) -> Option<&CachedDocument> {
+        self.clock = self.clock.wrapping_add(1);
+        let touched = self.clock;
+        let slot = self.entries.get_mut(&id)?;
+        slot.touched = touched;
+        Some(&slot.document)
+    }
+
+    /// 放一条，满了就淘汰最久没被碰过的那一条。
+    fn insert(&mut self, id: Id, document: CachedDocument) {
+        self.clock = self.clock.wrapping_add(1);
+        let touched = self.clock;
+        self.entries.insert(id, Slot { touched, document });
+        while self.entries.len() > CACHED_DOCUMENTS {
+            // 溢出最多比上限多一条，所以每一次插入最多淘汰一条；`while` 只是把不变量写死。
+            let victim = self
+                .entries
+                .iter()
+                .min_by_key(|(_, slot)| slot.touched)
+                .map(|(id, _)| *id);
+            match victim {
+                Some(victim) => {
+                    self.entries.remove(&victim);
+                }
+                None => break,
+            }
+        }
+    }
+
+    fn remove(&mut self, id: Id) {
+        self.entries.remove(&id);
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+/// 缓存里现在有几条。**只给判据用**（`#25`：上限必须机器可判，不然「不会永不释放」只能靠读代码）。
+pub(crate) fn cache_len(cache: &Mutex<DocumentCache>) -> usize {
+    lock(cache).len()
+}
+
+/// 这份文档现在在缓存里吗。**只给判据用**：LRU 与 FIFO 只差「命中是否推时间戳」那一句，差别只有
+/// 读得到它才能判。
+pub(crate) fn caches_document(cache: &Mutex<DocumentCache>, id: Id) -> bool {
+    lock(cache).entries.contains_key(&id)
+}
 
 /// 一条 delta revision 的 wire ops（`[{op}, …]`）作用在 `value` 上。
 ///
@@ -212,15 +293,15 @@ pub(crate) fn materialize_cached(
         return materialize(executor, schema, id, at);
     }
     let Some(pointer) = current_pointer(executor, schema, id)? else {
-        lock(cache).remove(&id);
+        lock(cache).remove(id);
         return Ok(None);
     };
     if pointer.retired {
-        lock(cache).remove(&id);
+        lock(cache).remove(id);
         return Ok(None);
     }
     let hit = lock(cache)
-        .get(&id)
+        .get(id)
         .filter(|entry| Some(entry.seq) == pointer.latest_seq)
         .cloned();
     if let Some(entry) = hit {
@@ -281,7 +362,7 @@ pub(crate) fn refresh(
         let retired = row.get("retired_at").map(|cell| !matches!(cell, Cell::Null)).unwrap_or(false);
         let latest_seq = row.get("latest_seq").and_then(Cell::as_i64);
         let entry = guarded
-            .get(&id)
+            .get(id)
             .filter(|entry| !retired && Some(entry.seq) == latest_seq)
             .cloned();
         match entry {
@@ -289,14 +370,14 @@ pub(crate) fn refresh(
                 live.insert(id, entry);
             }
             None => {
-                guarded.remove(&id);
+                guarded.remove(id);
             }
         }
     }
     // 这次提交里**不在库中**的文档 id（新造的）：库里查不到就没有可校准的，缓存里也不该有。
     for id in ids {
         if !rows.iter().any(|row| row.get("id").and_then(Cell::as_i64) == Some(*id)) {
-            guarded.remove(id);
+            guarded.remove(*id);
         }
     }
     Ok(live)
@@ -324,7 +405,7 @@ pub(crate) fn values_after_batch(
         let action = &actions[&id];
         if action.retire {
             // 记录里已经带了 `retiredAt`：值不再有意义，缓存也不该留着它。
-            lock(cache).remove(&id);
+            lock(cache).remove(id);
             continue;
         }
         let Some(content) = &action.content else { continue };

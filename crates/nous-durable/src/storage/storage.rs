@@ -326,6 +326,18 @@ impl Storage {
         materialize_cached(self.store.db(), self.schema(), &self.cache, id, at)
     }
 
+    /// 缓存里现在留了几份文档。**给判据用**：`#25` 要求上限机器可判（`tests/materialize_cache.rs`），
+    /// 不然「不会永不释放」只能靠读代码。上限本身是 [`super::documents::CACHED_DOCUMENTS`]。
+    pub fn cached_documents(&self) -> usize {
+        super::documents::cache_len(&self.cache)
+    }
+
+    /// 这份文档现在在缓存里吗。**给判据用**：`#25` 的淘汰策略是 LRU，而 LRU 与 FIFO 只差一句
+    /// 「命中是否推时间戳」—— 差别只有读得到它才能判。
+    pub fn caches_document(&self, id: i64) -> bool {
+        super::documents::caches_document(&self.cache, id)
+    }
+
     /// 一份文档的记录（不重放内容）。
     pub fn document(&self, id: i64) -> Result<Option<Value>> {
         let row = self.store.db().get(

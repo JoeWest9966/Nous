@@ -257,8 +257,8 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 
 | 文件 | 内容 | 判据 |
 |---|---|---|
-| `documents.rs` | `DocumentCache`（按文档 id）、`CachedDocument`（`seq` + `version` + `value` + `deltas_since_base`）、`materialize_cached`、`refresh`（一批写落库**之前**对着库校准）、`values_after_batch`（落库**之后**算这批的 `(version, value)`） | `tests/materialize_cache.rs` 四条 |
-| `storage.rs` | `Storage.cache: Mutex<DocumentCache>`；`commit` 的每批：`refresh` → `flush` → `values_after_batch` → `stored_batch(…, values)`；公开的 `Storage::materialize` 走 `materialize_cached` | 同上 |
+| `documents.rs` | `DocumentCache`（按文档 id，**上限 `CACHED_DOCUMENTS = 256` 条，LRU**）、`CachedDocument`（`seq` + `version` + `value` + `deltas_since_base`）、`materialize_cached`、`refresh`（一批写落库**之前**对着库校准）、`values_after_batch`（落库**之后**算这批的 `(version, value)`） | `tests/materialize_cache.rs` 六条 |
+| `storage.rs` | `Storage.cache: Mutex<DocumentCache>`；`commit` 的每批：`refresh` → `flush` → `values_after_batch` → `stored_batch(…, values)`；公开的 `Storage::materialize` 走 `materialize_cached`；`Storage::cached_documents()` / `caches_document(id)` 只给判据用 | 同上 |
 | `commit.rs` | `stored_batch` 不再自己读库：delta 的 `value` 由调用方算好传进来（`values`） | 同上 |
 
 **缓存的有效性判据只有一条**：库里这份文档 `MAX(seq)` 等于缓存记下的 `seq`。理由：revision 只插不改
@@ -276,6 +276,36 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 
 **只缓存 `Current`。** `At(seq)` 是历史读取（还拿它判一条 delta 的 `version`），没有「每次都读同一个
 点」的性质，缓存它只有伪造历史的收益。
+
+### 上限：256 条，LRU —— 算术（不是注释里的一句「应该够了」）
+
+缓存是**每个 `Storage` 一份**（一条连接的生命）。没有上限时它只在退役时删，于是「不释放」是个沉默的
+漏，不是任何一个决定。
+
+| 量 | 数 |
+|---|---|
+| 上限 | **256 条**（`CACHED_DOCUMENTS`），按**条目数**，不按字节数 |
+| 一条的大小 | 文档值 + `record` + 几十字节簿记（`seq` / `version` / `deltas_since_base` / `touched`） |
+| 典型（fixture 那 961 份文档） | 全部加起来 53 KB，平均 ≈ 56 B/份 ⇒ 256 份 ≈ **15 KB** |
+| 最坏（`pi.live` 一份长答案 100 KB） | 256 × 100 KB ≈ **25 MB** 封顶（每连接） |
+| 没有上限时的最坏 | 5,000 个会话 × 一份 100 KB 的 `pi.live` = **≈ 500 MB** 常驻，且没有任何一步会报错 |
+
+按条目数而不是字节数的理由：一份值有多大由调用方决定（`pi.live` 在流式期间就是整段正文），
+字节数上限会变成一个「按负载调的数字」，改它的理由永远说不清；条目数上限是个能写的常数，而
+「最坏 25 MB」是可以算出来的。
+
+**为什么是 256，不是 8 或 8,192。** 淘汰的代价是一次**完整重放**（链长 `n` ⇒ `n` 条 apply，线性），
+而上限太小会让「反复重放」变成新的抖动源。256 比「一次 RPC 里同时活跃的文档数」（一页会话 + 当前
+正在流的那几份）大一到两个数量级，同时又把最坏情况压在 25 MB —— 这两头都留着余量，中间不需要调。
+
+**淘汰只影响成本，不影响正确性**，而且这不是靠小心：未命中走的是完整重放，那条路一直在（缓存不是
+唯一的读法）。所以「被淘汰的文档读回来仍然等于直接读库」是一条**结构性**的性质，判据只需守住它
+（`the_cache_stops_at_its_cap_and_an_evicted_document_still_reads_back_correctly`）。
+
+**淘汰是 LRU 不是 FIFO。** 差别只有一句「命中是否推时间戳」，后果差很远：FIFO 下「每一轮都在读的
+那一份」因为写得早而被淘汰，每次读都要重放；真正冷的那份一直占着格子。判据
+`the_cache_keeps_what_was_read_recently_not_what_was_written_first` —— 这条必须读得到「某份还在不在
+缓存里」才能判，所以 `Storage::caches_document(id)` 存在（只给判据用）。
 
 **两条不许松的判据**：① 同一 store 里两份文档交替读，值各归各的；
 ② 加缓存之后 `materialize` 的结果与「另开一条只读连接直接从库里读」**逐字段相等** ——
