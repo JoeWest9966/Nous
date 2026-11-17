@@ -18,7 +18,7 @@ use std::sync::Arc;
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
 use nous_durable::storage::import::ImportedStore;
 use nous_durable::storage::sessions::{
-    render_entries_page, render_live_message, render_sessions, SessionItem, ENTRIES_MAX_LIMIT,
+    render_entries_page, render_live_message, render_sessions, SessionItem,
 };
 use serde_json::Value;
 

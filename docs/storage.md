@@ -428,3 +428,42 @@ fixtures/agent.sqlite
 **规矩**：只有「多出一个键就等于另一种语义」的枚举才手写反序列化；其余继续 derive。手写的那几处必须
 在同一次提交里带一条「非法形状明确报错」的测试，否则下次改结构不会有人发现约束已经松了。
 判据：`crates/nous-durable/tests/records_domains.rs`。
+
+### 12.7 `waitMs`：传了就 400，不等
+
+`POST /v1/sessions/:id/messages` 的 body 里出现 `waitMs` → **400 `{error}`**，不会挂住等结果。
+
+- **为什么**：`wire.md` 明写桌面端的用法是「发消息 → 202 → 靠 SSE 收内容」，并说别用 `waitMs`
+  等同步。实现一条没有人走的同步路径，等于在端点层再造一套超时/取消语义，而它不受任何客户端
+  判据约束。
+- **反悔点**：出现**真要同步等**的调用方时，二选一 —— 实现它（`waitMs` 上限、超时返回当前
+  submission 状态、取消语义都要先写进 `wire.md`），或者把状态码改成 501 明说「不实现」。
+  不许改成「静默忽略」：那会让调用方以为等到了。
+- 判据：`crates/nous-server/tests/commands_endpoints.rs::fork_while_busy_is_409_and_wait_ms_is_400`。
+
+### 12.8 `whenBusy`：当前**静默忽略**，行为 = 照样排队
+
+body 里出现 `whenBusy` → 收下、不解释、**不改变行为**：这次输入照样写一条 `queued` submission。
+
+- **为什么**：`wire.md` 只列了这个键，没有定义取值域与语义；自己发明一套「reject / queue /
+  interrupt」会让客户端按猜的写。当前的确定行为是：**忙不忙都排队**（`busy` 只影响列表显示）。
+- **反悔点**：先在 `wire.md` 里把取值域写死（例如 `reject` 时返回 409），再在
+  `session::commands::submit_message` 里按值分支，并在同一提交里补「忙 + reject → 409、忙 +
+  queue → 202」两条判据。**在那之前，任何「whenBusy 生效了」的说法都是假的。**
+- 判据：目前没有行为判据，只有「字段存在且不影响 202」这条隐含事实；加语义时先加判据。
+
+### 12.9 上游 v2 副本的「领养」（`NOUS_ADOPT_LEGACY=1`）
+
+`nous-server` 的 bin 可以对一份**上游 v2 库的副本**做一次性领养：补 `durable_schema.writer`
+列（值 `nous`）、把 `version` 记成 1。**表结构不动、行数据不动** —— 本库 v1 的 DDL 就是上游
+v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）。
+
+- **默认拒绝**：不设这个开关时，`NOUS_DB` 指向上游 v2 库会明确报错并打印操作提示（§12.3：
+  版本号不可比，写模式拒 v2）。
+- **为什么需要它**：端到端验证要在**可写副本**上跑（不能写 `fixtures/agent.sqlite` 语料）。
+- **守卫**：只在「没有 `writer` 列 + 版本号正好 2」时动作；已有认门值的库拒绝领养
+  （`WriterMismatch`）。判据：`crates/nous-durable/tests/adoption.rs` 两条。
+- **反悔点**：真要做「上游库 → 本库」的常规迁移时，单独开票写导入器（只读源 → 新库），
+  **不要**把领养扩成通用路径。领养是破坏性的：跑完那份文件在本库眼里就是 v1，真上游再打开
+  会看到旧版本号。
+

@@ -45,8 +45,10 @@ impl AppState {
     /// 提交落库后帧立刻进 SSE，端点不用自己补发。
     pub fn durable(path: impl AsRef<std::path::Path>) -> Result<Arc<Self>> {
         let path = path.as_ref();
-        let source = ImportedSource::open(path)?;
+        // 先开写后端：空路径由它的迁移建表（`ImportedSource::open` 会立刻读一次，
+        // 文件还不存在时先读会报 "unable to open database file"）。
         let commands = DurableCommands::open(path)?;
+        let source = ImportedSource::open(path)?;
         let state = Arc::new(Self {
             source,
             commands: commands.clone(),
