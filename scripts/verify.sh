@@ -74,12 +74,33 @@ if [ "$WHAT" = all ] || [ "$WHAT" = fixture ]; then
 		bad "fixture 缺了就无法验证会话树读得对不对"
 	else
 		if cargo run --quiet -p nous-fixture -- "$FIX" > /tmp/nous-fixture.json 2>/tmp/nous-fixture.err; then
-			# 关键字段一个不能少
-			for k in id name parent model updatedAt last; do
-				grep -q "\"$k\"" /tmp/nous-fixture.json || bad "输出里缺字段 $k"
-			done
-			N=$(grep -o '"id"' /tmp/nous-fixture.json | wc -l)
-			[ "$N" -ge 189 ] && ok "读出 $N 条会话（≥189）" || bad "只读出 $N 条，期望 ≥189"
+			# 判据必须是「189 条、id 降序、字段齐、无重复」，不是数 "id" 字符串
+			CHECK=$(python3 - <<'PY'
+import json
+try:
+    doc=json.load(open('/tmp/nous-fixture.json',encoding='utf-8'))
+except Exception as e:
+    print('BAD'); print(f'输出不是合法 JSON：{e}'); raise SystemExit
+items=doc.get('items')
+if not isinstance(items,list):
+    print('BAD'); print('输出里没有 items 数组'); raise SystemExit
+need=['id','name','parent','model','updatedAt','last']
+missing=[k for k in need if any(k not in it for it in items)]
+if missing:
+    print('BAD'); print('有会话缺字段：'+','.join(missing)); raise SystemExit
+ids=[it['id'] for it in items]
+if len(ids)!=len(set(ids)):
+    print('BAD'); print(f'id 有重复（{len(ids)} 条，{len(set(ids))} 个唯一）'); raise SystemExit
+if ids!=sorted(ids,reverse=True):
+    print('BAD'); print('不是 id 降序'); raise SystemExit
+print('OK'); print(len(ids))
+PY
+)
+			if [ "$(head -1 <<<"$CHECK")" = OK ]; then
+				ok "读出 $(tail -n +2 <<<"$CHECK") 条会话（id 降序、字段齐、无重复）"
+			else
+				bad "fixture 输出不对：$(tail -n +2 <<<"$CHECK")"
+			fi
 		else
 			bad "fixture 跑不起来：$(head -3 /tmp/nous-fixture.err)"
 		fi
