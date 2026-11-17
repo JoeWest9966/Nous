@@ -71,6 +71,120 @@ pub fn message_changes(change: &CommitChange) -> Result<Vec<MessageChange>, Harn
     Ok(project(&decoded, value))
 }
 
+/// 一条 commit 里的**工具卡片**变化（`tool_execution_start` / `tool_execution_update` 的原料）。
+///
+/// 为什么在 `project` 里而不是 `nous-server` 里：`nous-server` 的契约面**不许依赖
+/// `nous_chord`**（`AGENTS.md` §二），而这一步必须解 `ops` 才能知道「谁刚刚开始跑」。
+/// 从批后 `value.tools` 反推会把「每次提交都把整轮工具重发一遍」当成正确行为。
+///
+/// 只认**顶层** `tools` 槽。`nested_tools`（工具内部发起的嵌套调用）`wire.md` 没有对应帧，
+/// 硬塞进 `tool_execution_*` 会让客户端把嵌套调用画成顶层卡片 —— 不产生帧。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolChange {
+    /// 一个工具槽出现在 `tools` 里（或从 `pending` 进到 `running`）：开卡片。
+    Start {
+        tool_call_id: String,
+        tool_name: String,
+    },
+    /// 运行时输出。`append` 与 `set` 至少有一个。
+    Update {
+        tool_call_id: String,
+        append: Option<String>,
+        set: Option<String>,
+    },
+}
+
+/// 一条 commit → 工具卡片变化。非 `pi.live` / 非 `Change` / 不触及 `tools` 一律空 vec。
+pub fn tool_changes(change: &CommitChange) -> Result<Vec<ToolChange>, HarnessError> {
+    let CommitChange::Document(DocumentCommitChange::Change {
+        record,
+        value,
+        ops,
+        ..
+    }) = change
+    else {
+        return Ok(Vec::new());
+    };
+    if record.kind != LIVE_KIND {
+        return Ok(Vec::new());
+    }
+    let wire = ops
+        .as_array()
+        .ok_or_else(|| HarnessError::Shape("publication ops is not an array".to_string()))?;
+    let decoded = Decoder::new()
+        .decode(wire)
+        .map_err(|error| HarnessError::Ops(error.to_string()))?;
+    let tools = value.get("tools").and_then(Value::as_array);
+    let mut changes = Vec::new();
+    for op in &decoded {
+        let Some(path) = op.path() else { continue };
+        let Some(rest) = path.strip_prefix([Seg::key("tools")].as_slice()) else {
+            continue;
+        };
+        let [Seg::Index(index), tail @ ..] = rest else {
+            continue;
+        };
+        let Some(slot) = tools.and_then(|tools| tools.get(*index as usize)) else {
+            continue;
+        };
+        let call_id = slot.get("callId").and_then(Value::as_str);
+        let name = slot.get("name").and_then(Value::as_str);
+        match (op, tail) {
+            // 新槽 / 整槽重写：开卡片。
+            (Op::Set(_, _), []) => {
+                if let (Some(call_id), Some(name)) = (call_id, name) {
+                    changes.push(ToolChange::Start {
+                        tool_call_id: call_id.to_string(),
+                        tool_name: name.to_string(),
+                    });
+                }
+            }
+            // `status` 被设成 `running`：从「排着」变「在跑」，也要开（或刷新）卡片。
+            (Op::Set(_, Value::String(status)), [Seg::Key(field)]) if field == "status" => {
+                if status == "running" {
+                    if let (Some(call_id), Some(name)) = (call_id, name) {
+                        changes.push(ToolChange::Start {
+                            tool_call_id: call_id.to_string(),
+                            tool_name: name.to_string(),
+                        });
+                    }
+                }
+            }
+            // 输出增量。`output` 留 `Value` 的形状由 `nous-server` 决定。
+            (Op::Append(_, text), [Seg::Key(field)]) if field == "output" => {
+                if let Some(call_id) = call_id {
+                    changes.push(ToolChange::Update {
+                        tool_call_id: call_id.to_string(),
+                        append: Some(text.clone()),
+                        set: None,
+                    });
+                }
+            }
+            (Op::Set(_, Value::String(text)), [Seg::Key(field)]) if field == "output" => {
+                if let Some(call_id) = call_id {
+                    changes.push(ToolChange::Update {
+                        tool_call_id: call_id.to_string(),
+                        append: None,
+                        set: Some(text.clone()),
+                    });
+                }
+            }
+            // `output` 整段清掉（工具结束 `clear_progress` 之类）：覆盖成空串。
+            (Op::Set(_, Value::Null), [Seg::Key(field)]) if field == "output" => {
+                if let Some(call_id) = call_id {
+                    changes.push(ToolChange::Update {
+                        tool_call_id: call_id.to_string(),
+                        append: None,
+                        set: Some(String::new()),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(changes)
+}
+
 /// 解码后的 op 批次 + 批后的完整值 → 帧。分开暴露是因为判据要直接喂 op 批次。
 pub fn project(ops: &[Op], value: &Value) -> Vec<MessageChange> {
     let mut frames = Vec::new();

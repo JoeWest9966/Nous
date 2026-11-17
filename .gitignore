@@ -9,3 +9,8 @@ data/
 
 # vendor 里那个自带 Cargo.toml 的 daemon 单编会生成 target/
 vendor/**/target/
+
+# nous-server 的默认库（NOUS_DB 缺省 ./nous.db）：运行时产物，不入库
+nous.db
+nous.db-wal
+nous.db-shm

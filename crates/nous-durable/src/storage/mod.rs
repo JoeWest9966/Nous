@@ -26,7 +26,8 @@ pub mod sqlite;
 use std::path::Path;
 
 use nous_chord::sqlite::{
-    apply_sqlite_migrations, LocalDatabase, SqliteError, SqliteErrorKind, SqliteExecutor,
+    apply_sqlite_migrations, LocalDatabase, SqliteDatabase, SqliteError, SqliteErrorKind,
+    SqliteExecutor,
 };
 
 use crate::error::{Result, StorageError};
@@ -144,6 +145,55 @@ impl SqliteStore {
 }
 
 /// SQLite 报「no such column」时返回 true。用它区分「上游库没有 writer 列」和真正的故障。
+/// 把一份**上游 v2 库的副本**领养成可写库：加 `writer` 列、版本号记成 1。
+///
+/// ## 这不是迁移，是「领养副本」
+///
+/// `docs/storage.md` §12.3：两边的版本号**不可比**。上游 v2 的最终 DDL 与本库 v1 逐字相同
+/// （`tasks` 的 `sleeping` 已含在 v1，见 `sqlite/migrations.rs` 模块文档），差别只有
+/// `durable_schema.writer` 这一列。所以「领养」= 补一列 + 把版本号记成我们自己的 1，
+/// 不动任何表、不动任何行数据。
+///
+/// ## 两道守卫，缺一不可
+///
+/// 1. 文件必须**没有** `writer` 列（有就说明已经是别人的可写库，不许改它的认门值）；
+/// 2. 版本号必须**等于 2**（上游 v2）。别的值一律拒绝 —— 猜一个不认识的库是数据损坏。
+///
+/// ## 只能用在副本上
+///
+/// 这是**破坏性**的：跑完之后那份文件在本库眼里就是 v1，真上游再打开会看到旧版本。
+/// 调用方（`nous-server` 的 bin）只在显式开关下调用，且文档写明「只对 /var/tmp 的副本用」。
+pub fn adopt_legacy_copy(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    let schema = SqliteSchema::unprefixed();
+    {
+        // 先用只读连接判两道门，确认之后再开写连接 —— 不留一个「开了写但立刻退出」的窗口。
+        let probe = SqliteStore::open_read_only(path)?;
+        if let Some(found) = probe.writer()? {
+            return Err(StorageError::WriterMismatch {
+                found: Some(found),
+            });
+        }
+        let version = probe.schema_version()?;
+        if version != 2 {
+            return Err(StorageError::Shape(format!(
+                "legacy adoption only accepts upstream v2, found version {version}"
+            )));
+        }
+    }
+    let mut db = LocalDatabase::open(path)?;
+    let table = schema.table("durable_schema");
+    db.transaction(|tx| -> Result<()> {
+        tx.exec(&format!("ALTER TABLE {table} ADD COLUMN writer TEXT"))?;
+        tx.run(
+            &format!("UPDATE {table} SET writer = ?, version = 1 WHERE singleton = 1"),
+            &[WRITER.into()],
+        )?;
+        Ok(())
+    })?;
+    Ok(())
+}
+
 fn is_missing_column(error: &SqliteError) -> bool {
     error.kind == SqliteErrorKind::Backend && error.message.contains("no such column")
 }

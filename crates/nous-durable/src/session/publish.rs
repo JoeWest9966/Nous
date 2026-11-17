@@ -55,8 +55,12 @@ use crate::types::{
 };
 use crate::{CopySource, Id, Seq};
 
-use nous_chord::context::Context;
-use nous_chord::watch::WatchEnd;
+// 重新导出：`CommitObserver` 的签名里出现这两个类型，任何实现者都必须能命名它们。
+// 不 re-export 的话，`nous-server` 为了写一个 `impl CommitObserver` 就得直接依赖
+// `nous-chord`，而 §二 的契约面里没有那条边（判据：`verify.sh` 4e）。这里导出的是
+// **trait 签名的一部分**，不是 chord 的门面。
+pub use nous_chord::context::Context;
+pub use nous_chord::watch::WatchEnd;
 
 /// 一次提交存下的全部改动，加它自己的 `seq`。上游 `CommitPublication`。
 ///

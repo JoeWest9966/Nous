@@ -318,6 +318,38 @@ impl Storage {
         })))
     }
 
+    /// 一个会话的提交记录（`submissions.record`），按 id 升序。
+    ///
+    /// `request_id` 的幂等查找要走这条：`#22` 的 `POST /messages` 同一个 `requestId` 打两次
+    /// 必须拿到同一条 submission（表里不建唯一索引的理由见 `docs/storage.md`）。
+    pub fn submissions(&self, conversation_id: i64) -> Result<Vec<Value>> {
+        let rows = self.store.db().all(
+            &format!(
+                "SELECT record FROM {} WHERE conversation_id = ? ORDER BY id",
+                self.schema().table("submissions")
+            ),
+            &[Cell::Integer(conversation_id)],
+        )?;
+        rows.iter().map(record_of).collect()
+    }
+
+    /// 一个会话的任务记录（`tasks.record`），按 id 升序。状态是不透明 JSON，这里不解释。
+    pub fn tasks(&self, conversation_id: i64) -> Result<Vec<Value>> {
+        let rows = self.store.db().all(
+            &format!(
+                "SELECT record FROM {} WHERE conversation_id = ? ORDER BY id",
+                self.schema().table("tasks")
+            ),
+            &[Cell::Integer(conversation_id)],
+        )?;
+        rows.iter().map(record_of).collect()
+    }
+
+    /// 会话里 id 最大的那条 entry（fork 不给 `entryId` 时用）。
+    pub fn latest_entry_id(&self, conversation_id: i64) -> Result<Option<i64>> {
+        latest_entry_id(self.store.db(), self.schema(), conversation_id)
+    }
+
     /// 一份文档在 `at` 上的值。不存在 / 不在世 → `None`。
     ///
     /// `Current` 走缓存（[`materialize_cached`]）：命中与否**只看库里这份文档最新一条 revision

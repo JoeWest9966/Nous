@@ -9,6 +9,7 @@ members = [
     "crates/nous-chord",
     "crates/nous-durable",
     "crates/nous-runtime",
+    "crates/nous-server",
     "crates/nous-fixture",
 ]
 # `packages/env/daemon` 自带 Cargo.toml / Cargo.lock / rust-toolchain.toml，不是本 workspace 的成员。
@@ -29,7 +30,7 @@ license = "MIT"
 #   yaml_serde = "=0.10.2"                                          ← nous-runtime
 [workspace.dependencies]
 async-trait = "0.1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "process", "sync", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "fs", "process", "sync", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive", "rc"] }
@@ -46,6 +47,11 @@ indexmap = { version = "2", features = ["serde"] }
 # SQLite：`bundled` 自带一份 libsqlite3，不依赖系统库（部署机各不相同）。
 # 版本照 `pi-rust@v0.24.2` 的 workspace.dependencies pin 住。
 rusqlite = { version = "0.31", features = ["bundled"] }
+
+# 端点层（#22）。`AGENTS.md` §二：axum 只允许出现在 `nous-server`，durable 永久禁 HTTP。
+# 版本随本库自己的 minor pin（同 `thiserror = "1"` 的风格），不追上游 —— 本库没有哪个
+# 上游用 axum，这一行没有可对齐的 tag。
+axum = "0.8"
 
 # 错误 / 日志
 thiserror = "1"
@@ -69,4 +75,5 @@ nous-ai = { path = "crates/nous-ai", version = "0.1.0" }
 nous-env = { path = "crates/nous-env", version = "0.1.0" }
 nous-tools = { path = "crates/nous-tools", version = "0.1.0" }
 nous-durable = { path = "crates/nous-durable", version = "0.1.0" }
+nous-server = { path = "crates/nous-server", version = "0.1.0" }
 nous-fixture = { path = "crates/nous-fixture", version = "0.1.0" }

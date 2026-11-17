@@ -392,6 +392,28 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 「抛错」这个通道，`panic` 会冒到 `commit()` 的调用方 —— 我们**不** `catch_unwind` 兜住：把库里的
 bug 变成「事件静默丢失」比崩掉更难查。
 
+### 10.5.1 `#22` 撑大的公开面（Rust 里 `pub` 就是契约）
+
+`#22`（端点层）需要三件 durable 里**原本没有公开**的东西。加在这里不是「顺手 export」，是
+`#13` 那张 5 方法表之外**第二张**要有人负责的表。记住这一条：`Session` 的五个方法没变，
+下面这些都是 **sibling 模块 / 自由函数**，但它们在 Rust 里同样是契约。
+
+| 新增 | 形状 | 为什么住 durable 而不是 `nous-server` | `#22` 之后谁来用 |
+|---|---|---|---|
+| `session::commands::{submit_message, abort, fork}` | `async fn(&Session, …) -> Result<…, CommandError>`；配套 `SubmitRequest` / `SubmitOutcome` / `AbortOutcome` / `ForkRequest` / `ForkOutcome` | 三条命令都要「铸 id + 一次提交 + 把 publication 交给观察者」。id 分配器与提交锁在 `Session` 里（`Storage::mint_id` 不落盘，必须和下一次提交在同一个事务里推进）；把这三步拆到端点层等于让 `nous-server` 重做一遍提交语义 | `nous-server` 的 `POST /messages` / `abort` / `fork` 直接调；将来 harness 起生成时也走 `submit_message` 的同一份受理语义 |
+| `harness::project::{tool_changes, ToolChange}` | `fn(&CommitChange) -> Result<Vec<ToolChange>, HarnessError>`；`ToolChange::{Start, Update}` | 工具启动必须解 `ops` 才知道「谁刚开始跑」；`nous-server` 的契约面**不含 `nous-chord`**（§二），所以解码只能在 durable 这边做。从批后 `value.tools` 反推会把「每次提交都把整轮工具重发一遍」当成正确行为 | `nous-server` 的 `message_update` 旁边的 `tool_execution_start/update`（issue #22 的 ≤1 拍判据钉着） |
+| `storage::sessions::{render_entries, render_entries_page, render_live_message, ENTRIES_MAX_LIMIT, LIVE_DOCUMENT_KIND}` | 只读：entries 的 `/v1` 形状（`model` 原样透传）、一页 + 不透明游标、`pi.live.generation.message` | 这是「旧引擎文档 → `wire.md` 形状」的知识（`qrd3wh.sessions` / `pi.agent` / `pi.live` 的文档布局）。端点层不知道这些 kind，也不该知道 | `nous-server` 的 `GET /entries` 与 SSE `snapshot`；将来 12c 落自己的文档契约时替换掉 |
+| `session::publish::{Context, WatchEnd}` 重新导出 | `pub use nous_chord::{context::Context, watch::WatchEnd}` | 它们是 `CommitObserver` 签名的一部分。不 re-export，`nous-server` 为了写一个 `impl CommitObserver` 就得直接依赖 `nous-chord`，而 §二 没有那条边（`verify.sh` 4e 会红） | `nous-server` 的观察者适配层；`#19` 的订阅实现同理 |
+| `Storage::{submissions, tasks, latest_entry_id}` | 只读查询：一个会话的 submission / task 记录（按 id 升序）、最后一条 entry id | `requestId` 幂等要按 `conversationId + requestId` 查库；abort/fork 的前置条件要读活跃任务。这些是存储语义，不是端点的 | `session::commands`；将来 `#25` 的缓存失效判定也会读同两条 |
+
+**不进这张表的东西**：`Session` 的 5 个方法一个没加（`tests/session.rs` 扫源码钉着）；
+`commands` 是子模块，所以扫描器看不到它 —— 这不是绕过判据，判据的意图是「不许悄悄给 `Session`
+加方法」，而这三条命令本来就不该是 `Session` 的方法：它们要**先读后写**（幂等查找、活跃任务
+检查），而 `Session::commit` 只收一批已经定好的写。
+
+**代价**：公开面多一行就多一条兼容义务。`#22` 之后要改 `CommandError` 的四个分类、或去掉
+`ToolChange` 的某个变体，都得先看 `nous-server` 的路由映射与 `tests/{commands,harness_projection}.rs`。
+
 ## 12. 与上游的故意差别
 
 这四条是**我们和上游不一样的地方**，不是还没做完的地方。写在这里的唯一理由：以后最容易撞车的就是它们，
@@ -468,3 +490,42 @@ fixtures/agent.sqlite
 **规矩**：只有「多出一个键就等于另一种语义」的枚举才手写反序列化；其余继续 derive。手写的那几处必须
 在同一次提交里带一条「非法形状明确报错」的测试，否则下次改结构不会有人发现约束已经松了。
 判据：`crates/nous-durable/tests/records_domains.rs`。
+
+### 12.7 `waitMs`：传了就 400，不等
+
+`POST /v1/sessions/:id/messages` 的 body 里出现 `waitMs` → **400 `{error}`**，不会挂住等结果。
+
+- **为什么**：`wire.md` 明写桌面端的用法是「发消息 → 202 → 靠 SSE 收内容」，并说别用 `waitMs`
+  等同步。实现一条没有人走的同步路径，等于在端点层再造一套超时/取消语义，而它不受任何客户端
+  判据约束。
+- **反悔点**：出现**真要同步等**的调用方时，二选一 —— 实现它（`waitMs` 上限、超时返回当前
+  submission 状态、取消语义都要先写进 `wire.md`），或者把状态码改成 501 明说「不实现」。
+  不许改成「静默忽略」：那会让调用方以为等到了。
+- 判据：`crates/nous-server/tests/commands_endpoints.rs::fork_while_busy_is_409_and_wait_ms_is_400`。
+
+### 12.8 `whenBusy`：当前**静默忽略**，行为 = 照样排队
+
+body 里出现 `whenBusy` → 收下、不解释、**不改变行为**：这次输入照样写一条 `queued` submission。
+
+- **为什么**：`wire.md` 只列了这个键，没有定义取值域与语义；自己发明一套「reject / queue /
+  interrupt」会让客户端按猜的写。当前的确定行为是：**忙不忙都排队**（`busy` 只影响列表显示）。
+- **反悔点**：先在 `wire.md` 里把取值域写死（例如 `reject` 时返回 409），再在
+  `session::commands::submit_message` 里按值分支，并在同一提交里补「忙 + reject → 409、忙 +
+  queue → 202」两条判据。**在那之前，任何「whenBusy 生效了」的说法都是假的。**
+- 判据：目前没有行为判据，只有「字段存在且不影响 202」这条隐含事实；加语义时先加判据。
+
+### 12.9 上游 v2 副本的「领养」（`NOUS_ADOPT_LEGACY=1`）
+
+`nous-server` 的 bin 可以对一份**上游 v2 库的副本**做一次性领养：补 `durable_schema.writer`
+列（值 `nous`）、把 `version` 记成 1。**表结构不动、行数据不动** —— 本库 v1 的 DDL 就是上游
+v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）。
+
+- **默认拒绝**：不设这个开关时，`NOUS_DB` 指向上游 v2 库会明确报错并打印操作提示（§12.3：
+  版本号不可比，写模式拒 v2）。
+- **为什么需要它**：端到端验证要在**可写副本**上跑（不能写 `fixtures/agent.sqlite` 语料）。
+- **守卫**：只在「没有 `writer` 列 + 版本号正好 2」时动作；已有认门值的库拒绝领养
+  （`WriterMismatch`）。判据：`crates/nous-durable/tests/adoption.rs` 两条。
+- **反悔点**：真要做「上游库 → 本库」的常规迁移时，单独开票写导入器（只读源 → 新库），
+  **不要**把领养扩成通用路径。领养是破坏性的：跑完那份文件在本库眼里就是 v1，真上游再打开
+  会看到旧版本号。
+
