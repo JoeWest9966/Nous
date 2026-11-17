@@ -81,3 +81,38 @@
 **由此定的范围（用户刀）**：`#23` 只做「表示 + collapse」—— 原生 flush 分支（`renderSystemMessageUpdate`
 + anthropic 的 `pendingSystemMessages`）**不做**，因为我们手上没有「吃原生中途 system」的模型能对照，
 写出来没有任何判据能红。
+
+---
+
+## 人工哨兵（没有机器判据，只能连真引擎看）
+
+机器判据只能看本仓的代码，看不到「真引擎现在发什么帧」。所以有几件事**故意不做成测试** ——
+做成测试必然假红（`grep` 我们自己的源码永远能过），而假绿比没有更坏。这几件事靠人，写在下面，
+每条都写清「为什么会变」和「变了之后动哪里」。
+
+### S1 · 每轮动 `#22` 之前：连一次真引擎，确认 `message_update.changes` 还在
+
+**看什么**：真引擎的 SSE 帧里，`message_update` 是否仍然带 `changes[]`（8 个变体的数组），
+而不是带整条 `message`（snapshot-diff）。
+
+**为什么会消失**：上游 `pi@v1.5.1` 已经把它整条事件流砍了 —— `packages/durable/CHANGELOG.md:76`：
+*Removed `watchEvents()` and its types `AgentEvent`, `AgentEventStream`, `SnapshotEvent`,
+`MessageChange`, and `ToolEventCall` … A renderer renders state instead of assembling it from
+events*（earendil-works/pi#11327）。`grep -rn MessageChange packages/` 全仓零命中。
+上游的理由是「渲染器渲状态、不拿事件拼状态」。
+
+**我们的理由（不是抄它）**：`wire.md` 的 8 个变体是从**真流量**（NousDesk ↔ 真引擎）抄的，
+不是从 pi 源码抄的。所以 pi 删不删**不影响合同** —— 它删的是它自己的渲染路径。
+
+**变了怎么办**：`docs/decisions.md` 里那条「`message_update.changes[]` 的 8 个变体」写了完整
+反悔动作：`wire.md` 的 `changes[]` 那段整段作废、`#22` 的投影换成状态差分、`MessageChange`
+8 个变体退役。
+
+**为什么是人工**：真引擎不在本仓。要机器判它，得先有一个「连真引擎抓一帧比对」的集成测试，
+而那需要线上凭据与网络 —— 那属于部署面，不属于 `verify.sh`（`verify.sh` 必须离线可跑）。
+
+### S2 · 每次提货上游之后：`rg 'rpi[_-]' crates/` 必须 0
+
+代码里不许出现 `rpi_` / `rpi-` 前缀（改了名的提货文件也不能留旧名）。这条**曾经**有机器判据，
+后来改成人工报数：报告里报今天多少处（2026-11-17 是 **19**），代码引用必须 0。理由同 S1 ——
+上游名字会漂，机器判据只会维护一堆例外。

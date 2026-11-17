@@ -47,7 +47,8 @@ impl SqliteStore {
     /// 2. 缺 `writer` 列（上游库）→ [`StorageError::WriterMismatch`]；
     /// 3. `writer != 'nous'` → 同上。
     ///
-    /// 打开成功时 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` 已经设好（`docs/storage.md` §7）。
+    /// 打开成功时 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` + `synchronous=NORMAL` 已经设好
+    /// （`docs/storage.md` §7；最后那条的代价在 `docs/bench-commit.md`）。
     pub fn open_writer(path: impl AsRef<Path>) -> Result<Self> {
         let schema = SqliteSchema::unprefixed();
         let mut db = LocalDatabase::open(path)?;
@@ -55,6 +56,13 @@ impl SqliteStore {
         // WAL + busy_timeout：单写者的两个前提。
         db.exec("PRAGMA journal_mode=WAL")?;
         db.exec("PRAGMA busy_timeout=5000")?;
+        // `synchronous=NORMAL`：WAL 下**提交本身不 fsync**（只有 checkpoint 才 fsync）。
+        // 掉电的代价是丢掉最近若干个提交，库本身不会坏 —— SQLite 文档写明的取舍。
+        // 依据是数字，不是口味：1,000 次 immediate partial 提交在 ext4 上默认 FULL 要 11,200 ms
+        // （每次提交 ~11 ms 全花在 fsync），NORMAL 后 1,890 ms；按真实节流（100 ms 一次，
+        // 16 秒流式输出 = 160 次提交）是 110 ms。据此上游的 deferred 持久化
+        // （`live.ts:236` `PROGRESS_COMMIT`）在本库**不需要**。见 `docs/bench-commit.md`。
+        db.exec("PRAGMA synchronous=NORMAL")?;
 
         let store = Self { db, schema };
         match store.writer()? {

@@ -75,7 +75,10 @@ tasks / submissions / durable_metadata / durable_schema
 
 ## 7. 失败 / 半写 / 多进程
 
-- **单写者**：`BEGIN IMMEDIATE` + WAL + `busy_timeout = 5000`。
+- **单写者**：`BEGIN IMMEDIATE` + WAL + `busy_timeout = 5000` + `synchronous = NORMAL`。
+  `NORMAL` 是数字逼出来的：ext4 上 1,000 次提交默认 FULL 要 11,200 ms（每次 ~11 ms 全在等 fsync），
+  NORMAL 1,890 ms。代价写在这里别写在心里：**掉电会丢最近若干个提交，库不会坏**（WAL 下只有
+  checkpoint 保证落盘）。依据与全部数字见 `docs/bench-commit.md`。
 - **一次调用失败的三种样子，别压成一句**（见 §7.1）：
   1. **校验拒绝**（durable 自己的检查）—— 不抛，装进 `CommitResult.refused`；
      前 N−1 批照常提交，seq 逐批盖章，回执在 `COMMIT` 之后发。
