@@ -19,7 +19,7 @@
 import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
-import type { Node } from "../src/game.ts";
+import type { Node } from "./tree.ts";
 
 /** 宿主的状态目录。放在 board 里面，但**不属于**树，也不属于任何一个块的文件夹。 */
 export const NOUS = ".nous";
