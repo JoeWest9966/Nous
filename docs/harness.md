@@ -144,10 +144,14 @@ abort 与 `classify` 的竞争同理：`Session` 的存储锁保证先到的那�
 「committed state stays consistent」是一条判据（`an_abort_after_the_terminal_commit_writes_nothing`），
 不是注释。
 
-**(5) 本票已知「抓不住」的一条：** 在 `finally` 里补一次尾帧提交（上游**不**这么做，见
-(2)）不会被这四条判据抓住 —— 时间线上它落在终态之**前**，既不违反节拍也不违反「终态在后」。
-唯一能看见它的是**提交次数预算**（每条流多一次写盘），那属于基准票那一类（`commit_throughput`），
-不属本票。写在这里是为了下次有人「顺手补一帧」时知道没人拦他。
+**(5) 尾帧提交抓得住了 —— 靠等号，不靠基准票。** 起初这里写的是「抓不住」（时间线上尾帧落在
+终态之**前**，既不违反节拍也不违反「终态在后」）。**那是判据写宽了，不是判据写不了**：当时
+断言的是区间 `2..=5`，而 `start_paused` 下虚拟时钟精确到毫秒、同一份输入每次得到同一个数 ——
+区间恰好给「补一帧」（4 次）留了位置。现在写成 `assert_eq!(partials, 3)`（40 片 × 10 ms、
+闸 100 ms ⇒ 110 / 210 / 310 ms 三次），并逐个钉住时刻；补一帧就是 4，实测立刻红。
+
+**区间只有一个正当理由：虚拟时钟下仍有抖动。** tokio 的 paused 时钟不抖动，所以那个理由
+不成立 —— 凡是能在虚拟时钟上算出来的次数，都写等号。
 
 ### ④ abort（无上游模块 —— 见 §0.1）
 
@@ -286,7 +290,7 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 | `projection_covers_every_message_change_variant` | 8 变体逐个（5 真数据 + 3 构造） |
 | `projection_emits_no_change_for_storage_only_commits` | §2.1 的 7 行「不产出」各一条 |
 | `projection_never_encodes_a_set_as_a_delta` | §2.2 那条铁律 |
-| `harness_stream_commits_partials_at_most_every_interval` | 节流 + 单飞 + `finally` 等飞完（时间线见证，不用 `sleep` 猜）；**同一时间线还要判「终态之后没有 partial」** —— 时间线上出现「先终态、后 partial」即红。不判「尾帧必交」：上游 `finally` 故意不提交 pending（§1 ③ 附 (2)） |
+| `harness_stream_commits_partials_at_most_every_interval` | 节流 + 单飞 + `finally` 等飞完（时间线见证，不用 `sleep` 猜）+ **「终态之后没有 partial」**（出现「先终态、后 partial」即红）+ **次数等号**：`== 3`，且三次时刻逐个等于 110 / 210 / 310 ms —— 于是「在 finally 里补一帧」是 4，红。不判「尾帧必交」：上游 `finally` 故意不提交 pending（§1 ③ 附 (2)）；不补是行为，「补了会红」是成本面，两条别混 |
 
 ---
 

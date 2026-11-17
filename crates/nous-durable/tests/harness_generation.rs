@@ -215,6 +215,7 @@ async fn harness_stream_commits_partials_at_most_every_interval() {
     let chunks: Vec<String> = (0..40).map(|_| "0123456789".to_string()).collect();
     let total: String = chunks.concat();
 
+    let began = Instant::now();
     let message = stream_response(
         &session,
         &request(100),
@@ -223,11 +224,35 @@ async fn harness_stream_commits_partials_at_most_every_interval() {
     )
     .await
     .expect("流能跑完");
+
+    // **等号，不是区间。** `start_paused` 下虚拟时钟精确到毫秒、同一份输入每次得到同一个数，
+    // 所以「大概几次」是把这个数放宽成了一个抓不住东西的区间 —— 区间 2..=5 恰好给「在 finally
+    // 里顺手补一帧」（4 次）留了位置。
+    //
+    // 算得出来：第一片 10 ms 到，闸定在 10+100=110 ms；此后每 100 ms 一次（落库之后才重新
+    // 起闸），110 / 210 / 310；流在 400 ms 结束、410 ms 给终态，第四次闸（410 之后）永远到
+    // 不了 ⇒ 恰好 3 次。
     let partials = timeline.count(Beat::PartialStart);
-    assert!(
-        partials >= 2 && partials <= 5,
-        "40 片 × 10ms = 400ms 的流、闸 100ms，partial 提交应该在 2..=5 次，实际 {partials}"
+    assert_eq!(
+        partials, 3,
+        "40 片 × 10ms = 400ms 的流、闸 100ms ⇒ 恰好 3 次 partial 提交（110 / 210 / 310 ms）"
     );
+
+    // 等号顺带钉住「闸在哪一刻第一次触发」：110 / 210 / 310 ms，不是 10 / 110 / 210。
+    let starts: Vec<Instant> = timeline
+        .beats()
+        .into_iter()
+        .filter(|(beat, _)| *beat == Beat::PartialStart)
+        .map(|(_, at)| at)
+        .collect();
+    for (index, at) in starts.iter().enumerate() {
+        let expected = Duration::from_millis(110 + 100 * index as u64);
+        assert_eq!(
+            at.duration_since(began),
+            expected,
+            "第 {index} 次 partial 提交的时刻不对（闸第一次就该在 110 ms）"
+        );
+    }
 
     // ①② 节拍与单飞（真流）。
     let violations = timeline_violations(&timeline.beats(), 100);
