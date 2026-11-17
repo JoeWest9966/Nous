@@ -11,6 +11,7 @@
 3. **每条判据必须能单独起进程跑**（一条命令一次结果）。SKIP 是 `exit 0`，一进套件就会把后面的判据一起吞掉——那是换了个位置的假绿。
 4. **判据里出现的每个路径，第一段必须是** `test -e <载体> || { echo "SKIP: 等 <票号>"; exit 0; }`。引用 `scripts/judge.sh` 的判据，**脚本本身也要 guard**（脚本不存在时是 SKIP，不是红——否则一开票就红一片，然后有人去改判据）。
 5. **本仓只有样例扩展**，住 `Nous/exts/`（四小一大：`section` / `tool` / `nameplate` / `handle` / `combo`）。**真扩展住 `Nous-extend`，本文件的判据一律不引用它**——跨仓判据等于"跑不了 = 绿"。
+6. **断言不许只有一个数。** 凡是形如 `| wc -l` = N 的判据，必须**再配一条内容断言**（输出里必须出现某个确定的行/字段）。证据：v0 骨架（每个 case 只 `echo` 一行 SKIP）让 EX-13/27/38/51 四条**当场变绿**——一个只会打印一行的桩就能骗过计数型判据，那不是判据，是巧合。
 
 ## 章目
 
@@ -558,6 +559,7 @@ watch 触发是**目录级**的，重载必须是**扩展级**的。
 
 | 编号 | 判据（可跑的命令） | 票号 | 谁签字 |
 |---|---|---|---|
+<!-- 单元格里的 `\|` 是 Markdown 表格转义，粘贴到 shell 时要还原成 `|`。用"抽表器"整批跑时别做全局反转义——那会把 EX-57 的正则 `^\| (EX-[0-9]+) \|` 破坏成选择分支。 -->
 | EX-01 | `test -d exts \|\| { echo "SKIP: 等 T5"; exit 0; }; grep -rn '/opt/' -- exts/*/nous.json \| tee` 逐行空 | T5 | 待人拍 |
 | EX-02 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh load-missing-handle \| tee` 含"缺句柄 X"且该扩展未装载 | T5 | 待人拍 |
 | EX-03 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh load-empty-extension \| tee` 含"这个扩展什么都不提供" | T5 | 待人拍 |
@@ -614,7 +616,7 @@ watch 触发是**目录级**的，重载必须是**扩展级**的。
 | EX-54 | `test -d crates/app \|\| { echo "SKIP: 等 T1"; exit 0; }; grep -rn 'api/catalog' -- crates server \| tee` 逐行空；`curl -s localhost:PORT/v1/machines \| tee` 含兼容 target 列表 | T1 | 已签 · 2026-11-17（S10/S11） |
 | EX-55 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh two-sessions-isolated \| tee` A 的输出不含 B 的任何字节 | T5 | 待人拍 |
 | EX-56 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh disable-extension \| tee` 0 次调用 + 名牌全 `missing()` + 诊断写"已禁用" | T5 | 待人拍 |
-| EX-57 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; diff <(grep -oE 'judge\.sh [a-z0-9-]+' docs/spec/ext-runtime.md \| awk '{print $2}' \| sort -u) <(./scripts/judge.sh --list \| sort -u) \| tee` 空 diff（判据表引用的 case 名与 `--list` 集合相等） | T5 | 待人拍 |
+| EX-57 | `diff <(grep -oE '^\| (EX-[0-9]+) \|' docs/spec/ext-runtime.md \| grep -oE 'EX-[0-9]+') <(./scripts/judge.sh --list) \| tee` 空 diff（表里的 EX 编号集合 == `--list`）；且表里每个 `judge.sh <name>` 都能解析（否则 exit 2） | T5 | 已签 · 2026-11-17（v0 已生效） |
 | EX-58 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh oversized-frame \| tee` 扩展被杀、归因 `extension_crash`、宿主 RSS 涨幅 < 1MB | T5 | 待人拍 |
 | EX-59 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh nameplate-conflict \| tee` 第二个拒载并点名双方，第一个照常工作 | T5 | 待人拍 |
 | EX-60 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh handle-path-escape \| tee` 内核代读时拒掉 `..`/绝对路径并落诊断 | T5 | 待人拍 |
