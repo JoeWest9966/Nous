@@ -171,3 +171,20 @@ if self.appends.is_empty() { return Ok(TrustedOps::unchecked(diff)); }
 **反悔点**：若本库开始承载「掉电也不能丢最后一笔」的东西（例如账务类写入，或用户明确要求
 durable-until-acked），把这条 pragma 去掉，同时重跑 `commit_throughput` —— 那时 deferred 的
 决策要跟着重看（见上一条的反悔点 1）。
+
+## 2026-11-17 · 冷启动判据的对象写死成 `nous-server`
+
+**决定**：`verify.sh` 第 3 段不再从 `cargo metadata` 里取第一个 bin target，直接 `BIN=nous-server`；
+`nous-fixture` 的逻辑测试留在第 1 段（`cargo test --workspace`），不占这一格。
+
+**留痕（老规矩三行）**：
+
+- **谁刀的**：用户，2026-11-17（`#22` 合并后那一轮），助理起草改动。
+- **旧判据**：`BIN=$(cargo metadata … next((t["name"] … if t["kind"]==["bin"])))` —— 取第一个 bin target。
+  单 bin 时期（只有 `nous-fixture`）这是对的，也因为只有那一个。
+- **为什么改**：`#22` 加了 `nous-server`，第二个 bin 一出现，这一格取到谁**取决于包名遍历顺序**。
+  实测它碰巧取到了 server（rc=124，一直活着），于是判据看起来「验了服务端」——但那是运气，不是判据。
+  加一个 crate 就可能静默换对象，而这一格照旧绿。**判据不许依赖顺序。**
+
+**反悔点**：哪天真的需要同时验两个 bin（例如给 `nous-fixture` 单独做退出码判据），就写成显式列表
+`for BIN in nous-server nous-fixture`，每个对象一条断言——仍然不许回到「取第一个」。

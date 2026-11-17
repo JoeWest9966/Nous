@@ -130,10 +130,17 @@ fi
 # 3. 冷启动
 if [ "$WHAT" = all ] || [ "$WHAT" = boot ]; then
 	step "3. 冷启动不 panic"
-	BIN=$(cargo metadata --no-deps --format-version 1 2>/dev/null |
-		python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((t["name"] for p in d["packages"] for t in p["targets"] if t["kind"]==["bin"]),""))' 2>/dev/null)
-	if [ -z "$BIN" ]; then
-		skip "还没有 bin target"
+	# 冷启动只认这一个对象，**写死**。
+	#
+	# 旧判据是「从 cargo metadata 里取第一个 bin target」—— 那是 2026-11-17 之前的写法，当时只有
+	# `nous-fixture` 一个 bin。`#22` 加了 `nous-server` 之后，它取到哪个**取决于包名遍历顺序**：
+	# 碰巧取到了 server（rc=124），但加一个 crate 就可能静默换成别的二进制，而这一格照旧是绿的。
+	# 判据不许依赖顺序。
+	#
+	# `nous-fixture` 的逻辑测试在 1 段（`cargo test --workspace`）里跑，不占这一格。
+	BIN=nous-server
+	if ! cargo metadata --no-deps --format-version 1 2>/dev/null | grep -q "\"name\":\"$BIN\""; then
+		bad "没有 $BIN 这个 target —— 冷启动对象被删了，先改这里再改代码"
 	else
 		if cargo build --release --quiet -p "$BIN" >/dev/null 2>&1; then
 			timeout 5 "./target/release/$BIN" >/tmp/nous-boot.log 2>&1
