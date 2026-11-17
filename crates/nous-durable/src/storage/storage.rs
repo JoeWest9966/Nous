@@ -303,7 +303,10 @@ impl Storage {
         Ok(Some((record, seq)))
     }
 
-    /// 一个会话的 entry，按 id 升/降序，游标不透明。
+    /// 一条会话（含它的 fork 祖先链）的 entry，按 id 升/降序，游标不透明。
+    ///
+    /// **不只是一条会话**：fork 出来的会话只存自己那一段，之前的历史住在父会话里。链怎么走、
+    /// 两条方向为什么不对称，见 [`super::scans::scan_entry_chain`] 的模块文档。
     pub fn scan_entries(
         &self,
         query: &EntryQuery,
@@ -311,48 +314,7 @@ impl Storage {
         cursor: Option<&Cursor>,
     ) -> Result<std::result::Result<Page<Value>, Refusal>> {
         self.ensure_open()?;
-        let (order, after) = match scan_start(query.order, cursor, ScanOrder::Descending) {
-            Ok(start) => start,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        let mut clauses = vec!["conversation_id = ?".to_string()];
-        let mut params = vec![Cell::Integer(query.conversation_id)];
-        clauses.push(
-            match order {
-                ScanOrder::Ascending => "id > ?",
-                ScanOrder::Descending => "id < ?",
-            }
-            .to_string(),
-        );
-        params.push(Cell::Integer(after.unwrap_or(match order {
-            ScanOrder::Ascending => -1,
-            ScanOrder::Descending => i64::MAX,
-        })));
-        if let Some(min) = query.min_entry_id {
-            clauses.push("id >= ?".to_string());
-            params.push(Cell::Integer(min));
-        }
-        if let Some(max) = query.max_entry_id {
-            clauses.push("id <= ?".to_string());
-            params.push(Cell::Integer(max));
-        }
-        params.push(Cell::Integer(limit as i64 + 1));
-        let rows = self.store.db().all(
-            &format!(
-                "SELECT record FROM {} WHERE {} ORDER BY id {} LIMIT ?",
-                self.schema().table("entries"),
-                clauses.join(" AND "),
-                order.direction()
-            ),
-            &params,
-        )?;
-        let records = rows
-            .iter()
-            .map(record_of)
-            .collect::<Result<Vec<Value>>>()?;
-        Ok(Ok(cut_page(records, limit, order, |record| {
-            record.get("id").and_then(Value::as_i64).unwrap_or(0)
-        })))
+        super::scans::scan_entry_chain(self.store.db(), self.schema(), query, limit, cursor)
     }
 
     /// 一个会话的提交记录（`submissions.record`），按 id 升序。
@@ -409,6 +371,66 @@ impl Storage {
     /// 「命中是否推时间戳」—— 差别只有读得到它才能判。
     pub fn caches_document(&self, id: i64) -> bool {
         super::documents::caches_document(&self.cache, id)
+    }
+
+    /// 一条任务记录。`state` 是不透明 JSON：这一层不解释它，状态机的语义在调用方。
+    pub fn task(&self, id: i64) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::task(self.store.db(), self.schema(), id)
+    }
+
+    /// 一条提交记录。
+    pub fn submission(&self, id: i64) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::submission(self.store.db(), self.schema(), id)
+    }
+
+    /// `(conversationId, requestId)` 的幂等查找 —— `POST /messages` 的幂等键。
+    pub fn submission_by_request(&self, conversation_id: i64, request_id: &str) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::submission_by_request(self.store.db(), self.schema(), conversation_id, request_id)
+    }
+
+    /// 按 id 升/降扫任务。过滤条件全是拆出来的索引列（`kind` 与 `request_id` 是编码体）。
+    pub fn scan_tasks(
+        &self,
+        query: &super::scans::TaskQuery,
+        limit: usize,
+        cursor: Option<&Cursor>,
+    ) -> Result<std::result::Result<Page<Value>, Refusal>> {
+        self.ensure_open()?;
+        super::scans::scan_tasks(self.store.db(), self.schema(), query, limit, cursor)
+    }
+
+    /// 按 id 升/降扫提交记录。
+    pub fn scan_submissions(
+        &self,
+        query: &super::scans::SubmissionQuery,
+        limit: usize,
+        cursor: Option<&Cursor>,
+    ) -> Result<std::result::Result<Page<Value>, Refusal>> {
+        self.ensure_open()?;
+        super::scans::scan_submissions(self.store.db(), self.schema(), query, limit, cursor)
+    }
+
+    /// 按**作用域**扫在世的文档（`key` 不参与）。
+    pub fn scan_documents(
+        &self,
+        query: &super::scans::DocumentQuery,
+        limit: usize,
+        cursor: Option<&Cursor>,
+    ) -> Result<std::result::Result<Page<Value>, Refusal>> {
+        self.ensure_open()?;
+        super::scans::scan_documents(self.store.db(), self.schema(), query, limit, cursor)
+    }
+
+    /// 按**地址**（`kind` + `scope` + `key`）精确找一份在世的文档。
+    ///
+    /// 与 [`scan_documents`](Self::scan_documents) 是两条独立的路：一个比五个索引列，一个比作用域
+    /// 三列。混成一条就会出现「按地址找」返回一串候选，调用方还得自己挑。
+    pub fn find_document(&self, address: &Value, at: DocumentPoint) -> Result<Option<Value>> {
+        self.ensure_open()?;
+        super::scans::find_document(self.store.db(), self.schema(), address, at)
     }
 
     /// 一份文档的记录（不重放内容）。

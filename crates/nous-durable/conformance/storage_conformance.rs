@@ -7,7 +7,7 @@
 //! - 一份**真后端**（临时文件 SQLite）上跑，不造假后端：假后端通过什么也证明不了。
 //! - 减法都要有理由：砍掉的案进票 #21，不无声消失。
 //!
-//! 上游 32 个 `createCase(`，这里 21 个；`FLOOR.tsv` 记的正是这个数字。
+//! 上游 32 个 `createCase(`，这里 24 个；`FLOOR.tsv` 记的正是这个数字。
 //!
 //! ## 八个上游文件，为什么这里只有一份规范
 //!
@@ -16,8 +16,8 @@
 //! `createCase(` 调用点是 0（benchmark / 断言 / 注册器 / 类型 / 出口 / 提交辅助），不设下限，
 //! 也不为凑文件数造空文件。
 //!
-//! 于是 32 案 = **21 已落** + **8 等真后端**（`scan_tasks` / `scan_submissions` / `scan_documents` /
-//! fork 链的 entry 扫描，票 #21）+ **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与
+//! 于是 32 案 = **24 已落** + **5 等真后端**（`scan_submissions` / `scan_documents` / fork 链的
+//! entry 扫描，票 #21）+ **3 不做**（对象别名两条 + 不种根会话；理由在票 #21 与
 //! `docs/not-ported.md`）。
 //! `env_conformance.rs` **不做**：本库 `nous-env` 只有 trait、没有一个实现，而 conformance 测的是
 //! **真后端** —— 造个假后端让用例通过，什么也证明不了（票 #15）。逐文件的判定见 `FLOOR.tsv` 文件头。
@@ -865,4 +865,253 @@ fn rejects_every_operation_after_close() {
 
     // 关掉之后「再关一次」不是错误：已经关了就是已经关了。
     fixture.storage.close().unwrap();
+}
+
+/// 上游的 `pendingTask(id, conversationId)`：一条待跑的任务，形状逐字段照抄。
+fn pending_task(id: i64, conversation_id: i64) -> Value {
+    json!({
+        "id": id,
+        "conversationId": conversation_id,
+        "kind": "test.task",
+        "version": 1,
+        "input": { "value": id },
+        "state": { "status": "pending", "checkpoint": { "phase": "ready" } },
+        "background": false,
+        "abortRequested": false
+    })
+}
+
+fn ids_of(page: &nous_durable::Page<Value>) -> Vec<i64> {
+    ids_in(&page.items)
+}
+
+fn ids_in(items: &[Value]) -> Vec<i64> {
+    items
+        .iter()
+        .map(|record| record["id"].as_i64().unwrap())
+        .collect()
+}
+
+/// 按状态扫一页任务（上游那几条案里最常见的形状）。写成 `fn` 而不是闭包：闭包会借着
+/// `fixture.storage`，而后面的 `commit` 要 `&mut` 它。
+fn tasks_with_status(storage: &Storage, status: &str) -> Vec<Value> {
+    let query = nous_durable::TaskQuery {
+        status: Some(status.to_string()),
+        ..Default::default()
+    };
+    tasks_of(storage, query, 10, None).items
+}
+
+fn tasks_of(
+    storage: &Storage,
+    query: nous_durable::TaskQuery,
+    limit: usize,
+    cursor: Option<&nous_durable::Cursor>,
+) -> nous_durable::Page<Value> {
+    storage.scan_tasks(&query, limit, cursor).unwrap().unwrap()
+}
+
+#[test]
+fn replaces_complete_task_records_and_pages_filtered_task_scans() {
+    // 上游 case：整条任务记录（含 `memos` / `background` / `abortRequested`）被后写的覆盖，不是合并；
+    // 扫描按状态 / 后台 / 中止标记过滤，并且能翻页。
+    let mut fixture = backend("task-replace");
+    let (first_id, second_id, third_id) = (11, 12, 13);
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                conversation(2),
+                StorageWrite::Task({
+                    let mut record = pending_task(first_id, 2);
+                    record["memos"] = json!({ "winner": "first" });
+                    record
+                }),
+                StorageWrite::Task({
+                    let mut record = pending_task(second_id, 2);
+                    record["background"] = json!(true);
+                    record
+                }),
+                StorageWrite::Task({
+                    let mut record = pending_task(third_id, 2);
+                    record["abortRequested"] = json!(true);
+                    record
+                }),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+
+    // 覆盖成 running：`state` 整块换掉，`abortRequested` 换成 true。
+    let running = {
+        let mut record = pending_task(first_id, 2);
+        record["state"] = json!({ "status": "running", "checkpoint": { "phase": "effect", "attempt": 1 } });
+        record["abortRequested"] = json!(true);
+        record
+    };
+    fixture
+        .storage
+        .commit(&[vec![StorageWrite::Task(running.clone())]], |_, _| {})
+        .unwrap();
+    assert_eq!(fixture.storage.task(first_id).unwrap().unwrap(), running);
+
+    // 再覆盖成 terminal：这一条是新记录，不是与上面合并。
+    let terminal = json!({
+        "id": first_id,
+        "conversationId": 2,
+        "kind": "test.task",
+        "version": 1,
+        "input": { "value": first_id },
+        "state": { "status": "terminal", "outcome": { "status": "completed", "result": { "entryId": 99 } } },
+        "background": false,
+        "abortRequested": true
+    });
+    fixture
+        .storage
+        .commit(&[vec![StorageWrite::Task(terminal.clone())]], |_, _| {})
+        .unwrap();
+    assert_eq!(fixture.storage.task(first_id).unwrap().unwrap(), terminal);
+
+    // 分页：pending 只剩 12 和 13，一页一条。
+    let pending = nous_durable::TaskQuery {
+        status: Some("pending".to_string()),
+        ..Default::default()
+    };
+    let first_page = tasks_of(&fixture.storage, pending.clone(), 1, None);
+    assert_eq!(ids_of(&first_page), vec![second_id]);
+    let next = first_page.next.expect("还有第二条");
+    let second_page = tasks_of(&fixture.storage, pending, 1, Some(&next));
+    assert_eq!(ids_of(&second_page), vec![third_id]);
+    assert!(second_page.next.is_none());
+
+    // 状态 + 中止标记一起过滤：只剩 terminal 那条。
+    let terminal_query = nous_durable::TaskQuery {
+        status: Some("terminal".to_string()),
+        abort_requested: Some(true),
+        ..Default::default()
+    };
+    let page = tasks_of(&fixture.storage, terminal_query, 10, None);
+    assert_eq!(page.items, vec![terminal]);
+
+    // 后台标记是一个独立的索引列，不跟着状态走。
+    let background_query = nous_durable::TaskQuery {
+        background: Some(true),
+        ..Default::default()
+    };
+    let page = tasks_of(&fixture.storage, background_query, 10, None);
+    assert_eq!(ids_of(&page), vec![second_id]);
+}
+
+#[test]
+fn stores_owners_and_scans_waiting_and_completing_tasks_by_status() {
+    // 上游 case：`owner` 边与两种中间状态（`waiting` / `completing`）能存能扫；
+    // 状态一变，它就从这个状态的扫描里消失、出现在新状态的扫描里。
+    let mut fixture = backend("task-owner");
+    let (owner_id, waiting_id, completing_id) = (11, 12, 13);
+    let owner = pending_task(owner_id, 2);
+    let waiting = json!({
+        "id": waiting_id,
+        "conversationId": 2,
+        "kind": "test.task",
+        "version": 1,
+        "input": { "value": waiting_id },
+        "owner": owner_id,
+        "state": {
+            "status": "waiting",
+            "checkpoint": { "phase": "next" },
+            "on": [owner_id],
+            "policy": "allSettled"
+        },
+        "memos": { "kept": true },
+        "background": false,
+        "abortRequested": false
+    });
+    let completing = json!({
+        "id": completing_id,
+        "conversationId": 2,
+        "kind": "test.task",
+        "version": 1,
+        "input": { "value": completing_id },
+        "owner": owner_id,
+        "state": {
+            "status": "completing",
+            "outcome": { "status": "failed", "error": { "message": "held" } }
+        },
+        "background": false,
+        "abortRequested": false
+    });
+    fixture
+        .storage
+        .commit(
+            &[vec![
+                conversation(2),
+                StorageWrite::Task(owner.clone()),
+                StorageWrite::Task(waiting.clone()),
+                StorageWrite::Task(completing.clone()),
+            ]],
+            |_, _| {},
+        )
+        .unwrap();
+    assert_eq!(fixture.storage.task(waiting_id).unwrap().unwrap(), waiting);
+    assert_eq!(fixture.storage.task(completing_id).unwrap().unwrap(), completing);
+
+    assert_eq!(tasks_with_status(&fixture.storage, "waiting"), vec![waiting.clone()]);
+    assert_eq!(tasks_with_status(&fixture.storage, "completing"), vec![completing.clone()]);
+    assert_eq!(ids_in(&tasks_with_status(&fixture.storage, "pending")), vec![owner_id]);
+
+    // `completing` → `terminal`：`outcome` 整块搬过去，状态扫描立刻换边。
+    let terminal = {
+        let mut record = completing.clone();
+        record["state"] = json!({
+            "status": "terminal",
+            "outcome": { "status": "failed", "error": { "message": "held" } }
+        });
+        record
+    };
+    fixture
+        .storage
+        .commit(&[vec![StorageWrite::Task(terminal.clone())]], |_, _| {})
+        .unwrap();
+    assert_eq!(tasks_with_status(&fixture.storage, "completing"), Vec::<Value>::new());
+    assert_eq!(tasks_with_status(&fixture.storage, "terminal"), vec![terminal]);
+}
+
+#[test]
+fn stores_and_scans_sleeping_tasks_by_status() {
+    // 上游 case：`sleeping`（v2 才加的状态）能存、能扫，并且和 `running` 之间换边。
+    let mut fixture = backend("task-sleeping");
+    let sleeping_id = 11;
+    let sleeping = json!({
+        "id": sleeping_id,
+        "conversationId": 2,
+        "kind": "test.task",
+        "version": 1,
+        "input": { "value": sleeping_id },
+        "state": { "status": "sleeping", "checkpoint": { "phase": "next" }, "until": 61_000 },
+        "memos": { "kept": true },
+        "background": false,
+        "abortRequested": false
+    });
+    fixture
+        .storage
+        .commit(
+            &[vec![conversation(2), StorageWrite::Task(sleeping.clone())]],
+            |_, _| {},
+        )
+        .unwrap();
+    assert_eq!(fixture.storage.task(sleeping_id).unwrap().unwrap(), sleeping);
+
+    assert_eq!(tasks_with_status(&fixture.storage, "sleeping"), vec![sleeping.clone()]);
+
+    let running = {
+        let mut record = sleeping.clone();
+        record["state"] = json!({ "status": "running", "checkpoint": { "phase": "next" } });
+        record
+    };
+    fixture
+        .storage
+        .commit(&[vec![StorageWrite::Task(running.clone())]], |_, _| {})
+        .unwrap();
+    assert_eq!(tasks_with_status(&fixture.storage, "sleeping"), Vec::<Value>::new());
+    assert_eq!(tasks_with_status(&fixture.storage, "running"), vec![running]);
 }
