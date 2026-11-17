@@ -3,7 +3,7 @@
 ## 块和组的字段
 
 **块（leaf）和组（section）是同一个类型 `Node`，没有类型字段。** 判据是 `children` 在不在：
-`isSection(n) = Array.isArray(n.children)`（`server/tree.ts:18`）。
+`isSection(n) = Array.isArray(n.children)`（`server/tree.ts:17`）。
 
 ### 存进 `tree.json` 的（就这四个）
 
