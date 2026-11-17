@@ -30,7 +30,7 @@
 | [`earendil-works/pi`](https://github.com/earendil-works/pi) · `packages/chord` | `v1.5.2` | **只六个目录**：`src/{context,json,delta,sqlite,watch,output}`（≈5,700 行） | 自己 port。`delta/` 最值钱（3,969 行），先做它 |
 | `earendil-works/pi` · `packages/durable` | `v1.5.2` | `src/{storage,session,harness,tools,types.ts,entries.ts,documents.ts}`（27,259 行里取核心）；`src/testing/**`（3,444 行一致性套件）；`docs/spec.md`（7,296 行） | 自己 port。**只借语义和坑，不借结构**：`harness` 只取 `generation`/`abort`/`live`/`partial-changes`，`watch` 那套不要（事件走 `nous-wire`） |
 | `earendil-works/pi` · `packages/env` | `v1.5.2` | `daemon/**`（5,768 行 Rust，已写好）+ `docs/{protocol.md,semantics.md}`（241 行） | daemon 当**外部二进制** build，不改它。客户端照 `protocol.md` 自己写 |
-| `earendil-works/pi` · `packages/ai` | `v1.5.2` | **只有** `src/api/google-generative-ai.ts`（468 行 TS） | 翻成 Rust 补进 `nous-ai`。`packages/ai` 的其余部分与本库无关 |
+| `earendil-works/pi` · `packages/ai` | `v1.5.2` | `src/api/google-generative-ai.ts`（468 行 TS）+ `src/utils/streaming-json.ts`（559 行，只取四个导出：`JsonPath` / `JsonChange` / `StreamingJsonParser` / `ToolCallArgumentsStream`） | 翻成 Rust 补进 `nous-ai`。`streaming-json` 是**唯一**能产出 `toolcall_delta`（参数增量）的东西，`rpi-ai` 没有等价物；纯函数、无 IO、有上游实现可对拍。`packages/ai` 的其余部分与本库无关 |
 
 **MIT 义务**：`LICENSE.rpi` 和 `LICENSE.pi` 放在仓库根，永不删除。`SOURCE` 台账记到行，见第七节。
 
