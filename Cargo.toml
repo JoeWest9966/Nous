@@ -1,15 +1,11 @@
 # Nous 唯一 workspace（spec §1：一个仓、一个 workspace、一个产物）。
-# 三层只是目录约定，不是仓库边界，不是第二个部署单元：
-#   crates/kernel/*    真相层（换个产品还能用）
-#   crates/platform/*  能力层
-#   crates/app/*       应用层（只有 Nous 用；nous-server 的 bin `nous-app` 进 systemd）
+# 目录只管所有权，层写在 `docs/plugins.md` 的 layer 列（spec §3.0）——
+# 这一步先按 crate 的原目录名在一层摆开（#14 第 1 步），下一步再 `git mv` 成
+# `crates/<vendor>/<module>/`。
 [workspace]
 resolver = "2"
 members = [
-    "crates/sdk/*",
-    "crates/kernel/*",
-    "crates/platform/*",
-    "crates/app/*",
+    "crates/*",
     "exts/*",
 ]
 # `packages/env/daemon`（vendor/ 下）自带 Cargo.toml / Cargo.lock / rust-toolchain.toml，
@@ -50,17 +46,17 @@ bytes = "1"
 tempfile = "3"
 eventsource-stream = "0.2"
 
-nous-ext-sdk = { path = "crates/sdk/nous-ext-sdk", version = "0.1.0" }
-nous-telemetry = { path = "crates/kernel/nous-telemetry", version = "0.1.0" }
-nous-chord = { path = "crates/kernel/nous-chord", version = "0.1.0" }
-nous-wire = { path = "crates/kernel/nous-wire", version = "0.1.0" }
-nous-env = { path = "crates/kernel/nous-env", version = "0.1.0" }
-nous-durable = { path = "crates/kernel/nous-durable", version = "0.1.0" }
-nous-ai-types = { path = "crates/platform/nous-ai-types", version = "0.1.0" }
-nous-ai = { path = "crates/platform/nous-ai", version = "0.1.0" }
-nous-tools = { path = "crates/platform/nous-tools", version = "0.1.0" }
-nous-runtime = { path = "crates/platform/nous-runtime", version = "0.1.0" }
-nous-ext = { path = "crates/app/nous-ext", version = "0.1.0" }
-nous-ext-probe = { path = "crates/app/nous-ext-probe", version = "0.1.0" }
-nous-server = { path = "crates/app/nous-server", version = "0.1.0" }
-nous-fixture = { path = "crates/app/nous-fixture", version = "0.1.0" }
+nous-ext-sdk = { path = "crates/nous-ext-sdk", version = "0.1.0" }
+nous-telemetry = { path = "crates/nous-telemetry", version = "0.1.0" }
+nous-chord = { path = "crates/nous-chord", version = "0.1.0" }
+nous-wire = { path = "crates/nous-wire", version = "0.1.0" }
+nous-env = { path = "crates/nous-env", version = "0.1.0" }
+nous-durable = { path = "crates/nous-durable", version = "0.1.0" }
+nous-ai-types = { path = "crates/nous-ai-types", version = "0.1.0" }
+nous-ai = { path = "crates/nous-ai", version = "0.1.0" }
+nous-tools = { path = "crates/nous-tools", version = "0.1.0" }
+nous-runtime = { path = "crates/nous-runtime", version = "0.1.0" }
+nous-ext = { path = "crates/nous-ext", version = "0.1.0" }
+nous-ext-probe = { path = "crates/nous-ext-probe", version = "0.1.0" }
+nous-server = { path = "crates/nous-server", version = "0.1.0" }
+nous-fixture = { path = "crates/nous-fixture", version = "0.1.0" }

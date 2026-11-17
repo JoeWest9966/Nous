@@ -4,7 +4,7 @@
 #   ./scripts/verify.sh              # 全部
 #   ./scripts/verify.sh unit         # 只跑测试
 #   ./scripts/verify.sh fixture      # 只跑 agent.sqlite fixture
-#   ./scripts/verify.sh boundary     # 只跑 spec 第 1 章的边界判据（本脚本 16 项）
+#   ./scripts/verify.sh boundary     # 只跑 spec 第 1 章的边界判据（15 条）
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -17,19 +17,17 @@ skip() { printf '  \033[33m–\033[0m %s\n' "$*"; }
 
 WHAT="${1:-all}"
 
-# 三层目录（spec §1：一层一目录，只是目录约定）
-KERNEL=crates/kernel
-PLATFORM=crates/platform
-APP=crates/app
+# 分层不写在路径上（spec §3.0）：成员由 `scripts/layer-paths.sh` 从
+# `docs/plugins.md` 的 layer 列算出来（$K / $A），本脚本不写死模块名。
 
 # 0. 提货体检：crates 一个都没有时，别让人误以为"全都过了"
 step "0. 提货体检"
-if [ ! -d "$KERNEL" ] || [ ! -d "$PLATFORM" ] || [ ! -d "$APP" ]; then
-	bad "三层目录不齐（kernel/platform/app）—— #14 搬迁没做完，下面全部失去判据载体"
+if [ -z "$(ls -d crates/*/ 2>/dev/null)" ]; then
+	bad "crates/ 是空的 —— #14 搬迁没做完，下面全部失去判据载体"
 	printf '\n\033[31m未通过：等 #14 搬迁\033[0m\n'
 	exit 2
 else
-	ok "三层目录齐：kernel $(ls "$KERNEL" | wc -l) / platform $(ls "$PLATFORM" | wc -l) / app $(ls "$APP" | wc -l)"
+	ok "crates/ 已存在 $(ls -d crates/*/ | wc -l) 个 crate（层见 docs/plugins.md）"
 fi
 
 # 1. 单元测试 + 一致性套件
@@ -45,13 +43,13 @@ if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	fi
 
 	step "1c. conformance 用例数下限（防止套件被瘦成三行）"
-	FLOOR=$KERNEL/nous-durable/conformance/FLOOR.tsv
+	FLOOR=crates/nous-durable/conformance/FLOOR.tsv
 	if [ -f "$FLOOR" ]; then
 		THIN=0; FILES=0
 		while IFS=$'\t' read -r file min; do
 			case "$file" in ''|'#'*) continue ;; esac
 			FILES=$((FILES+1))
-			N=$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "$KERNEL/nous-durable/conformance/$file" 2>/dev/null || true)
+			N=$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "crates/nous-durable/conformance/$file" 2>/dev/null || true)
 			N=${N:-0}
 			if [ "$N" -ge "$min" ] 2>/dev/null; then
 				ok "$file：$N ≥ $min"
@@ -316,236 +314,294 @@ PY
 		ok "注释里的 占位/stub/FIXME：$NOTES 行（只报数，逐条看）"
 	fi
 fi
-
 # ════════════════════════════════════════════════════════════════════════════
-# 5. spec 第 1 章「边界与仲裁」的判据（Q18 / S1 / S2 / S4 / S8 / S12）
-#    spec 正文编号 1–13（其中 6b/7b 是插入项，spec 自己算 15 条）；本脚本把
-#    6a/6b/6b'/7b 逐项计，实跑 16 项。行数不同只是计数口径，判据口径逐字不改。
-#    红/绿各归各，互不连坐（判据互相独立，一条红不拦后面的）。
+# 5. spec 第 1 章「边界与仲裁」的 15 条判据（Q18 / S1 / S2 / S4 / S8 / S12）
+#
+#    判据正文只住在 spec 里（`docs/spec/kernel-rust.md` §1），这里逐条实现，
+#    不改口径。**层不写在路径上**（spec §3.0）：kernel / app 的成员由
+#    `scripts/layer-paths.sh` 从 `docs/plugins.md` 的 layer 列算出来（$K / $A），
+#    本脚本不写死任何模块名。
+#
+#    三段退化语义（spec 读法，逐字）：
+#      docs/plugins.md 缺失 / 不可解析  → RED（清单是判据的一部分，缺了没法判）
+#      scripts/layer-paths.sh 缺失      → RED（同上）
+#      K 为空 或 crates/*/* 一个都没有   → SKIP（打印出来），因为 #14 还没搬
+#    红/绿/skip 各归各，互不连坐（判据互相独立，一条红不拦后面的）。
 # ════════════════════════════════════════════════════════════════════════════
 if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
-	step "5. spec 第 1 章：边界判据（spec 13 条 / 本脚本 16 项）"
+	step "5. spec 第 1 章：边界判据（15 条）"
 	B_GREEN=0; B_RED=0; B_SKIP=0
 	bok()  { ok "$1";   B_GREEN=$((B_GREEN+1)); }
 	bbad() { bad "$1";  B_RED=$((B_RED+1)); }
 	bskip(){ skip "$1"; B_SKIP=$((B_SKIP+1)); }
-	# 每条判据的前缀按 spec「读法」：路径不存在 = 打印 SKIP（带票号），不许静默过。
-	test -d "$KERNEL" || bskip "0/16 全部：$KERNEL 不存在，等 #14 搬迁"
-	if [ -d "$KERNEL" ]; then
 
-	# ── 1. 正向依赖：进 systemd 的那个 bin（nous-app，package nous-server）--depth 1
-	#     含 durable/wire/tools/runtime，不含 chord/rusqlite。
-	#     （包名叫 nous-server、bin 叫 nous-app；spec 写的是产物名，这里取它的包。）
-	TREE=$(cargo tree -p nous-server --depth 1 -e normal 2>/dev/null)
-	FAIL1=""
-	for need in durable wire tools runtime; do
-		printf '%s\n' "$TREE" | grep -q "nous-$need" || FAIL1="$FAIL1 缺:nous-$need"
-	done
-	for ban in chord rusqlite; do
-		printf '%s\n' "$TREE" | grep -qE "(nous-)?$ban" && FAIL1="$FAIL1 多:$ban"
-	done
-	if [ -z "$FAIL1" ]; then bok "1. 正向依赖（durable/wire/tools/runtime 齐，无 chord/rusqlite）"
-	else bbad "1. 正向依赖：$FAIL1 —— nous-app 还没接 tools/runtime（T5 扩展运行时）"
-	     printf '%s\n' "$TREE" | sed 's/^/       /' | head -12; fi
+	# ── 守门块（spec §1 逐字）──
+	# 只允许"打印出 SKIP 然后跳过这条判据"，不许静默 exit 0；配置缺失不算 SKIP。
+	GUARD_MSG=""
+	guard() {
+		GUARD_MSG=""
+		if [ ! -e docs/plugins.md ]; then
+			GUARD_MSG="RED: docs/plugins.md 缺失（清单是判据的一部分）"; return 1
+		fi
+		if [ ! -x scripts/layer-paths.sh ]; then
+			GUARD_MSG="RED: scripts/layer-paths.sh 缺失"; return 1
+		fi
+		K=$(scripts/layer-paths.sh kernel 2>/dev/null) && A=$(scripts/layer-paths.sh app 2>/dev/null) || {
+			K=""; A=""; GUARD_MSG="RED: docs/plugins.md 不可解析（scripts/layer-paths.sh 读不出来）"; return 1
+		}
+		if ! ls -d crates/*/*/ >/dev/null 2>&1; then
+			GUARD_MSG="SKIP: crates/*/* 一个都没有，等 #14 搬迁"; return 2
+		fi
+		if [ -z "$K" ]; then
+			GUARD_MSG="SKIP: K 为空（清单里没有 layer=kernel 的行），等 #14 搬迁"; return 2
+		fi
+		return 0
+	}
 
-	# ── 2. 反向依赖：spec ch1 字面是「内核层任一 crate --depth 1 都不依赖应用层」。
-	#    「应用层」= crates/app（nous-server / nous-fixture）；platform 层不属于这一条。
-	#    S2/6b' 明说「不是不许依赖 nous-ai」（T2 拆 types/providers 后只允许 types 被依赖），
-	#    所以 nous-durable → nous-ai 只报信息行，不红。
-	FAIL2=""
-	INFO2=""
-	for c in "$KERNEL"/nous-*/; do
-		name=$(basename "$c")
-		OUT=$(cargo tree -p "$name" --depth 1 2>/dev/null | grep -E 'nous-(server|fixture)') || true
-		[ -n "$OUT" ] && FAIL2="$FAIL2\n       $name: $OUT"
-		# 信息行：真相层 → 能力层（nous-ai），由 T2 拆 types/providers 后彻底消失。
-		INFO=$(cargo tree -p "$name" --depth 1 2>/dev/null | grep -E 'nous-(ai|tools|runtime)') || true
-		[ -n "$INFO" ] && INFO2="$INFO2\n       $name: $INFO"
-	done
-	if [ -z "$FAIL2" ]; then bok "2. 反向依赖（内核层 --depth 1 不依赖 crates/app 应用层）"
-	else bbad "2. 反向依赖：内核层 crate 依赖了应用层：$(printf '%b' "$FAIL2")"; fi
-	if [ -n "$INFO2" ]; then
-		skip "2 信息行（不算红）：内核层 → platform 层依赖：$(printf '%b' "$INFO2")；nous-durable → nous-ai 等 T2 拆 types/providers 后彻底消失（S2）"
-	fi
+	# 判据出口统一走 judge：守门不过就按退化语义记 RED / SKIP，过了才真跑判据。
+	judge() {
+		local label="$1" fn="$2" out rc
+		guard; rc=$?
+		if [ $rc -eq 2 ]; then bskip "$label —— $GUARD_MSG"; return; fi
+		if [ $rc -eq 1 ]; then bbad "$label —— $GUARD_MSG"; return; fi
+		out=$("$fn" 2>&1); rc=$?
+		if [ $rc -eq 2 ]; then bskip "$label —— $out"; return; fi
+		if [ $rc -eq 0 ]; then
+			bok "$label"
+			[ -n "$out" ] && printf '%s\n' "$out" | sed 's/^/       /'
+		else
+			bbad "$label"
+			printf '%s\n' "$out" | sed 's/^/       /'
+		fi
+	}
 
-	# ── 3. 词表基线（S8：基线只减不增，新增一行即红）
-	BASE=docs/boundary-baseline.txt
-	if [ ! -f "$BASE" ]; then bskip "3. $BASE 不存在，等 #14"
-	else
-		HITS=$(git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- "$KERNEL" | grep -v -i licenses || true)
-		# 基线正文 = 去掉注释/空行/表头说明后的「路径:行号:内容」前缀部分（尾部 # 理由不算比对对象）
-		# grep 的 needle 来自管道，可能被当二进制；--text 强制按文本匹配（基线是文本）
-		# 基线正文行里「路径:行号:内容」之后可能跟着「  # 理由」——比对时剥掉。
+	# 1. 正向依赖：进 systemd 的那个 bin（`nous-app`，包名 `nous-server`）
+	#    --depth 1 含 durable/wire/tools/runtime，不含 chord/rusqlite。
+	#    spec 写的是产物名 `nous-app`；`cargo tree -p` 认的是**包名**，所以取它住的包。
+	c1() {
+		local tree
+		tree=$(cargo tree -p nous-server --depth 1 -e normal 2>/dev/null) || {
+			echo "cargo tree -p nous-server 失败（nous-app 的包不在了？）"; return 1; }
+		local miss=""
+		for need in durable wire tools runtime; do
+			printf '%s\n' "$tree" | grep -q "nous-$need" || miss="$miss 缺:nous-$need"
+		done
+		for ban in chord rusqlite; do
+			printf '%s\n' "$tree" | grep -qE "(nous-)?$ban" && miss="$miss 多:$ban"
+		done
+		if [ -n "$miss" ]; then
+			echo "正向依赖:$miss"; printf '%s\n' "$tree" | head -12; return 1
+		fi
+	}
+
+	# 2. 反向依赖：内核层任一 crate 的 --depth 1 依赖里没有应用层的 crate。
+	#    "应用层" = `docs/plugins.md` 里 layer=app 的模块（$A）；platform 层不算上层（S2/6b）。
+	c2() {
+		K="$K" A="$A" python3 - <<'PY'
+import json, os, subprocess
+k = os.environ['K'].split(); a = os.environ['A'].split()
+meta = json.loads(subprocess.run(['cargo', 'metadata', '--no-deps', '--format-version', '1'],
+                                 capture_output=True, text=True).stdout)
+kdirs = {os.path.abspath(d) for d in k}
+adirs = {os.path.abspath(d) for d in a}
+bad = []
+for p in meta['packages']:
+    here = os.path.dirname(p['manifest_path'])
+    if here not in kdirs:
+        continue
+    for dep in p['dependencies']:
+        if dep.get('path') and os.path.abspath(dep['path']) in adirs:
+            bad.append(f"{p['name']} → {dep['name']}")
+print('\n'.join(bad))
+raise SystemExit(1 if bad else 0)
+PY
+	}
+
+	# 3. 词表基线（S8：基线只减不增，新增一行即红）
+	c3() {
+		local BASE=docs/boundary-baseline.txt
+		[ -f "$BASE" ] || { echo "$BASE 不存在"; return 1; }
+		local HITS NEW STRIPPED
+		HITS=$(git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K \
+			| grep -v -i licenses || true)
 		STRIPPED=$(grep -v '^\s*#' "$BASE" | grep -v '^\s*$' | sed 's/  # .*//' || true)
 		NEW=$(printf '%s\n' "$HITS" | while IFS= read -r line; do
 			[ -z "$line" ] && continue
 			printf '%s\n' "$STRIPPED" | grep -qF --text -- "$line" || printf '%s\n' "$line"
 		done)
-		if [ -z "$NEW" ]; then bok "3. 词表基线（$(printf '%s\n' "$HITS" | grep -c .) 行命中全部在基线里，只减不增）"
-		else bbad "3. 词表基线被新增 $(printf '%s\n' "$NEW" | grep -c .) 行 —— 改基线必须单独一张票："
-		     printf '%s\n' "$NEW" | sed 's/^/       + /'; fi
-	fi
+		if [ -n "$NEW" ]; then
+			echo "词表基线被新增 $(printf '%s\n' "$NEW" | grep -c .) 行 —— 改基线必须单独一张票："
+			printf '%s\n' "$NEW" | sed 's/^/       + /'
+			return 1
+		fi
+		echo "命中 $(printf '%s\n' "$HITS" | grep -c .) 行全部在基线里（只减不增）"
+	}
 
-	# ── 4. 路由归属：内核层不许出现 HTTP 框架
-	FAIL4=$(git grep -nE '\.route\(|axum::|tower::' -- "$KERNEL" || true)
-	if [ -z "$FAIL4" ]; then bok "4. 路由归属（内核层无 .route(/axum::/tower::）"
-	else bbad "4. 路由归属："; printf '%s\n' "$FAIL4" | sed 's/^/       /'; fi
+	# 4. 路由归属：内核层不许出现 HTTP 框架
+	c4() {
+		local F
+		F=$(git grep -nE '\.route\(|axum::|tower::' -- $K || true)
+		[ -z "$F" ] || { echo "$F"; return 1; }
+	}
 
-	# ── 5. 数据面唯一入口：crates/kernel 之外不许出现 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE
-	# 「kernel 之外」= crates/kernel 以外的**代码**。内核（nous-chord）是数据面入口，
-	# 不许跑出去；测试目录/测试文件里的 .sqlite 临时库名是测试夹具，不是第二入口。
-	# markdown / Cargo.toml 的描述文本不是代码，不在查。
-	FAIL5=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- "$PLATFORM/*.rs" "$APP/*.rs" \
-		| grep -v '/tests/' | grep -vE '_tests?\.rs:' \
-		| grep -vE ':[0-9]+:\s*(//|///|//!)' \
-		| grep -v 'DEFAULT_FIXTURE' | grep -v '"nous-server-{tag}' \
-		| grep -v 'fixtures/agent.sqlite' \
-		| grep -v '<legacy.sqlite>' || true)
-	if [ -z "$FAIL5" ]; then bok "5. 数据面唯一入口（kernel 之外无 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE）"
-	else bbad "5. 数据面唯一入口："; printf '%s\n' "$FAIL5" | sed 's/^/       /'; fi
+	# 5. 数据面唯一入口：$K 之外不许出现 rusqlite / Connection::open / .sqlite / PRAGMA / BEGIN IMMEDIATE。
+	#    "之外"只算代码（crates/ 下的 .rs）；tests/ 与 *_test(s).rs 里的临时库名是夹具，不是第二入口。
+	c5() {
+		local ex=() p
+		for p in $K; do ex+=(":(exclude)$p"); done
+		local F
+		F=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- crates "${ex[@]}" \
+			| grep -v '/tests/' | grep -vE '_tests?\.rs:' \
+			| grep -vE ':[0-9]+:\s*(//|///|//!)' \
+			| grep -v 'DEFAULT_FIXTURE' | grep -v 'fixtures/agent.sqlite' || true)
+		[ -z "$F" ] || { echo "$F"; return 1; }
+	}
 
-	# ── 6. 进程归应用层：内核层零进程（S1）；文件集合 == baseline spawn_files（S12，待签）
-	#     白名单：crates/platform/nous-tools/src/os_env.rs（工具子进程）+ crates/app 扩展监管
-	FAIL6=$(git grep -nE 'std::process|tokio::process|Command::new|Child' -- "$KERNEL" \
-		| grep -v 'ExitCode' | grep -v '/tests/' | grep -v '/conformance/' || true)
-	if [ -z "$FAIL6" ]; then bok "6a. 内核层零进程（std::process/tokio::process/Command::new/Child 逐行为空）"
-	else bbad "6a. 内核层出现进程："; printf '%s\n' "$FAIL6" | sed 's/^/       /'; fi
-	# S12（追加二，待签）：按**文件**数，不按入口数。判据 = 命令输出集合与 baseline
-	# spawn_files=N 后紧跟的逐行文件清单逐行相等；tests/ 与 tests.rs 都排除。
-	# output_decode.rs 的唯一 spawn 在 #[cfg(windows)]（Linux 不可达），已按 S12 排除。
-	# S12 未签字：结论行按 spec ch1:62 打 SKIP: 等 S12 签字（不红也不绿），集合差异
-	# 只作提示逐行贴出，签字后再改成 bok/bbad。
-	BASE=docs/boundary-baseline.txt
-	if [ ! -f "$BASE" ]; then bskip "6b. $BASE 不存在，等 #14 搬迁"
-	else
-		SPAWN_NOW=$(grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
+	# 6. 进程归应用层（S1 + S12）：内核层逐行为空；全仓进程创建点按**文件**数 == baseline 的 spawn_files=N。
+	#    S1 的验收口径（spec ch1 §6）：S12 签字前结论写 SKIP: 等 S12 签字，并打印出来。
+	c6() {
+		local F
+		F=$(git grep -nE 'std::process|tokio::process|Command::new|Child' -- $K \
+			| grep -v 'ExitCode' | grep -v '/tests/' | grep -v '/conformance/' || true)
+		if [ -n "$F" ]; then echo "内核层出现进程："; printf '%s\n' "$F"; return 1; fi
+		local BASE=docs/boundary-baseline.txt
+		[ -f "$BASE" ] || { echo "$BASE 不存在"; return 1; }
+		local NOW BASEFILES N_BASE DIFF
+		NOW=$(grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
 			| grep -vE '(/tests/|tests\.rs$)' | sort || true)
-		SPAWN_BASE=$(awk '/^spawn_files=/{f=1;next} f && /^crates\//{sub(/[[:space:]]*#.*$/, ""); print; next} f{exit}' "$BASE" \
+		BASEFILES=$(awk '/^spawn_files=/{f=1;next} f && /^crates\//{sub(/[[:space:]]*#.*$/, ""); print; next} f{exit}' "$BASE" \
 			| sed 's/[[:space:]]*$//' | sort || true)
 		N_BASE=$(grep -c '^spawn_files=' "$BASE" || true)
-		DIFF6B=$(printf '%s\n%s\n' "$SPAWN_NOW" "$SPAWN_BASE" | grep -v '^$' | sort | uniq -u || true)
-		if [ "$N_BASE" -ne 1 ]; then
-			bskip "6b. $BASE 里 spawn_files 行有 $N_BASE 条（应为 1）—— SKIP: 等 S12 签字"
-		elif [ -z "$DIFF6B" ]; then
-			bskip "6b. spawn 文件集合与 baseline 逐行相等，但 S12 待签 —— SKIP: 等 S12 签字（集合：$(printf '%s\n' "$SPAWN_NOW" | grep -c .) 文件）"
-		else
-			bskip "6b. spawn 文件集合与 baseline 有差异（签字后再判红）—— SKIP: 等 S12 签字："
-			printf '%s\n' "$DIFF6B" | sed 's/^/       ± /'
-		fi
-	fi
+		DIFF=$(printf '%s\n%s\n' "$NOW" "$BASEFILES" | grep -v '^$' | sort | uniq -u || true)
+		echo "6a 内核层零进程；6b spawn 文件集合 $(printf '%s\n' "$NOW" | grep -c .) 个 / baseline spawn_files 行 $N_BASE 条"
+		[ -n "$DIFF" ] && { echo "集合差异（签字后再判红）："; printf '%s\n' "$DIFF" | sed 's/^/       ± /'; }
+		return 2
+	}
 
-	# ── 6b. 依赖方向（S2）：真相层依赖里不许有 providers（会 sleep 的那个 crate）
-	FAIL6B=$(cargo tree -p nous-durable --depth 2 2>/dev/null | grep providers || true)
-	if [ -z "$FAIL6B" ]; then bok "6b'. nous-durable 依赖树无 providers（S2）"
-	else bbad "6b'. nous-durable 依赖了 providers："; printf '%s\n' "$FAIL6B" | sed 's/^/       /'; fi
+	# 6b. 依赖方向：真相层不许依赖会 sleep 的那个 crate —— `cargo tree -p nous-durable --depth 2 | grep providers` 为空。
+	c6b() {
+		local F
+		F=$(cargo tree -p nous-durable --depth 2 2>/dev/null | grep providers || true)
+		[ -z "$F" ] || { echo "$F"; return 1; }
+	}
 
-	# ── 7. 端点索引唯一：^### GET /v1/ 恰好 1 个文件（wire.md 权威版；content/ 下是已死面板的镜像）
-	F7=$(git grep -l '^### GET /v1/' -- ':!content/**' || true)
-	N7=$(printf '%s\n' "$F7" | grep -c . || true)
-	if [ "$N7" -eq 1 ] && [ "$F7" = "wire.md" ]; then bok "7. 端点索引唯一（只有 wire.md）"
-	else bbad "7. 端点索引不唯一（$N7 个文件）："; printf '%s\n' "$F7" | sed 's/^/       /'; fi
+	# 7. 端点索引唯一：`^### GET /v1/` 恰好 1 个文件（wire.md），content/ 是已死面板的数据镜像，不算。
+	c7() {
+		local F N
+		F=$(git grep -l '^### GET /v1/' -- ':!content/**' || true)
+		N=$(printf '%s\n' "$F" | grep -c . || true)
+		[ "$N" -eq 1 ] && [ "$F" = "wire.md" ] || { echo "端点索引 $N 个文件：$F"; return 1; }
+	}
 
-	# ── 7b. 索引不抄字段：wire.md 里出现 "type": 或 camelCase 字段名清单的段落数 = 0。
-	#    段落 = 空行分隔的块；命中 = 段落里成串的 camelCase 字段名（例如
-	#    `{ id, name, parent: {id, at} ... }` 这类字段清单），不是某个词单独出现。
-	#    命中就报红并贴出段落起始行；红了让它红 —— 把 wire.md 改成纯索引是独立一张票
-	#    （正文判据在测试里，删字段清单前要确认每条都有测试背书）。
-	F7B=$(python3 - <<'PY'
+	# 7b. 索引不抄字段：wire.md 里出现 `"type":` 或 camelCase 字段名清单的段落数 = 0。
+	c7b() {
+		python3 - <<'PY'
 import re
-lines=open('wire.md',encoding='utf-8').read().splitlines()
-paras=[]; start=None; buf=[]
-for i,line in enumerate(lines,1):
+lines = open('wire.md', encoding='utf-8').read().splitlines()
+paras = []; start = None; buf = []
+for i, line in enumerate(lines, 1):
     if not line.strip():
-        if buf: paras.append((start,i-1,'\n'.join(buf))); buf=[]; start=None
+        if buf: paras.append((start, i - 1, '\n'.join(buf))); buf = []; start = None
     else:
-        if start is None: start=i
+        if start is None: start = i
         buf.append(line)
-if buf: paras.append((start,len(lines),'\n'.join(buf)))
-CAM=re.compile(r'[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*')
+if buf: paras.append((start, len(lines), '\n'.join(buf)))
+CAM = re.compile(r'[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*')
 def field_list(seg):
-    # 字段清单 = 一段里至少两个不同 camelCase 标识符，且用逗号/冒号排成清单。
-    # 例：{ id, name, parent: {id, at} ... } / { content, requestId?, waitMs? } /
-    #     { type: "text_start", contentIndex, block } / `file{db,wal,shm,mtime}`。
     if ',' not in seg and '，' not in seg: return False
     return len(set(CAM.findall(seg))) >= 2
-for s,e,p in paras:
-    groups=[m.group(0) for m in re.finditer(r'\{[^\{\}\n]*\}',p)]
-    in_fence=False; fence=[]; fenced=[]
+hits = []
+for s, e, p in paras:
+    groups = [m.group(0) for m in re.finditer(r'\{[^\{\}\n]*\}', p)]
+    in_fence = False; fence = []; fenced = []
     for line in p.splitlines():
         if line.lstrip().startswith('```'):
-            if in_fence and fence: fenced.append('\n'.join(fence)); fence=[]
-            in_fence=not in_fence
+            if in_fence and fence: fenced.append('\n'.join(fence)); fence = []
+            in_fence = not in_fence
         elif in_fence: fence.append(line)
     if fence: fenced.append('\n'.join(fence))
-    why=[]
-    if re.search(r'"type"\s*:',p): why.append('"type":')
-    if any(field_list(g) for g in groups+fenced): why.append('camelCase 字段清单')
-    if why: print(f'{s}-{e}: {"/".join(why)}')
+    why = []
+    if re.search(r'"type"\s*:', p): why.append('"type":')
+    if any(field_list(g) for g in groups + fenced): why.append('camelCase 字段清单')
+    if why: hits.append(f'{s}-{e}: {"/".join(why)}')
+if hits:
+    print(f'wire.md 抄了字段清单（{len(hits)} 个段落，抄一遍就会漂）：')
+    print('\n'.join(hits))
+    raise SystemExit(1)
 PY
-)
-	if [ -z "$F7B" ]; then bok "7b. 索引不抄字段（wire.md 无 \"type\": / camelCase 字段清单段落）"
-	else bbad "7b. 索引抄了字段清单（$(printf '%s\n' "$F7B" | grep -c .) 个段落，抄一遍就会漂）："
-	     printf '  wire.md 段落行号：\n%s\n' "$F7B" | sed 's/^/       /' | head -30; fi
+	}
 
-	# ── 8. 代码不引文档（S8：去掉注释行后为空）
-	# 判据对象是**代码**（*.rs）：README.md / Cargo.toml 里的描述文本不是代码引用。
-	# pathspec 里 '*.rs' 必须带 magic 前缀，否则会被当目录前缀匹配。
-	F8=$(git grep -n 'wire\.md' -- "$KERNEL/*.rs" \
-		| grep -vE ':[0-9]+:\s*(//|///|//!)' || true)
-	if [ -z "$F8" ]; then bok "8. 代码不引文档（内核 .rs 里 wire.md 只在注释里）"
-	else bbad "8. 代码引了文档（非注释命中）："; printf '%s\n' "$F8" | sed 's/^/       /'; fi
+	# 8. 代码不引文档（S8）：内核 .rs 里 wire.md 去掉注释行后为空
+	c8() {
+		local F
+		F=$(git grep -n 'wire\.md' -- $K | grep '\.rs:' \
+			| grep -vE ':[0-9]+:\s*(//|///|//!)' || true)
+		[ -z "$F" ] || { echo "$F"; return 1; }
+	}
 
-	# ── 9. 一个 workspace 根 + 进 systemd 的 bin 恰好 1（S4：排除 nous-fixture）
-	# 仓根的 Cargo.toml = 文件名恰为 Cargo.toml、不带任何目录前缀。
-	# 用固定字符串列表查，不靠通配：grep -v '/' 会把「Cargo.toml」本身也数错。
-	NROOT=$(git ls-files | grep -xc 'Cargo.toml' || true)
-	BINS=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
-		| python3 -c "import json,sys
+	# 9. 一个 workspace 根；进 systemd 的 bin target 恰好 1 个（排除 nous-fixture，S4）
+	c9() {
+		local NROOT BINS NBINS
+		NROOT=$(git ls-files | grep -xc 'Cargo.toml' || true)
+		BINS=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
+			| python3 -c "import json,sys
 m=json.load(sys.stdin)
-names=[t['name'] for p in m['packages'] for t in p['targets'] if 'bin' in t['kind'] and t['name']!='nous-fixture']
-print('\n'.join(names))")
-	NBINS=$(printf '%s\n' "$BINS" | grep -c . || true)
-	if [ "$NROOT" -eq 1 ] && [ "$NBINS" -eq 1 ] && [ "$BINS" = "nous-app" ]; then
-		bok "9. 一个 workspace 根；进 systemd 的 bin 恰好 1 个（nous-app，nous-fixture 已排除）"
-	else bbad "9. 根 Cargo.toml 数=$NROOT（应为 1）；systemd bin 数=$NBINS（应为 1）：$BINS"; fi
+print('\n'.join(t['name'] for p in m['packages'] for t in p['targets'] if 'bin' in t['kind'] and t['name']!='nous-fixture'))")
+		NBINS=$(printf '%s\n' "$BINS" | grep -c . || true)
+		[ "$NROOT" -eq 1 ] && [ "$NBINS" -eq 1 ] && [ "$BINS" = "nous-app" ] \
+			|| { echo "根 Cargo.toml 数=$NROOT（应为 1）；systemd bin 数=$NBINS（应为 1）：$(printf '%s' "$BINS" | tr '\n' ' ')"; return 1; }
+	}
 
-	# ── 10. 旧仓清空：代码与文档里 'Nous-Package' 为 0（content/ 已死面板的数据不算代码）
-	# scripts/verify.sh 自己必然含这个字符串（它就是检查者），排除检查者本身。
-	F10=$(git grep -n 'Nous-Package' -- ':!content/**' ':!scripts/verify.sh' || true)
-	if [ -z "$F10" ]; then bok "10. 旧仓清空（代码与文档 0 处 Nous-Package）"
-	else bbad "10. 还有 Nous-Package 引用："; printf '%s\n' "$F10" | sed 's/^/       /'; fi
+	# 10. 旧仓清空：代码与文档里 'Nous-Package' 为 0（检查者自己那一行不算，content/ 是已死面板的数据）
+	c10() {
+		local F
+		F=$(git grep -n 'Nous-Package' -- ':!content/**' ':!scripts/verify.sh' || true)
+		[ -z "$F" ] || { echo "$F"; return 1; }
+	}
 
-	# ── 11. 发现唯一（S 系§3.4）：生产配置不许出现 NOUS_SERVER_ADDR（只许测试用）
-	# 生产路径 = 非注释代码行；注释里提一句（说明为什么改名）不算配置。
-	F11=$(git grep -n 'NOUS_SERVER_ADDR' -- "$APP" | grep -v '/tests/' | grep -vE ':[0-9]+:\s*(//|///|//!)' || true)
-	if [ -z "$F11" ]; then bok "11. 发现唯一（crates/app 生产路径无 NOUS_SERVER_ADDR）"
-	else bbad "11. NOUS_SERVER_ADDR 出现在生产路径："; printf '%s\n' "$F11" | sed 's/^/       /'; fi
+	# 11. 发现唯一：生产路径不许出现 NOUS_SERVER_ADDR（只许测试用；注释里提一句不算配置）
+	c11() {
+		local F
+		F=$(git grep -n 'NOUS_SERVER_ADDR' -- $A | grep -v '/tests/' \
+			| grep -vE ':[0-9]+:\s*(//|///|//!)' || true)
+		[ -z "$F" ] || { echo "$F"; return 1; }
+	}
 
-	# ── 12. 进程只有一处：crates/app 里 spawn 恰好 1 处，且位于扩展监管
-	# spec 字面：`git grep -n 'spawn' crates/app` 恰好 1 处，且位于扩展监管。
-	# 现在的 5 处是 tokio 任务 spawn（async 运行时），不是进程 spawn —— spec 的本意是
-	# 「子进程创建只有扩展监管一处」，而进程级 spawn 已由判据 6 卡住；本条照字面跑，
-	# 红就是红（扩展监管还没写，T5）。
-	F12=$(git grep -n 'spawn' -- "$APP" | grep -v '/tests/' || true)
-	N12=$(printf '%s\n' "$F12" | grep -c . || true)
-	if [ "$N12" -eq 1 ] && printf '%s\n' "$F12" | grep -qE 'extensions?/'; then
-		bok "12. 进程只有一处（$F12）"
-	else bbad "12. crates/app 的 spawn 是 $N12 处 ≠ 1（扩展监管还没写，T5）："
-	     printf '%s\n' "$F12" | sed 's/^/       /'; fi
+	# 12. 进程只有一处：应用层里 spawn 恰好 1 处，且位于扩展监管（spec 字面）
+	c12() {
+		local F N
+		F=$(git grep -n 'spawn' -- $A | grep -v '/tests/' || true)
+		N=$(printf '%s\n' "$F" | grep -c . || true)
+		[ "$N" -eq 1 ] && printf '%s\n' "$F" | grep -qE '(nous-ext|ext)/src/.*(spawn|supervis)' \
+			|| { echo "应用层 spawn 是 $N 处 ≠ 1（不是「仅扩展监管一处」）："; printf '%s\n' "$F" | head -40; return 1; }
+	}
 
-	# ── 13. 无文件锁（Q26：单进程不需要文件锁）
-	# flock / fs2 / File::lock 是文件锁；`.lock()` 照 spec 字面查。
-	# 进程内互斥的 `.lock()`（`Mutex` / `RwLock`，std 或 tokio 的同步原语）不是文件锁 ——
-	# spec §6 恰恰要求进程内同步原语。排除法：凡 `.lock()` 命中行，其结构体字段类型带
-	# Mutex/RwLock 就不算（当前唯一命中是 hub.channels: Mutex<HashMap<…>> 的 `.lock()`）。
-	F13=$(git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- "$APP" | grep -v '/tests/' \
-		| grep -v 'hub.rs' | grep -vE 'Mutex|RwLock' || true)
-	if [ -z "$F13" ]; then bok "13. 无文件锁（crates/app 无 flock/fs2/File::lock/.lock()）"
-	else bbad "13. crates/app 出现文件锁："; printf '%s\n' "$F13" | sed 's/^/       /'; fi
+	# 13. 无文件锁（Q26：单进程不需要文件锁）—— spec 字面：flock / fs2 / File::lock / `.lock()` 为空
+	c13() {
+		local F
+		F=$(git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A | grep -v '/tests/' || true)
+		[ -z "$F" ] || { echo "应用层出现文件锁命中（含进程内 Mutex/RwLock 的 .lock()，按 spec 字面计）："; printf '%s\n' "$F" | head -40; return 1; }
+	}
+
+	judge "1. 正向依赖（nous-app 的包 --depth 1 含 durable/wire/tools/runtime，无 chord/rusqlite）" c1
+	judge "2. 反向依赖（内核层 --depth 1 不依赖应用层）" c2
+	judge "3. 词表基线（S8：只减不增）" c3
+	judge "4. 路由归属（内核层无 .route(/axum::/tower::）" c4
+	judge "5. 数据面唯一入口（内核层之外无 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE）" c5
+	judge "6. 进程归应用层（内核层零进程 + spawn 文件集合 == baseline）" c6
+	judge "6b. 依赖方向（nous-durable --depth 2 无 providers）" c6b
+	judge "7. 端点索引唯一（^### GET /v1/ 恰好 wire.md）" c7
+	judge "7b. 索引不抄字段（wire.md 无 \"type\": / camelCase 字段清单段落）" c7b
+	judge "8. 代码不引文档（内核 .rs 里 wire.md 只在注释里）" c8
+	judge "9. 一个 workspace 根 + 进 systemd 的 bin 恰好 1 个" c9
+	judge "10. 旧仓清空（代码与文档 0 处 Nous-Package）" c10
+	judge "11. 发现唯一（应用层生产路径无 NOUS_SERVER_ADDR）" c11
+	judge "12. 进程只有一处（应用层 spawn 恰好 1 处，在扩展监管）" c12
+	judge "13. 无文件锁（应用层无 flock/fs2/File::lock/.lock()）" c13
 
 	TOTAL=$((B_GREEN+B_RED+B_SKIP))
-	printf '\n  \033[1mspec 13 条 / 本脚本 %d 项边界判据：绿 %d / 红 %d / SKIP %d\033[0m\n' "$TOTAL" "$B_GREEN" "$B_RED" "$B_SKIP"
-	fi
+	printf '\n  \033[1mspec 第 1 章边界判据：%d 条 —— 绿 %d / 红 %d / SKIP %d\033[0m\n' \
+		"$TOTAL" "$B_GREEN" "$B_RED" "$B_SKIP"
 fi
 
 printf '\n'
