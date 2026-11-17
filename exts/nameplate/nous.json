@@ -1,0 +1,11 @@
+{
+  "name": "nameplate",
+  "version": "0.1.0",
+  "protocol": 3,
+  "file": "exts-nameplate",
+  "entry": "exts-nameplate",
+  "sections": [],
+  "handles": ["skills"],
+  "summary": "把 skills 的每个文件名报成 skill:<名>",
+  "category": "sample"
+}

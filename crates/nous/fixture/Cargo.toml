@@ -1,0 +1,12 @@
+[package]
+name = "nous-fixture"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "读 fixtures/agent.sqlite，往 stdout 打 /v1/sessions 形状的 JSON（verify.sh 第 2 段的对象）"
+
+# 它**只干这一件事**：没有子命令、没有 flag、不写库。判据（verify.sh §2）就是用这个形状的。
+[dependencies]
+nous-durable = { workspace = true }
+serde_json = { workspace = true }

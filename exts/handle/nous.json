@@ -1,0 +1,11 @@
+{
+  "name": "handle",
+  "version": "0.1.0",
+  "protocol": 3,
+  "file": "exts-handle",
+  "entry": "exts-handle",
+  "sections": [{ "key": "prompts", "tag": "prompts" }],
+  "handles": ["prompts"],
+  "summary": "投影 prompts 句柄的内容（不碰路径）",
+  "category": "sample"
+}

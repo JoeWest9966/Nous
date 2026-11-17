@@ -20,3 +20,21 @@ content/**/.git/
 # sqlite 的 WAL 边车文件：随进程来去，提交它没意义（库本体照旧跟踪）。
 content/**/*.sqlite-shm
 content/**/*.sqlite-wal
+
+# ── Rust workspace（#14 搬迁）────────────────────────────
+/target
+# 扩展的判据执行器也会生成 target/
+**/*.rs.bk
+
+# 真实用户数据，永不入库（spec：fixture 那份 agent.sqlite 是线上数据）
+fixtures/*.sqlite
+fixtures/*.sqlite-wal
+fixtures/*.sqlite-shm
+
+# vendor 里自带 Cargo.toml 的 daemon 单编会生成 target/
+vendor/**/target/
+
+# nous-server 的默认库（NOUS_DB 缺省 ./nous.db）：运行时产物，不入库
+nous.db
+nous.db-wal
+nous.db-shm

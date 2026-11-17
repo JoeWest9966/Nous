@@ -1,0 +1,15 @@
+[package]
+name = "exts-handle"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "样例扩展：handle（只依赖 nous-ext-sdk，不依赖 kernel/platform 任何 crate）"
+
+[[bin]]
+name = "exts-handle"
+path = "src/main.rs"
+
+[dependencies]
+nous-ext-sdk = { workspace = true }
+serde_json = { workspace = true }

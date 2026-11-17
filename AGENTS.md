@@ -3,13 +3,13 @@
 ## 块和组的字段
 
 **块（leaf）和组（section）是同一个类型 `Node`，没有类型字段。** 判据是 `children` 在不在：
-`isSection(n) = Array.isArray(n.children)`（`src/game.ts:20`）。
+`isSection(n) = Array.isArray(n.children)`（`server/tree.ts:17`）。
 
 ### 存进 `tree.json` 的（就这四个）
 
 | 字段 | 类型 | 块 | 组 | 说明 |
 |---|---|---|---|---|
-| `id` | `string` | 必有 | 必有 | 唯一引用键。**6 位随机，如 `7kq2md`**：字母表 32 个（去掉 `i l o u`），`freshId()` 发，`newId()` 在整棵树里查重、撞了就重掷。**新建那一刻定型，改名、换爹、撤销都不动它**。这个字段搬过两次家（`id` → `tree` → `id`，值一次没变），老盘两个名字都认：`adoptIds()`（`store.ts`）载入时接住，下一次落子按新名写回 |
+| `id` | `string` | 必有 | 必有 | 唯一引用键。**6 位随机，如 `7kq2md`**：字母表 32 个（去掉 `i l o u`），`freshId()` 发，`newId()` 在整棵树里查重、撞了就重掷。**新建那一刻定型，改名、换爹、撤销都不动它**。这个字段搬过两次家（`id` → `tree` → `id`，值一次没变），老盘两个名字都认：早先前端的 `adoptIds()`（`store.ts`，已随前端删除）载入时接住，下一次落子按新名写回 |
 | `name` | `string` | 必有 | 必有 | 人看的那层皮。改名不动 `id`（`renameNode` 只改 `name`） |
 | `value` | `number?` | 必有 | **不许有** | 面积就是它。组的值由子节点相加得出，写进去就是两份事实源 |
 | `children` | `Node[]?` | **不许有** | 必有（可为空数组） | 唯一的结构字段，同时兼任「是不是组」的判据 |
@@ -20,19 +20,12 @@
 
 | 东西 | 怎么算 | 在哪儿 |
 |---|---|---|
-| `valueOf(n)` | 块返回 `value`，组返回子节点之和 | `game.ts:17` |
-| `tree` | 名字路径 `N/src/App.tsx`，同级重名按遍历顺序加 `-2`。改名、搬爹它就变,每次从树现算，**不进 json** | `treeMap()` `game.ts:120` |
-| `pathTo` / `childIds` | 钻到某节点的组路径（一串组 id）/ 某组底下的顺序 | `game.ts` |
+| `valueOf(n)` | 块返回 `value`，组返回子节点之和 | 前端已删，服务端不用它，不存在了 |
+| `tree` | 名字路径（例如 `N/src/App.tsx` 只是路径形状的例子，不是现存的源文件），同级重名按遍历顺序加 `-2`。改名、搬爹它就变,每次从树现算，**不进 json** | `treeMap()` `server/tree.ts:26` |
+| `pathTo` / `childIds` | 钻到某节点的组路径（一串组 id）/ 某组底下的顺序 | 前端已删，服务端不用，不存在了 |
 
-布局（谁在哪、多大）也是派生的：`layout()` + `grid()` 从容器宽度算出来，丢了重算一次就有。
-存它等于把衍生物当事实源。
-
-网格的规则（`game.ts`，改了先看这段）：**列数只由宽度算** ——
-`cols = clamp(1, floor(宽 / MIN_CELL_W), maxCols(宽))`，`maxCols` 是 2 / 4 / 8 的天花板，
-`MIN_CELL_W = 140`（宽得放得下名字 + `进入 ›`）和 `MIN_CELL_H = 84`（内缩 2px 后还剩 80，组的标题带才够 `hat()` 那 24px 一档）
-是地板。**内层没有特判**：组只有外面 1/4 宽，`floor` 自动给它少几列。
-装不下就往下长（`gridHeight`），**只有最外层滚** —— 嵌套滚动在触屏上必翻车。
-面积不再等于值：等大格子 + 中间那个数字 + 底部 `share` 比例条，三样加起来说同一件事。
+布局（`layout()` + `grid()`、`MIN_CELL_W/H`、嵌套滚动）是面板前端的事，前端已删，这些规则不再存在。
+**不要照旧去 `src/` 找**：那棵 React 树连同它的布局、编辑函数已经整个删掉。
 
 ### 盘上长什么样
 
@@ -107,8 +100,9 @@ POST   /api/boards/<b>/nodes/<n>/doc/<name>/restore → { name }          从 .t
 - **页面盖在盘面上，不卸载盘面。** 卸载会丢掉树的展开状态、滚动位置和撤销栈；
   被盖住的区域用 `inert`，键盘别穿透下去。
 
-文档名（`src/docname.ts`，服务端和浏览器共用同一份）：小写、空格转 `-`、只留字母数字中文和 `._-`、
-补 `.md`。**只有这一份实现** —— 两份会漂，上一版就漂过：客户端补 `.md`，服务端不补。
+文档名（`server/docname.ts`）：小写、空格转 `-`、只留字母数字中文和 `._-`、补 `.md`。
+`docname.ts` 与 `tree.ts` 是服务端独占，历史上有一份副本在 `src/` 与它漂过，前端已删，
+不许再出现第二份。判据：`grep -rn --include='*.ts' 'export const normalizeDocName\|export function treeMap' .` 只允许各 1 处。
 
 ### 一个块 = 一个独立进程（没有条件）
 
@@ -129,7 +123,7 @@ POST   /api/boards/<b>/nodes/<n>/doc/<name>/restore → { name }          从 .t
 
 - **听 `PORT`。** 宿主给的空闲端口，不写进任何文件。
 - **数据写 `NOUS_DATA`**（= 它自己文件夹下的 `data/`）。不是宿主替你存 —— 是「`cp -r` 走了数据也走了」。
-- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（文档页、`__nous/ctx`）。
+- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（文档页、`__nous/resolve`）。
 - **链接写相对路径。** 这是唯一能让 `cp -r map/<id> ~/<id> && npm start` 和宿主里打开
   是同一页的写法。宿主不重写 HTML、不改你的绝对路径，`/style.css` 就是逃出前缀。
 
@@ -146,10 +140,11 @@ POST   /api/boards/<b>/nodes/<n>/doc/<name>/restore → { name }          从 .t
 三个一起升、一起锁死 —— `pi-durable` 自己就是精确钉 `1.4.0`，顶层写 `^` 迟早分叉出两份 `pi-ai`，
 症状是「同一个类却不相等」。
 
-- **只在 Node 里跑。** 只有 `server/*.ts` 能 import。`src/` 里一行都不许 —— 它们拖着
-  `openai` / `@anthropic-ai/sdk` / `@aws-sdk/client-bedrock-runtime` / photon wasm，
-  进客户端 bundle 就是几十兆跑不了的死重。`vite.config.ts` 把 `@earendil-works/*` 标成 external，
-  手滑了在 build 期就吭声，不是悄悄膨胀。
+- **只在 Node 里跑。** 如今只有 `server/*.ts`，没有 `src/`、没有客户端 bundle，也没有
+  「被拖进前端」这条失败模式了。包还在，是因为壳里的块调度与 content store 要用。
+  禁止再把它们塞进浏览器代码；`vite.config.ts` **不是构建配置，它就是面板壳本体** ——
+  `nous-panel.service` 跑 `vite preview`，`contentApi` / `blocksApi` / `nousApi` / `BoardStore`
+  都在里面当 middleware。所以 A 段不能删它，B/C 段判断「壳还在不在」时以这个为准。
 - **持久化状态写 `NOUS_DATA`。** chord 的 sqlite 也好、agent 的会话记录也好，落块的 `data/` 底下，
   **不许落仓库根**。理由跟块一样：`cp -r map/<id> ~/<id>` 走了，状态也跟着走。
 - `node >= 22.19.0`（`engines` 已声明）。`node:sqlite` 在 20.x 上不存在，别指望它会以看得懂的方式报错。
@@ -168,7 +163,7 @@ PUT  /api/boards/:id/locks   { id, locked }      → { ids }
 - **锁只管它自己那一个节点，块和组都能锁。** 锁住一个组 = 这个组不许消失；组里的块**没有**跟着锁，
   从里面删一块、往里加一块都照旧。想保护里面的块就自己按上去。
   （早先的规则是「锁是子树」—— 结果是锁过的组里每新建一块都删不掉，必须先解锁再加锁。）
-  `locks.json` 里存的就是生效的全部，没有继承那一层，`lockMap()`（`src/game.ts`）只是把
+  `locks.json` 里存的就是生效的全部，没有继承那一层，`lockMap()`（`server/locks.ts`）只是把
   树里已经没了的 id 滤掉。
 - **强制在服务端。** 客户端发来的树里少了锁定的节点，`save()` 沿它**原来**的位置往上找最近的存活祖先，
   把它接回来（整枝被删的话，连它当时的孩子一起还回来）。并把修正后的树返回给客户端
@@ -176,7 +171,7 @@ PUT  /api/boards/:id/locks   { id, locked }      → { ids }
   所以「删掉它所在的组 = 它上提一层」，不是「它跟着没了」。
   这里有两个必须记住的坑，病都是「同一个 id 出现两次」：**先浅后深地接**（锁了组又锁了里面的块，
   组先回家，块跟着回来），**每接一枝就重算「谁还活着」**（开头算一次用到尾，会 clone 出第二个它）。
-- **前端隐藏「删除」只是防手滑。** 真正拦住机器的是上面那条；别在 UI 里加第二套判断。
+- **强制只在服务端。** 前端已删，没有 UI 那一层判断；「隐藏删除」这种防手滑的旧规则不再存在。
 - **绕过会留痕**：每次「锁定节点从树里消失」的尝试都写进 `audit.log`，带来源地址。
 
 做不到的也说清：能改宿主状态文件的人（root、或者将来的 AI）照样能解锁。
@@ -185,11 +180,10 @@ PUT  /api/boards/:id/locks   { id, locked }      → { ids }
 ### 块之间怎么说话
 
 ```
-GET <NOUS_ORIGIN><NOUS_SELF>/__nous/ctx          → { board, host, base, node, blocks[], resolve }
 GET …/__nous/resolve/<id>[?path=/底下]           → { url }   ← 绝对地址
 ```
 
-`ctx.blocks[id].url` 就是邻居的地址，拿到就能电话。**两条铁律：**
+`resolve` 的 `url` 就是邻居的地址，拿到就能电话。**两条铁律：**
 
 - **只走 HTTP。** 不许 import 别人的代码，不许读别人的文件夹，不信任别人的 `data/`。
   按路径自己拼 `/p/<board>/<id>` 也不许 —— 地址只有一个来源，就是 `resolve`。

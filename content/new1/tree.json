@@ -1,8 +1,8 @@
 {
   "v": 1,
   "name": "new1",
-  "version": 194,
-  "updatedAt": "2026-11-16T02:00:47.173Z",
+  "version": 196,
+  "updatedAt": "2026-11-17T09:44:17.620Z",
   "root": {
     "id": "n45",
     "name": "Nous",
@@ -34,99 +34,25 @@
             ]
           },
           {
-            "id": "cmqt66",
-            "name": "work",
+            "id": "p34pgp",
+            "name": "skills-local",
             "value": 1
           },
           {
-            "id": "k5411g",
-            "name": "model",
+            "id": "s9hzsp",
+            "name": "alpha.1",
             "value": 1
           },
           {
-            "id": "68kazk",
-            "name": "skills",
-            "children": [
-              {
-                "id": "p34pgp",
-                "name": "skills-local",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "id": "vbe4pt",
-            "name": "extend",
-            "children": [
-              {
-                "id": "s9hzsp",
-                "name": "alpha.1",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "id": "d6s4v1",
-            "name": "storage",
-            "children": [
-              {
-                "id": "mcfpqm",
-                "name": "storage-Archive",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "id": "n8qkkj",
-            "name": "Trigger",
-            "value": 1
-          },
-          {
-            "id": "6ysg01",
-            "name": "Prompts",
-            "value": 1
-          },
-          {
-            "id": "8ven4x",
-            "name": "Template",
-            "children": [
-              {
-                "id": "3699b9",
-                "name": "Session-Template",
-                "value": 1
-              },
-              {
-                "id": "jtjzw5",
-                "name": "Ultimate-Template",
-                "value": 1
-              }
-            ]
-          },
-          {
-            "id": "k3skws",
-            "name": "Element",
+            "id": "mcfpqm",
+            "name": "storage-Archive",
             "value": 1
           }
         ]
       },
       {
-        "id": "zefsvf",
-        "name": "tailnet",
-        "value": 1
-      },
-      {
         "id": "vq0f03",
         "name": "vps",
-        "value": 1
-      },
-      {
-        "id": "bjes6b",
-        "name": "Nous-Mobile",
-        "value": 1
-      },
-      {
-        "id": "h58ga5",
-        "name": "NousDesk",
         "value": 1
       }
     ]

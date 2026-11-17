@@ -3,7 +3,8 @@
 `templates/agent-block/` 是一个能拷进任何块的 agent 后端。三个文件、零依赖安装（见末尾的欠账），
 跑起来就是一个真能干活的东西：一个会话、`read`/`write`/`edit`/`bash` 四件套、SSE 推流。
 
-已经在 `new1 / new1.1`（id `cmqt66`）里跑通了，那份是活样本。
+历史上在 `new1 / new1.1`（id `cmqt66`）里跑通过 —— 那一块的代码已随块清算删掉（票 #16），
+模板本身仍在 `templates/agent-block/`。
 
 ## 拷进一个块
 
@@ -104,7 +105,7 @@ POST /v1/messages {"content":"!ls -la","waitMs":20000}
 → 真的调一次 bash，把输出念回来
 ```
 
-实测（块在 `content/new1/map/cmqt66/`）：
+实测（当年块在 `content/new1/map/cmqt66/`，代码已删，只剩 `data/agent.sqlite` 这份证据）：
 
 ```json
 {"status":"done","answer":{"text":"工具跑完了：\ntotal 36\n-rw-r--r-- 1 root root 10247 server.js\n..."}}

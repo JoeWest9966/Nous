@@ -348,7 +348,8 @@ POST /v1/prompts/archive|restore|purge {name}
 GET  /v1/prompts/pending          待同步清单（一个模板 = 一个单元）
 POST /v1/prompts/sync             {message, paths?}
 POST /v1/prompts/reload           重扫名册
-GET  /v1/sessions                 会话树（每条带 updatedAt：最后落库时刻，可能 null）
+GET  /v1/sessions                 会话树（置顶在前；每条带 pinned + updatedAt：最后落库时刻，可能 null）
+POST /v1/sessions/:id/pin         {pinned, requestId} → 置顶进内核：落一条 durable 提交，重放同锚不写第二条
 GET  /v1/unread                   每个会话的未读数（平铺 map，引擎算好）
 POST /v1/read/:id                 标成读到最新 → { id, readAt, unread: 0 }
 POST /v1/sessions                 {name, model, thinkingLevel, skills, template}

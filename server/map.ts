@@ -19,7 +19,7 @@
 import { mkdir, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { isSection, treeMap, type Node } from "../src/game.ts";
+import { isSection, treeMap, type Node } from "./tree.ts";
 
 const MAP = "map";
 const GONE = ".gone";
@@ -33,7 +33,7 @@ export const isNodeId = (id: string): boolean => SAFE_ID.test(id);
 
 const ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
 
-/** 跟 `src/game.ts` 里 `freshId()` 同一个规格：32 字母表、6 位、无模偏。 */
+/** 32 字母表、6 位、无模偏（256 能被 32 整除，所以按位取模均匀）。 */
 export const freshId = (): string => {
   const bytes = randomBytes(6);
   let out = "";

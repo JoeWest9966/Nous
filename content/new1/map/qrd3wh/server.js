@@ -12,11 +12,12 @@
 //   POST /v1/catalog/refresh          重拉编目（换了密钥 / 编目里加了供应商之后用）
 //   GET  /v1/fs/dirs?path=           目录浏览器：空 = start dirs；给路径 = 列它的子目录（?machine= 列那台机器的）
 //   GET  /v1/machines                 机器编目（从 vq0f03 读，缓存 60s；?fresh=1 重拉）
-//   GET  /v1/sessions                 会话树（含忙闲、模型、思考档、cwd、机器、最后一句、最后写库时刻）
+//   GET  /v1/sessions                 会话树（置顶在前，含忙闲、模型、思考档、cwd、机器、最后一句、最后写库时刻）
 //   GET  /v1/unread                   每个会话的未读数 + 上次读的时刻（平铺的 map，引擎算好）
 //   POST /v1/read/:id                 把这个会话标成读到最新
 //   POST /v1/sessions                 {name, model, thinkingLevel, skills, template, cwd, machine} → 新对话
 //   POST /v1/sessions/:id/rename      {name}
+//   POST /v1/sessions/:id/pin         {pinned, requestId}  → 落一条提交（幂等锚 requestId）
 //   POST /v1/sessions/:id/fork        {entryId} 或 {} （空 = 从最后一条分叉）
 //   POST /v1/sessions/:id/config      {readOnly, model, thinkingLevel, skills, template, cwd, machine} 只读 = 不给会写的工具
 //   POST /v1/sessions/:id/archive     归档 = 复印进 data/archives/gen-YYYYMMDD.sqlite + 写墓碑（ADR 0001）
@@ -68,6 +69,7 @@ import { openActivity } from "./activity.js";
 import { collectPages } from "./pages.js";
 import { openUnread } from "./unread.js";
 import { openArchive } from "./archive.js";
+import { openSessionPins } from "./session-pins.js";
 // 自研扩展的**源码不在这棵树里** —— 在 Nous-extend 仓库的本地副本（`NOUS_EXTEND`）。
 // 块里只留两件事：去哪儿拿（下面这两行）+ 钉着哪个 commit（extensions.lock.json）。
 // 用动态 import 是因为路径得能配；静态 import 只能写字面量，一换机器就炸。
@@ -168,27 +170,23 @@ const startedAt = Date.now();
 // 这里只取 ssh 目标（name/user/port/ips），**不碰密钥** —— 密钥是宿主机 ~/.ssh 的事
 // （vq0f03 的 /ssh 端点自己写着「密钥、known_hosts、跳板都不在编目里」）。
 //
-// 地址两个来源：默认走宿主 `__nous/ctx` 找 vq0f03；`NOUS_VPS_BASE` 可以指死
+// 地址两个来源：默认走宿主 `__nous/resolve/vq0f03`；`NOUS_VPS_BASE` 可以指死
 // （测试 / 远程部署时用，跟 NW_BASE 一个道理）。
 const MACHINES_BLOCK_ID = "vq0f03";
 const MACHINES_TTL_MS = 60_000;
 let machinesState = { at: 0, machines: [], error: null };
 
-/** vq0f03 的地址：宿主 `__nous/ctx` 现找；`NOUS_VPS_BASE` 可以指死（测试 / 远程部署时用）。 */
+/** vq0f03 的地址：宿主 `__nous/resolve/vq0f03` 现问；`NOUS_VPS_BASE` 可以指死（测试 / 远程部署时用）。 */
 const vpsBase = async () => {
   if (process.env.NOUS_VPS_BASE) return String(process.env.NOUS_VPS_BASE).replace(/\/+$/, "");
   const origin = process.env.NOUS_ORIGIN ?? "http://127.0.0.1";
   const self = process.env.NOUS_SELF ?? "/";
-  const ctxUrl = `${origin}${self.endsWith("/") ? self : self + "/"}__nous/ctx`;
-  const ctxRes = await fetch(ctxUrl);
-  if (!ctxRes.ok) throw new Error(`__nous/ctx ${ctxRes.status}`);
-  const ctxDoc = await ctxRes.json();
-  const blocks = Array.isArray(ctxDoc.blocks)
-    ? ctxDoc.blocks
-    : Object.entries(ctxDoc.blocks ?? {}).map(([id, b]) => ({ id, ...(b ?? {}) }));
-  const vps = blocks.find((b) => b?.id === MACHINES_BLOCK_ID);
-  if (!vps?.url) throw new Error(`__nous/ctx 里没有 ${MACHINES_BLOCK_ID}`);
-  return String(vps.url).replace(/\/+$/, "");
+  const resolveUrl = `${origin}${self.endsWith("/") ? self : self + "/"}__nous/resolve/${MACHINES_BLOCK_ID}`;
+  const res = await fetch(resolveUrl);
+  if (!res.ok) throw new Error(`resolve ${MACHINES_BLOCK_ID} ${res.status}`);
+  const found = await res.json();
+  if (!found?.url) throw new Error(`resolve 里没有 ${MACHINES_BLOCK_ID} 的地址`);
+  return String(found.url).replace(/\/+$/, "");
 };
 
 const fetchMachineCatalog = async () => {
@@ -1324,7 +1322,7 @@ const Sessions = defineDoc({
   scope: "session",
   // archived 是归档墓碑（ADR 0001）：{ id: { at, gen, purged } }。老盘没有这个键 ——
   // setArchived 里和 machines 一个待遇（`??=`），不靠 initial。
-  initial: () => ({ names: {}, machines: {}, archived: {}, origins: {} }),
+  initial: () => ({ names: {}, machines: {}, archived: {}, origins: {}, pins: { ids: [], requests: {} } }),
   // 这张表很小、改得也不勤：每次都给一份完整 base，别攒 delta。
   checkpointWhen: () => true,
 });
@@ -1894,6 +1892,13 @@ harness.subscribeCommits((publication) => {
   }
 });
 
+/** 置顶：状态在 Sessions 文档，提交走 harness.commit。 */
+const sessionPins = openSessionPins({
+  commit: (change) => harness.commit(change, ctx),
+  peek: async (token, anchor) => (await harness.snapshot(token, ctx))?.pins?.requests?.[anchor],
+});
+const pinsOf = async () => (await harness.snapshot(Sessions, ctx))?.pins?.ids ?? [];
+
 const names = async () => (await harness.snapshot(Sessions, ctx))?.names ?? {};
 
 const machinesOf = async () => (await harness.snapshot(Sessions, ctx))?.machines ?? {};
@@ -1957,12 +1962,13 @@ const busyMap = async () => {
 
 const tree = async () => {
   const page = await harness.commit((tx) => tx.scanConversations({}, 200, undefined), ctx);
-  const [namesNow, machinesNow, busy, archivedNow, originsNow] = await Promise.all([
+  const [namesNow, machinesNow, busy, archivedNow, originsNow, pinsNow] = await Promise.all([
     names(),
     machinesOf(),
     busyMap(),
     archivedMarks(),
     originsOf(),
+    pinsOf(),
   ]);
   const nodes = [];
   for (const record of page.items) {
@@ -2000,7 +2006,8 @@ const tree = async () => {
       last: last.items[0] ? { id: last.items[0].id, kind: last.items[0].kind, text: textOfEntry(last.items[0]) } : null,
     });
   }
-  return nodes;
+  // 置顶在前（pins.ids 的先后），其余保持 durable 的原顺序；pinned 字段一起给客户端。
+  return sessionPins.decorate(nodes, pinsNow);
 };
 
 // ── HTTP ─────────────────────────────────────────────────────────────────
@@ -3200,6 +3207,18 @@ const route = async (req, res, url) => {
     if (!Number.isFinite(id)) return json(res, 400, { error: "会话 id 得是数字" });
     const conversation = await harness.conversation(id, ctx);
     if (!conversation) return json(res, 404, { error: "没有这个会话", id });
+
+    // POST /v1/sessions/:id/pin —— 置顶进内核（票 #15）。requestId 是幂等锚，
+    // 同一条重放十次只落首轮那条提交；提交序号回给调用方当证据。
+    if (req.method === "POST" && rest === "pin") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      if (typeof body.pinned !== "boolean") return json(res, 400, { error: "pinned 得是 true/false" });
+      try {
+        return json(res, 200, await sessionPins.setPin({ id, pinned: body.pinned, requestId: body.requestId, token: Sessions }));
+      } catch (error) {
+        return json(res, error.status ?? 500, { error: String(error?.message ?? error) });
+      }
+    }
 
     if (req.method === "POST" && rest === "rename") {
       const body = JSON.parse((await readBody(req)) || "{}");

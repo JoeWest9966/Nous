@@ -1,0 +1,62 @@
+# Nous 唯一 workspace（spec §1：一个仓、一个 workspace、一个产物）。
+# 目录只管所有权，层写在 `docs/plugins.md` 的 layer 列（spec §3.0）：
+#   crates/<vendor>/<module>/   —— vendor 是所有者，module 是模块名（≠ 包名）
+#   crates/nous/durable  的包名仍是 nous-durable（crate 名不因搬家而改）
+[workspace]
+resolver = "2"
+members = [
+    "crates/*/*",
+    "exts/*",
+]
+# `packages/env/daemon`（vendor/ 下）自带 Cargo.toml / Cargo.lock / rust-toolchain.toml，
+# 不是本 workspace 的成员。不 exclude 掉，cargo 会直接罢工。
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+
+# 版本表照 `pi-rust@v0.24.2` 的 workspace.dependencies 冻结；要加一处依赖，
+# 先在这里落一行，再记进 SOURCES.md。
+[workspace.dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "fs", "process", "sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
+schemars = { version = "0.8", features = ["preserve_order"] }
+# `default-features = false`：默认开的是 `cli`（→ clap）、`resolve-http`（→ reqwest → hyper、
+# tower-http）、`resolve-file`，都是 JSON Schema **命令行工具**和**远程 `$ref` 抓取**才要的。
+# 我们用它的只有 `JSONSchema::compile` + `validate`，schema 自包含。不关的话
+# `cargo tree -p nous-durable` 里会冒出 hyper/tower-http —— 语义层就"绑上传输"了。
+jsonschema = { version = "0.18", default-features = false }
+indexmap = { version = "2", features = ["serde"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+axum = "0.8"
+thiserror = "1"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "v7"] }
+base64 = "0.22"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+bytes = "1"
+tempfile = "3"
+eventsource-stream = "0.2"
+
+nous-ext-sdk = { path = "crates/nous/ext-sdk", version = "0.1.0" }
+nous-telemetry = { path = "crates/nous/telemetry", version = "0.1.0" }
+nous-chord = { path = "crates/nous/chord", version = "0.1.0" }
+nous-wire = { path = "crates/nous/wire", version = "0.1.0" }
+nous-env = { path = "crates/nous/env", version = "0.1.0" }
+nous-durable = { path = "crates/nous/durable", version = "0.1.0" }
+nous-ai-types = { path = "crates/nous/ai-types", version = "0.1.0" }
+nous-ai = { path = "crates/nous/ai", version = "0.1.0" }
+nous-tools = { path = "crates/nous/tools", version = "0.1.0" }
+nous-runtime = { path = "crates/nous/runtime", version = "0.1.0" }
+nous-ext = { path = "crates/nous/ext", version = "0.1.0" }
+nous-ext-probe = { path = "crates/nous/ext-probe", version = "0.1.0" }
+nous-server = { path = "crates/nous/server", version = "0.1.0" }
+nous-fixture = { path = "crates/nous/fixture", version = "0.1.0" }

@@ -9,7 +9,7 @@
 ## 为什么只剩发静态文件
 
 数据不走这个进程。页面自己去问 qrd3wh 的 `GET /v1/extensions`，地址从宿主的
-`__nous/ctx` 里找 `qrd3wh` 那个块拿。所以 `server.js` 现在只做一件事：把 `public/` 发出去。
+`__nous/resolve/qrd3wh` 拿。所以 `server.js` 现在只做一件事：把 `public/` 发出去。
 
 块之间只走 HTTP，地址只从宿主的 ctx 来 —— 这一块里一个 `/p/…` 都不拼。
 

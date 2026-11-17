@@ -15,7 +15,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { BoardStore, isBoardId, type DocEditResult } from "./content.ts";
-import { isDocName, normalizeDocName } from "../src/docname.ts";
+import { isDocName, normalizeDocName } from "./docname.ts";
 import { isNodeId } from "./map.ts";
 
 const MAX_BODY = 4 * 1024 * 1024;

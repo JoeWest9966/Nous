@@ -1,0 +1,20 @@
+[package]
+name = "nous-chord"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "chord 的 context / json / delta / sqlite 语义层"
+readme = "README.md"
+
+# AGENTS.md §二：nous-chord 无内部依赖。
+# 出现 nous-ai / nous-durable / nous-tools 就是契约图破了。
+# 允许的第三方：serde_json（delta/json）、tokio-util（context 的 CancellationToken）、
+# rusqlite（sqlite adapter）。**不许引 tokio 运行时**，也不许引 futures/reqwest。
+[dependencies]
+serde_json = { workspace = true }
+tokio-util = { workspace = true }
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "time"] }

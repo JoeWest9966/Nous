@@ -1,0 +1,20 @@
+[package]
+name = "nous-ai-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "nous-ai 的纯半：类型 / 事件流 / 容错 JSON。零 IO、零时钟，真相层只许依赖它"
+
+# 判据（#18）：这里不许出现 reqwest / hyper / `tokio` 的 time|net 特性。
+# 事件流要的是 tokio 的 sync 原语（mpsc / oneshot / Semaphore）与 CancellationToken，
+# 两者都不碰网络与时钟。
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { version = "1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[dev-dependencies]
+futures = { workspace = true }
+tokio = { version = "1", features = ["sync", "macros", "rt"] }

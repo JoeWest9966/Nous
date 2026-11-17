@@ -796,13 +796,15 @@ const pollSelection = async () => {
 };
 setInterval(pollSelection, 1200);
 
-// 这一页没有左列了，挑对话在 pxbgng —— 地址只从宿主的 ctx 来。
+// 这一页没有左列了，挑对话在 pxbgng —— 地址只从宿主的 `__nous/resolve` 来。
 try {
-  const ctx = await fetch(base + "__nous/ctx").then((r) => r.json());
-  const list = ctx.blocks.find((b) => b.id === "pxbgng") ?? ctx.blocks.find((b) => b.name === "session.2");
-  if (list) {
-    $("list").href = list.url;
-    $("list").hidden = false;
+  const res = await fetch(base + "__nous/resolve/pxbgng");
+  if (res.ok) {
+    const list = await res.json();
+    if (list?.url) {
+      $("list").href = list.url;
+      $("list").hidden = false;
+    }
   }
 } catch {}
 

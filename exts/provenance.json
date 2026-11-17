@@ -1,0 +1,5 @@
+{
+  "builtFrom": "621f4f5",
+  "buildMachine": "asus",
+  "note": "产物来源的样例：builtFrom 是真实历史提交（#14 搬迁的 vendor 导入），机器名是开发机。"
+}
