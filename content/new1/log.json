@@ -604,6 +604,20 @@
       "t": "rename",
       "id": "h58ga5",
       "name": "Nous-Desktop"
+    },
+    {
+      "t": "remove",
+      "id": "4qpzmw"
+    },
+    {
+      "t": "addLeaf",
+      "parent": "vh79pm",
+      "id": "k3skws"
+    },
+    {
+      "t": "rename",
+      "id": "k3skws",
+      "name": "Element"
     }
   ]
 }
