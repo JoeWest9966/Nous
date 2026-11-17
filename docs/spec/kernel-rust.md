@@ -85,12 +85,10 @@ test -n "$K"                   || { echo "SKIP: K 为空（清单里没有 layer
    **判定口径变更（2026-11-17）**：从"数方法调用"（`\.spawn\(`）改成"数构造点"（`Command::new` / `fork` / `posix_spawn` / `execve`）。理由：`os_env.rs:443` 是 `cmd.status().await`，**它也在创建进程**，`\.spawn\(` 与 `\.spawn\(\)` 都数不到；收紧到 `\.spawn\(\)` 会连 `.output()` / `.status()` 一起漏。数字与成员不变（仍 2 个），**不需要重新签字**。
 
    结果**逐行相等**于代码仓 `docs/boundary-baseline.txt` 的 `spawn_files=N` + 紧跟的成员清单（今天 **N=2**：`crates/nous/tools/src/os_env.rs`、`crates/nous/ext/src/spawn.rs`）。
-   **排除项（逐条列出，判据从集合里减掉每一条；不许只写"排除 tests/"就完）**：
+   **排除项（只有三组，判据从集合里减掉；不许只写"排除 tests/"就完，也不许点名目录）**：
    - `tests/`、`*_test.rs`、`*_tests.rs`、`*tests.rs` —— 测试夹具（今天命中 `crates/nous/runtime/src/provider/tests.rs`）。**排除式写 `(/tests/|tests?\.rs$)`**：`_tests?\.rs$` 抓不到 `provider/tests.rs`（没有下划线前缀），这是锚点选错的经典复发；
    - `#[cfg(windows)]` 块 —— Linux 不编。**今天命中 0 个文件**（`output_decode.rs` 里那个 `chcp` 构造点已在 #14 移除）；规则留着，再出现 windows-only 构造点时自动不算；
-   - 探针 crate `crates/nous/ext-probe/` —— 起一个 `nous-server` 逐帧验协议的探针，**不进 systemd，不是生产路径**（今天 3 个文件）。
-
-   **已删的一条**：`crates/nous/ext/src/runtime.rs:537` 的 `scope.spawn(move || …)` —— 它是 `std::thread::scope` 的**线程**，不是 `Command`，数构造点后**自动不计**，不需要写进排除项。
+   - **减 `layer = dev`**（`fixture` + `ext-probe`）：用 §3.0 的 `$D` 写法，**不点名目录**。`dev` 集合不是恰好那两个 → **红**（见 §3.0 正集哨兵，否则这条排除静默失效）。
 
    已知欠账（**不设判据**，只记在 baseline 注释里）：`os_env.rs` 一文件 3 个入口（363 / 412 / 915）；`ext/src/spawn.rs` 一文件 1 个入口（90 / 127）。口号仍是"其余工具一律经它"，但 `os_env.rs` 今天就是那个它本身。
    **成员变更要签字**："只减不增"管的是**成员**，不只是数字——`open_browser.rs` → `ext/src/spawn.rs` 换人时数字仍为 2，**换成员同样要签字**（数字相等不等于没变，这就是哨兵原则）。
@@ -98,10 +96,10 @@ test -n "$K"                   || { echo "SKIP: K 为空（清单里没有 layer
 7. **端点索引唯一**：`git grep -l '^### GET /v1/'` 恰好 1 个文件（`wire.md`）。它只是索引——端点、用途、谁在用；**字段形状的权威在 `crates/*/*/tests/` 与 conformance 里**，两者冲突时**测试赢**。
 7b. **索引不抄字段**：`wire.md` 里出现 `"type":` 或 camelCase 字段名清单的段落数 = 0（抄一遍就会漂）。
 8. 代码不引文档：`git grep -n 'wire.md' -- $K` **去掉注释行后**为空（测试引形状常量，不引文档路径；注释里提一句不算，S8）。
-9. 一个 workspace 根：全仓只有一个根 `Cargo.toml`；**进 systemd 的 bin target 恰好 1 个**（排除 `nous-fixture`，S4）。
+9. 一个 workspace 根：全仓只有一个根 `Cargo.toml`；**进 systemd 的 bin target 恰好 1 个**（**减 `layer = dev`**：`fixture` 与 `ext-probe` 都不进 systemd；S4；不点名 crate）。
 10. 旧仓清空：`git grep -c 'Nous-Package'` 在代码与文档里为 0（只许出现在归档 README 与历史提交里）。
-11. 发现唯一：`grep -rn 'NOUS_SERVER_ADDR' -- $A` 为空（只许测试用；生产配置出现即红）。
-12. 进程只有一处（应用层）：与判据 6 **同一个 pattern**（只数构造点）+ **同一份排除项**，`grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' -- $A | grep -vE '(/tests/|tests?\.rs$|^crates/nous/ext-probe/)'` 的文件集合**恰好 1 个**，且必须等于 `crates/nous/ext/src/spawn.rs`（扩展监管）。**注意 `$A` 含探针 crate `ext-probe`**（它是 `layer = app`），不排除它就会数出 4 个。
+11. 发现唯一：`grep -rn 'NOUS_SERVER_ADDR' -- $A | grep -vE "^($D)"` 为空（只许测试用 = 只许 `dev` 层；生产配置出现即红）。
+12. 进程只有一处（应用层）：与判据 6 **同一个 pattern** + **同一份排除项**，`grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' -- $A | grep -vE "(/tests/|tests?\.rs$|^($D))"` 的文件集合**恰好 1 个**，且必须等于 `crates/nous/ext/src/spawn.rs`（扩展监管）。**`ext-probe` 归 `dev`，按层减掉**——不按层减就会数出 4 个。
 13. 无文件锁：`git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A` 为空（单进程不需要文件锁）。
 
 **反悔点**：出现"纯内核"部署形态（没有应用层、只跑 6 条路由）→ 契约拆两份。
@@ -144,6 +142,18 @@ crates/acme/            ← 将来第三方（现在空）
 ```
 
 - **crate 名不改**：`crates/nous/tools` 的包名仍是 `nous-tools`，`crates/nous/durable` 仍是 `nous-durable`。目录名与包名不必一致（目录管位置，包名管引用）。
+- `layer` 四个值：`kernel` / `platform` / `app` / **`dev`**。**`dev` = 测试夹具与探针**（今天正好两个：`fixture`、`ext-probe`）：**不进 systemd、不进发布包**。判据里凡要"排除测试用的 crate"，一律写成**减 `dev` 层**，**不许点名目录**——点名是把"清单没分层对"的症状抄进判据（判据 6 / 9 / 11 / 12 各抄过一遍，已收回）。
+- **正集哨兵**：`scripts/layer-paths.sh dev` 的模块集合**必须恰好是** `fixture` 与 `ext-probe`（集合相等）。`dev` 一旦为空，所有"减 dev"的排除会**静默失效**——所以这条是哨兵，不是提醒。
+- 减 `dev` 的写法（判据里唯一允许的形式，不出现目录名）：
+
+  ```bash
+  test -n "$(scripts/layer-paths.sh dev)" || { echo "RED: layer=dev 为空（排除会静默失效）"; exit 1; }
+  D=$(scripts/layer-paths.sh dev | tr ' ' '\n' | sed 's|$|/|' | paste -sd'|')
+  # … | grep -vE "^($D)"
+  ```
+
+  **两种退化形态都必须先红再算**：`dev` 为空时脚本会打出空行，`D` 退化成 `/`（排除空转）或 `""`（`^()` 把集合清空）——两种都会让"排除"变成假绿/假红，所以第一行守卫不能省。
+
 - 三层（kernel / platform / app）**不体现在路径上**，体现在 `docs/plugins.md` 的 `layer` 列 + 一条依赖判据：`layer = kernel` 的 crate，依赖树里不许出现 `layer = platform` 的 crate（`cargo metadata` 可查）。
 - 判据里的路径选择子只有一个，不硬编码目录名：
 
