@@ -1,5 +1,5 @@
 /**
- * 块问宿主：「我在哪、我旁边有谁、怎么找到它们」。
+ * 块问宿主：「我在哪、怎么找到我的邻居」。
  *
  * 这块东西存在的理由只有一个：**块之间只走 HTTP**，而 URL 长什么样是宿主的秘密。
  * 如果让块自己拼 `/p/<board>/<id>`，那将来某块搬去自己的域名/容器，得回头改它的代码 ——
@@ -7,6 +7,9 @@
  *
  * 所以地址由 `resolve` 给，现在就返回 `/p/<board>/<id>`，将来只改这个文件：
  * 一块一张表，查不到再退回路径。**`resolve` 是这整套愿景里唯一不可替换的东西。**
+ *
+ * `ctx`（一次回全树：邻居清单 + 自己的路径）已经删了：它服务的是「块画一块盘面」那套
+ * 面板前端，前端一删就没有读者了。**发现路径只有 `resolve` 一条。**
  *
  * 两条铁律（也是这文件只做这么点事的原因）：
  *
@@ -29,27 +32,6 @@ const send = (res: ServerResponse, status: number, body: unknown): void => {
   res.end(JSON.stringify(body));
 };
 
-type Flat = {
-  id: string;
-  name: string;
-  /** `N/src/App.tsx` —— 给人看的路径，块要按组筛东西时用它。 */
-  path: string;
-  kind: "group" | "block";
-  /** 绝对地址。宿主的秘密就在这儿，块只认它。 */
-  url: string;
-};
-
-const flatten = (node: Node, base: string, at: string, out: Flat[]): void => {
-  const path = at ? `${at}/${node.name}` : node.name;
-  const url = `${base}/${encodeURIComponent(node.id)}`;
-  if (node.children) {
-    out.push({ id: node.id, name: node.name, path, kind: "group", url });
-    for (const kid of node.children) flatten(kid, base, path, out);
-  } else {
-    out.push({ id: node.id, name: node.name, path, kind: "block", url });
-  }
-};
-
 const findPath = (node: Node, id: string): Node[] | undefined => {
   if (node.id === id) return [node];
   for (const kid of node.children ?? []) {
@@ -64,7 +46,7 @@ export type CtxOptions = {
   origin: string;
 };
 
-/** `GET /p/<board>/<id>/__nous/ctx`、`GET /p/<board>/<id>/__nous/resolve/<谁>[?path=/底下]` */
+/** `GET /p/<board>/<id>/__nous/resolve/<谁>[?path=/底下]` */
 export function nousApi(store: BoardStore, opts: CtxOptions) {
   return (req: IncomingMessage, res: ServerResponse, next: (err?: unknown) => void): void => {
     const url = req.url ?? "/";
@@ -88,33 +70,8 @@ export function nousApi(store: BoardStore, opts: CtxOptions) {
       // 反代终结了 TLS、剥掉了挂载前缀 —— 这两件事都只能从头上读，见 `origin.ts`。
       const host = publicOrigin(req, opts.origin);
       const base = `${host}/p/${board}`;
-      const mine = `${base}/${encodeURIComponent(self)}`;
 
       const [verb = ""] = rest;
-      if (verb === "ctx") {
-        const all: Flat[] = [];
-        flatten(root, base, "", all);
-        const chain = findPath(root, self)!;
-        send(res, 200, {
-          board,
-          host,
-          /** 我挂在宿主的哪儿。给自己拼链接用它，别自己拼 `/p/...`。 */
-          base: mine,
-          /** 邻居全在这儿：`ctx.blocks[id].url` 就能打电话。 */
-          blocks: all,
-          /** 查一个我没在 `blocks` 里看到的 id（留着给将来按组查）。 */
-          resolve: `${mine}/__nous/resolve`,
-          node: {
-            id: self,
-            name: chain[chain.length - 1]!.name,
-            path: chain.map((n) => n.name).join("/"),
-            kind: chain[chain.length - 1]!.children ? "group" : "block",
-            url: mine,
-          },
-        });
-        return;
-      }
-
       if (verb === "resolve") {
         const [target = "", ...tail] = rest.slice(1);
         const chain = target ? findPath(root, target) : undefined;

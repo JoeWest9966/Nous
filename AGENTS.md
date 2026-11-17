@@ -123,7 +123,7 @@ POST   /api/boards/<b>/nodes/<n>/doc/<name>/restore → { name }          从 .t
 
 - **听 `PORT`。** 宿主给的空闲端口，不写进任何文件。
 - **数据写 `NOUS_DATA`**（= 它自己文件夹下的 `data/`）。不是宿主替你存 —— 是「`cp -r` 走了数据也走了」。
-- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（文档页、`__nous/ctx`）。
+- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（文档页、`__nous/resolve`）。
 - **链接写相对路径。** 这是唯一能让 `cp -r map/<id> ~/<id> && npm start` 和宿主里打开
   是同一页的写法。宿主不重写 HTML、不改你的绝对路径，`/style.css` 就是逃出前缀。
 
@@ -180,11 +180,10 @@ PUT  /api/boards/:id/locks   { id, locked }      → { ids }
 ### 块之间怎么说话
 
 ```
-GET <NOUS_ORIGIN><NOUS_SELF>/__nous/ctx          → { board, host, base, node, blocks[], resolve }
 GET …/__nous/resolve/<id>[?path=/底下]           → { url }   ← 绝对地址
 ```
 
-`ctx.blocks[id].url` 就是邻居的地址，拿到就能电话。**两条铁律：**
+`resolve` 的 `url` 就是邻居的地址，拿到就能电话。**两条铁律：**
 
 - **只走 HTTP。** 不许 import 别人的代码，不许读别人的文件夹，不信任别人的 `data/`。
   按路径自己拼 `/p/<board>/<id>` 也不许 —— 地址只有一个来源，就是 `resolve`。

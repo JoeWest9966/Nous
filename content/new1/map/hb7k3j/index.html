@@ -519,7 +519,7 @@
 </div>
 
 <script type="module">
-// 块之间只走 HTTP，地址只从宿主的 ctx 来 —— 这里一个 /p/... 都不拼。
+// 块之间只走 HTTP，地址只从宿主的 `__nous/resolve` 来 —— 这里一个 /p/... 都不拼。
 const self = location.pathname.endsWith("/") ? location.pathname : location.pathname + "/";
 const $ = (id) => document.getElementById(id);
 const get = (url) => fetch(url).then(async (r) => {
@@ -536,28 +536,27 @@ const post = (url, body) => fetch(url, {
 });
 
 let tag = null;
-/** 两个仓库面板的地址（也来自 ctx，不拼死）。空状态里的「去装一个 / 去建一条」用它。 */
+/** 仓库面板的地址（也来自宿主的 `__nous/resolve`，不拼死）。空状态里的「去装一个 / 去建一条」用它。 */
 let skillsPage = null;
 let promptsPage = null;
+/** 问宿主要一个邻居的地址。认不出就是 null —— 少一个入口，不是整页坏掉。 */
+const where = (id) => get(self + "__nous/resolve/" + id).catch(() => null);
 try {
-  const ctx = await get(self + "__nous/ctx");
-  tag = ctx.blocks.find((b) => b.id === "qrd3wh")
-     ?? ctx.blocks.find((b) => b.name === "session" && b.kind === "group")
-     ?? null;
+  tag = await where("qrd3wh");
   if (!tag) throw new Error("这一盘里没有 qrd3wh，创建不知道往哪发");
-  skillsPage = ctx.blocks.find((b) => b.id === "68kazk") ?? null;
+  // 仓库的写入口还是 68kazk / 6ysg01 / vbe4pt 这三块（它们还在；票 #16 只清了死掉的块）。
+  // 哪一块哪天被清算掉，`where` 返回 null，入口自己消失，不留一条指向空处的链接。
+  skillsPage = await where("68kazk");
+  if (skillsPage) $("skillRailGo").href = skillsPage.url;
   // 右栏底部「+ 新建类别」的出路：类别只在扩展页建（那边才是仓库的写入口）。
-  const extendPage = ctx.blocks.find((b) => b.id === "vbe4pt") ?? null;
+  const extendPage = await where("vbe4pt");
   if (extendPage) {
     const go = $("extRailGo");
     go.href = extendPage.url;
     go.textContent = "+ 新建类别：去扩展页";
   }
-  promptsPage = ctx.blocks.find((b) => b.id === "6ysg01") ?? null;
-  // 模板弹窗右栏底下那条「+ 新建类别」：类别只在模板库建（那边才是仓库的写入口）。
+  promptsPage = await where("6ysg01");
   if (promptsPage) $("tmplRailGo").href = promptsPage.url;
-  // 技能右栏底下那条「+ 新建类别」：类别只在技能面板建（那边才是仓库的写入口）。
-  if (skillsPage) $("skillRailGo").href = skillsPage.url;
   $("open").href = tag.url;
   $("open").hidden = false;
 } catch (error) {
@@ -1392,7 +1391,7 @@ const renderCtxList = () => {
     .filter((skill) => hit(`${skill.name} ${skill.description ?? ""} ${skillCats(skill).join(" ")}`));
 
   if (!installedSkills.length) {
-    // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 ctx 拿，不拼死的）。
+    // 没装技能不是错误，是还没开始：给一条真能走的链接（地址从 resolve 拿，不拼死的）。
     $("skillList").innerHTML = `<div class="skill-none">这台机器一个技能都没装。<br>`
       + (skillsPage ? `<a href="${esc(skillsPage.url)}/">去技能面板装一个 ›</a>` : "")
       + `</div>`;

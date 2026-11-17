@@ -13,8 +13,8 @@ description: "本块（68kazk）是 Nous 自持技能的清单面板：一张技
 
 ## 为什么只剩发静态文件
 
-数据不走这个进程。页面自己去问 qrd3wh 的 `GET /v1/skills`，地址从宿主的 `__nous/ctx` 里
-找 `qrd3wh` 那个块拿 —— **这一块里不拼任何绝对路径**。所以 `server.js` 只剩一件事：
+数据不走这个进程。页面自己去问 qrd3wh 的 `GET /v1/skills`，地址从宿主的 `__nous/resolve/qrd3wh`
+里拿 —— **这一块里不拼任何绝对路径**。所以 `server.js` 只剩一件事：
 把 `public/` 发出去（剥 `NOUS_SELF`、目录穿越 403、目录 → `index.html`、没扩展名的路径当路由也
 发 `index.html`、注入 `<base>` + `__nous_self`、`cache-control: no-store`）。
 
@@ -133,7 +133,7 @@ POST /v1/skills/archive | restore | purge {name}
 1. **`server.js` 认「没扩展名的路径 = 路由」**，一律发 `index.html`（带扩展名的照旧走磁盘、
    找不到 404 —— 把 `style.css` 回退成 HTML 只会让浏览器报一句难查的 MIME 错）。
 2. **`index.html` 发出去前注入 `<base href="{NOUS_SELF}/">` 和 `window.__nous_self`**：
-   深路径下 `./style.css` 要从**块根**算，页面问 `__nous/ctx` 也要从**块根**算
+   深路径下 `./style.css` 要从**块根**算，页面问 `__nous/resolve` 也要从**块根**算
    （站在 `/upstream` 上时 `location.pathname` 已经不是块根了）。
    所以 **`app.js` 里那个 `SELF` 不能再用 `location.pathname` 拼** —— 它读注入值。
 3. **`index.html` 里不许有「没尾斜杠就 `location.replace` 补一个」那种脚本**：它会把
@@ -165,7 +165,7 @@ test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
 
 1. **尾斜杠。** 宿主把这一块挂在某个前缀下面（可能没有尾斜杠）。`index.html` 顶部那段一跳是必须的，
    不然 `./style.css` 会解析到上一层去，页面没样式、`app.js` 直接 404。
-2. **`SELF` 只从 `location.pathname` 来，邻居地址只从 `__nous/ctx` 来。** 老版本写死过路径：
+2. **`SELF` 只从 `location.pathname` 来，邻居地址只从 `__nous/resolve/<id>` 来。** 老版本写死过路径：
    请求越出前缀打到宿主的 SPA，回了 200 的 `index.html`，面板报「上游回了非 JSON」。
    现在地址的唯一来源是 `api.js` 的 `hostBase(ctx)`：在 `ctx.blocks` 里按 **id `qrd3wh`** 找
    （不是名字，名字会改），找到之前一个 `v1/skills…` 请求都不发。找不到就报「ctx 里没有 qrd3wh」。
@@ -226,8 +226,8 @@ test/model.test.js 测 model.js；test/api.test.js 测 api.js（都不测 DOM）
 cp -r content/new1/map/68kazk ~/68kazk && cd ~/68kazk && npm start   # → http://127.0.0.1:4784/
 ```
 
-数据来自 qrd3wh，地址来自宿主的 `__nous/ctx` —— 这份 ctx 只有宿主给得出来，
-所以这一页只在宿主里跑得起来，这是设计。裸 `npm start` 会停在「ctx 里没有 qrd3wh」那张错误卡上。
+数据来自 qrd3wh，地址来自宿主的 `__nous/resolve/qrd3wh` —— 这份地址只有宿主给得出来，
+所以这一页只在宿主里跑得起来，这是设计。裸 `npm start` 会停在「resolve 不到 qrd3wh」那张错误卡上。
 `data/` 不预建、不需要：这一块没有后端状态。
 
 ## 不做的事

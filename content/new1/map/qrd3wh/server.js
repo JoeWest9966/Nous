@@ -170,27 +170,23 @@ const startedAt = Date.now();
 // 这里只取 ssh 目标（name/user/port/ips），**不碰密钥** —— 密钥是宿主机 ~/.ssh 的事
 // （vq0f03 的 /ssh 端点自己写着「密钥、known_hosts、跳板都不在编目里」）。
 //
-// 地址两个来源：默认走宿主 `__nous/ctx` 找 vq0f03；`NOUS_VPS_BASE` 可以指死
+// 地址两个来源：默认走宿主 `__nous/resolve/vq0f03`；`NOUS_VPS_BASE` 可以指死
 // （测试 / 远程部署时用，跟 NW_BASE 一个道理）。
 const MACHINES_BLOCK_ID = "vq0f03";
 const MACHINES_TTL_MS = 60_000;
 let machinesState = { at: 0, machines: [], error: null };
 
-/** vq0f03 的地址：宿主 `__nous/ctx` 现找；`NOUS_VPS_BASE` 可以指死（测试 / 远程部署时用）。 */
+/** vq0f03 的地址：宿主 `__nous/resolve/vq0f03` 现问；`NOUS_VPS_BASE` 可以指死（测试 / 远程部署时用）。 */
 const vpsBase = async () => {
   if (process.env.NOUS_VPS_BASE) return String(process.env.NOUS_VPS_BASE).replace(/\/+$/, "");
   const origin = process.env.NOUS_ORIGIN ?? "http://127.0.0.1";
   const self = process.env.NOUS_SELF ?? "/";
-  const ctxUrl = `${origin}${self.endsWith("/") ? self : self + "/"}__nous/ctx`;
-  const ctxRes = await fetch(ctxUrl);
-  if (!ctxRes.ok) throw new Error(`__nous/ctx ${ctxRes.status}`);
-  const ctxDoc = await ctxRes.json();
-  const blocks = Array.isArray(ctxDoc.blocks)
-    ? ctxDoc.blocks
-    : Object.entries(ctxDoc.blocks ?? {}).map(([id, b]) => ({ id, ...(b ?? {}) }));
-  const vps = blocks.find((b) => b?.id === MACHINES_BLOCK_ID);
-  if (!vps?.url) throw new Error(`__nous/ctx 里没有 ${MACHINES_BLOCK_ID}`);
-  return String(vps.url).replace(/\/+$/, "");
+  const resolveUrl = `${origin}${self.endsWith("/") ? self : self + "/"}__nous/resolve/${MACHINES_BLOCK_ID}`;
+  const res = await fetch(resolveUrl);
+  if (!res.ok) throw new Error(`resolve ${MACHINES_BLOCK_ID} ${res.status}`);
+  const found = await res.json();
+  if (!found?.url) throw new Error(`resolve 里没有 ${MACHINES_BLOCK_ID} 的地址`);
+  return String(found.url).replace(/\/+$/, "");
 };
 
 const fetchMachineCatalog = async () => {

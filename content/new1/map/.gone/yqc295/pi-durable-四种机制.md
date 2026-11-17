@@ -354,7 +354,7 @@ await conversation.configure({ modelTools: { remove: ["write", "edit", "bash"] }
 **二、每个工具最该露出来的字段是 `replay`。** 它是产品判断（「崩了能不能再干一遍」），不是技术参数。界面上应该跟 durable-pi 一样，两个徽章直接写「崩了会重跑」/「崩了不重跑」。
 
 **三、我们要写的东西，pi 一个都没提供。** 它只给了 `read/write/edit/bash` 四个手。真正的工作量在业务工具：
-- 块的：读树、改名、开文档、看邻居（`/__nous/ctx`）
+- 块的：读树、改名、开文档、查邻居地址（`/__nous/resolve/<id>`）
 - 盘面的：某块在跑什么、谁的 agent 活着
 - 这些都得自己 `defineTool`，每个二三十行。
 
