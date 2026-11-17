@@ -39,7 +39,7 @@
 
 **结论**：一个仓（`Nous`）、一个 workspace、一个产物（`nous-app` 进一个 systemd 单元）。内核层与应用层是目录约定。
 
-**判据（13 条，全进 `scripts/verify.sh`）**
+**判据（15 条，全进 `scripts/verify.sh`；编号 1–13 里含 6b / 7b 两条插入项，实为 15 条）**
 
 判据引用的 `crates/kernel` / `crates/app` 在 #14 搬迁完成前**不存在**。契约：**路径不存在 = SKIP（打印出来），不是 PASS。** 下面 13 条每条都以这三行为前缀：
 
@@ -55,7 +55,11 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- crates/kernel` 与 `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
 4. 路由归属：`git grep -nE '\.route\(|axum::|tower::' -- crates/kernel` 为空。
 5. 数据面唯一入口：`crates/kernel` 之外不许出现 `rusqlite` / `Connection::open` / `.sqlite` / `PRAGMA` / `BEGIN IMMEDIATE`。
-6. 进程归应用层：`crates/kernel` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。** 全仓**进程创建点恰好两个**、各一处：扩展子进程（`crates/app` 扩展监管）、工具子进程（`crates/platform/nous-tools` 的 `os_env` 适配文件，其余工具一律经它）；第三处即红（S1）。
+6. 进程归应用层：`crates/kernel` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。**
+   全仓的进程创建点按**文件**数，不按入口数：`出现真实 spawn 的文件集合 == docs/boundary-baseline.txt 里 spawn_files=N 那一行`（今天 N=2：`nous-tools/src/os_env.rs`、`nous-tools/src/utils/open_browser.rs`；`#20` 落地后变 3，**改这一行需要签字**）。
+   排除项：`output_decode.rs` 的 `#[cfg(windows)] fn console_code_page` 那一块（Linux 不编，判据不数它）；`tests/` 与 `*tests.rs` 一律不算。
+   已知欠账（**不设判据**，只记在 baseline 注释里）：`os_env.rs` 一个文件内 3 个入口（363 / 412 / 915）。口号仍是"其余工具一律经它"，但它今天就是那个它本身。
+   验收口径：**S1 在 S12 签字前，验收结论写 `SKIP: 等 S12 签字` 并打印出来** —— 旧条款本身错了，按它判出来的红没有意义。
 6b. 依赖方向：`cargo tree -p nous-durable --depth 2 | grep providers` 为空 —— 真相层不许依赖**会 sleep 的那个 crate**，不是"不许依赖 `nous-ai`"（拆完 `types` 允许被依赖，S2）。
 7. **端点索引唯一**：`git grep -l '^### GET /v1/'` 恰好 1 个文件（`wire.md`）。它只是索引——端点、用途、谁在用；**字段形状的权威在 `crates/*/tests/` 与 conformance 里**，两者冲突时**测试赢**。
 7b. **索引不抄字段**：`wire.md` 里出现 `"type":` 或 camelCase 字段名清单的段落数 = 0（抄一遍就会漂）。
