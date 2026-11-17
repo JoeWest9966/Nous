@@ -205,7 +205,7 @@ if [ ! -x "$PROBE" ]; then
     exit 0
   fi
   cargo build --offline --quiet \
-    -p nous-ext-probe -p nous-server \
+    -p nous-ext-probe -p nous-server -p nous-app \
     -p exts-section -p exts-tool -p exts-nameplate -p exts-handle -p exts-combo -p exts-evil \
     >/dev/null 2>&1
 fi

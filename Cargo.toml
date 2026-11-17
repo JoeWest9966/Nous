@@ -56,7 +56,6 @@ nous-chord = { path = "crates/kernel/nous-chord", version = "0.1.0" }
 nous-wire = { path = "crates/kernel/nous-wire", version = "0.1.0" }
 nous-env = { path = "crates/kernel/nous-env", version = "0.1.0" }
 nous-durable = { path = "crates/kernel/nous-durable", version = "0.1.0" }
-nous-ext-sdk = { path = "crates/sdk/nous-ext-sdk", version = "0.1.0" }
 nous-ai-types = { path = "crates/platform/nous-ai-types", version = "0.1.0" }
 nous-ai = { path = "crates/platform/nous-ai", version = "0.1.0" }
 nous-tools = { path = "crates/platform/nous-tools", version = "0.1.0" }

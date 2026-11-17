@@ -10,13 +10,27 @@ use std::sync::Arc;
 
 use nous_server::AppState;
 
-/// 起一个真的 `nous-server` 子进程，返回它打印出来的地址。
+/// 端点层的产物名：入口 bin 是 `nous-app`（spec 3.5 的 systemd 单元名）：
+/// 旧布局里叫 `nous-server`，两个都认。
+fn server_binary() -> &'static str {
+    let dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|parent| parent.to_path_buf()))
+        .unwrap_or_default();
+    if dir.join("nous-app").exists() {
+        "nous-app"
+    } else {
+        "nous-server"
+    }
+}
+
+/// 起一个真的端点层子进程，返回它打印出来的地址。
 pub fn spawn(db: &Path) -> (SocketAddr, Child) {
     let binary = std::env::current_exe()
         .expect("exe")
         .parent()
         .expect("parent")
-        .join("nous-server");
+        .join(server_binary());
     let mut child = Command::new(binary)
         .env("NOUS_DB", db)
         .env("NOUS_SERVER_ADDR", "127.0.0.1:0")
