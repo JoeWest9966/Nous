@@ -76,7 +76,10 @@
 | `crates/nous-durable/src/harness/generation.rs` | pi@v1.5.2 | `packages/durable/src/harness/harness.ts` | 摘 abort 段并入（`onAbort: withdraw`）；watch 那套不要（票 #14） | 待提货 |
 | `crates/nous-durable/src/harness/generation.rs` | pi@v1.5.2 | `packages/durable/src/harness/util.ts` | 摘 abort 相关辅助并入（票 #14） | 待提货 |
 | `crates/nous-durable/src/harness/partial_changes.rs` | pi@v1.5.2 | `packages/durable/src/harness/types.ts` | 摘 abort / 部分变更相关类型并入（票 #14） | 待提货 |
-| `crates/nous-durable/src/record/**` | pi@v1.5.2 | `packages/durable/src/types.ts` | 只摘记录版本语义（`pi.tool` / `pi.generation` / `task_too_old`）；**不整份搬类型**（票 #12） | 待提货 |
+| `crates/nous-durable/src/types/records.rs` | pi@v1.5.2 | `packages/durable/src/types.ts` | 已改（只摘八样）：`ConversationRecord`（含 `parent` / `owner`）、`EntryRecord`、`ContextEdit`、`TaskRecord`、`SubmissionRecord`（`SubmissionFields` 承载 type × status 矩阵）、`DocumentRecord`（`scope` / `history` / `fork` 落枚举）、`ConversationOwnership`、`AbortReason`。**不整份搬 1,449 行**：task 引擎、watch、TS 类型体操一律不搬，取舍清单在票 #13 逐条带理由 | 已改 |
+| `crates/nous-durable/src/types/draft.rs` | pi@v1.5.2 | `packages/durable/src/types.ts` | 已改（只摘三样）：`EntryDraft`（`head` 允许字面量 `"self"`）、`SubmissionCreate`（= 记录去掉 id，复用同一份矩阵校验）、`SubmissionSettlement`。同上的取舍清单 | 已改 |
+| `crates/nous-durable/src/types/records.rs`（`ContextEdit` 手写 `Deserialize`） | pi@v1.5.2 | `packages/durable/src/types.ts` | 已改：上游靠 `messages?: never` 表达的两条约束，serde 的内部标签枚举不认 `deny_unknown_fields`，所以手写反序列化，`omit` 带 `messages` / `replace` 不带都直接报错 | 已改 |
+| `crates/nous-durable/tests/records_domains.rs` | pi@v1.5.2 | `packages/durable/src/types.ts` | 自写判据：取值域逐格验（合法值往返 + 非法组合明确报错），格子取自上游类型定义，不是自创 | 已改 |
 | `crates/nous-durable/conformance/storage_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/storage-conformance.ts` | 已改：上游 32 个 `createCase(` 里**抄了 20 个**，案名逐字照抄（`FLOOR.tsv` 记 20，可复算）；剩下 12 个的判定与理由在票 #21，票 #12 有一张 32 行的对照表。改写方式：`createCase` 函数 → 一条 `#[test]`，`storage` 夹具 → 临时文件真后端，`receive` 回执 → 闭包 | 已改 |
 | `crates/nous-fixture/src/main.rs` | 无 | 无 | **自写**：`verify.sh` 第 2/3 段的那个 bin。只干一件事 —— 读 `agent.sqlite`（只读）→ 打 `/v1/sessions` 形状的 JSON → exit 0；没有子命令、没有 flag、不写库（票 #16） | 自写 |
 | `crates/nous-durable/conformance/env_conformance.rs` | pi@v1.5.2 | `packages/durable/src/testing/env-conformance.ts` | 改写成 Rust：**≥ 10 个 `#[test]`**（上游 633 行 / **20 个 `createCase(`**，取一半；同上命令可复算）。案名照抄（票 #15） | 待提货 |
