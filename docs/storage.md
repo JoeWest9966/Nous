@@ -216,3 +216,19 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 ## 11. 记录字段的对齐
 
 对外记录的字段名由 `wire.md` 决定；内部存的东西可以和它不同，但**同名字段必须同义**。`pi.*` 记录里 assistant 消息的字段名（`stopReason` / `responseId` / `responseModel` / `rawStopReason` / `usage`）来自上游，`nous-ai` 的 `#[serde(rename_all = "camelCase")]` 已经对齐，改这里之前先看 `wire.md` 对应段。
+
+### 10.4 12d 落地的部分（一致性套件）
+
+`crates/nous-durable/conformance/storage_conformance.rs`，`[[test]] name = "conformance"`。
+
+- **来源**：`packages/durable/src/testing/storage-conformance.ts` 的 32 个 `createCase(` 抄了 **20** 个。
+  案名逐字照抄（改名就是换判据）；`createCase` → 一条 `#[test]`，`storage` 夹具 → 临时文件真后端。
+- **不造假后端**：套件跑在真 SQLite 上。`nous-env` 只有 trait、没有真后端，所以
+  `env_conformance.rs` 现在不做 —— 测一个假后端什么也证明不了。它的判据随本地后端一起进 #13。
+- **`FLOOR.tsv` 记 20**，文件头写了复算命令
+  （`grep -cE '^[[:space:]]*#\[(tokio::)?test' …`），所以「套件被悄悄写瘦」这件事是机器判的。
+- **没抄的 12 案**在 #21，每条写明卡在哪（`scan_tasks` / `scan_submissions` / `scan_documents` /
+  fork 回溯 / `close()` / 本库不存在的 JS 别名与原型语义）；票 #12 有一张 32 行的「已抄 / 未抄」表。
+
+`nous-fixture`（`verify.sh` 第 2/3 段的对象）只干一件事：读 `agent.sqlite`（只读）→ 打
+`{ items: [...] }` → exit 0。无子命令、无 flag、不写库。

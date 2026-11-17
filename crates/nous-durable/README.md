@@ -3,8 +3,9 @@
 `durable` 的语义自己写 —— `AGENTS.md` §一 的原话是**只借语义和坑，不借结构**。
 上游 27,259 行里我们只取 storage / session / harness 的核心，`watch` 那套不要（事件走 `nous-wire`）。
 
-**已落地**：`storage/` 的行层与只读导入（12a）、提交语义（12b）、文档修订与复制（12c）
-**待落地**：conformance（12d）、session、harness。
+**已落地**：`storage/` 的行层与只读导入（12a）、提交语义（12b）、文档修订与复制（12c）、
+一致性套件 20 案（12d）
+**待落地**：session、harness（一致性套件剩余 12 案见 #21）
 
 ## 目录
 
@@ -52,3 +53,13 @@ fixture 不在时这些测试**跳过并打印**，不假绿。
 
 `nous-durable → chord, ai, wire, telemetry, env`。**`cargo tree -p nous-durable` 里永远不该有
 `nous-tools`** —— 工具靠 `nous-ai::Tool` trait 注入。
+
+## 一致性套件（`conformance/`）
+
+```bash
+cargo test -p nous-durable --test conformance        # 20 案
+```
+
+`conformance/FLOOR.tsv` 记用例数下限（`verify.sh` 1c 用它防瘦身），文件头写了复算命令。
+案名逐字照抄上游 `testing/storage-conformance.ts` 的 `createCase(`；改动方式：`createCase` →
+`#[test]`、夹具 → 临时文件真后端。**没抄的 12 案在 #21**，不无声消失。
