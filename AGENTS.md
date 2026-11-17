@@ -115,6 +115,7 @@ nous-server        → durable, wire, telemetry
 | 想沿用上游的表结构、`record` 形状、`durable_schema.version` | 表结构和 `record` 形状**照抄**上游（DDL 取 `storage/sqlite/migrations.ts` 的 v2 + 一列 `writer`；`record` 存 camelCase JSON）；**版本号从 1 数起、迁移链单向**、分拆列规则本库自己定。全部定在 `docs/storage.md`，改这三样就是改契约，先改文档 |
 | 想用"类型兼容"保证互通 | 互通只靠**序列化后的字段名**（`camelCase`，`Option` 字段 `skip_serializing_if`）。加一个字段先看 `wire.md` |
 | 想顺手"改进"上游代码的风格 | 冻结的前 45 天里不改。改了要记 `SOURCES.md` 的"改了什么"列 |
+| 想用"值相等"证明某条优化生效 | 先说清判据测的是输出的哪一面（字节 / 账本 / 墙钟），配一条"关掉优化就红"；实测关掉也不红 = 判据选错了面，改判据不改说法（反例与根因见 `docs/decisions.md`） |
 
 ---
 

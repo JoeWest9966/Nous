@@ -99,11 +99,41 @@ harness 是本库最后一个大未知，先出形状能省掉两轮返工。
 
 | 段 | 上游 | 取什么 | 本库落点 |
 |---|---|---|---|
-| 节流单飞 | `:697-764` `streamResponse` | 100ms（`settings.progress.partialIntervalMs`）定时器 + **同时只有一次提交在飞** + `finally` 停表并等那次提交（否则过期 partial 会盖住终态）+ 失败 `restore` | `harness/generation.rs::stream_response` |
+| 节流单飞 | `:697-764` `streamResponse` | 100ms（`settings.progress.partialIntervalMs`）定时器 + **同时只有一次提交在飞** + 失败 `restore`；`finally` 只做三件：`stopped = true`、取消定时器、`await inFlight` —— **不提交 pending**（见下面那段，尾帧是故意丢的） | `harness/generation.rs::stream_response` |
 | abort 落库 | `:668-674` `convertPartial` | 把 `live.generation.message` 复制成一条 `stopReason: "aborted"` 的 assistant entry | `harness/abort.rs::convert_partial` |
 | 分类 | `:765-868` `classify` | 终态消息 → 四种去向：`deferred`（转 `poll`，`pollAt = max(now + pollAfterMs ?? 5000, 上次 + 1)`）、可重试错误（转 `retry`，退避）、溢出（转 `prepare` + 阻塞压缩）、答完（`answer`/工具轮） | `harness/generation.rs::classify` |
 | 公开面（提议） | — | `pub async fn stream_response(session: &Session, conversation: Id, live: &mut LiveState, request: &RunRequest<'_>) -> Result<AssistantMessage, HarnessError>`；`pub async fn classify(session: &Session, request: &RunRequest<'_>, message: &AssistantMessage) -> Result<Classification, HarnessError>`；`pub enum Classification { Answered, Retry { at_ms: u64, error: String }, Poll { poll_at_ms: u64 }, Overflow { error: String } }`；`pub struct RunRequest<'a> { model, messages, options, attempt, interval_ms, persist_within_ms }` | — |
 | 不取 | 7 个 checkpoint phase、`runtime.commit`/`runtime.hooks` 那层、`beforeRequest`/`afterRun` 钩子链、`startRun`/`handOver`（`createTask` 属调度器） | — | — |
+
+#### ③ 附：提交节奏的三条事实（2026-11-17 核过上游，别再翻案）
+
+**(1) `deferred` 不做 ⇒ 走 immediate + 时间闸。** 上游 partial 用 `PROGRESS_COMMIT`
+（`live.ts:236` `{ persistence: { kind: "deferred" } }`），本库 `#13` 的
+`CommitPersistence::Deferred` 明确拒绝（`docs/decisions.md` deferred 那节）。所以每次 partial
+都是一次真提交，节拍只由 100 ms 时间闸与单飞决定。
+
+**(2) 尾帧必交是错的 —— 上游故意丢最后那一批增量。** `generation.ts:735-770`：
+
+```ts
+} finally {
+    stopped = true;
+    timer?.();       // 取消定时器
+    await inFlight;  // 只等在飞的，**不提交 pending**
+}
+```
+
+上游自己的 docstring（`:690-695`）写着 "`finally` stops the throttle and awaits that commit,
+so no stale partial lands after the outcome"。紧接着 `classify` 会一次提交终态消息并
+`delete live.generation`（`:816` 一带），补那一帧只是**覆盖一次再被覆盖**。
+
+所以判据不是「最后一批增量必被提交」，而是**终态之后不许再落 partial**：`classify` 那次提交
+之后 `live.generation` 已被清掉，时间线上不许出现「先终态、后 partial」。已并入
+`harness_stream_commits_partials_at_most_every_interval` 的同一条时间线断言（见 §5）。
+
+**(3) 两次提交之间不许在持锁区间里做 `materialize` 重放。** 提交在流循环里 `await`，写盘
+（ext4 `NORMAL` 约 1 ms，见 `docs/bench-commit.md`）直接压在 provider 事件处理上 —— 这是
+可以接受的代价。但**不要把「重放整条修订链」放进持锁区间**：那就是 `#25` 那个 O(n²)，而
+今天测到的 110 ms 是**当前链长**（160 次提交、链被 base 切断）下的数，不是上界。
 
 ### ④ abort（无上游模块 —— 见 §0.1）
 
@@ -236,7 +266,7 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 | `projection_covers_every_message_change_variant` | 8 变体逐个（5 真数据 + 3 构造） |
 | `projection_emits_no_change_for_storage_only_commits` | §2.1 的 7 行「不产出」各一条 |
 | `projection_never_encodes_a_set_as_a_delta` | §2.2 那条铁律 |
-| `harness_stream_commits_partials_at_most_every_interval` | 节流 + 单飞 + `finally` 等飞完（时间线见证，不用 `sleep` 猜） |
+| `harness_stream_commits_partials_at_most_every_interval` | 节流 + 单飞 + `finally` 等飞完（时间线见证，不用 `sleep` 猜）；**同一时间线还要判「终态之后没有 partial」** —— 时间线上出现「先终态、后 partial」即红。不判「尾帧必交」：上游 `finally` 故意不提交 pending（§1 ③ 附 (2)） |
 
 ---
 
