@@ -199,14 +199,14 @@ fn parent_is_array(root: &Value, path: &[Seg]) -> bool {
     matches!(value_at(root, parent), Some(Value::Array(_)))
 }
 
-fn child(path: &[Seg], segment: &Seg) -> Vec<Seg> {
+pub(super) fn child(path: &[Seg], segment: &Seg) -> Vec<Seg> {
     let mut extended = Vec::with_capacity(path.len() + 1);
     extended.extend_from_slice(path);
     extended.push(segment.clone());
     extended
 }
 
-fn value_at<'a>(root: &'a Value, path: &[Seg]) -> Option<&'a Value> {
+pub(super) fn value_at<'a>(root: &'a Value, path: &[Seg]) -> Option<&'a Value> {
     let mut node = root;
     for segment in path {
         node = match (node, segment) {

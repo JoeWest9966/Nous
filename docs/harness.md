@@ -91,7 +91,7 @@ harness 是本库最后一个大未知，先出形状能省掉两轮返工。
 |---|---|
 | 上游 | `live.ts:139-236`（`LiveRun` / `LiveState` / `LiveDoc` / `PROGRESS_COMMIT`）+ `:250-410`（`cutOffTooOften` / `salvageable` / `cutOffCount` / `RunEnd` / `endRun` / `addCompactionStatus` / `compactionStatus` / `removeCompactionStatus` / `failCompactionStatus` / `toolSlot` / `finishSlot` / `removeNestedSlots` / `clearProgress`） |
 | 不取 | `:411-452` `settleSchedulerOutcome` —— 它的入参是 scheduler 的 `TaskOutcome`，搬它等于搬调度器 |
-| 本库落点 | `crates/nous-durable/src/harness/live.rs` |
+| 本库落点 | `crates/nous-durable/src/harness/live.rs`（**进度 2026-11-17**：类型面三件 `LiveState` / `LiveGeneration` / `ToolSlot` 已落，其余类型与 7 个函数、`LIVE_DOC`、`checkpoint_when` 未落） |
 | 公开面 | `LiveState { run, generation, tools, nested_tools, compactions, compaction_failure, run_failure }`；`LiveRun { task_id, inputs, turns, first, after_run }`；`LiveGeneration { attempt, message, retry, deferred }`；`ToolSlot` / `NestedToolSlot` / `CompactionStatus` / `CompactionFailure` / `RunFailure` / `RunFailureReason` / `RunEnd`；函数 7 个：`end_run` / `add_compaction_status` / `remove_compaction_status` / `fail_compaction_status` / `tool_slot` / `finish_slot` / `clear_progress`；常量 `LIVE_DOC`（`kind: "pi.live"`、`version: 3`、`scope: conversation`、`history: latest`、`fork: initial`）+ `checkpoint_when(&LiveState) -> bool` |
 | 注意 | `checkpoint_when` 是一条**真规则**（上游注释写死「不要加 delta 计数上限」，工具输出基准在测它）：空闲 / 交接 / 两个工具之间必须是完整 base。我们要照抄这条判据，别改成「每 N 条 delta 一个 base」 |
 
@@ -226,8 +226,11 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 
 | 判据 | 验什么 |
 |---|---|
-| `partial_changes_appends_text_instead_of_reassigning` | `take()` 对 text 产出 `Append`（不是整块 `Set`）；`Set` 那天成本就退化成 O(总长) |
+| `partial_changes_appends_text_instead_of_reassigning` | 体积判据三条：第 k 次提交只有一条 `a`、载荷里没有整段正文、`len(ops)` 不随正文变长而增长；外加**追加账本**（`Draft::appends()`）断言 —— 见下面那条更正 |
+| `dropping_the_append_plan_is_caught_by_the_ledger_not_by_the_bytes` | 负向对照。**结论与设计时的预期相反**：整块 `set` 不会让体积断言红 —— `Draft::prepare` 每次都 `diff_revisions` 兜底，diff 自己就重新推导出那条 `a`，字节一模一样；会红的是账本。所以这条同时证明「度量本身不是空转」（手搭整块写必须被判据抓住） |
 | `partial_changes_restores_what_a_failed_commit_took` | 提交失败后 `restore()` 把 changes 放回去，下一次提交先写它们 |
+| `harness_json.rs` 的 `growing_an_array_keeps_the_append_record` | `assign_json` 里「先插尾巴、再递归前缀」的顺序（顺序反了这条红；它不改变 ops 也不改变值，是账本断言） |
+| `harness_live.rs` 的 5 条 | `pi.live` 类型面的字段名逐字对上游（`callId` / `droppedBytes` / `pollAt` / `unoffered` 缺席而非 `false`） |
 | `live_doc_is_a_complete_base_when_nothing_runs` | `checkpoint_when` 在空闲 / 交接 / 两工具之间为真（上游那条不许改成 delta 计数） |
 | `convert_partial_writes_an_aborted_assistant_entry` | abort 落库的形状 |
 | `projection_covers_every_message_change_variant` | 8 变体逐个（5 真数据 + 3 构造） |

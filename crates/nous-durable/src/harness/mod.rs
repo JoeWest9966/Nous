@@ -4,6 +4,8 @@
 //! `watch` 那套事件流不要（事件走 `nous-wire`），`Session` 那层的回调也不进来。
 
 pub mod json;
+pub mod live;
+pub mod partial;
 
 use nous_ai::utils::streaming_json::PathSegment;
 use nous_chord::delta::{Path, Seg};
