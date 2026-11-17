@@ -18,6 +18,8 @@
 //! 接再自己 parse —— 让 axum 的 `Path<i64>` 拒掉会吐一段纯文本，破坏 `{error}`。
 
 use std::convert::Infallible;
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -90,7 +92,9 @@ async fn entries(
             .map_err(|_| ServerError::BadRequest(format!("limit is not a number: {text:?}")))?,
     };
     if limit == 0 {
-        return Err(ServerError::BadRequest("limit must be at least 1".to_string()));
+        return Err(ServerError::BadRequest(
+            "limit must be at least 1".to_string(),
+        ));
     }
     let limit = limit.min(ENTRIES_MAX_LIMIT);
     let cursor = match query.cursor.as_deref() {
@@ -107,9 +111,13 @@ async fn entries(
         }
     };
     if !state.source().exists(session)? {
-        return Err(ServerError::NotFound(format!("session {session} not found")));
+        return Err(ServerError::NotFound(format!(
+            "session {session} not found"
+        )));
     }
-    let (mut items, next) = state.source().entries_page(session, limit, cursor.as_ref())?;
+    let (mut items, next) = state
+        .source()
+        .entries_page(session, limit, cursor.as_ref())?;
     if let Some(kind) = query.kind.as_deref() {
         items.retain(|entry| entry.get("kind").and_then(Value::as_str) == Some(kind));
     }
@@ -163,10 +171,7 @@ async fn messages(
 }
 
 /// `POST /v1/sessions/:id/abort`：没有活跃任务时 409（不是 200「假装停了」）。
-async fn abort(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Value>> {
+async fn abort(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Result<Json<Value>> {
     let session = parse_session(&id)?;
     state.commands().abort(session).await?;
     Ok(Json(json!({ "status": "aborted" })))
@@ -206,6 +211,12 @@ async fn fork(
     ))
 }
 
+/// 每条 SSE 连接的未发送字节硬顶（spec ch6 建议 1MB，本实现把它钉死为硬顶的一部分）。
+/// 它和 `ext-sdk` 的单帧上限同数，但两者是**独立上限、各自生效**：帧层管单条 RPC 帧，
+/// 这里管一条 SSE 连接的全部未发送字节；谁都不许调另一个的数。超了就断这条连接，
+/// 让客户端重连拿新 snapshot。不是帧数：一条大帧自己就能把内存打穿。
+const SSE_UNSENT_LIMIT: usize = 1024 * 1024;
+
 /// `GET /v1/sessions/:id/events` —— SSE。
 ///
 /// 顺序是契约：**先 `snapshot`**，再增量。订阅在算快照**之前**做：否则算快照那几毫秒里
@@ -227,21 +238,131 @@ async fn events(
     let (framed_tx, framed_rx) = mpsc::channel(64);
     coalesce::spawn(Framing::Windowed, raw_rx, framed_tx);
 
-    let first = futures::stream::once(async move { Ok(frame(snapshot)) });
-    let rest = futures::stream::unfold(framed_rx, |mut framed| async move {
-        framed.recv().await.map(|event| (Ok(frame(event)), framed))
-    });
+    // 背压计的是**未发送字节**：生产端把帧编码进队列时记账，消费端取走后销账。
+    // 快读客户端的 outstanding 始终接近 0，不会被累计发送量误伤。
+    let outstanding = Arc::new(AtomicUsize::new(0));
+    let (encoded_tx, encoded_rx) = mpsc::channel::<PendingFrame>(8);
+    tokio::spawn(encode_with_backpressure(
+        id,
+        framed_rx,
+        encoded_tx,
+        outstanding.clone(),
+    ));
+
+    let Some(snapshot_data) = encode_data(&snapshot, SSE_UNSENT_LIMIT) else {
+        return Err(ServerError::Internal(
+            "snapshot frame exceeds SSE limit".into(),
+        ));
+    };
+    let first = futures::stream::once(async move { Ok(Event::default().data(snapshot_data)) });
+    let rest = futures::stream::unfold(
+        (encoded_rx, outstanding, None::<UnsentGuard>),
+        |(mut rx, outstanding, previous)| async move {
+            // 上一轮的守卫在这一 poll 开始时被 drop（销账）；即便上次返回的帧
+            // 从未交给 socket，也会被回收。
+            drop(previous);
+            let Some(frame) = rx.recv().await else {
+                return None;
+            };
+            // 销账交给守卫的 `Drop`，不在这一行手工 `fetch_sub`：客户端断开会取消
+            // 这个 future，手工那行就不会跑，配额永久泄漏。守卫跟着帧一起生命周期。
+            let PendingFrame { data, guard } = frame;
+            Some((
+                Ok(Event::default().data(data)),
+                (rx, outstanding, Some(guard)),
+            ))
+        },
+    );
     // 心跳：`wire.md` 没规定间隔，15 s 足够穿过常见反代的 60 s 空闲超时。
-    Ok(Sse::new(first.chain(rest))
-        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    Ok(Sse::new(first.chain(rest)).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }
 
-/// 一帧 SSE。`wire.md` 的形状是**数据里带 `type`**，不是 SSE 的 `event:` 名 ——
-/// 所以这里不设事件名，只写 `data:`。
-fn frame(event: RemoteEvent) -> Event {
+/// `wire.md` 的帧形状是**数据里带 `type`**，不是 SSE 的 `event:` 名 —— 这里只编码
+/// `data:` 负载。
+///
+/// 序列化直接写进**受预算约束的 writer**：超限就中止，不先生成完整字符串再检查。
+/// "拒绝发生在分配之前" 的判据就在这一层 —— 不会为了丢掉一帧而先分配它的全尺寸副本。
+fn encode_data(event: &RemoteEvent, limit: usize) -> Option<String> {
+    let mut writer = LimitedWriter {
+        buf: Vec::new(),
+        limit,
+    };
     // `RemoteEvent` 全是 `Serialize`；序列化失败只可能是 `Unknown`（不产出）。
-    let data = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-    Event::default().data(data)
+    serde_json::to_writer(&mut writer, event).ok()?;
+    String::from_utf8(writer.buf).ok()
+}
+
+/// 有硬上限的 `Write`：写满 `limit` 字节后立刻报错，不再延长缓冲区。
+struct LimitedWriter {
+    buf: Vec<u8>,
+    limit: usize,
+}
+
+impl Write for LimitedWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.buf.len() + bytes.len() > self.limit {
+            return Err(io::Error::other("SSE frame exceeds unsent byte limit"));
+        }
+        self.buf.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// 一条已编码、尚未交给客户端的 SSE 帧。`guard` 在帧被消费/丢弃时销账。
+struct PendingFrame {
+    data: String,
+    guard: UnsentGuard,
+}
+
+/// 未发送字节的 RAII 销账守卫。`Drop` 一定跑：正常消费、future 被取消、客户端断开
+/// 都走同一条路。没有它，取消一次连接就永久泄漏那几字节配额。
+struct UnsentGuard {
+    outstanding: Arc<AtomicUsize>,
+    bytes: usize,
+}
+
+impl Drop for UnsentGuard {
+    fn drop(&mut self) {
+        self.outstanding.fetch_sub(self.bytes, Ordering::Relaxed);
+    }
+}
+
+/// 把合帧后的事件编码入队，并维护「未发送字节」。
+///
+/// 检查在 `send().await` **之前**：撞顶时不再把帧交给队列，任务退出、下游流关闭，
+/// 客户端重连拿 `snapshot`。这是 `Lagged` 那条断流路径在字节维度的对应物。
+async fn encode_with_backpressure(
+    session_id: i64,
+    mut framed: mpsc::Receiver<RemoteEvent>,
+    tx: mpsc::Sender<PendingFrame>,
+    outstanding: Arc<AtomicUsize>,
+) {
+    while let Some(event) = framed.recv().await {
+        let Some(data) = encode_data(&event, SSE_UNSENT_LIMIT) else {
+            return;
+        };
+        let bytes = data.len();
+        let queued = outstanding.load(Ordering::Relaxed) + bytes;
+        if queued > SSE_UNSENT_LIMIT {
+            // 协议哑：不加事件类型，留一行服务端日志给事后排查。
+            eprintln!(
+                "nous-server: sse backpressure: session={session_id} bytes={queued} reason=backpressure"
+            );
+            return;
+        }
+        outstanding.fetch_add(bytes, Ordering::Relaxed);
+        let guard = UnsentGuard {
+            outstanding: outstanding.clone(),
+            bytes,
+        };
+        if tx.send(PendingFrame { data, guard }).await.is_err() {
+            return;
+        }
+    }
 }
 
 /// `snapshot` 帧：会话 + 正在生成的消息 + entry 历史（`entries` 是唯一的时间源）。
@@ -265,7 +386,10 @@ fn snapshot(source: &dyn SessionSource, id: i64) -> Result<RemoteEvent> {
 
 /// 广播 → mpsc。`Lagged` 表示客户端落后超过缓冲：补丁流已断，**断开连接**让客户端
 /// 重连拿新 `snapshot`。不补旧帧（补丁流不是可独立应用的快照）。
-async fn forward(mut subscription: broadcast::Receiver<RemoteEvent>, tx: mpsc::Sender<RemoteEvent>) {
+async fn forward(
+    mut subscription: broadcast::Receiver<RemoteEvent>,
+    tx: mpsc::Sender<RemoteEvent>,
+) {
     loop {
         match subscription.recv().await {
             Ok(event) => {
@@ -282,4 +406,29 @@ async fn forward(mut subscription: broadcast::Receiver<RemoteEvent>, tx: mpsc::S
 fn parse_session(raw: &str) -> Result<i64> {
     raw.parse::<i64>()
         .map_err(|_| ServerError::BadRequest(format!("session id is not a number: {raw:?}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 超限帧在序列化途中就中止：没有先分配它的全尺寸副本。
+    #[test]
+    fn an_oversized_frame_is_refused_before_it_is_fully_materialized() {
+        let event = RemoteEvent::EntryAppended {
+            entry: json!({ "blob": "x".repeat(4 * SSE_UNSENT_LIMIT) }),
+        };
+        let mut writer = LimitedWriter {
+            buf: Vec::new(),
+            limit: SSE_UNSENT_LIMIT,
+        };
+        let error = serde_json::to_writer(&mut writer, &event).unwrap_err();
+        assert!(error.is_io(), "应当是 writer 在超限处中止：{error}");
+        assert!(
+            writer.buf.len() <= SSE_UNSENT_LIMIT,
+            "中止时缓冲区不该膨胀到全尺寸：{}",
+            writer.buf.len()
+        );
+        assert!(encode_data(&event, SSE_UNSENT_LIMIT).is_none());
+    }
 }
