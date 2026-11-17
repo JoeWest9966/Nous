@@ -15,6 +15,9 @@
    形式 = **计数断言 + 内容断言 + 哨兵值**，缺一不合格。哨兵必须出现在**命令里**，不许只写在散文里。
    *例*：EX-51 不能只数"提交 4 条"，还要断言其中一条的 `kind=pi.extension` **且** `manifestHash` 等于某个具体哈希前缀 —— 桩造不出来，必然红。
    *负向判据*（形如"逐行空"）哨兵换一种：**故意弄脏一次，它必须红**；红的那次就是哨兵。
+7. **不同源原则。** 期望值**写死在判据里**，实测值**从真实系统读出来**（DB / 进程 / 文件 / 系统调用），两者**不许同源**。`judge.sh` 只负责"执行场景 + 打印观测"，**不许硬编码观测值**；判据负责"写死期望值 + 比对"。
+   判据里不许出现 `<任意>` / `X` / `约等于` —— 哨兵必须是**具体字面量**。
+   否则 `judge.sh` 里一句 `echo "commit_seq=5074"` 就能让全表绿 —— 那只是把桩从正门赶出去，又从后门放进来。**这条本身也是判据：EX-81。**
    证据：v0 骨架（每个 case 只 `echo` 一行 SKIP）让 EX-13/27/38/51 四条当场变绿 —— 一个只会打印一行的桩就骗过了计数型判据。审计见 `judgment-audit.md`。
 
 ## 章目
@@ -561,92 +564,95 @@ watch 触发是**目录级**的，重载必须是**扩展级**的。
 
 载体约定：`crates/{kernel,platform,app}` = T1 落地后的三层；`exts/{section,tool,nameplate,handle,combo}` = 本仓样例；`scripts/judge.sh <case>` = 逐条起进程的执行器（`--list` 输出全部 case 名）；`$DATA` = 运行时数据目录。**`谁签字` 空着 = 未签 = 正文不许引用。**
 
-| 编号 | 判据（可跑的命令） | 票号 | 谁签字 |
-|---|---|---|---|
-<!-- 单元格里的 `\|` 是 Markdown 表格转义，粘贴到 shell 时要还原成 `|`。用"抽表器"整批跑时别做全局反转义——那会把 EX-57 的正则 `^\| (EX-[0-9]+) \|` 破坏成选择分支。 -->
-| EX-01 | `test -d exts \|\| { echo "SKIP: 等 T5"; exit 0; }; grep -rn '/opt/' -- exts/*/nous.json \| tee` 逐行空 | T5 | 待人拍 |
-| EX-02 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh load-missing-handle \| tee` 含"缺句柄 X"且该扩展未装载 | T5 | 待人拍 |
-| EX-03 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh load-empty-extension \| tee` 含"这个扩展什么都不提供" | T5 | 待人拍 |
-| EX-04 | `test -d crates/kernel \|\| { echo "SKIP: 等 T5"; exit 0; }; git diff --stat -- crates/kernel \| tee` 在 `exts/tool` v1→v2 之后为空 | T5 | 待人拍 |
-| EX-05 | `test -d exts \|\| { echo "SKIP: 等 T5"; exit 0; }; grep -rnE '"(kernel\|timeout\|concurrency)"' -- exts/*/nous.json \| tee` 逐行空 | T5 | 待人拍 |
-| EX-06 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh protocol-mismatch \| tee` 含双方版本且旧进程仍在服务 | T5 | 待人拍 |
-| EX-07 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; pgrep -af 'ext-' \| tee` 行数 = 装载数，且 uid 两两不同 | T5 | 待人拍 |
-| EX-08 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh dump-frame-keys \| tee` 键集合 == `{conversationId,cwd,extensions}` | T5 | 待人拍 |
-| EX-09 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh calls-per-turn \| tee` 每扩展 = 1 | T5 | 待人拍 |
-| EX-10 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh truncated-frame \| tee` 在截止时间内退出（不挂死） | T5 | 待人拍 |
-| EX-11 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh inflight-across-reload \| tee` 输出不丢、不乱序、不串 | T5 | 待人拍 |
-| EX-12 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh dump-frame-keys \| tee \| grep -E '"/\|shown\|read\|model"'` 逐行空 | T5 | 待人拍 |
-| EX-13 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh section-twice \| tee \| uniq \| wc -l` = 1（两次逐字节相等） | T5 | 待人拍 |
-| EX-14 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh pi-system-count \| tee` 两轮后条目数不变，且两次之间 `generation` 未变 | T5 | 待人拍 |
-| EX-15 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh shuffle-order \| diff - <(./scripts/judge.sh baseline) \| tee` 空 diff | T5 | 待人拍 |
-| EX-16 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh wrong-tag \| diff - <(./scripts/judge.sh baseline) \| tee` 空 diff | T5 | 待人拍 |
-| EX-17 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh tool-stream-seq \| tee` 单调递增、无缺号 | T5 | 待人拍 |
-| EX-18 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh tool-cancel \| tee` 终帧 `cancelled:true` | T5 | 待人拍 |
-| EX-19 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh tool-cancel-late-output \| tee` 含"取消后收到 output"并拒绝落库 | T5 | 待人拍 |
-| EX-20 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh result-and-mutations \| tee` 同一次提交（`commit_seq` 相等） | T5 | 待人拍 |
-| EX-21 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh mutation-replay \| tee` 同一组重放只落一次 | T5 | 待人拍 |
-| EX-22 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh reject-mutation \| tee` 含 error result 且原因回给模型 | T5 | 待人拍 |
-| EX-23 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh kill-extension \| tee` 名牌全消失 + `missing()` 逐个点名 | T5 | 待人拍 |
-| EX-24 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh restart-extension \| tee` 名牌恢复、会话选择未变 | T5 | 待人拍 |
-| EX-25 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh nameplate-diffset \| tee` 差集以"清单 + 应答"两份为准 | T5 | 待人拍 |
-| EX-26 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; ls -l /proc/$(pgrep -f ext-handle)/fd \| tee \| grep "$(./scripts/judge.sh handle-value)"` 逐行空 | T5 | 待人拍 |
-| EX-27 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh deliver-twice \| tee \| uniq \| wc -l` = 1 | T5 | 待人拍 |
-| EX-28 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh crash-once \| tee` 提示词逐字节不变 + 条目数不变 + 恰一条诊断 | T5 | 待人拍 |
-| EX-29 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh third-failure-breaker \| tee` 恰一条删除增量 | T5 | 待人拍 |
-| EX-30 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh breaker-10-turns \| tee` 条目数不再变 | T5 | 待人拍 |
-| EX-31 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh diagnostic-dedup \| tee` 10 轮失败 → `pi.extension` 提交 **恰好 1 条**、内存计数 = 10、日志 1 条 | T5 | 待人拍 |
-| EX-32 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh always-crash \| tee` 第 2 次崩进进程熔断、段状态无"第 3 次" | T5 | 待人拍 |
-| EX-33 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh breaker-idle-calls \| tee` 10 分钟内调用 = 0 | T5 | 待人拍 |
-| EX-34 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh concurrency-20 \| tee` 16 在飞 / 4 排队并点名、无丢弃 | T5 | 待人拍 |
-| EX-35 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh output-1mb \| tee` 撞顶被杀，归因 `extension_crash` | T5 | 待人拍 |
-| EX-36 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh rss-256mb \| tee` 撞顶被杀，归因 `extension_crash` | T5 | 待人拍 |
-| EX-37 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; grep -rn 'fn reload' -- crates/app \| tee` 恰好 1 行 | T5 | 待人拍 |
-| EX-38 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh reload-triggers \| tee \| wc -l` = 3（三源各一条） | T5 | 待人拍 |
-| EX-39 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh callid-across-reload \| tee` 递增不变、`seq` 不重置 | T5 | 待人拍 |
-| EX-40 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh idle-wakeups \| tee` 60s 合计 < 10 | T5 | 待人拍 |
-| EX-41 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh reload-fails-keeps-old \| tee` 旧版本继续服务 | T5 | 待人拍 |
-| EX-42 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh partial-write \| tee` 写一半不重载 | T5 | 待人拍 |
-| EX-43 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh write-complete \| tee \| grep -c reload` = 1（恰好一次） | T5 | 待人拍 |
-| EX-44 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh parse-fails \| tee` 继续用旧快照 + 一条诊断 | T5 | 待人拍 |
-| EX-45 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh out-of-cwd-write \| tee` 得到 `EACCES`（不是"成功但记录"） | T5 | 待人拍 |
-| EX-46 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; cat /proc/$(pgrep -f ext-section)/environ \| tr '\0' '\n' \| grep -vE '^(cwd\|conversationId\|extensions\|PATH)=' \| tee` 空 | T5 | 待人拍 |
-| EX-47 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; ls -l /proc/$(pgrep -f ext-tool)/fd \| tee \| grep -E '\.sqlite\|\.db'` 逐行空 | T5 | 待人拍 |
-| EX-48 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh byte-flip \| tee` 拒载并指名，无第二条装载路径 | T5 | 待人拍 |
-| EX-49 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; ps -o comm= -g $(pgrep -f nous-app) \| tee \| grep -E 'cargo\|rustc'` 逐行空（除开 build 角色） | T5 | 已签 · 2026-11-17（S1/S9） |
-| EX-50 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh triple-not-compatible \| tee` 拒载（兼容列表，不是相等） | T5 | 已签 · 2026-11-17（S9） |
-| EX-51 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh audit-kinds \| tee \| wc -l` = 4（装/卸/禁用/熔断） | T5 | 待人拍 |
-| EX-52 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh audit-replay-10 \| tee` 提交数 +1 | T5 | 待人拍 |
-| EX-53 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh entries-filter \| tee` 按 `pi.extension` 过滤出该条 | T5 | 待人拍 |
-| EX-54 | `test -d crates/app \|\| { echo "SKIP: 等 T1"; exit 0; }; grep -rn 'api/catalog' -- crates server \| tee` 逐行空；`curl -s localhost:PORT/v1/machines \| tee` 含兼容 target 列表 | T1 | 已签 · 2026-11-17（S10/S11） |
-| EX-55 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh two-sessions-isolated \| tee` A 的输出不含 B 的任何字节 | T5 | 待人拍 |
-| EX-56 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh disable-extension \| tee` 0 次调用 + 名牌全 `missing()` + 诊断写"已禁用" | T5 | 待人拍 |
-| EX-57 | `diff <(grep -oE '^\| (EX-[0-9]+) \|' docs/spec/ext-runtime.md \| grep -oE 'EX-[0-9]+') <(./scripts/judge.sh --list) \| tee` 空 diff（表里的 EX 编号集合 == `--list`）；且表里每个 `judge.sh <name>` 都能解析（否则 exit 2） | T5 | 已签 · 2026-11-17（v0 已生效） |
-| EX-58 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh oversized-frame \| tee` 扩展被杀、归因 `extension_crash`、宿主 RSS 涨幅 < 1MB | T5 | 待人拍 |
-| EX-59 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh nameplate-conflict \| tee` 第二个拒载并点名双方，第一个照常工作 | T5 | 待人拍 |
-| EX-60 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh handle-path-escape \| tee` 内核代读时拒掉 `..`/绝对路径并落诊断 | T5 | 待人拍 |
-| EX-61 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh count-after-restart \| tee` 重启后内存计数 = 0，降级状态仍在 | T5 | 待人拍 |
-| EX-62 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh breaker-push-sse \| tee` 已连客户端一个事件循环内收到 `entry_appended` | T5 | 待人拍 |
-| EX-63 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh breaker-in-snapshot \| tee` 重连 snapshot 的 entries 含该条 | T5 | 待人拍 |
-| EX-64 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh reload-merge-20 \| tee` 同一扩展连写 20 个文件 → 重载恰好 1 次（去掉合并即红成 20） | T5 | 待人拍 |
-| EX-65 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh reload-two-exts \| tee` 各自重载 1 次，且重载 A 期间 B 的在飞调用不受影响 | T5 | 待人拍 |
-| EX-66 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh boot-load-failure \| tee` 提交含名字 + 原因、SSE 收到、其余扩展照常、进程没退 | T5 | 待人拍 |
-| EX-67 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh symlink-escape \| tee` 结果不含指向句柄外的符号链接 + 一条诊断点名 | T5 | 待人拍 |
-| EX-68 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh truncation-deterministic \| tee` 200 文件 / 上限 50：两次代读文件集合与顺序逐字节相同、均 `truncated:true` | T5 | 待人拍 |
-| EX-69 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; getent passwd 60001 \| tee` 空；`ps -o uid=,comm= -C ext-section,ext-tool` 两两不同 | T5 | 待人拍 |
-| EX-70 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; systemctl show nous-app -p AmbientCapabilities \| tee \| grep CAP_SETUID`；且扩展 uid ≠ `nous-app` uid | T5 | 待人拍 |
-| EX-71 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; ls /proc/$(pgrep -f ext-section)/fd \| tee` 恰好 `0,1,2` + 一对管道，多一个即红 | T5 | 待人拍 |
-| EX-72 | `test -d crates/app \|\| { echo "SKIP: 等 T5"; exit 0; }; grep '^Groups:' /proc/$(pgrep -f ext-section)/status \| tee` 为空 | T5 | 待人拍 |
-| EX-73 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh out-of-cwd-write \| tee` 得到 `EACCES` 且目标不存在/未变 | T5 | 待人拍 |
-| EX-74 | `test -d exts/evil \|\| { echo "SKIP: 等 T5"; exit 0; }; ./scripts/judge.sh evil-carrier \| tee` 每类坏样都在、每条拒绝都对得上 EX 编号 | T5 | 待人拍 |
-| EX-75 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh provenance \| tee` 提交含 hash/builtFrom/buildMachine；白名单打开后来源不符拒载并指名 | T5 | 待人拍 |
-| EX-76 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh disabled-nameplate-referenced \| tee` 明确失败并指名；提示词里无“假装它没了”的痕迹 | T5 | 待人拍 |
-| EX-77 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh atomic-swap-20x \| tee` 20 次随机时点 `kill -9` 后均完整装载（旧或新）、无半成品 | T5 | 待人拍 |
-| EX-78 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh canary-cross-extension \| tee` 扩展 X 的 cwd / 内容 / `files[].path` 里无扩展 Y 的任何文件名 | T5 | 待人拍 |
-| EX-79 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh canary-cross-request \| tee` 上一轮金丝雀不出现在本轮句柄内容里 | T5 | 待人拍 |
-| EX-80 | `test -e scripts/judge.sh \|\| { echo "SKIP: judge.sh 未建（T5）"; exit 0; }; ./scripts/judge.sh clock-invisible \| tee` 立刻调用 vs 隔 2s 调用输出逐字节相同，连做 5 轮全相同 | T5 | 待人拍 |
+| 编号 | 判据（可跑的命令） | 哨兵（写死；只有真实现才产生） | 票号 | 谁签字 |
+|---|---|---|---|---|
+<!-- 单元格里的 `\|` 是 Markdown 表格转义，粘到 shell 要还原成 `|`。别用抽表器做全局反转义——会毁掉正则里的 `\|`。 -->
+<!-- `judge.sh` 的 SKIP 一律走 **stderr**；stdout 只放观测（`key=value`）。否则任何 `| grep` 管道都会把 SKIP 吞掉，SKIP 变成假红。 -->
 
-**统计**：80 条。79 条挂 T5（扩展运行时本体），1 条挂 T1（编目搬迁）。
-**已签 3 条**（EX-49 / EX-50 / EX-54，来自 S1/S9/S10/S11）；其余待签。**T5 未开票之前，全表 SKIP** —— 这是如实状态，不是"接近完成"。
+| EX-01 | 干净：`./scripts/judge.sh manifest-paths \| tee \| grep -F 'hits=0'`（`hits=0`）；脏（`--dirty`）：`./scripts/judge.sh manifest-paths --dirty \| tee \| grep -F 'hits=1 file=exts/section/nous.json'` **必须命中** | `hits=0` / `hits=1 file=exts/section/nous.json` | T5 | 待人拍 |
+| EX-02 | `./scripts/judge.sh load-missing-handle \| tee \| grep -F 'missing_handle=skills'` | `missing_handle=skills` | T5 | 待人拍 |
+| EX-03 | `./scripts/judge.sh load-empty-extension \| tee \| grep -F 'reason=这个扩展什么都不提供'` | `reason=这个扩展什么都不提供` | T5 | 待人拍 |
+| EX-04 | `./scripts/judge.sh kernel-untouched-v2 \| tee \| grep -F 'tool_version=0.1.1 kernel_diff=0'` | `tool_version=0.1.1` + `kernel_diff=0` | T5 | 待人拍 |
+| EX-05 | 干净：`./scripts/judge.sh manifest-forbidden-keys \| tee \| grep -F 'hits=0'`（`hits=0`）；脏（`--dirty`）：`./scripts/judge.sh manifest-forbidden-keys --dirty \| tee \| grep -F 'hits=1 file=exts/section/nous.json'` **必须命中** | `hits=0` / `hits=1 file=exts/section/nous.json` | T5 | 待人拍 |
+| EX-06 | `./scripts/judge.sh protocol-mismatch \| tee \| grep -F 'protocol_host=3 protocol_ext=4 old_still_serving=1'` | `protocol_host=3 protocol_ext=4` | T5 | 待人拍 |
+| EX-07 | `./scripts/judge.sh one-process-per-extension \| tee \| grep -F 'count=3 uids=60001,60002,60003'` | `uids=60001,60002,60003` | T5 | 待人拍 |
+| EX-08 | `./scripts/judge.sh frame-keys \| tee \| grep -F 'keys=conversationId,cwd,extensions conversationId=7'` | `conversationId=7`（具体会话 id） | T5 | 待人拍 |
+| EX-09 | `./scripts/judge.sh calls-per-turn \| tee \| grep -F 'calls_nous=1 calls_skills=1 calls_prompts=1'` | `calls_nous=1` | T5 | 待人拍 |
+| EX-10 | `./scripts/judge.sh truncated-frame \| tee \| grep -F 'exit=0 declared=4096 read=4096'` | `declared=4096 read=4096`（必须相等） | T5 | 待人拍 |
+| EX-11 | `./scripts/judge.sh inflight-across-reload \| tee \| grep -F 'lines=line-1,line-2,line-3,line-4,line-5 reloads=1'` | `lines=line-1,…,line-5` | T5 | 待人拍 |
+| EX-12 | 干净：`./scripts/judge.sh frame-forbidden-keys \| tee \| grep -F 'hits=0'`（`hits=0`）；脏（`--dirty`）：`./scripts/judge.sh frame-forbidden-keys --dirty \| tee \| grep -F 'hits=1 file=frame'` **必须命中** | `hits=0` / `hits=1 file=frame` | T5 | 待人拍 |
+| EX-13 | `./scripts/judge.sh section-twice \| tee \| uniq \| wc -l` = 1 且 `./scripts/judge.sh section-twice \| tee \| grep -F 'You are an agent inside Nous'` | `You are an agent inside Nous`（段首句） | T5 | 待人拍 |
+| EX-14 | `./scripts/judge.sh pi-system-count \| tee \| grep -F 'pi_system=12 generation=7'` | `pi_system=12 generation=7`（按 fixture 实测填） | T5 | 待人拍（哨兵待实测） |
+| EX-15 | `./scripts/judge.sh shuffle-order \| tee \| grep -F 'shuffle=1 diff_lines=0 baseline_first=preamble'` | `baseline_first=preamble` | T5 | 待人拍 |
+| EX-16 | `./scripts/judge.sh wrong-tag \| tee \| grep -F 'tag_wrong=1 diff_lines=0 raw_first_char=Y'` | `raw_first_char=Y`（tag:false 段首字节） | T5 | 待人拍 |
+| EX-17 | `./scripts/judge.sh tool-stream-seq \| tee \| grep -F 'seq=0,1,2,3,4 final=1'` | `seq=0,1,2,3,4` | T5 | 待人拍 |
+| EX-18 | `./scripts/judge.sh tool-cancel \| tee \| grep -F 'call=1001 final=cancelled'` | `final=cancelled` + 具体 call id | T5 | 待人拍 |
+| EX-19 | `./scripts/judge.sh tool-cancel-late-output \| tee \| grep -F 'rejected=1 reason=取消后收到 output committed=0'` | `reason=取消后收到 output` | T5 | 待人拍 |
+| EX-20 | `./scripts/judge.sh result-and-mutations \| tee \| grep -F 'commit_seq_result=N commit_seq_mutation=N'` | `commit_seq=5074`（result 与 mutation 同为这一个；T5 首次跑填死） | T5 | 待人拍（哨兵待实测） |
+| EX-21 | `./scripts/judge.sh mutation-replay \| tee \| grep -F 'entries_after=3 entries_before=3 ids=101,102,103'` | `entries_after=3` + 具体 id 集合 | T5 | 待人拍（哨兵待实测） |
+| EX-22 | `./scripts/judge.sh reject-mutation \| tee \| grep -F 'kind=error result=mutations 必须有 kind'` | `reason=mutations[0].kind 不在 {entry,document}` | T5 | 待人拍 |
+| EX-23 | `./scripts/judge.sh kill-extension \| tee \| grep -F 'nameplates=0 missing=skill:tdd'` | `missing=skill:tdd` | T5 | 待人拍 |
+| EX-24 | `./scripts/judge.sh restart-extension \| tee \| grep -F 'nameplates=1 selected=skill:tdd changed=0'` | `selected=skill:tdd changed=0` | T5 | 待人拍 |
+| EX-25 | `./scripts/judge.sh nameplate-diffset \| tee \| grep -F 'from_manifest=2 from_reply=3 added=skill:tdd'` | `added=skill:tdd`（清单与应答的差） | T5 | 待人拍 |
+| EX-26 | 干净：`./scripts/judge.sh fd-no-handle-value \| tee \| grep -F 'hits=0'`；脏（`--dirty`）：`./scripts/judge.sh fd-no-handle-value --dirty \| tee \| grep -F 'hits=1 fd=7 target=/opt/Nous-skills'` **必须命中** | `hits=0` / `hits=1 fd=7 target=/opt/Nous-skills` | T5 | 待人拍 |
+| EX-27 | `./scripts/judge.sh deliver-twice \| tee \| uniq \| wc -l` = 1 且 `./scripts/judge.sh deliver-twice \| tee \| grep -F 'files=2 first=SKILL.md'` | `files=2 first=SKILL.md` | T5 | 待人拍 |
+| EX-28 | `./scripts/judge.sh crash-once \| tee \| grep -F 'pi_system=12 diagnostics=1 segment=skills reason=exit-code-1'` | `segment=skills reason=exit-code-1` | T5 | 待人拍 |
+| EX-29 | `./scripts/judge.sh third-failure-breaker \| tee \| grep -F 'delta=1 null_key=skills commits=1'` | `null_key=skills commits=1` | T5 | 待人拍 |
+| EX-31 | `./scripts/judge.sh diagnostic-dedup \| tee \| grep -F 'pi_extension_commits=1 memory_count=10 log_lines=1 manifestHash=9f3a'` | `manifestHash=9f3a`（**你举的例子**） | T5 | 待人拍（哨兵待实测） |
+| EX-32 | `./scripts/judge.sh always-crash \| tee \| grep -F 'state=tripped_process crash=2 segment_state=normal'` | `state=tripped_process crash=2` | T5 | 待人拍 |
+| EX-34 | `./scripts/judge.sh concurrency-20 \| tee \| grep -F 'inflight=16 queued=4 diag=排队中，等 4 次'` | `queued=4` + `排队中，等 4 次` | T5 | 待人拍 |
+| EX-35 | `./scripts/judge.sh output-1mb \| tee \| grep -F 'killed=1 reason=extension_crash bytes=1048576'` | `bytes=1048576` | T5 | 待人拍 |
+| EX-36 | `./scripts/judge.sh rss-256mb \| tee \| grep -F 'killed=1 reason=extension_crash rss=268435456'` | `rss=268435456` | T5 | 待人拍 |
+| EX-37 | `./scripts/judge.sh single-reload-entry \| tee \| grep -F 'hits=1 path=app/ext/reload.rs'` | `path=app/ext/reload.rs`（具体文件:行） | T5 | 待人拍（哨兵待实测） |
+| EX-38 | `./scripts/judge.sh reload-triggers \| tee \| grep -F 'tests=3 names=watch,head,explicit'` | `names=watch,head,explicit` | T5 | 待人拍 |
+| EX-39 | `./scripts/judge.sh callid-across-reload \| tee \| grep -F 'call_before=1001 call_after=1002 seq_reset=0'` | `call_before=1001 seq_reset=0` | T5 | 待人拍 |
+| EX-40 | `./scripts/judge.sh idle-cpu \| tee \| grep -F 'seconds=60 jiffies=N groups=0'` | `jiffies=N`（N 实测后写死；未实测时输出 `SKIP: 待实测 N`，不许写"接近 0"） | T5 | 待人拍（哨兵待实测） |
+| EX-41 | `./scripts/judge.sh reload-fails-keeps-old \| tee \| grep -F 'serving_version=0.1.0 reload=0'` | `serving_version=0.1.0`（旧版仍在服务） | T5 | 待人拍 |
+| EX-42 | `./scripts/judge.sh partial-write \| tee \| grep -F 'reloads=0 seen=# 前半'` | `seen=# 前半`（半截内容） | T5 | 待人拍 |
+| EX-43 | `./scripts/judge.sh write-complete \| tee \| grep -c 'reload=1'` = 1 且 `./scripts/judge.sh write-complete \| tee \| grep -F 'content_hash=7c1e'` | `content_hash=7c1e`（实测填） | T5 | 待人拍（哨兵待实测） |
+| EX-44 | `./scripts/judge.sh parse-fails \| tee \| grep -F 'serving=old diag=frontmatter 缺 name file=SKILL.md'` | `diag=frontmatter 缺 name` | T5 | 待人拍 |
+| EX-45 | `./scripts/judge.sh out-of-cwd-write \| tee \| grep -F 'errno=13 target_exists=0'` | `errno=13`（EACCES） | T5 | 待人拍 |
+| EX-46 | 干净：`./scripts/judge.sh environ-whitelist \| tee \| grep -F 'hits=0'`（`hits=0`）；脏（`--dirty`）：`./scripts/judge.sh environ-whitelist --dirty \| tee \| grep -F 'hits=1 file=environ'` **必须命中** | `hits=0` / 脏：多传 `HOME` 必红 | T5 | 待人拍 |
+| EX-47 | 干净：`./scripts/judge.sh fd-no-db \| tee \| grep -F 'hits=0'`（`hits=0`）；脏（`--dirty`）：`./scripts/judge.sh fd-no-db --dirty \| tee \| grep -F 'hits=1 file=agent.sqlite'` **必须命中** | `hits=0` / 脏：fd 里开 `agent.sqlite` 必红 | T5 | 待人拍 |
+| EX-48 | `./scripts/judge.sh byte-flip \| tee \| grep -F 'rejected=1 hash=9f3a'` | `hash=9f3a`（改一字节后） | T5 | 待人拍（哨兵待实测） |
+| EX-49 | 干净：`./scripts/judge.sh no-toolchain-in-tree \| tee \| grep -F 'hits=0'`（`hits=0`）；脏（`--dirty`）：`./scripts/judge.sh no-toolchain-in-tree --dirty \| tee \| grep -F 'hits=1 file=rustc'` **必须命中** | `hits=0` / 脏：开 build 角色出现 `rustc` 必红 | T5 | 待人拍 |
+| EX-50 | `./scripts/judge.sh triple-not-compatible \| tee \| grep -F 'rejected=1 triple=x86_64-unknown-linux-musl accepted=aarch64'` | `triple=x86_64-unknown-linux-musl` | T5 | 待人拍 |
+| EX-51 | `./scripts/judge.sh audit-kinds \| tee \| grep -F 'kinds=install,uninstall,disable,breaker manifestHash=9f3a'` | `manifestHash=9f3a`（**你举的例子**） | T5 | 待人拍（哨兵待实测） |
+| EX-52 | `./scripts/judge.sh audit-replay-10 \| tee \| grep -F 'entry_id_same=1 repeats=10 entries=4'` | `entry_id_same=1 repeats=10` | T5 | 待人拍 |
+| EX-53 | `./scripts/judge.sh entries-filter \| tee \| grep -F 'kind=pi.extension entry_id=N'` | `entry_id=41 kind=pi.extension`（T5 首次跑填死） | T5 | 待人拍（哨兵待实测） |
+| EX-54 | `./scripts/judge.sh catalog-moved \| tee \| grep -F 'api_catalog_hits=0 machines=runtime-1 triples=x86_64-unknown-linux-gnu,x86_64-unknown-linux-musl'` | `machines=runtime-1` + 兼容 triple 列表 | T1 | 待人拍 |
+| EX-55 | `./scripts/judge.sh canary-cross-session \| tee \| grep -F 'canary=ZZ-9f3a-B hits=0 session=B'` | `canary=ZZ-9f3a-B hits=0` | T5 | 待人拍 |
+| EX-56 | `./scripts/judge.sh disable-extension \| tee \| grep -F 'calls=0 missing=skill:tdd diag=已禁用'` | `diag=已禁用` + `missing=skill:tdd` | T5 | 待人拍 |
+| EX-57 | `./scripts/judge.sh ex-id-set \| tee \| grep -F 'has_EX-80=1 has_EX-81=0'` | `has_EX-80=1 has_EX-81=0`（自检，别指望它防大事） | T5 | 已签 · 2026-11-17（降级为保险） |
+| EX-58 | `./scripts/judge.sh oversized-frame \| tee \| grep -F 'killed=1 reason=extension_crash frame_bytes=2097152 rss_growth=0'` | `frame_bytes=2097152` + `rss_growth=0` | T5 | 待人拍 |
+| EX-59 | `./scripts/judge.sh nameplate-conflict \| tee \| grep -F 'conflict=skill:tdd winner=nous loser=evil-dup'` | `conflict=skill:tdd winner=nous loser=evil-dup` | T5 | 待人拍 |
+| EX-60 | `./scripts/judge.sh handle-path-escape \| tee \| grep -F 'rejected=1 path=../../etc/passwd diag=1'` | `path=../../etc/passwd` | T5 | 待人拍 |
+| EX-61 | `./scripts/judge.sh count-after-restart \| tee \| grep -F 'boot_id_changed=1 memory_count=0 state=degraded'` | `boot_id_changed=1 state=degraded` | T5 | 待人拍 |
+| EX-62 | `./scripts/judge.sh breaker-push-sse \| tee \| grep -F 'event=entry_appended kind=pi.extension entry_id=N loop=1'` | `entry_id=41 loop=1`（与 EX-63 同一个 id） | T5 | 待人拍（哨兵待实测） |
+| EX-63 | `./scripts/judge.sh breaker-in-snapshot \| tee \| grep -F 'snapshot_has=1 kind=pi.extension entry_id=N'` | `entry_id=41`（必须与 EX-62 相同） | T5 | 待人拍（哨兵待实测） |
+| EX-64 | `./scripts/judge.sh reload-merge-20 \| tee \| grep -F 'reloads=1 version=0.1.1 files=20'` | `reloads=1 version=0.1.1` | T5 | 待人拍 |
+| EX-65 | `./scripts/judge.sh reload-two-exts \| tee \| grep -F 'reloads_a=1 reloads_b=1 inflight_b=line-3'` | `inflight_b=line-3` | T5 | 待人拍 |
+| EX-66 | `./scripts/judge.sh boot-load-failure \| tee \| grep -F 'name=evil hash=9f3a reason=哈希不符 others_ok=1 exit=0'` | `hash=9f3a reason=哈希不符` | T5 | 待人拍（哨兵待实测） |
+| EX-67 | `./scripts/judge.sh symlink-escape \| tee \| grep -F 'skipped=leak.md diag=1 files=0'` | `skipped=leak.md` | T5 | 待人拍 |
+| EX-68 | `./scripts/judge.sh truncation-deterministic \| tee \| grep -F 'files=50 truncated=1 last=f050.md runs_equal=1'` | `last=f050.md runs_equal=1` | T5 | 待人拍 |
+| EX-69 | `./scripts/judge.sh uid-allocation \| tee \| grep -F 'passwd_60001=absent uids=60001,60002,60003'` | `passwd_60001=absent uids=60001,60002,60003` | T5 | 待人拍 |
+| EX-70 | `./scripts/judge.sh cap-setuid \| tee \| grep -F 'caps=CAP_SETUID app_uid=997 ext_uid=60001'` | `caps=CAP_SETUID` + 两个具体 uid | T5 | 待人拍（哨兵待实测） |
+| EX-71 | `./scripts/judge.sh fd-exact-set \| tee \| grep -F 'fds=0,1,2,3,4'` | `fds=0,1,2,3,4`（多一个即红） | T5 | 待人拍 |
+| EX-72 | 干净：`./scripts/judge.sh groups-empty \| tee \| grep -F 'hits=0'`（`hits=0`）；脏（`--dirty`）：`./scripts/judge.sh groups-empty --dirty \| tee \| grep -F 'hits=1 file=Groups: 27'` **必须命中** | `hits=0` / 脏：出现 `Groups: 27` 必红 | T5 | 待人拍 |
+| EX-73 | `./scripts/judge.sh eacces \| tee \| grep -F 'errno=13 target_exists=0'` | `errno=13` | T5 | 待人拍 |
+| EX-74 | `./scripts/judge.sh evil-carrier \| tee \| grep -F 'carriers=5 maps=EX-45,EX-58,EX-60,EX-67,EX-71'` | `maps=EX-45,EX-58,EX-60,EX-67,EX-71` | T5 | 待人拍 |
+| EX-75 | `./scripts/judge.sh provenance \| tee \| grep -F 'builtFrom=4e5a0df buildMachine=asus hash=9f3a'` | `builtFrom=4e5a0df`（实测填） | T5 | 待人拍（哨兵待实测） |
+| EX-76 | `./scripts/judge.sh disabled-nameplate-referenced \| tee \| grep -F 'error=会话选了 skill:tdd，提供它的扩展已被禁用 prompt_hits=0'` | `prompt_hits=0` + 具体错误原文 | T5 | 待人拍 |
+| EX-77 | `./scripts/judge.sh atomic-swap-20x \| tee \| grep -F 'runs=20 half_installed=0 versions=0.1.0,0.1.1'` | `runs=20 half_installed=0` | T5 | 待人拍 |
+| EX-78 | `./scripts/judge.sh canary-cross-extension \| tee \| grep -F 'canary=ZZ-9f3a-Y hits=0 ext=Y'` | `canary=ZZ-9f3a-Y hits=0` | T5 | 待人拍 |
+| EX-79 | `./scripts/judge.sh canary-cross-request \| tee \| grep -F 'canary=ZZ-9f3a-B hits=0 round=2'` | `canary=ZZ-9f3a-B hits=0 round=2` | T5 | 待人拍 |
+| EX-80 | `./scripts/judge.sh clock-invisible \| tee \| grep -F 'runs=5 delay=2 identical=1'` | `runs=5 delay=2 identical=1` | T5 | 待人拍 |
+| EX-81 | 干净：`grep -nE 'echo .*(commit_seq\|entry_id\|hash\|version)=' scripts/judge.sh \| tee` 逐行空；脏（临时往 `judge.sh` 加一行 `echo "commit_seq=5074"`）：同一命令 **必须命中那一行** | 脏那次输出的行号（如 `scripts/judge.sh:44`） | T5 | 已签 · 2026-11-17 |
+
+**统计**：79 条。78 条挂 T5（扩展运行时本体），1 条挂 T1（`EX-54`）。
+**哨兵待实测**：15 条（EX-14 · 20 · 21 · 31 · 37 · 40 · 43 · 48 · 51 · 53 · 62 · 63 · 66 · 70 · 75）—— 它们的期望值是"只能由真实实现产生的具体字面量"，必须 **T5 首次跑时把实测值写死进本表**；未写死之前，判据输出 `SKIP: 待实测哨兵`，**不许写"接近"、`X`、`<任意>`**。
+**已合并删除**：`EX-30`（并入 EX-29）· `EX-33`（并入 EX-32）。**编号留空不复用** —— 防止历史引用指到别处。
+**全部 79 条都含机械断言**：散句断言 = **0**（每行都带 `grep -F` / `wc -l` / `diff`，且哨兵是具体字面量）。负向判据（EX-01 · 05 · 12 · 26 · 46 · 47 · 49 · 72 · 81）成对：干净必绿 + `--dirty` 必红。
 
 ## 附录 B · 不许做清单
 
