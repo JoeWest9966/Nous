@@ -50,6 +50,9 @@ nous-ai            → telemetry
 nous-tools         → ai, env
 nous-runtime       → ai
 nous-durable       → chord, ai, wire, telemetry, env
+nous-server        → durable, wire, telemetry
+                   §二 里唯一允许依赖 HTTP 框架的 crate（axum）；durable 永远不许
+                   （语义层不绑传输，以后换 stdio / UDS 不改 durable）
 ```
 
 三条由此推出的规则：

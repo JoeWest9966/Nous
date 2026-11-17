@@ -251,6 +251,7 @@ allow={
  'nous-tools': {'nous-ai','nous-env'},
  'nous-runtime': {'nous-ai'},
  'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env'},
+ 'nous-server': {'nous-durable','nous-wire','nous-telemetry'},
 }
 meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
                                capture_output=True,text=True).stdout)
@@ -265,7 +266,11 @@ for pkg in meta['packages']:
 print('\n'.join(bad))
 PY
 )
-	if [ -z "$ALLOWED" ]; then ok "依赖边全在 AGENTS.md §二 表里"; else
+	# durable 是语义层，永久不许绑传输
+	if cargo tree -p nous-durable -e normal 2>/dev/null | grep -qE '\b(axum|hyper|tower-http|actix\w*|warp)\b'; then
+		bad "nous-durable 依赖了 HTTP 框架 —— 语义层不绑传输，端点住 nous-server"
+	fi
+	if [ -z "$ALLOWED" ]; then ok "依赖边全在 AGENTS.md §二 表里（durable 无 HTTP 依赖）"; else
 		while read -r e; do [ -n "$e" ] && bad "依赖边不在 §二 表里：$e"; done <<< "$ALLOWED"
 	fi
 
