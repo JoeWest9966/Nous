@@ -102,10 +102,10 @@ harness 是本库最后一个大未知，先出形状能省掉两轮返工。
 | 节流单飞 | `:697-764` `streamResponse` | 100ms（`settings.progress.partialIntervalMs`）定时器 + **同时只有一次提交在飞** + 失败 `restore`；`finally` 只做三件：`stopped = true`、取消定时器、`await inFlight` —— **不提交 pending**（见下面那段，尾帧是故意丢的） | `harness/generation.rs::stream_response` |
 | abort 落库 | `:668-674` `convertPartial` | 把 `live.generation.message` 复制成一条 `stopReason: "aborted"` 的 assistant entry | `harness/abort.rs::convert_partial` |
 | 分类 | `:765-868` `classify` | 终态消息 → 四种去向：`deferred`（转 `poll`，`pollAt = max(now + pollAfterMs ?? 5000, 上次 + 1)`）、可重试错误（转 `retry`，退避）、溢出（转 `prepare` + 阻塞压缩）、答完（`answer`/工具轮） | `harness/generation.rs::classify` |
-| 公开面（提议） | — | `pub async fn stream_response(session: &Session, conversation: Id, live: &mut LiveState, request: &RunRequest<'_>) -> Result<AssistantMessage, HarnessError>`；`pub async fn classify(session: &Session, request: &RunRequest<'_>, message: &AssistantMessage) -> Result<Classification, HarnessError>`；`pub enum Classification { Answered, Retry { at_ms: u64, error: String }, Poll { poll_at_ms: u64 }, Overflow { error: String } }`；`pub struct RunRequest<'a> { model, messages, options, attempt, interval_ms, persist_within_ms }` | — |
+| 公开面（**2026-11-17 已落，签名以此为准**） | — | `pub async fn stream_response(session: &Session, request: &StreamRequest, events: AssistantMessageEventStream, timeline: Option<&Timeline>) -> Result<AssistantMessage, HarnessError>`；`pub async fn classify(session: &Session, request: &ClassifyRequest, message: &AssistantMessage, now_ms: u64, timeline: Option<&Timeline>) -> Result<Classification, HarnessError>`；`pub enum Classification { Answered, Retry { at_ms, error }, Poll { poll_at_ms }, Overflow { error } }`；`pub struct StreamRequest { live: Id, conversation: Id, attempt: u64, interval_ms: u64 }`；`pub struct ClassifyRequest { live, conversation, attempt, entry_id, retry: RetryPolicy, retryable: bool, overflow: Option<String> }`；`pub fn live_record(id: Id, conversation: Id) -> Value`（`pi.live` 的五个地址字段，别在调用点手抄）；`pub struct Timeline` + `pub enum Beat { PartialStart, PartialEnd, Terminal }` | — |
 | 不取 | 7 个 checkpoint phase、`runtime.commit`/`runtime.hooks` 那层、`beforeRequest`/`afterRun` 钩子链、`startRun`/`handOver`（`createTask` 属调度器） | — | — |
 
-#### ③ 附：提交节奏的三条事实（2026-11-17 核过上游，别再翻案）
+#### ③ 附：提交节奏的五条事实（2026-11-17 核过上游，别再翻案）
 
 **(1) `deferred` 不做 ⇒ 走 immediate + 时间闸。** 上游 partial 用 `PROGRESS_COMMIT`
 （`live.ts:236` `{ persistence: { kind: "deferred" } }`），本库 `#13` 的
@@ -135,13 +135,27 @@ so no stale partial lands after the outcome"。紧接着 `classify` 会一次提
 可以接受的代价。但**不要把「重放整条修订链」放进持锁区间**：那就是 `#25` 那个 O(n²)，而
 今天测到的 110 ms 是**当前链长**（160 次提交、链被 base 切断）下的数，不是上界。
 
+**(4) 停表要真停，竞争要串起来。** 上游 `timer?.()` 用的是 `runtime.setTimer` 返回的取消函数；
+本库的定时器是 `select!` 里的 `sleep_until` 临时 future，select 一结束就 drop，**所以「停表」
+是结构性的**。判据不看实现，只看提交次数：`stopped` 之后冷却三个 `interval_ms`，`PartialStart`
+的次数不许再涨（若有人把提交挪进 `spawn`、定时器只让回调 `return`，这条立刻红）。
+abort 与 `classify` 的竞争同理：`Session` 的存储锁保证先到的那次提交整个跑完，`convert_partial`
+读到的总是它**之后**的 `generation`；终态已经清掉 `generation` 时它写 `Ok(None)` ——
+「committed state stays consistent」是一条判据（`an_abort_after_the_terminal_commit_writes_nothing`），
+不是注释。
+
+**(5) 本票已知「抓不住」的一条：** 在 `finally` 里补一次尾帧提交（上游**不**这么做，见
+(2)）不会被这四条判据抓住 —— 时间线上它落在终态之**前**，既不违反节拍也不违反「终态在后」。
+唯一能看见它的是**提交次数预算**（每条流多一次写盘），那属于基准票那一类（`commit_throughput`），
+不属本票。写在这里是为了下次有人「顺手补一帧」时知道没人拦他。
+
 ### ④ abort（无上游模块 —— 见 §0.1）
 
 | 项 | 内容 |
 |---|---|
 | 上游事实 | `runtime.signal: AbortSignal` 在 `commit` / provider 流 / 工具里被读（`harness.ts:594`、`generation.ts:216`、`tool.ts:480`、`view.ts:191/211/243`）；`generation.ts:397` 是 `abort:` 任务钩子；`generation.ts:668` 是把在流 partial 落库 |
 | 本库落点 | `crates/nous-durable/src/harness/abort.rs`（**自写**） |
-| 公开面 | `pub async fn convert_partial(session: &Session, conversation: Id, live: &LiveState) -> Result<Option<Id>, HarnessError>`（无 partial 时 `Ok(None)`）；`pub struct AbortMark`（`Session` 侧用 `CancellationToken`，不用 `AbortSignal` —— `nous-ai` 已经是 `CancellationToken`） |
+| 公开面 | `pub async fn convert_partial(session: &Session, live: Id, conversation: Id, entry_id: Id) -> Result<Option<Id>, HarnessError>`（无 partial 时 `Ok(None)`；entry id 由调用方给 —— 上游 `tx.appendEntry` 自己 mint）。**`AbortMark` 还没落**：它要接 `Session` 的关停路径，属 `#19` 的观察者那一层，本票不开那个口子 |
 | 判据 | `convert_partial_writes_an_aborted_assistant_entry`（构造一条 partial → 关 → 读回 entry 的 `stopReason == "aborted"`） |
 
 ---
@@ -262,7 +276,13 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 | `harness_json.rs` 的 `growing_an_array_keeps_the_append_record` | `assign_json` 里「先插尾巴、再递归前缀」的顺序（顺序反了这条红；它不改变 ops 也不改变值，是账本断言） |
 | `harness_live.rs` 的 5 条 | `pi.live` 类型面的字段名逐字对上游（`callId` / `droppedBytes` / `pollAt` / `unoffered` 缺席而非 `false`） |
 | `live_doc_is_a_complete_base_when_nothing_runs` | `checkpoint_when` 在空闲 / 交接 / 两工具之间为真（上游那条不许改成 delta 计数） |
-| `convert_partial_writes_an_aborted_assistant_entry` | abort 落库的形状 |
+| `convert_partial_writes_an_aborted_assistant_entry` | abort 落库的形状（`stopReason: "aborted"`，正文是流到那一刻的那段，之后 `generation` 清掉） |
+| `every_timeline_face_has_a_fake_that_turns_it_red` | 四条时间线断言的**反向对照**：造一条「10ms 隔两次提交」的时间线、一条重叠的、一条「先终态后 partial」的、一个泄漏的定时器，每条都必须被抓。没有这一条，另外四条只是「反正都通过」 |
+| `the_terminal_commit_appends_the_answer_and_clears_the_partial` | 终态：entry 是完整消息，`generation` **整键消失**（不是 `null`） |
+| `a_retryable_error_turns_the_generation_into_a_retry_marker` | `retry` 退避时间点 = `now + delay_for(attempt)` |
+| `an_overflow_is_never_retried` | 溢出即使 `retryable` 也不重试（上游 `!overflow` 那一项） |
+| `an_empty_partial_never_commits` | 第一条 `start` 不落空帧（上游 `partial.content.length === 0` 那条 `continue`） |
+| `an_abort_after_the_terminal_commit_writes_nothing` | abort 落在终态之后不写第二条 entry（「committed state stays consistent」） |
 | `projection_covers_every_message_change_variant` | 8 变体逐个（5 真数据 + 3 构造） |
 | `projection_emits_no_change_for_storage_only_commits` | §2.1 的 7 行「不产出」各一条 |
 | `projection_never_encodes_a_set_as_a_delta` | §2.2 那条铁律 |

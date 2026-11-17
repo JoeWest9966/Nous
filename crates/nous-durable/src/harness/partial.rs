@@ -30,6 +30,7 @@ use nous_chord::delta::{OpError, Seg};
 use serde_json::{Map, Value};
 
 use super::json::{assign_json, child, value_at, AssignPlan};
+use super::under;
 use super::seg;
 
 /// 正在攒增量的那个字段。
@@ -230,13 +231,13 @@ impl PartialChanges {
     pub fn commit(
         &mut self,
         generation: &mut Draft,
+        prefix: &[Seg],
         message: &mut Value,
         commit: PartialCommit,
     ) -> Result<(), OpError> {
         let PartialCommit { plan, tool_calls } = commit;
-        let committed_blocks = generation
-            .value()
-            .get("message")
+        let message_path = under(prefix, &[Seg::key("message")]);
+        let committed_blocks = value_at(generation.value(), &message_path)
             .and_then(|message| message.get("content"))
             .and_then(Value::as_array)
             .map_or(0, Vec::len);
@@ -266,11 +267,9 @@ impl PartialChanges {
             apply.push((index, taken.changes));
         }
 
-        assign_json(generation, &[Seg::key("message")], message, Some(&plan))?;
+        assign_json(generation, &message_path, message, Some(&plan))?;
 
-        let content = generation
-            .value()
-            .get("message")
+        let content = value_at(generation.value(), &message_path)
             .and_then(|message| message.get("content"))
             .and_then(Value::as_array)
             .cloned()
@@ -282,7 +281,7 @@ impl PartialChanges {
             if block.get("type").and_then(Value::as_str) != Some("toolCall") {
                 continue;
             }
-            let block_path = vec![Seg::key("message"), Seg::key("content"), Seg::index(index)];
+            let block_path = under(&message_path, &[Seg::key("content"), Seg::index(index)]);
             for change in changes {
                 apply_change(generation, &block_path, &change)?;
             }

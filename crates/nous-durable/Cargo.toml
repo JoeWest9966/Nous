@@ -20,6 +20,11 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# 判据要读虚拟时钟（`start_paused`）：`harness_stream_commits_partials_at_most_every_interval`
+# 的四条都只能靠时间线判，而「用 sleep 猜」在负载下必假红。`test-util` 只进测试。
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
 # 生产代码**不**拿 `nous_ai::Message` 解析库里存的 `model` —— 那正是
 # `docs/pitfalls-from-pi.md` 里那条「引擎写进库的数据比类型宽」的坑（#23 已删掉那条断言）。
 

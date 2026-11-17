@@ -123,7 +123,7 @@ fn stream_text(chunks: &[&str]) -> (Vec<Vec<Op>>, String, usize) {
         let mut draft = draft_of(&committed);
         let taken = changes.take(&mut message);
         changes
-            .commit(&mut draft, &mut message, taken)
+            .commit(&mut draft, &[], &mut message, taken)
             .expect("提交能写");
         if !draft.appends().is_empty() {
             ledger_rounds += 1;
@@ -240,7 +240,7 @@ fn a_block_end_drops_the_pending_delta() {
         "`text_end` 之后不该还留着增量"
     );
     let mut draft = draft_of(&json!({"message": partial_message()}));
-    changes.commit(&mut draft, &mut message, taken).unwrap();
+    changes.commit(&mut draft, &[], &mut message, taken).unwrap();
     let ops = ops_of(draft);
     assert!(
         !ops.iter().any(|op| matches!(op, Op::Append(..))),
@@ -268,7 +268,7 @@ fn a_streamed_tool_call_commits_its_argument_changes() {
             "take() 要清空被跟踪调用的参数：提交时按改动逐条写"
         );
         changes
-            .commit(&mut draft, &mut message, taken)
+            .commit(&mut draft, &[], &mut message, taken)
             .expect("提交能写");
         let ops = ops_of(draft);
         committed = replayed(&committed, &ops);
@@ -296,7 +296,7 @@ fn a_tracked_tool_call_falls_back_to_its_snapshot_when_its_block_is_gone() {
     // 第一次提交：文档里还没有 message，块是新的，参数从改动写起。
     let mut first = draft_of(&json!({}));
     let taken = changes.take(&mut message);
-    changes.commit(&mut first, &mut message, taken).unwrap();
+    changes.commit(&mut first, &[], &mut message, taken).unwrap();
     let committed = replayed(&json!({}), &ops_of(first));
     assert_eq!(
         committed["message"]["content"][1]["arguments"],
@@ -310,7 +310,7 @@ fn a_tracked_tool_call_falls_back_to_its_snapshot_when_its_block_is_gone() {
     let mut second = draft_of(&reset);
     let taken = changes.take(&mut message);
     assert!(taken.tool_calls.contains_key(&1), "它还在跟踪");
-    changes.commit(&mut second, &mut message, taken).unwrap();
+    changes.commit(&mut second, &[], &mut message, taken).unwrap();
     let after = replayed(&reset, &ops_of(second));
     assert_eq!(
         after["message"]["content"][1]["arguments"],
@@ -371,7 +371,7 @@ fn partial_changes_restores_what_a_failed_commit_took() {
         "恢复之后改动要接在前面，实际是 {:?}",
         taken.tool_calls[&1].changes
     );
-    changes.commit(&mut draft, &mut message, taken).unwrap();
+    changes.commit(&mut draft, &[], &mut message, taken).unwrap();
     let committed = replayed(&json!({}), &ops_of(draft));
     assert_eq!(
         committed["message"]["content"][1]["arguments"],
