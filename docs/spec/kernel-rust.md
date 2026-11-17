@@ -7,16 +7,28 @@
 ## 读法
 
 - **形状听 `wire.md`，语义听本 spec。** 一份契约，住本仓根。
-- 一层一目录：`crates/kernel/*`（内核层，换个产品还能用）/ `crates/app/*`（应用层，只有 Nous 用）。**两层只是目录约定，不是仓库边界，不是第二个部署单元。**
+- 目录按 **`crates/<vendor>/<module>`** 管**所有权**，分层写在 `docs/plugins.md` 的 `layer` 列（§3.0）。**目录不是仓库边界，不是第二个部署单元；层不再是路径。**
 - 术语以 `GLOSSARY.md` 为准。本 spec 只加词，不改已定义的词。
 - 每章三样齐：**判据**（红/绿明确）/ **反悔点** / **不许做什么**。
-- **判据不许空跑绿。** 任何判据引用的路径不存在时，结果是 **SKIP（打印出来）**，不是 PASS。`git grep -n "x" -- <不存在的目录>` 会返回 rc=0、无输出——那就是 `0 ≥ 0` 的假绿，明令禁止。每条判据都套这三行前缀：
+- **判据不许空跑绿。** 任何判据引用的路径不存在时，结果是 **SKIP（打印出来）**，不是 PASS。`git grep -n "x" -- <不存在的目录>` 会返回 rc=0、无输出——那就是 `0 ≥ 0` 的假绿，明令禁止。每条判据都以这段守门开头（**不认 vendor 名，不写死目录**）：
 
   ```bash
-  test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"; exit 0; }
+  test -e docs/plugins.md         || { echo "RED: docs/plugins.md 缺失（清单是判据的一部分）"; exit 1; }
+  test -x scripts/layer-paths.sh  || { echo "RED: scripts/layer-paths.sh 缺失"; exit 1; }
+  K=$(scripts/layer-paths.sh kernel); A=$(scripts/layer-paths.sh app)
+  ls -d crates/*/*/ >/dev/null 2>&1 || { echo "SKIP: crates/*/* 一个都没有，等 #14 搬迁"; exit 0; }
+  test -n "$K"                    || { echo "SKIP: K 为空（清单里没有 layer=kernel 的行），等 #14 搬迁"; exit 0; }
   ```
 
-  只允许"打印出 SKIP 然后退出"，不许静默 `exit 0`。判据跑完必须能在输出里数出红/绿/SKIP 各多少条。
+  **三段退化语义写死**：
+
+  ```
+  docs/plugins.md 缺失 / 不可解析   → RED（清单是判据的一部分，缺了没法判）
+  scripts/layer-paths.sh 缺失       → RED（同上）
+  K 为空 或 crates/*/* 一个都没有    → SKIP（打印），因为 #14 还没搬
+  ```
+
+  只允许"打印出 SKIP 然后退出"，不许静默 `exit 0`；**配置缺失不算 SKIP**——把缺配当 SKIP 就是"路径不存在当 PASS"的第二季。判据跑完必须能在输出里数出红/绿/SKIP 各多少条。
 
 ## 章目
 
@@ -37,38 +49,44 @@
 
 ## 1 · 边界与仲裁
 
-**结论**：一个仓（`Nous`）、一个 workspace、一个产物（`nous-app` 进一个 systemd 单元）。内核层与应用层是目录约定。
+**结论**：一个仓（`Nous`）、一个 workspace、一个产物（`nous-app` 进一个 systemd 单元）。分层写在 `docs/plugins.md` 的 `layer` 列，目录按 `crates/<vendor>/<module>` 管所有权（§3.0）——**路径不再表示层**。
 
 **判据（15 条，全进 `scripts/verify.sh`；编号 1–13 里含 6b / 7b 两条插入项，实为 15 条）**
 
-判据引用的 `crates/kernel` / `crates/app` 在 #14 搬迁完成前**不存在**。契约：**路径不存在 = SKIP（打印出来），不是 PASS。** 下面 13 条每条都以这三行为前缀：
+本层判据里的 `$K` / `$A` 是**路径选择子**，不是目录名：`K=$(scripts/layer-paths.sh kernel)`、`A=$(scripts/layer-paths.sh app)`（定义见 §3.0）。契约：**载体不存在 = SKIP（打印出来），不是 PASS；清单或选择子脚本缺失 = RED。** 下面 15 条每条都以这段守门开头：
 
 ```bash
-test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"; exit 0; }
+test -e docs/plugins.md        || { echo "RED: docs/plugins.md 缺失（清单是判据的一部分）"; exit 1; }
+test -x scripts/layer-paths.sh || { echo "RED: scripts/layer-paths.sh 缺失"; exit 1; }
+K=$(scripts/layer-paths.sh kernel); A=$(scripts/layer-paths.sh app)
+ls -d crates/*/*/ >/dev/null 2>&1 || { echo "SKIP: crates/*/* 一个都没有，等 #14 搬迁"; exit 0; }
+test -n "$K"                   || { echo "SKIP: K 为空（清单里没有 layer=kernel 的行），等 #14 搬迁"; exit 0; }
 ```
 
-- 覆盖范围：以 `git grep … -- crates/kernel` / `-- crates/app` 为载体的（3、4、5、6、8、11、12、13）与 `cargo tree` / `cargo metadata` 类（1、2、9、10）。
-- **#14 的验收里必须包含"这 13 条从 SKIP 变真绿"**；搬迁完成后仍 SKIP 即红。
+三段退化语义：清单缺失/不可解析 → **RED**；选择子脚本缺失 → **RED**；`K` 为空或 `crates/*/*` 一个都没有 → **SKIP（打印）**。
+
+- 覆盖范围：以 `git grep … -- $K` / `-- $A` 为载体的（3、4、5、6、8、11、12、13）与 `cargo tree` / `cargo metadata` 类（1、2、9、10）。
+- **#14 的验收里必须包含"这 15 条从 RED/SKIP 变真绿"**：#14 第 10 步（清单 + 选择子脚本）之前一律 **RED**（缺配），之后仍 SKIP 即红、仍 RED 即未交付。
 
 1. 正向依赖：`cargo tree -p nous-app --depth 1 -e normal` 含内核层的 `durable` / `wire` / `tools` / `runtime`，不含 `chord` / `rusqlite`。
 2. 反向依赖：内核层任一 crate `--depth 1` 都不依赖应用层。
-3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- crates/kernel` 与 `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
-4. 路由归属：`git grep -nE '\.route\(|axum::|tower::' -- crates/kernel` 为空。
-5. 数据面唯一入口：`crates/kernel` 之外不许出现 `rusqlite` / `Connection::open` / `.sqlite` / `PRAGMA` / `BEGIN IMMEDIATE`。
-6. 进程归应用层：`crates/kernel` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。**
-   全仓的进程创建点按**文件**数，不按入口数：`出现真实 spawn 的文件集合 == docs/boundary-baseline.txt 里 spawn_files=N 那一行`（今天 N=2：`nous-tools/src/os_env.rs`、`nous-tools/src/utils/open_browser.rs`；`#20` 落地后变 3，**改这一行需要签字**）。
+3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K` 与 `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
+4. 路由归属：`git grep -nE '\.route\(|axum::|tower::' -- $K` 为空。
+5. 数据面唯一入口：`$K` 之外不许出现 `rusqlite` / `Connection::open` / `.sqlite` / `PRAGMA` / `BEGIN IMMEDIATE`。
+6. 进程归应用层：`$K` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。**
+   全仓的进程创建点按**文件**数，不按入口数：`出现真实 spawn 的文件集合 == docs/boundary-baseline.txt 里 spawn_files=N 那一行`（今天 N=2：`crates/nous/tools/src/os_env.rs`、`crates/nous/tools/src/utils/open_browser.rs`；`#20` 落地后变 3，**改这一行需要签字**）。
    排除项：`output_decode.rs` 的 `#[cfg(windows)] fn console_code_page` 那一块（Linux 不编，判据不数它）；`tests/` 与 `*tests.rs` 一律不算。
    已知欠账（**不设判据**，只记在 baseline 注释里）：`os_env.rs` 一个文件内 3 个入口（363 / 412 / 915）。口号仍是"其余工具一律经它"，但它今天就是那个它本身。
    验收口径：**S1 在 S12 签字前，验收结论写 `SKIP: 等 S12 签字` 并打印出来** —— 旧条款本身错了，按它判出来的红没有意义。
 6b. 依赖方向：`cargo tree -p nous-durable --depth 2 | grep providers` 为空 —— 真相层不许依赖**会 sleep 的那个 crate**，不是"不许依赖 `nous-ai`"（拆完 `types` 允许被依赖，S2）。
-7. **端点索引唯一**：`git grep -l '^### GET /v1/'` 恰好 1 个文件（`wire.md`）。它只是索引——端点、用途、谁在用；**字段形状的权威在 `crates/*/tests/` 与 conformance 里**，两者冲突时**测试赢**。
+7. **端点索引唯一**：`git grep -l '^### GET /v1/'` 恰好 1 个文件（`wire.md`）。它只是索引——端点、用途、谁在用；**字段形状的权威在 `crates/*/*/tests/` 与 conformance 里**，两者冲突时**测试赢**。
 7b. **索引不抄字段**：`wire.md` 里出现 `"type":` 或 camelCase 字段名清单的段落数 = 0（抄一遍就会漂）。
-8. 代码不引文档：`git grep -n 'wire.md' -- crates/kernel` **去掉注释行后**为空（测试引形状常量，不引文档路径；注释里提一句不算，S8）。
+8. 代码不引文档：`git grep -n 'wire.md' -- $K` **去掉注释行后**为空（测试引形状常量，不引文档路径；注释里提一句不算，S8）。
 9. 一个 workspace 根：全仓只有一个根 `Cargo.toml`；**进 systemd 的 bin target 恰好 1 个**（排除 `nous-fixture`，S4）。
 10. 旧仓清空：`git grep -c 'Nous-Package'` 在代码与文档里为 0（只许出现在归档 README 与历史提交里）。
-11. 发现唯一：`grep -rn 'NOUS_SERVER_ADDR' -- crates/app` 为空（只许测试用；生产配置出现即红）。
-12. 进程只有一处：`git grep -n 'spawn' crates/app` 恰好 1 处，且位于扩展监管。
-13. 无文件锁：`git grep -nE 'flock|fs2|File::lock|\.lock\(\)' crates/app` 为空（单进程不需要文件锁）。
+11. 发现唯一：`grep -rn 'NOUS_SERVER_ADDR' -- $A` 为空（只许测试用；生产配置出现即红）。
+12. 进程只有一处：`git grep -n 'spawn' -- $A` 恰好 1 处，且位于扩展监管。
+13. 无文件锁：`git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A` 为空（单进程不需要文件锁）。
 
 **反悔点**：出现"纯内核"部署形态（没有应用层、只跑 6 条路由）→ 契约拆两份。
 **不许做**：不许用"反正改基线就行"绕过判据 3；不许为应用层的查询需求给内核层加列——应用层自己建投影表。
@@ -98,6 +116,57 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 ## 3 · 客户端面与部署
 
 **结论**：客户端**现在只有一个**：NousDesk。移动端将来**复用 NousDesk 的 core**，不另建客户端；`bjes6b` 删除。客户端只看 `resolve` 给出的那一个 `/v1` 面，不链接库。内核层与应用层是**一个** systemd 单元、一个 musl 静态二进制，跑在 j1900。
+
+### 3.0 目录：按 vendor/module（分层不在路径上）
+
+对标 Magento 2 的 `app/code/<Vendor>/<Module>`：**目录管所有权，清单管分层。**
+
+```
+crates/nous/durable  chord  wire  env  tools  runtime
+             ai-types  ai-providers  sessions  ext-host  server  telemetry
+crates/acme/            ← 将来第三方（现在空）
+```
+
+- **crate 名不改**：`crates/nous/tools` 的包名仍是 `nous-tools`，`crates/nous/durable` 仍是 `nous-durable`。目录名与包名不必一致（目录管位置，包名管引用）。
+- 三层（kernel / platform / app）**不体现在路径上**，体现在 `docs/plugins.md` 的 `layer` 列 + 一条依赖判据：`layer = kernel` 的 crate，依赖树里不许出现 `layer = platform` 的 crate（`cargo metadata` 可查）。
+- 判据里的路径选择子只有一个，不硬编码目录名：
+
+  ```bash
+  K=$(scripts/layer-paths.sh kernel)   # 输出 layer=kernel 的模块路径，空格分隔
+  A=$(scripts/layer-paths.sh app)
+  ```
+
+  `git grep … -- $K` 就是本条 spec 里的"内核层"。`scripts/layer-paths.sh` 的成员**只从 `docs/plugins.md` 读**，脚本里不写死模块名。
+
+**清单格式（列名定死）**：
+
+```
+| module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |
+```
+
+- `crate` 列三种写法：`nous-durable`（已存在）/ `(待建) nous-sessions`（目录不存在**不算红**）/ `—`（不是 crate）。
+- `必需=是` 的模块缺失 → 发行版**拒绝启动并指名缺谁**（fail-closed）。
+- 清单与目录**双向相等**，但只算**非 `(待建)` 行**：目录在、清单没写 = 红；清单写了、目录不在 = 红（`(待建)` 行豁免）。
+
+**三段退化语义（与读法一致，不得两边漂移）**：
+
+```
+docs/plugins.md 缺失 / 不可解析   → RED（清单是判据的一部分，缺了没法判）
+scripts/layer-paths.sh 缺失       → RED（同上）
+K 为空 或 crates/*/* 一个都没有    → SKIP（打印），因为 #14 还没搬
+```
+
+三条边界：
+
+1. 模块内部**不**照搬 PHP 的 `Api/ Model/ etc/ Controller/`。Rust 用 `lib.rs` 只 re-export `api`；`Model/` 的等效物是 `src/` 里的内部模块一律 `pub(crate)`。
+2. `vendor` 不许变成第二个分层：**不许**出现 `crates/nous-core`、`crates/nous-app` 这种按层起的目录名。
+3. 第三方**不进源码树**，走 Cargo 依赖；`crates/acme/` 只放测试用的模拟第三方。
+
+**判据**：`ls -d crates/*/*/` 的模块集合 == `docs/plugins.md` 里**非 `(待建)` 行**的模块集合（双向，逐行 `tee`）；`crates/` 下不存在名为 `core` / `app` / `kernel` / `platform` 的目录（那四个词是层名，不是路径）；`cargo metadata` 里 `layer = kernel` 的 crate 的依赖闭包不含 `layer = platform` 的 crate；`必需=是` 的模块在 `K`/`A` 里（缺失即发行版拒启）。
+
+**反悔点**：`crates/nous/` 一级目录数超过 ~15、模块拆分明显失控 → 允许加一级 module group（`crates/nous/ai/types`），但 `layer` 列仍是唯一分层来源，路径仍不代表层。
+
+**不许做**：不许把层写进路径；不许在 `vendor` 下再分一次层；不许让第三方 crate 出现在源码树里（`crates/acme/` 除外）；不许为了"目录好看"改包名。
 
 ### 3.1 客户端只剩一个（面板死、手机端也死）
 
@@ -183,13 +252,13 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 
 **结论**：**块不再是进程，也没有"崩"这回事。** 块分三类：并成路由/特性、删、真需隔离的叫扩展。
 
-- 进程：`spawn` 只有一处，且**只服务扩展**（`git grep -n 'spawn' crates/app` 恰好 1 处，在 extensions 模块里）。"块崩溃只死自己"的监管逻辑**不用写**。
+- 进程：`spawn` 只有一处，且**只服务扩展**（`git grep -n 'spawn' -- $A` 恰好 1 处，在 extensions 模块里）。"块崩溃只死自己"的监管逻辑**不用写**。
 - content store：文件锁锁的是**多进程写同一份 `tree.json`**；块进程一消失，锁就没对手了，同一进程内 `Mutex<()>` 足够。**不许把文件锁移植进 Rust**——那是把多进程时代的问题带进单进程架构，还会在 j1900 上变成"CLI 一读就卡住"的新坑。
 
 **判据**
 
-1. `git grep -n 'spawn' crates/app` 恰好 1 处，位于扩展监管。
-2. `git grep -nE 'flock|fs2|File::lock|\.lock\(\)' crates/app` 为空。
+1. `git grep -n 'spawn' -- $A` 恰好 1 处，位于扩展监管。
+2. `git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A` 为空。
 3. `resolve` 由 nous-app 自己发，响应体 `url` 指向 nous-app 自己的监听。
 4. 停掉 `nous-panel.service` 之后，NousDesk 冷启动仍能连上（第 8 章之前跑一次）。
 
@@ -237,7 +306,7 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 | 能力 | 一句话 | 判据 | 不许做 |
 |---|---|---|---|
 | ① section | 纯函数：同输入→同字节输出 | 同一轮请求跑两次，第二次 section 与第一次逐字节相等，且不产生第二条 `pi.system` 增量 | 不许碰盘、不许看时钟、不许发网络 |
-| ② tool | 接入第二个工具时内核零改动 | 只写扩展清单 + 扩展进程，`git diff --stat crates/kernel` **为空** | 不许为某个工具改内核（要改 ⇒ 接缝形状错了，本章重开） |
+| ② tool | 接入第二个工具时内核零改动 | 只写扩展清单 + 扩展进程，`git diff --stat -- $K` **为空** | 不许为某个工具改内核（要改 ⇒ 接缝形状错了，本章重开） |
 | ③ 名牌 | 扩展注册具名槽位（`skill:<名>`、`prompt:<名>`），应用层按会话选中集装配 | 删除一个名牌后旧会话的选择静默失效、可由 `missing()` 点名，不自动改选 | 不许替用户改选择；不许名牌带默认值 |
 | ④ 目录代读 | 扩展在清单里声明要哪个目录，**由内核代读并交付已解析内容** | 扩展进程里 `open(` / `readFile` 命中断言为空；同一目录两次交付一致 | 不许扩展自己 open 路径（等于没有权限边界） |
 
@@ -295,7 +364,7 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 **内核层零 `spawn`，且时钟由应用层注入**
 
 - 内核层只许用同步原语（`Mutex`、`Notify`、`CancellationToken`），**不许**直接调 `tokio::time::{sleep, interval, timeout}`。理由是真话：`tokio::time` 在没有 runtime 的宿主里会 panic，所以"内核层能嵌入无 runtime 宿主"这条只有在时钟注入之后才成立。先例照抄 `nous-chord` 的 `watch`：注入时钟 + 显式 `poll()`。
-- 判据：`git grep -nE 'tokio::time::(sleep|interval|timeout)' -- crates/kernel` 为空；时钟只出现在一个适配器文件里。
+- 判据：`git grep -nE 'tokio::time::(sleep|interval|timeout)' -- $K` 为空；时钟只出现在一个适配器文件里。
 
 **每会话一个任务，任务身份是 `(会话 id, generation)`**
 
@@ -406,13 +475,13 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 
 | # | 结论 | 一句话理由 | 反悔点 |
 |---|---|---|---|
-| Q1 | spec 在应用层之上：一个仓、两层（`crates/kernel/*` / `crates/app/*`），不是给内核做注脚 | 形状/语义分治，才不至于重写已验收的东西 | 事件面从"客户端投影"变成"两方消息总线" |
+| Q1 | spec 在应用层之上：一个仓、两层（`layer` 列：kernel / app；路径不分层，见 §3.0），不是给内核做注脚 | 形状/语义分治，才不至于重写已验收的东西 | 事件面从"客户端投影"变成"两方消息总线" |
 | Q2 | 最小不可分单元是**提交**；entry 可寻址但不是原子单位；会话是身份 + 命名空间；其余是投影 | 事务边界 = 提交，`commit_seq` 单库全局单调已是事实 | 出现必须跨会话原子的动作 |
 | Q3 | `/v1` HTTP+SSE 是唯一客户端面，不给任何客户端开链接库 | 链接库绕过 `requestId` 幂等与 `whenBusy`，造第二个真相入口 | 需要双向或多路复用 → 在 `/v1` 加通道，仍不是链接库 |
 | Q4 | v1 扩展能力四件：section / tool / 名牌 / 目录代读 | 用例取自线上四个扩展 | 出现"内核每轮主动推事件给扩展"的真用例 |
 | Q5 | "扩展"是一个概念（不再有"插件"）；调用、接缝、名牌一并钉死 | 两个词就要两套生命周期 | 出现必须同进程、可崩内核的东西 → 那是内核变体，另立一章 |
 | Q6 | 迁移两段切：先只读上线，再停机拷库切写 | 一步到位 + 24h 回滚是假安全（切后有写入） | `storage.md` 那 3 条"不做"的用例含线上真记录类型 |
-| Q7 | 应用层拥有扩展进程；内核层只认 trait，不认识进程 | 内核是库，要能嵌入 | `crates/kernel` 里出现 `std::process`（判据 6 红） |
+| Q7 | 应用层拥有扩展进程；内核层只认 trait，不认识进程 | 内核是库，要能嵌入 | `layer = kernel` 的 crate 里出现 `std::process`（判据 6 红） |
 | Q8 | 通道 = 应用层 spawn 的一对管道 + 长度前缀 JSON 帧 | 管道断开即死亡，不需要心跳；不引第二种编码 | 扩展必须跑在另一台机器 → UDS |
 | Q9 | 扩展状态必须可丢弃：杀掉重建后输出逐字节相同 | 否则热加载 = 数据丢失 | 出现不可重建状态的扩展 → 单列"重启+重建" |
 | Q10 | tool 进 v1 只留形状；判据 = 接入第二个工具时内核零改动 | 零用例不是降低判据的理由 | 接入需改内核 → 形状错，第 4 章重开 |
