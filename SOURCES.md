@@ -107,7 +107,8 @@
 
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
-| `vendor/pi-env-daemon/**` | pi@v1.5.2 | `packages/env/daemon/**` | 原样，**只 build 不改**；自带 `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`，本仓根 `Cargo.toml` 必须 `exclude = ["vendor/pi-env-daemon"]`（票 #20） | 待提货 |
+| `vendor/pi-env-daemon/daemon/**` | pi@v1.5.2 | `packages/env/daemon/**` | 原样，**只 build 不改**；自带 `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`，本仓根 `Cargo.toml` `exclude = ["vendor/pi-env-daemon"]`（票 #20） | 已提货 |
+| `vendor/pi-env-daemon/package.json` | pi@v1.5.2 | `packages/env/package.json` | 原样提货（`version: "1.5.2"` 是上游快照的一部分，不改）；daemon 的 `build.rs` 无条件读 `../package.json` 取版本，放在 `vendor/pi-env-daemon/` 下才能编译（票 #20） | 已提货 |
 | `docs/spec-from-pi-durable.md` | pi@v1.5.2 | `packages/durable/docs/spec.md` | 摘录 + 逐条「采纳 / 不采纳」+ 反悔点 | 已改 |
 | `docs/pitfalls-from-pi.md` | pi@v1.5.2 | `packages/durable/CHANGELOG.md` | 只追加判定（`中` / `不中` / `未知`），不改旧条目 | 已改 |
 | `wire.md` | NousDesk@`wire.md` | `wire.md` | 迁入并改为权威版本（Nous 侧是只读镜像）。**这行是唯一对不上 tag 的**：来源是 NousDesk 仓，不是 pi/pi-rust，没法用 `git cat-file` 核；台账体检会把它列进「跳过」并打出来。留着是为了记出处，不是漏改 | 已提货 |
@@ -122,3 +123,9 @@ pi:      packages/{ai, agent, coding-agent, tui, mcp, schema, telemetry, codemod
 pi-rust: crates/{rpi-harness, rpi-cli, rpi-tui, rpi-extensions, rpi-plugin-sdk}
          （只有 tokens.rs / retry 段 / protocol.rs 三处例外，见上表）
 ```
+
+## 六、#20 提货记录（追加，不改上文任何一行）
+
+- `vendor/pi-env-daemon/daemon/**` ← `pi@v1.5.2:packages/env/daemon/**`：**已提货**，20 个文件逐字节原样（`diff -r` 无输出），只 build、不改一行、不发版跟进。根 `Cargo.toml` 的 `[workspace] exclude = ["vendor/pi-env-daemon"]` 已在基线中，members 一行未动；daemon 自带 `Cargo.toml` / `Cargo.lock` / `rust-toolchain.toml`（Rust 1.96.0 / edition 2024），不并入主 workspace、不进主 `Cargo.lock`。
+- `vendor/pi-env-daemon/package.json` ← `pi@v1.5.2:packages/env/package.json`：**已提货**，逐字节原样（`cmp` 无输出）。`build.rs` 无条件读 `../package.json` 取 `version`（= `1.5.2`，上游快照的一部分，不改成我们的版本号）；放在 `vendor/pi-env-daemon/` 下，`../package.json` 从 `daemon/` 解析正好落在这里。
+- 客户端（远端实现的协议侧）按 `packages/env/docs/protocol.md` 自写，不在本票内。
