@@ -15,3 +15,20 @@
 //! 本 crate **不依赖 `nous-ai`**：生成走 `nous_durable::session::Session`，这一层不碰
 //! provider，也不许在测试里出现 `FauxProvider`。
 #![forbid(unsafe_code)]
+
+pub mod app;
+pub mod coalesce;
+pub mod error;
+pub mod hub;
+pub mod observer;
+pub mod project;
+pub mod routes;
+pub mod source;
+
+pub use app::AppState;
+pub use coalesce::{Framing, FRAME_INTERVAL};
+pub use error::{Result, ServerError};
+pub use hub::Hub;
+pub use observer::SessionObserver;
+pub use routes::router;
+pub use source::{ImportedSource, SessionSource};

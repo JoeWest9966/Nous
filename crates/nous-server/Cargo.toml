@@ -19,3 +19,15 @@ nous-durable = { workspace = true }
 nous-wire = { workspace = true }
 nous-telemetry = { workspace = true }
 axum = { workspace = true }
+tokio = { workspace = true }
+serde_json = { workspace = true }
+# SSE 的流：`futures::stream::unfold` 把 mpsc 的接收端包成 `Stream`。axum 的
+# `Sse` 认的是 `futures_core::Stream`，不为这一件事自己手写 `poll_next`。
+futures = { workspace = true }
+
+# 端点判据直接打 Router（`ServiceExt::oneshot`），不起真监听端口 —— 不绑 127.0.0.1，
+# 也就没有端口冲突和防火墙那类假红。`tower` 只进测试。
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+# `start_paused` 虚拟时钟：合帧判据必须能精确说「窗口差 1 ms 时还没发」。
+tokio = { workspace = true, features = ["test-util"] }

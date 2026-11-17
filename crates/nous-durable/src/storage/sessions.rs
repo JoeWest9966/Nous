@@ -38,6 +38,9 @@ use crate::error::{Result, StorageError};
 pub const LEGACY_NAMES_DOCUMENT_KIND: &str = "qrd3wh.sessions";
 /// 放模型与思考档位的文档种类（conversation 作用域）。
 pub const AGENT_DOCUMENT_KIND: &str = "pi.agent";
+/// 放运行态（`generation.message` / `tools` …）的文档种类（conversation 作用域）。
+/// 名称与 `harness::generation::LIVE_KIND` 一致；这一层是导入期的只读知识，不反向依赖 harness。
+pub const LIVE_DOCUMENT_KIND: &str = "pi.live";
 
 /// `GET /v1/sessions` 的一条。字段名照 `wire.md`（`camelCase`，`null` 照样输出）。
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -131,6 +134,69 @@ pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
     // 新的在前。
     items.sort_by(|left, right| right.id.cmp(&left.id));
     Ok(items)
+}
+
+/// `GET /v1/sessions/:id/entries` 的形状，**新的在前**。
+///
+/// `{id, kind, text, parent, model}`：
+///
+/// - `id` / `kind` / `text` / `parent` 是 `wire.md` 点名依赖的四个；`parent` 取 entry 记录里的
+///   `head`（entry 的父指针，和会话树的 `parent` 不是一回事）。
+/// - `model` 原样透传（**不裁**）：`/v1/entries` 不给时间，`snapshot.entries[].model[].timestamp`
+///   是 SSE 客户端唯一的时间源（`wire.md`）。裁掉它，客户端就没法按天分组。
+///
+/// 没有分页：`#22` 的 snapshot 要整份历史；`?limit=` 的游标留给 `/v1/entries` 那张票。
+pub fn render_entries(store: &ImportedStore, conversation_id: i64) -> Result<Vec<Value>> {
+    let mut items: Vec<(i64, Value)> = Vec::new();
+    for row in &store.entries {
+        if integer(row, "conversation_id")? != conversation_id {
+            continue;
+        }
+        let id = integer(row, "id")?;
+        let record = record_of(row)?;
+        let mut item = serde_json::Map::new();
+        item.insert("id".into(), Value::from(id));
+        item.insert(
+            "kind".into(),
+            Value::from(record.get("kind").and_then(Value::as_str).unwrap_or_default()),
+        );
+        item.insert("text".into(), Value::from(entry_text(&record)));
+        item.insert(
+            "parent".into(),
+            record.get("head").cloned().unwrap_or(Value::Null),
+        );
+        if let Some(model) = record.get("model") {
+            item.insert("model".into(), model.clone());
+        }
+        items.push((id, Value::Object(item)));
+    }
+    items.sort_by(|left, right| right.0.cmp(&left.0));
+    Ok(items.into_iter().map(|(_, item)| item).collect())
+}
+
+/// `snapshot.generation.message`：会话里正在生成的那条消息（没有就是 `None`）。
+///
+/// 来源是 `pi.live` 文档（conversation 作用域）最新 base 的 `generation.message`。旧 fixture
+/// 的 revision 全是 `base`；最新一条是 `delta` 时 [`latest_base_content`] 会明确失败（同
+/// [`render_sessions`] 的规矩：不拿旧 base 冒充当前值）。
+pub fn render_live_message(store: &ImportedStore, conversation_id: i64) -> Result<Option<Value>> {
+    for row in &store.documents {
+        let kind = decode_indexed_string(text(row, "kind")?)?;
+        if kind != LIVE_DOCUMENT_KIND || integer(row, "owner_id")? != conversation_id {
+            continue;
+        }
+        let Some(content) = latest_base_content(store, integer(row, "id")?)? else {
+            continue;
+        };
+        let message = content
+            .get("generation")
+            .and_then(|generation| generation.get("message"))
+            .cloned();
+        if message.is_some() {
+            return Ok(message);
+        }
+    }
+    Ok(None)
 }
 
 /// 旧引擎的 `names` 表：会话 id → 名字。

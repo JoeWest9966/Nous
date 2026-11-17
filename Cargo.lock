@@ -1286,9 +1286,13 @@ name = "nous-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "futures",
  "nous-durable",
  "nous-telemetry",
  "nous-wire",
+ "serde_json",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

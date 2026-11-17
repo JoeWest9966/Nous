@@ -16,7 +16,7 @@ use nous_chord::delta::draft::Draft;
 use nous_chord::delta::{Op, Revision, Seg};
 use nous_durable::harness::generation::live_record;
 use nous_durable::harness::partial::PartialChanges;
-use nous_durable::harness::project::message_changes;
+use nous_durable::harness::project::{message_changes, tool_changes, ToolChange};
 use nous_durable::session::publish::{CommitChange, DocumentCommitChange};
 use nous_durable::storage::import::ImportedStore;
 use nous_durable::types::DocumentRecord;
@@ -700,4 +700,100 @@ fn the_dispatch_table_yields_no_frames_outside_a_live_document_change() {
         project(value, &[Op::Set(content_path(0), json!({"type":"text","text":"x"}))]).len(),
         1
     );
+}
+
+// ---------------------------------------------------------------------------
+// 工具卡片：`tool_execution_start` / `tool_execution_update` 的原料
+// ---------------------------------------------------------------------------
+
+/// `["tools", index]`。
+fn tool_path(index: usize) -> Vec<Seg> {
+    vec![Seg::key("tools"), Seg::index(index)]
+}
+
+/// 一个 `pi.live` 值，带一个工具槽。
+fn live_with_tool(slot: Value) -> Value {
+    json!({ "tools": [slot] })
+}
+
+fn tool_slot(call_id: &str, name: &str, status: &str, output: Option<&str>) -> Value {
+    let mut slot = json!({"callId": call_id, "name": name, "status": status});
+    if let Some(text) = output {
+        slot["output"] = json!(text);
+    }
+    slot
+}
+
+#[test]
+fn a_tool_slot_appearing_is_a_start_and_its_output_is_an_update() {
+    // 新槽：`Set(["tools", 0], slot)` —— 工具启动。这一帧必须来自**这一次提交**，
+    // 不是「等工具结束再补」，否则客户端 60 秒看不见卡片（`docs/harness.md` §1 ③ 附 (5)）。
+    let value = live_with_tool(tool_slot("call-1", "bash", "running", None));
+    let started = tool_changes(&live_change(value.clone(), &[Op::Set(tool_path(0), value["tools"][0].clone())]))
+        .expect("投影不该失败");
+    assert_eq!(
+        started,
+        vec![ToolChange::Start {
+            tool_call_id: "call-1".into(),
+            tool_name: "bash".into(),
+        }]
+    );
+
+    // 输出追加：`Append(["tools", 0, "output"], text)` —— 卡片内容增量。
+    let value = live_with_tool(tool_slot("call-1", "bash", "running", Some("line1\nline2\n")));
+    let appended = tool_changes(&live_change(
+        value.clone(),
+        &[Op::Append(
+            {
+                let mut path = tool_path(0);
+                path.push(Seg::key("output"));
+                path
+            },
+            "line2\n".to_string(),
+        )],
+    ))
+    .expect("投影不该失败");
+    assert_eq!(
+        appended,
+        vec![ToolChange::Update {
+            tool_call_id: "call-1".into(),
+            append: Some("line2\n".into()),
+            set: None,
+        }]
+    );
+}
+
+#[test]
+fn tool_events_are_zero_outside_a_live_tools_change() {
+    // 消息部分的 op：不该冒工具帧。
+    let message = json!({"role": "assistant", "content": [{"type": "text", "text": "x"}]});
+    assert!(tool_changes(&live_change(
+        live_value(&message),
+        &[Op::Set(content_path(0), json!({"type":"text","text":"x"}))],
+    ))
+    .expect("不报错")
+    .is_empty());
+
+    // `nested_tools` 同理：`wire.md` 没有嵌套调用的帧，不能画成顶层卡片。
+    let mut path = vec![Seg::key("nested_tools"), Seg::index(0)];
+    let value = json!({"nested_tools": [tool_slot("p/k", "read", "running", None)]});
+    assert!(tool_changes(&live_change(value.clone(), &[Op::Set(path.clone(), value["nested_tools"][0].clone())]))
+        .expect("不报错")
+        .is_empty());
+    path.push(Seg::key("output"));
+
+    // 非 `pi.live` 文档：同样的一条 tools op 也不发。
+    let mut other = live_document();
+    other.kind = "pi.transcript".to_string();
+    let change = CommitChange::Document(DocumentCommitChange::Change {
+        record: other,
+        conversation_id: Some(2),
+        version: 1,
+        value: live_with_tool(tool_slot("call-1", "bash", "running", None)),
+        ops: Value::Array(Encoder::new().encode(&[Op::Set(
+            tool_path(0),
+            tool_slot("call-1", "bash", "running", None),
+        )])),
+    });
+    assert!(tool_changes(&change).expect("不报错").is_empty());
 }
