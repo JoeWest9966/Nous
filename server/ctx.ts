@@ -19,7 +19,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { BoardStore } from "./content.ts";
 import { adoptNode } from "./map.ts";
 import { publicOrigin } from "./origin.ts";
-import type { Node } from "../src/game.ts";
+import type { Node } from "./tree.ts";
 
 const send = (res: ServerResponse, status: number, body: unknown): void => {
   res.writeHead(status, {

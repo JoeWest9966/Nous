@@ -16,7 +16,7 @@ import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promi
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { adoptNode, freshId, hasNode, isNodeId, syncMap } from "./map.ts";
-import { isDocName, normalizeDocName } from "../src/docname.ts";
+import { isDocName, normalizeDocName } from "./docname.ts";
 import { audit, readLocks, restoreLocked, writeLocks } from "./locks.ts";
 
 export type BoardSummary = {
@@ -347,7 +347,7 @@ export class BoardStore {
   /** 新建一份。写一行的正文（`# 名字`）—— 空文件在列表里是一行空白，看着像坏了。 */
   async createDoc(id: string, nodeId: string, raw: string): Promise<DocEditResult> {
     if (!isNodeId(nodeId)) return { status: "no-node" };
-    // 规矩只有一份（`src/docname.ts`）：补 `.md`、压平空格、滤掉怪字符都在那里。
+    // 规矩只有一份（`server/docname.ts`）：补 `.md`、压平空格、滤掉怪字符都在那里。
     const typed = normalizeDocName(raw);
     if (!typed || !isDocName(typed)) return { status: "bad-name" };
     // 入口名没有禁令：新块一开始就没有 `AGENTS.md`，想有就自己建一份。
@@ -430,7 +430,7 @@ export class BoardStore {
     if (!isNodeId(nodeId)) return { status: "no-node" };
     if (!isDocName(name)) return { status: "bad-name" };
     if (isEntry(name)) return { status: "protected" };
-    // 和服务端别处一样，规矩只有 `src/docname.ts` 那一份。
+    // 和服务端别处一样，规矩只有 `server/docname.ts` 那一份。
     const to = normalizeDocName(raw);
     if (!to || !isDocName(to)) return { status: "bad-name" };
     if (isEntry(to)) return { status: "protected" };
