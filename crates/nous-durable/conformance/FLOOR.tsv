@@ -22,7 +22,7 @@
 #
 # 为什么 env 那行没有机器判据：`nous-env` 只有 trait，一个实现都没有；conformance 测的是真后端，
 # 没有后端能测的只有假后端，而假后端通过什么也证明不了。给它写一行 `0` 反而更糟 —— 0 ≥ 0 是绿的，
-# 于是「没做」看起来像「做完了」。理由写在这里，等真后端（#20 / 本地的 FileSystem+Shell 实现）落地。
+# 于是「没做」看起来像「做完了」。理由写在这里，等本地 `FileSystem` + `Shell` 真后端落地（票还没开，`nous-env` 目前只有 trait）。
 #
 # file	min
 storage_conformance.rs	20
