@@ -25,10 +25,12 @@ impl ProviderFactory for ProtocolFactory {
         settings: &crate::RuntimeSettings,
         values: &dyn ValueSource,
     ) -> Result<Arc<dyn Provider>, ResolveError> {
-        let fallback = if self.0 == nous_ai::Api::AnthropicMessages {
-            "https://api.anthropic.com"
-        } else {
-            "https://api.openai.com/v1"
+        let fallback = match self.0 {
+            nous_ai::Api::AnthropicMessages => "https://api.anthropic.com",
+            nous_ai::Api::GoogleGenerativeAi => {
+                "https://generativelanguage.googleapis.com/v1beta"
+            }
+            _ => "https://api.openai.com/v1",
         };
         let http = provider_http_client(&models, fallback, settings, values)?;
         let provider: Arc<dyn Provider> = match self.0 {
@@ -51,6 +53,9 @@ impl ProviderFactory for ProtocolFactory {
                     models,
                 ))
             }
+            nous_ai::Api::GoogleGenerativeAi => Arc::new(
+                GoogleGenerativeAiProvider::with_models(None, http, models),
+            ),
             _ => unreachable!("only supported wire protocols are registered"),
         };
         Ok(provider)
@@ -83,6 +88,7 @@ impl Default for RuntimeFactories {
             nous_ai::Api::AnthropicMessages,
             nous_ai::Api::OpenaiCompletions,
             nous_ai::Api::OpenaiResponses,
+            nous_ai::Api::GoogleGenerativeAi,
         ]
         .into_iter()
         .map(|api| {

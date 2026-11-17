@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use nous_ai::providers::anthropic::models::anthropic_models;
 use nous_ai::providers::anthropic::AnthropicProvider;
+use nous_ai::providers::google_generative_ai::GoogleGenerativeAiProvider;
 use nous_ai::providers::openai_completions::OpenAiCompletionsProvider;
 use nous_ai::providers::openai_responses::openai_responses_models;
 use nous_ai::providers::openai_responses::OpenAiResponsesProvider;
