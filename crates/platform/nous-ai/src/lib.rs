@@ -14,13 +14,11 @@
 
 pub mod constrained;
 pub mod error;
-pub mod event_stream;
 pub mod frames;
 #[cfg(feature = "providers")]
 pub mod http;
 #[cfg(feature = "providers")]
 pub mod images;
-pub mod json_parse;
 pub mod model;
 pub mod provider;
 pub mod providers;
@@ -30,11 +28,11 @@ pub mod schema;
 pub(crate) mod strict_schema;
 pub mod tool;
 pub mod transform;
-pub mod types;
-pub mod utils;
 
 // Flat re-exports — consumers do `use nous_ai::Message` not `nous_ai::types::Message`.
 pub use error::AiError;
+// 纯半搬进了 `nous-ai-types`；这里保持旧路径（`nous_ai::types::…`）。
+pub use nous_ai_types::{event_stream, json_parse, types, utils};
 pub use event_stream::{AssistantMessageEventStream, AssistantMessageEventStreamProducer};
 pub use model::{Model, StreamingProtocolCompat};
 pub use provider::{

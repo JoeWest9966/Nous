@@ -13,9 +13,10 @@ readme = "README.md"
 # 12a 只用到 chord 的 sqlite / json 两层，其余等真用到再加，不预先绑。
 [dependencies]
 nous-chord = { workspace = true }
-# `harness`（#14）用它的 `AssistantMessageEvent` / `utils::streaming_json`。
-# 契约面允许这一条（`AGENTS.md` §二：`nous-durable → chord, ai, wire, telemetry, env`）。
-nous-ai = { workspace = true }
+# 真相层只依赖 `nous-ai` 的**纯半**（types / event_stream / streaming_json）。
+# provider 半会 sleep，拖进来判据 6b 就红（`docs/spec/kernel-rust.md` 判据 6b）。
+nous-ai-types = { workspace = true }
+async-trait = { workspace = true }
 # `harness::project` 的产出类型是 `nous_wire::MessageChange`（`wire.md` 的 Rust 投影）。
 # 契约面里有这一条；事件只在这一层"成形"，传输仍然在 `nous-server`（#22）。
 nous-wire = { workspace = true }
@@ -27,6 +28,8 @@ serde_json = { workspace = true }
 # 的四条都只能靠时间线判，而「用 sleep 猜」在负载下必假红。`test-util` 只进测试。
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+# 测试可以拿完整的 `nous-ai`（FauxProvider 等）；生产代码不许。
+nous-ai = { workspace = true }
 
 # 生产代码**不**拿 `nous_ai::Message` 解析库里存的 `model` —— 那正是
 # `docs/pitfalls-from-pi.md` 里那条「引擎写进库的数据比类型宽」的坑（#23 已删掉那条断言）。

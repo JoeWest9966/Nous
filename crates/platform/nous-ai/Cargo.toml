@@ -9,6 +9,7 @@ readme = "README.md"
 
 [dependencies]
 nous-telemetry = { workspace = true }
+nous-ai-types = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }

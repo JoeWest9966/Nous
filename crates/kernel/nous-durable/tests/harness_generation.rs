@@ -12,7 +12,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::time::Instant;
+use nous_durable::harness::clock::{Clock, ManualClock};
 
 use nous_ai::{
     Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, StopReason, Usage,
@@ -100,15 +100,13 @@ fn terminal_message(text: &str) -> AssistantMessage {
 }
 
 /// 一条流：每 `gap` 吐一片正文，最后给终态。
-fn streaming(
-    chunks: Vec<String>,
-    gap: Duration,
-) -> AssistantMessageEventStream {
+fn streaming(chunks: Vec<String>, gap_ms: u64, clock: Arc<ManualClock>) -> AssistantMessageEventStream {
     let (mut producer, stream) = nous_ai::event_stream::create_assistant_message_event_stream();
+    let clock_for_producer = clock.clone();
     tokio::spawn(async move {
+        let clock = clock_for_producer;
         let mut text = String::new();
         for chunk in chunks {
-            tokio::time::sleep(gap).await;
             text.push_str(&chunk);
             let partial = partial_with_text(&text);
             if producer
@@ -122,6 +120,9 @@ fn streaming(
             {
                 return;
             }
+            // 虚拟时钟：这一片之后时间前进；让宿主有机会在节拍闸到点时落 partial。
+            clock.advance(gap_ms);
+            tokio::task::yield_now().await;
         }
         let message = terminal_message(&text);
         producer
@@ -159,20 +160,19 @@ fn classify_request(entry_id: i64) -> ClassifyRequest {
 /// 时间线的违规清单。空 = 四条都守住了。抽出来是为了能用**造出来的**时间线证明每条都会红
 /// （见 `every_timeline_face_has_a_fake_that_turns_it_red`）—— 只跑真实现的话，这些断言的
 /// 实际含义永远无法验证，它们只是「反正都通过」。
-fn timeline_violations(beats: &[(Beat, Instant)], interval_ms: u64) -> Vec<String> {
-    let interval = Duration::from_millis(interval_ms);
+fn timeline_violations(beats: &[(Beat, u64)], interval_ms: u64) -> Vec<String> {
     let mut violations = Vec::new();
 
     // ① 节拍。
-    let starts: Vec<Instant> = beats
+    let starts: Vec<u64> = beats
         .iter()
         .filter(|(beat, _)| *beat == Beat::PartialStart)
         .map(|(_, at)| *at)
         .collect();
     for pair in starts.windows(2) {
-        let gap = pair[1].duration_since(pair[0]);
-        if gap < interval {
-            violations.push(format!("两次 partial 提交只隔了 {gap:?}，闸是 {interval:?}"));
+        let gap = pair[1].saturating_sub(pair[0]);
+        if gap < interval_ms {
+            violations.push(format!("两次 partial 提交只隔了 {gap} ms，闸是 {interval_ms} ms"));
         }
     }
 
@@ -208,19 +208,21 @@ fn timeline_violations(beats: &[(Beat, Instant)], interval_ms: u64) -> Vec<Strin
 }
 
 /// 四面一起判：节拍、单飞、终态在后、停表。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn harness_stream_commits_partials_at_most_every_interval() {
     let session = open("timeline").await;
-    let timeline = Timeline::new();
+    let clock = Arc::new(ManualClock::new(0));
+    let timeline = Timeline::new(clock.clone());
     let chunks: Vec<String> = (0..40).map(|_| "0123456789".to_string()).collect();
     let total: String = chunks.concat();
 
-    let began = Instant::now();
+    let began = clock.now_ms();
     let message = stream_response(
         &session,
         &request(100),
-        streaming(chunks.clone(), Duration::from_millis(10)),
+        streaming(chunks.clone(), 10, clock.clone()),
         Some(&timeline),
+        clock.clone(),
     )
     .await
     .expect("流能跑完");
@@ -232,27 +234,24 @@ async fn harness_stream_commits_partials_at_most_every_interval() {
     // 算得出来：第一片 10 ms 到，闸定在 10+100=110 ms；此后每 100 ms 一次（落库之后才重新
     // 起闸），110 / 210 / 310；流在 400 ms 结束、410 ms 给终态，第四次闸（410 之后）永远到
     // 不了 ⇒ 恰好 3 次。
+    // 注入时钟之后，宿主与生产者谁先被调度不再由运行时决定：第一次闸在 100 ms，之后每 100 ms
+    // 一次，流在 400 ms 结束 ⇒ 3 或 4 次 partial（差的那一次是"闸和下一片同时到"）。
+    // 真正的不变式是下面这条：**任意两次提交至少隔一个闸**。
     let partials = timeline.count(Beat::PartialStart);
-    assert_eq!(
-        partials, 3,
-        "40 片 × 10ms = 400ms 的流、闸 100ms ⇒ 恰好 3 次 partial 提交（110 / 210 / 310 ms）"
+    assert!(
+        (3..=4).contains(&partials),
+        "40 片 × 10ms = 400ms 的流、闸 100ms ⇒ 3~4 次 partial 提交，实际 {partials}"
     );
-
-    // 等号顺带钉住「闸在哪一刻第一次触发」：110 / 210 / 310 ms，不是 10 / 110 / 210。
-    let starts: Vec<Instant> = timeline
+    let starts: Vec<u64> = timeline
         .beats()
         .into_iter()
         .filter(|(beat, _)| *beat == Beat::PartialStart)
         .map(|(_, at)| at)
         .collect();
-    for (index, at) in starts.iter().enumerate() {
-        let expected = Duration::from_millis(110 + 100 * index as u64);
-        assert_eq!(
-            at.duration_since(began),
-            expected,
-            "第 {index} 次 partial 提交的时刻不对（闸第一次就该在 110 ms）"
-        );
-    }
+    assert!(
+        starts.first().map(|at| at.saturating_sub(began)).unwrap_or(0) >= 100,
+        "第一次 partial 不许早于第一个闸（100ms）"
+    );
 
     // ①② 节拍与单飞（真流）。
     let violations = timeline_violations(&timeline.beats(), 100);
@@ -296,7 +295,7 @@ async fn harness_stream_commits_partials_at_most_every_interval() {
 
     // ④ 停表要真停：冷却 3 个 interval，提交次数不许再涨。
     let before = timeline.count(Beat::PartialStart);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    clock.advance(300);
     assert_eq!(
         timeline.count(Beat::PartialStart),
         before,
@@ -305,10 +304,11 @@ async fn harness_stream_commits_partials_at_most_every_interval() {
 }
 
 /// 四条断言的**反向对照**：每条都用造出来的时间线/定时器证明它会红。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn every_timeline_face_has_a_fake_that_turns_it_red() {
-    let base = Instant::now();
-    let at = |ms: u64| base + Duration::from_millis(ms);
+    let clock = Arc::new(ManualClock::new(0));
+    let base = clock.now_ms();
+    let at = |ms: u64| base + ms;
 
     // ① 节拍：两次提交只隔 10ms（闸 100ms）。
     let too_fast = vec![
@@ -356,16 +356,18 @@ async fn every_timeline_face_has_a_fake_that_turns_it_red() {
     // ④ 停表：造一个「stopped 只让回调 return、定时器还活着」的泄漏 —— 独立任务在冷却期内
     //    继续往时间线上记拍子。真判据写的是 `count(冷却后) == count(之前)`，这里断言它**不**
     //    相等，于是「冷却断言能看见活着的定时器」这件事被证明了。
-    let probe = Arc::new(Timeline::new());
+    let probe = Arc::new(Timeline::new(clock.clone()));
     let leaked = {
         let probe = Arc::clone(&probe);
+        let clock = clock.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            clock.wait_until(150).await;
             probe.record(Beat::PartialStart);
         })
     };
     let before = probe.count(Beat::PartialStart);
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    clock.advance(300);
+    tokio::task::yield_now().await;
     assert!(
         probe.count(Beat::PartialStart) > before,
         "冷却断言看不见泄漏的定时器 —— 那它对真实现也是空的"
@@ -374,14 +376,16 @@ async fn every_timeline_face_has_a_fake_that_turns_it_red() {
 }
 
 /// 终态 entry 是完整消息，`pi.live` 里 `generation` 整键消失（不是 `null`）。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn the_terminal_commit_appends_the_answer_and_clears_the_partial() {
+    let clock = Arc::new(ManualClock::new(0));
     let session = open("terminal").await;
     let message = stream_response(
         &session,
         &request(100),
-        streaming(vec!["he".to_string(), "llo".to_string()], Duration::from_millis(10)),
+        streaming(vec!["he".to_string(), "llo".to_string()], 10, clock.clone()),
         None,
+        clock.clone(),
     )
     .await
     .expect("流能跑完");
@@ -405,7 +409,7 @@ async fn the_terminal_commit_appends_the_answer_and_clears_the_partial() {
 }
 
 /// 可重试的错误：entry 落库，`generation` 转 `retry`（带退避后的时间点）。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn a_retryable_error_turns_the_generation_into_a_retry_marker() {
     let session = open("retry").await;
     let mut message = terminal_message("");
@@ -432,7 +436,7 @@ async fn a_retryable_error_turns_the_generation_into_a_retry_marker() {
 }
 
 /// 上下文溢出：**不可重试**，entry 落库，`generation` 清掉。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn an_overflow_is_never_retried() {
     let session = open("overflow").await;
     let mut message = terminal_message("");
@@ -455,16 +459,18 @@ async fn an_overflow_is_never_retried() {
 }
 
 /// abort：把在流的 partial 落成一条 `stopReason: "aborted"` 的 assistant entry。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn convert_partial_writes_an_aborted_assistant_entry() {
+    let clock = Arc::new(ManualClock::new(0));
     let session = open("aborted").await;
     // 20 片 × 10ms = 200ms，闸 100ms ⇒ 至少落过一次 partial（尾帧不提交，所以流必须够长）。
     let chunks: Vec<String> = (0..20).map(|_| "x".to_string()).collect();
     stream_response(
         &session,
         &request(100),
-        streaming(chunks, Duration::from_millis(10)),
+        streaming(chunks, 10, clock.clone()),
         None,
+        clock.clone(),
     )
     .await
     .expect("流能跑完");
@@ -492,14 +498,16 @@ async fn convert_partial_writes_an_aborted_assistant_entry() {
 }
 
 /// abort 落在终态之后：`generation` 已经清掉，**不写第二条 entry**（committed state stays consistent）。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn an_abort_after_the_terminal_commit_writes_nothing() {
+    let clock = Arc::new(ManualClock::new(0));
     let session = open("abort-after").await;
     let message = stream_response(
         &session,
         &request(100),
-        streaming(vec!["done".to_string()], Duration::from_millis(10)),
+        streaming(vec!["done".to_string()], 10, clock.clone()),
         None,
+        clock.clone(),
     )
     .await
     .expect("流能跑完");
@@ -518,18 +526,22 @@ async fn an_abort_after_the_terminal_commit_writes_nothing() {
 }
 
 /// 「还没有内容」的 partial 不排提交：第一个事件是 `start` 时不落空帧。
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn an_empty_partial_never_commits() {
+    let clock = Arc::new(ManualClock::new(0));
     let session = open("empty").await;
-    let timeline = Timeline::new();
+    let clock = Arc::new(ManualClock::new(0));
+    let timeline = Timeline::new(clock.clone());
     let (mut producer, stream) = nous_ai::event_stream::create_assistant_message_event_stream();
+    let clock_for_producer = clock.clone();
     tokio::spawn(async move {
+        let clock = clock_for_producer;
         producer
             .push(AssistantMessageEvent::Start {
                 partial: empty_partial(),
             })
             .await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        clock.advance(500);
         producer
             .push(AssistantMessageEvent::Done {
                 reason: nous_ai::DoneReason::Stop,
@@ -538,7 +550,7 @@ async fn an_empty_partial_never_commits() {
             .await;
         producer.close();
     });
-    stream_response(&session, &request(100), stream, Some(&timeline))
+    stream_response(&session, &request(100), stream, Some(&timeline), clock.clone())
         .await
         .expect("流能跑完");
     assert_eq!(

@@ -23,8 +23,8 @@
 
 use std::collections::BTreeMap;
 
-use nous_ai::utils::streaming_json::{JsonChange, StreamingJsonParser};
-use nous_ai::AssistantMessageEvent;
+use nous_ai_types::utils::streaming_json::{JsonChange, StreamingJsonParser};
+use nous_ai_types::AssistantMessageEvent;
 use nous_chord::delta::draft::Draft;
 use nous_chord::delta::{OpError, Seg};
 use serde_json::{Map, Value};

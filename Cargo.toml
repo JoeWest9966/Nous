@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/sdk/nous-ext-sdk",
+    "crates/kernel/nous-telemetry",
+    "crates/kernel/nous-wire",
+    "crates/kernel/nous-env",
+    "crates/kernel/nous-chord",
+    "crates/kernel/nous-durable",
+    "crates/platform/nous-ai",
+    "crates/platform/nous-ai-types",
+    "crates/platform/nous-tools",
+    "crates/platform/nous-runtime",
+    "crates/app/nous-ext",
+    "crates/app/nous-ext-probe",
+    "crates/app/nous-server",
+    "crates/app/nous-fixture",
+    "exts/section",
+    "exts/tool",
+    "exts/nameplate",
+    "exts/handle",
+    "exts/combo",
+    "exts/evil",
+]
+# `vendor/pi-env-daemon` 自带 Cargo.toml / rust-toolchain.toml，不是本 workspace 的成员。
+exclude = ["vendor/pi-env-daemon"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+
+# 版本表照 `pi-rust@v0.24.2` 的 workspace.dependencies 冻结；要加一处依赖，
+# 先在这里落一行，再记进 SOURCES.md。
+[workspace.dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "fs", "process", "sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
+schemars = { version = "0.8", features = ["preserve_order"] }
+jsonschema = { version = "0.18", default-features = false }
+indexmap = { version = "2", features = ["serde"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+axum = "0.8"
+thiserror = "1"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "v7"] }
+base64 = "0.22"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+bytes = "1"
+tempfile = "3"
+eventsource-stream = "0.2"
+
+nous-ext-sdk = { path = "crates/sdk/nous-ext-sdk", version = "0.1.0" }
+nous-telemetry = { path = "crates/kernel/nous-telemetry", version = "0.1.0" }
+nous-chord = { path = "crates/kernel/nous-chord", version = "0.1.0" }
+nous-wire = { path = "crates/kernel/nous-wire", version = "0.1.0" }
+nous-env = { path = "crates/kernel/nous-env", version = "0.1.0" }
+nous-durable = { path = "crates/kernel/nous-durable", version = "0.1.0" }
+nous-ai-types = { path = "crates/platform/nous-ai-types", version = "0.1.0" }
+nous-ai = { path = "crates/platform/nous-ai", version = "0.1.0" }
+nous-tools = { path = "crates/platform/nous-tools", version = "0.1.0" }
+nous-runtime = { path = "crates/platform/nous-runtime", version = "0.1.0" }
+nous-ext = { path = "crates/app/nous-ext", version = "0.1.0" }
+nous-ext-probe = { path = "crates/app/nous-ext-probe", version = "0.1.0" }
+nous-server = { path = "crates/app/nous-server", version = "0.1.0" }
+nous-fixture = { path = "crates/app/nous-fixture", version = "0.1.0" }

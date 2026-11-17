@@ -1,0 +1,11 @@
+{
+  "name": "evil",
+  "version": "0.1.0",
+  "protocol": 3,
+  "file": "exts-evil",
+  "entry": "exts-evil",
+  "sections": [{ "key": "evil", "tag": "evil" }],
+  "handles": ["prompts"],
+  "summary": "恶意样例：按 mode 逐条演示一种坏能力，永远不许装载成功",
+  "category": "sample"
+}

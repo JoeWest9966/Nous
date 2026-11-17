@@ -1,0 +1,14 @@
+{
+  "name": "section",
+  "version": "0.1.0",
+  "protocol": 3,
+  "file": "exts-section",
+  "entry": "exts-section",
+  "sections": [
+    { "key": "preamble", "tag": "preamble" },
+    { "key": "skills", "tag": "skills" }
+  ],
+  "handles": ["skills", "probe"],
+  "summary": "两段纯函数提示词：段首句 + 技能名册",
+  "category": "sample"
+}

@@ -50,7 +50,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/events", get(events))
         .route("/v1/sessions/{id}/abort", post(abort))
         .route("/v1/sessions/{id}/fork", post(fork))
+        .route("/v1/machines", get(machines))
         .with_state(state)
+}
+
+/// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
+async fn machines() -> Json<Value> {
+    Json(crate::machines::catalog())
 }
 
 /// `GET /v1/sessions`：`{ items: [...] }`，新的在前（排序在 `nous-durable` 的投影里）。
@@ -63,6 +69,8 @@ async fn sessions(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
 struct EntriesQuery {
     limit: Option<String>,
     cursor: Option<String>,
+    /// 按 entry 的 `kind` 过滤（审计可见性靠它，不加新端点，spec 8.5）。
+    kind: Option<String>,
 }
 
 /// `GET /v1/sessions/:id/entries`：`{ items, next }`，新的在前。
@@ -101,7 +109,10 @@ async fn entries(
     if !state.source().exists(session)? {
         return Err(ServerError::NotFound(format!("session {session} not found")));
     }
-    let (items, next) = state.source().entries_page(session, limit, cursor.as_ref())?;
+    let (mut items, next) = state.source().entries_page(session, limit, cursor.as_ref())?;
+    if let Some(kind) = query.kind.as_deref() {
+        items.retain(|entry| entry.get("kind").and_then(Value::as_str) == Some(kind));
+    }
     Ok(Json(json!({
         "items": items,
         "next": next.map(|cursor| cursor.encode()),

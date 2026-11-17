@@ -1,0 +1,13 @@
+[package]
+name = "nous-ext-sdk"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+description = "扩展作者面：清单、帧编解码、section/tool/名牌 API。只依赖 serde，不依赖内核或平台任何 crate。"
+
+# 判据（#20）：`cargo tree -p exts-section` 里不许出现 kernel/platform 任何 crate。
+# 所以这份 Cargo.toml 只许出现 serde / serde_json —— 加一条依赖就是给扩展加一层内核。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }

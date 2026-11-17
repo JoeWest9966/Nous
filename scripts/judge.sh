@@ -1,18 +1,27 @@
 #!/bin/sh
-# judge.sh v0 —— **只有入口，没有任何判断**。
+# judge.sh —— 附录 A 的执行器。
 #
-# 本文件的职责只有一个：把附录 A 的 EX 编号变成一个可调用的入口。
-# 每个 case 打印一行 SKIP 然后 exit 0。这里**不许长出一条真实断言**：
-# 骨架一旦带上判断，spec 线的人就会为了让骨架"看起来更像完成"而改判据，
-# 那正是我们一路在防的漂移。填判据的活属于 T5 的小子，不属于本文件。
+# 本文件只做两件事：
+#   1. 把 case 名映射到一次真实的场景执行（`nous-ext-probe` 或仓库扫描）；
+#   2. 载体不存在时打印 SKIP（**stderr**）并 exit 0 —— SKIP 不是绿。
 #
-#   ./scripts/judge.sh --list      # 80 行：EX 编号
+# 期望值写在附录 A（`docs/spec/ext-runtime.md`）里，**本文件不写任何期望值**：
+# `nous-ext-probe` 打印观测（`key=value`），附录 A 的命令用 `grep -F` 做断言。
+# 判据里不许出现 `echo "commit_seq=..."` 这种桩（EX-81 扫的就是它）。
+#
+#   ./scripts/judge.sh --list      # [behavior] 78 + [tool] 1
+#   ./scripts/judge.sh --ids       # 79 行编号
+#   ./scripts/judge.sh --pending   # 15 条待实测哨兵
 #   ./scripts/judge.sh EX-13       # 按编号
-#   ./scripts/judge.sh section-twice   # 按语义名（附录 A 里用的就是这个名字）
+#   ./scripts/judge.sh section-twice [--dirty]   # 按语义名
 #
 # 退出码：已知 case 一律 0（SKIP 也是一种结论），未知 case 2。
 
 set -u
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+cd "$ROOT" || exit 1
+PROBE="$ROOT/target/debug/nous-ext-probe"
 
 TABLE='
 EX-01 manifest-paths
@@ -95,23 +104,26 @@ EX-79 canary-cross-request
 EX-80 clock-invisible
 '
 
+TOOL='
+EX-81 different-sources'
+
+PENDING=''
+
 usage() {
-  echo "用法：$0 --list | <EX-nn> | <case-name>" >&2
+  echo "用法：$0 --list | --ids | --pending | <EX-nn> | <case-name> [--dirty]" >&2
   exit 2
 }
 
 resolve() {
-  # 参数可以是编号也可以是语义名；输出编号；找不到输出空
-  printf '%s\n' "$TABLE" | awk -v k="$1" '$1==k || $2==k { print $1; exit }'
+  { printf '%s\n' "$TABLE"; printf '%s\n' "$TOOL"; } | awk -v k="$1" '$1==k || $2==k { print $1; exit }'
 }
 
-TOOL='
-EX-81 different-sources'
-PENDING='EX-14 EX-20 EX-21 EX-31 EX-37 EX-40 EX-43 EX-48 EX-51 EX-53 EX-62 EX-63 EX-66 EX-70 EX-75'
+name_of() {
+  { printf '%s\n' "$TABLE"; printf '%s\n' "$TOOL"; } | awk -v k="$1" '$1==k { print $2; exit }'
+}
 
 case "${1-}" in
   --list|-l)
-    # 两段分开输出：全表全 SKIP 是一个信号，混进工具判据就失真了
     echo "[behavior]"
     printf '%s\n' "$TABLE"   | awk 'NF { print $1 }'
     echo "[tool]"
@@ -133,8 +145,75 @@ if [ -z "$ID" ]; then
   echo "judge.sh: 没有这个 case：$1" >&2
   usage
 fi
+CASE=$(name_of "$ID")
+shift
+DIRTY=""
+for arg in "$@"; do
+  case "$arg" in
+    --dirty) DIRTY="--dirty" ;;
+  esac
+done
 
-# v0：每条都只到这里。SKIP 走 stderr —— 任何 `| grep` 管道都会吞掉 stdout，
-# 那会把 SKIP 变成假红（"SKIP 被吞掉"和"假绿"是同一家人）。
-echo "SKIP: 等 T5（$ID）" >&2
-exit 0
+# ---------------------------------------------------------------------------
+# 仓库扫描类判据：不需要起进程。
+# ---------------------------------------------------------------------------
+
+ex_id_set() {
+  ids=$(./scripts/judge.sh --ids)
+  has81=0
+  has82=0
+  printf '%s\n' "$ids" | grep -qx 'EX-81' && has81=1
+  printf '%s\n' "$ids" | grep -qx 'EX-82' && has82=1
+  echo "has_EX-81=$has81 has_EX-82=$has82"
+}
+
+# EX-81：judge.sh 自己不许硬编码观测值。
+different_sources() {
+  grep -nE 'echo .*(commit_seq|entry_id|hash|version)=' scripts/judge.sh
+  # 干净时 grep 无输出、rc=1；SKIP 不是这里的结论，空输出就是结论。
+  exit 0
+}
+
+# 名单对得上附录 A（EX-57 的自检口径）。
+ex_id_set_selfcheck() {
+  # 附录 A 的编号集合与 --ids 的集合相等。
+  want=$(sed -n '/^| EX-[0-9]/s/^| \(EX-[0-9]*\) .*/\1/p' docs/spec/ext-runtime.md | sort -u)
+  have=$(./scripts/judge.sh --ids | sort -u)
+  if [ "$want" = "$have" ]; then
+    echo "ids_equal=1 count=$(printf '%s\n' "$have" | wc -l)"
+  else
+    echo "ids_equal=0"
+    printf '%s\n' "$want" >/tmp/judge-want.$$$$
+    printf '%s\n' "$have" >/tmp/judge-have.$$$$
+    diff /tmp/judge-want.$$$$ /tmp/judge-have.$$$$ | sed -n '1,20p'
+    rm -f /tmp/judge-want.$$$$ /tmp/judge-have.$$$$
+  fi
+}
+
+case "$CASE" in
+  ex-id-set) ex_id_set; exit 0 ;;
+  different-sources) different_sources ;;
+esac
+
+# ---------------------------------------------------------------------------
+# 场景类判据：交给 nous-ext-probe（真进程 / 真库 / 真 /proc）。
+# ---------------------------------------------------------------------------
+
+if [ ! -x "$PROBE" ]; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "SKIP: cargo 不在（$ID）" >&2
+    exit 0
+  fi
+  cargo build --offline --quiet \
+    -p nous-ext-probe -p nous-server \
+    -p exts-section -p exts-tool -p exts-nameplate -p exts-handle -p exts-combo -p exts-evil \
+    >/dev/null 2>&1
+fi
+
+if [ ! -x "$PROBE" ]; then
+  echo "SKIP: 判据执行器没编出来（$ID）" >&2
+  exit 0
+fi
+
+"$PROBE" "$CASE" $DIRTY
+exit $?
