@@ -224,8 +224,21 @@ async fn a_delta_publishes_the_stored_value_and_the_submitted_ops() {
     };
     let json = serde_json::to_value(change).unwrap();
     assert_eq!(json["ops"], ops, "ops 是提交上来的那批，不是重算的 diff");
-    assert_eq!(json["value"], json!({ "title": "Hello" }), "value 是重放后的值");
-    assert_eq!(json["version"], json!(1));
+    assert_eq!(json["version"], json!(1), "version 是它接着的那个 base 的版本");
+
+    // **这条是防退化的**：提交上来的是 ops，压根没有 value —— publication 里的 value 只能是从
+    // 库里读回来的。把 `StoredBatch` 换回「提交时那份副本」那天，这条会红：read-only 连接是
+    // 独立读，不看内存里的任何东西。
+    let reader = Storage::open_read_only(&path).expect("同一份库的第二个读连接");
+    let current = reader
+        .materialize(31, nous_durable::DocumentPoint::Current)
+        .expect("读得出来")
+        .expect("文档在世");
+    assert_eq!(
+        json["value"], current.value,
+        "publication 的 value 必须等于「直接读回该文档的当前值」"
+    );
+    drop(reader);
 
     session.close().await.unwrap();
     let _ = std::fs::remove_file(&path);

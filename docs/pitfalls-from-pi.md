@@ -75,3 +75,36 @@ assistant 多 `durationMs`，tool-result 多 `durationMs`）。冻结的那份�
 **守卫（机器判据）**：`crates/nous-durable/tests/records_fixture.rs::nous_ai_message_is_narrower_than_what_the_engine_stored`
 **故意断言「解析不了 / 会丢键」**。哪天 `nous-ai` 补上了 system 变体和未知键兜底，这条会红 —— 那时是
 好事：该删的是这条断言和这一节，不是改断言让它继续绿。
+
+## 2026-11-16 · 中途 system 的两档处理（#23 的范围刀）
+
+**起因**：`#23` 票面最初把「anthropic → 顶层 `system` 参数」当成 system 的全部通路，并写了「`toolsAdded`
+渲成工具声明文本」。两处都被上游源码推翻，用户核过后确认。这一节记源码事实，票面照它写。
+
+**第一条：首条与中途走的是两个函数**（`packages/ai/src/utils/text.ts`）
+
+| 场景 | 上游函数 | 渲染成什么 |
+|---|---|---|
+| 首条（`normalizeContext()` 折出来的那条） | `getSystemMessageText` | `content` 文本 + `sections` 的**值**，`"\n\n"` 连接，空串跳过 —— 不加任何框 |
+| 中途（模型原生吃中途 system 时） | `renderSystemMessageUpdate` | `content` 文本 + 每个 section **带名字框起来**：`Updated system prompt section "x":\n\n<值>` / 值为 `null` → `Removed system prompt section "x".` |
+
+所以「anthropic 把 system 放顶层 `system` 参数」**只对首条成立**；中途 system 按
+`anthropic-messages.ts:1638-1667` held back 到下一个 assistant 之前，落成 messages 里的
+`role:"system"` 项 —— 注释写了原因：夹在 `tool_use` 与其结果之间会被服务端拒。
+
+**第二条：工具集不进 prompt 文本。** `toolsAdded` / `toolsRemoved` 的 replay 目标是**请求的工具列表**
+（`transcript.ts::getCurrentTools`：首次声明顺序、同名替换在原位、`toolsRemoved` 删除），
+`renderSystemMessageUpdate` 也不渲工具。任何「把工具声明拼进 system 文本」的实现都与上游不同序。
+
+**第三条：`sections` 是打补丁，不是全量覆盖。** `getCurrentSystemMessage` 用 `Map.set` 同名就地替换
+（保位置）、`null` 删除；被删掉的名字再出现时排到最后。渲染时按 Map 的插入序出值。
+
+**第四条：fixture 里没有 compaction entry。** 机器查过（`sqlite3` 只读）：`pi.system` **17 条**、
+`pi.compaction` **0 条**；17 条全是 `model[0]` 一条 system、`content` 全为空串、15 条带 `toolsAdded`
+（各 4 个工具）、14 条带 `sections`（`preamble` / `cwd` / `prompts`）、`toolsRemoved` 从未出现。
+真数据里的「中途 system」只有两处：会话 2（entry 12 → 410）、会话 14（entry 23 → 457）。
+**要验「content 按序追加」只能用构造数据**，测试里必须标出是构造的，别假装 fixture 有。
+
+**由此定的范围（用户刀）**：`#23` 只做「表示 + collapse」—— 原生 flush 分支（`renderSystemMessageUpdate`
++ anthropic 的 `pendingSystemMessages`）**不做**，因为我们手上没有「吃原生中途 system」的模型能对照，
+写出来没有任何判据能红。
