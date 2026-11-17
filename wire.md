@@ -30,16 +30,9 @@
 
 会话**树**（不是列表）。返回 `{ items: [...] }`，**新的在前**。
 
-每条的形状：
-
-```
-{ id, name, parent: {id, at} | null, owner, model: "provider/modelId",
-  thinkingLevel, thinkingLevels: string[], skills: string[], template: string|null,
-  readOnly: bool, busy, updatedAt: number | null, last: {id, kind, text} | null,
-  archived: null | {at, gen, purged} }
-```
-
 我们依赖：`id` `name` `parent` `model` `thinkingLevel` `readOnly` `busy` `updatedAt` `last` `archived`。
+
+字段形状以 `crates/nous/server/tests/endpoints.rs::get_sessions_returns_the_wire_shape_newest_first` 为准（本文件只索引端点与约束）。
 
 - `archived` 是**归档墓碑**，`null` = 没归档过（捞回之后也回到 `null`），对象 = `{at, gen, purged}`，
   `at` 是 epoch **毫秒**。老引擎整个字段缺席时也是 `null` —— 别当布尔用，也别拿它判断
@@ -73,7 +66,8 @@
 
 ### POST /v1/sessions/:id/messages
 
-body `{ content, requestId?, waitMs?, whenBusy? }`。
+消息 body 的字段形状暂无测试背书（现有测试只钉关键字段的语义，不钉完整 body）；
+这里只留语义，不带形状，也不假装有权威测试指针。
 
 - `requestId` 是幂等锚：重连重发同一句拿到同一次提交，不会答两遍。**桌面端一定要传**。
 - 不传 `waitMs` 时立即回 `202 { submissionId, status: "queued" }`，真正的流走 SSE。
@@ -319,11 +313,8 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ### GET /v1/models
 
-`{ default: {provider, modelId} | null, items: [...] }`。`items[]` 每条：
-
-```
-{ provider, modelId, name, thinkingLevels: string[], contextWindow, maxTokens }
-```
+返回默认模型 + 模型列表。**模型列表每项的字段形状暂无测试背书**（本库还没有该端点的快照测试）；
+这里只留语义，不带形状，也不假装有权威测试指针。
 
 - `default` 是**盘上那只眼当前指着的**模型，不是我们的默认值。
 - `thinkingLevels` 从少想到多（`off` … `max`），**每个模型不一样**。换模型必须按新模型的表
@@ -364,24 +355,18 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - 不带 `path` = 引擎给的起点（board 的 map 根）；`path: ""` 是起点，不是「没有路径」。
 - 浏览发生在引擎进程里：引擎以后跑在远程机器上，这一页一行都不用改。
 
-### POST /v1/sessions —— 建会话的完整 body
+### POST /v1/sessions —— 建会话
 
-```jsonc
-{
-  "name": "…",                        // 可省；省了就是空串 ""，本库不生成默认名
-  "model": {"provider":"…","modelId":"…"},
-  "thinkingLevel": "off|minimal|low|medium|high|xhigh|max",
-  "skills": ["code-review", "…"],     // 可省 = 不挂
-  "template": "审查一段改动" | null,   // **总是发**：null 是「明确不要」
-  "extensions": ["…"],                // **只能加，不能减**：见下面那条 ⚠
-  "cwd": "/opt/Nous/content/new1/map",
-  "machine": "j1900"                  // 缺省 = 本机
-}
-```
+**建会话 body 的字段形状暂无测试背书**（本库还没有 `POST /v1/sessions` 的快照测试）；
+这里只留语义，不带形状，也不假装有权威测试指针。
 
-- 这几个键是 **camelCase**（`thinkingLevel` / `cwd` / `machine`）。写成 snake_case
-  不会报错，只会**悄悄不生效** —— `crates/nous-engine/tests/parse.rs` 里有条测试钉着它。
-- `template` 省掉 ≠ 不要：省掉服务端会用仓库默认值，于是「我明明点了无模板又给我塞回来」。
+- `skills` 可省 = 不挂。
+- 名字省略就是空串 `""` —— 本库不生成默认名；显示为「对话 N」是客户端自己的占位，别写回库里。
+- `template` **总是发**：`null` 是「明确不要」。省略会被服务端当成使用仓库默认值，于是
+  「点了无模板又被塞回来」。
+- `extensions` **只能加，不能减**（见下面那条 ⚠）。
+- 请求键是 **camelCase**（`thinkingLevel` / `cwd` / `machine`）。写成 snake_case
+  不会报错，只会**悄悄不生效**。键名语义属于约束，不等于这里抄了完整 body 形状。
 - 201 回来带 `missing` / `missingExtensions` / `missingTemplates`：引擎那边找不到的东西，
   客户端要如实说，别当成功。
 - 建完再 `POST /v1/selection { id }` 把盘上那只眼切过去（切不过去不该把会话判死）。
@@ -431,18 +416,17 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ## 另一个来源：`d6s4v1`（`agent.sqlite` 的 X 光机）
 
-数据监控室（`crates/nousdesk/src/data_console.rs`）有一半数据**不走引擎**，走的是面板
-`d6s4v1`：`/p/<board>/d6s4v1/api/*`。地址同样是「宿主 + board」，别在调用点拼。
+数据监控室有一半数据**不走引擎**，走的是面板 `d6s4v1`：`/p/<board>/d6s4v1/api/*`。
+地址同样是「宿主 + board」，别在调用点拼。
 
 客户端在 `crates/nous-engine/src/console.rs`，五个端点：
 
-| 端点 | 我们依赖什么 |
-|---|---|
-| `GET api/overview` | `file{db,wal,shm,mtime,walMtime}`、`pragmas{pageSize,pageCount,freelist,journalMode,schemaVersion}`、`bytes{free,used}`、`counts{<表名>: 行数}`、`tables[{name,rows,bytes,pages}]`、`indexes[]`、`entriesByKind[{kind,count,bytes}]`、`integrity{checked,ok,messages}`、`target{id,path}` |
-| `GET api/conversations` | `count`、`list[{id,entries,tokens,cost,toolCalls,models,firstAt,lastAt,title}]`、`totals{entries,tokens}` |
-| `GET api/conversation?id=N` | `id`、`entries[{seq,kind,role,tokens,bytes,at,text,isError,tool,usage}]`、`tasks[{id,kind,status,startedAt,endedAt,ms}]`、`documents[]`、`submissions[]`、`prompt{messages[{id,label,text,chars,tokens}],totals}` |
-| `GET api/cost` | `totals{entries,tokens,input,output,cacheRead,cacheWrite,reasoning,cost}`、`byDay/byHour/byModel/byConv[{label,tokens,cost,calls,input,output,cacheRead}]`、`note` |
-| `GET api/health` | `tasks{total,byStatus,stuck,sleeping,avgMs,p95,slowest[{id,conv,kind,status,startedAt,endedAt}]}`、`submissions{total,byStatus,unanswered[{id,conv,status}]}`、`documents{documents,byKind,revisions,base,delta,deltaRatio}`、`walBytes`、`freelist{free,bytes}`、`maintenance[{label,why,cmd,danger}]` |
+**这段只做端点索引，不抄字段**：`GET api/overview`
+（文件 / pragma / 字节统计 / 表与索引 / entries 的 kind 分布 / 完整性 / 目标库）、
+`GET api/conversations`（会话树）、`GET api/conversation?id=N`（单条会话的 entry / task /
+document / submission / prompt）、`GET api/cost`（按日 / 时 / 模型 / 会话的消耗），
+`GET api/health`（任务 / 提交 / 文档 / WAL / freelist / 维护计划）。字段形状无测试背书，
+暂不写在这里；真正用到时先补测试再把指针换上。
 
 几条别忘：
 
