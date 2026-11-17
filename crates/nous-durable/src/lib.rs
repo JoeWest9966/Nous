@@ -2,9 +2,9 @@
 //!
 //! 已落地：`storage`（只读导入 + 九张表的行/语句 + 会话树渲染 + 提交语义 + 文档修订重放
 //! + 一致性套件）、`types`（记录与草稿的形状）、`session`（#13）。
-//! 进行中：`harness`（#14）—— `json` / `partial` / `generation` / `abort` 已落，`live` 只落类型面
-//! （`LiveState` / `LiveGeneration` / `ToolSlot`）与 `live_record`；`live` 的 7 个函数、
-//! `checkpoint_when`、8 类 `MessageChange` 投影（`#22` 共用那张表）未落。
+//! 进行中：`harness`（#14）—— `json` / `partial` / `live`（类型 + 九个 draft 变更函数 +
+//! `checkpoint_when`）/ `generation` / `abort` 已落；剩 8 类 `MessageChange` 的投影（`#22` 共用
+//! 那张表）。
 //!
 //! ## 契约面（AGENTS.md §二）
 //!

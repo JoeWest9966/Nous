@@ -91,7 +91,7 @@ harness 是本库最后一个大未知，先出形状能省掉两轮返工。
 |---|---|
 | 上游 | `live.ts:139-236`（`LiveRun` / `LiveState` / `LiveDoc` / `PROGRESS_COMMIT`）+ `:250-410`（`cutOffTooOften` / `salvageable` / `cutOffCount` / `RunEnd` / `endRun` / `addCompactionStatus` / `compactionStatus` / `removeCompactionStatus` / `failCompactionStatus` / `toolSlot` / `finishSlot` / `removeNestedSlots` / `clearProgress`） |
 | 不取 | `:411-452` `settleSchedulerOutcome` —— 它的入参是 scheduler 的 `TaskOutcome`，搬它等于搬调度器 |
-| 本库落点 | `crates/nous-durable/src/harness/live.rs`（**进度 2026-11-17**：类型面三件 `LiveState` / `LiveGeneration` / `ToolSlot` 已落，其余类型与 7 个函数、`LIVE_DOC`、`checkpoint_when` 未落） |
+| 本库落点 | `crates/nous-durable/src/harness/live.rs`（**进度 2026-11-17：已落**）—— 全部类型 + 九个 draft 变更函数（`end_run` / `add_compaction_status` / `compaction_status` / `remove_compaction_status` / `fail_compaction_status` / `tool_slot` / `finish_slot` / `remove_nested_slots` / `clear_progress`）+ `checkpoint_when`。三处转译：交叉类型 → `SlotProgress` + `flatten`；`Draft<ToolSlot \| NestedToolSlot>` → `SlotRef` 枚举；`tx.settleSubmission` → `end_run` 把结算清单返回给调用方。不落：`LiveDoc.version`/`migrate`（本库没有 per-document 版本号，也没写过 v1/v2）、`defineDoc` 地址盖章、任务类型判定那组 |
 | 公开面 | `LiveState { run, generation, tools, nested_tools, compactions, compaction_failure, run_failure }`；`LiveRun { task_id, inputs, turns, first, after_run }`；`LiveGeneration { attempt, message, retry, deferred }`；`ToolSlot` / `NestedToolSlot` / `CompactionStatus` / `CompactionFailure` / `RunFailure` / `RunFailureReason` / `RunEnd`；函数 7 个：`end_run` / `add_compaction_status` / `remove_compaction_status` / `fail_compaction_status` / `tool_slot` / `finish_slot` / `clear_progress`；常量 `LIVE_DOC`（`kind: "pi.live"`、`version: 3`、`scope: conversation`、`history: latest`、`fork: initial`）+ `checkpoint_when(&LiveState) -> bool` |
 | 注意 | `checkpoint_when` 是一条**真规则**（上游注释写死「不要加 delta 计数上限」，工具输出基准在测它）：空闲 / 交接 / 两个工具之间必须是完整 base。我们要照抄这条判据，别改成「每 N 条 delta 一个 base」 |
 
@@ -151,7 +151,25 @@ abort 与 `classify` 的竞争同理：`Session` 的存储锁保证先到的那�
 「committed state stays consistent」是一条判据（`an_abort_after_the_terminal_commit_writes_nothing`），
 不是注释。
 
-**(5) 尾帧提交抓得住了 —— 靠等号，不靠基准票。** 起初这里写的是「抓不住」（时间线上尾帧落在
+**(5) 书签类变更：每次状态转换自带一次提交，不许攒。** 上游靠 deferred 的 1 秒窗口兜住低频
+变更（"stored with the next commit that touches `pi.live`, or after `persistWithinMs`"）。砍了
+deferred 之后这个兜底没了，于是必须换一条规矩：**工具启动一次提交、结束一次提交、abort 一次
+提交**；不许"攒到工具结束"，也不许"跟着下一个事件走"。
+
+为什么不能"跟下一个事件走"：一个 `bash` 跑 60 秒，期间没有任何别的提交 —— 攒就等于客户端
+60 秒看不见这个工具。代价是每个工具多一两次提交（110 ms / 160 次这个量级下看不见），换的是
+**可见性不依赖"下一个事件什么时候来"**。
+
+**这条的提交点不在 `live.rs`**：`live.rs` 的九个函数只改 `Draft<LiveState>`，不碰 `Session`
+（上游签名同样只拿 `Tx` + `Draft`）；提交点在工具执行层 / 调度层。所以这是一条**跨票约定**，
+`#22` 的判据直接用：
+
+> SSE 上「工具启动」必须在启动后 ≤ 1 个事件循环出现，不许等到工具结束。
+
+这条能红（把提交挪到结束时，客户端 60 秒看不到工具），而且它跨 `#14` 与工具执行层：两边各自
+正确、接缝处仍可能出错，正是最容易没人负责的地方。
+
+**(6) 尾帧提交抓得住了 —— 靠等号，不靠基准票。** 起初这里写的是「抓不住」（时间线上尾帧落在
 终态之**前**，既不违反节拍也不违反「终态在后」）。**那是判据写宽了，不是判据写不了**：当时
 断言的是区间 `2..=5`，而 `start_paused` 下虚拟时钟精确到毫秒、同一份输入每次得到同一个数 ——
 区间恰好给「补一帧」（4 次）留了位置。现在写成 `assert_eq!(partials, 3)`（40 片 × 10 ms、
@@ -285,7 +303,7 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 | `dropping_the_append_plan_is_caught_by_the_ledger_not_by_the_bytes` | 负向对照。**结论与设计时的预期相反**：整块 `set` 不会让体积断言红 —— `Draft::prepare` 每次都 `diff_revisions` 兜底，diff 自己就重新推导出那条 `a`，字节一模一样；会红的是账本。所以这条同时证明「度量本身不是空转」（手搭整块写必须被判据抓住） |
 | `partial_changes_restores_what_a_failed_commit_took` | 提交失败后 `restore()` 把 changes 放回去，下一次提交先写它们 |
 | `harness_json.rs` 的 `growing_an_array_keeps_the_append_record` | `assign_json` 里「先插尾巴、再递归前缀」的顺序（顺序反了这条红；它不改变 ops 也不改变值，是账本断言） |
-| `harness_live.rs` 的 5 条 | `pi.live` 类型面的字段名逐字对上游（`callId` / `droppedBytes` / `pollAt` / `unoffered` 缺席而非 `false`） |
+| `harness_live.rs`（15 条） | 上半字段名：`pi.live` 的键逐字对上游（`callId` / `droppedBytes` / `pollAt` / `parentTaskId` / `unoffered` 缺席而非 `false`）、十种 `RunFailureReason` 与三档 `DiagnosticSeverity` 拼写、往返不变。下半行为：`checkpoint_when` 恰在没东西跑时成立（生成 / 工具 / 嵌套三种假各自能红）、`end_run` 结算输入并清掉这一轮呈现、只有没答上才记 `runFailure`（`afterRun` 那轮不记）、`tool_slot` 两种槽都找得到（嵌套二分）、`finish_slot` 标 done 并清进度、压缩状态排序 / 删空 / 失败记录、`remove_nested_slots` 连带子、`clear_progress` 只删那五样 |
 | `live_doc_is_a_complete_base_when_nothing_runs` | `checkpoint_when` 在空闲 / 交接 / 两工具之间为真（上游那条不许改成 delta 计数） |
 | `convert_partial_writes_an_aborted_assistant_entry` | abort 落库的形状（`stopReason: "aborted"`，正文是流到那一刻的那段，之后 `generation` 清掉） |
 | `every_timeline_face_has_a_fake_that_turns_it_red` | 四条时间线断言的**反向对照**：造一条「10ms 隔两次提交」的时间线、一条重叠的、一条「先终态后 partial」的、一个泄漏的定时器，每条都必须被抓。没有这一条，另外四条只是「反正都通过」 |

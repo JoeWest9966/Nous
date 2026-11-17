@@ -85,12 +85,13 @@ export const DEFAULT_PROGRESS_POLICY: ProgressPolicy = {
 |---|---|---|
 | 流式 partial（`generation.message`） | 闸 `partialIntervalMs = 100` | **已落**（`harness/generation.rs`）：每帧一次真提交 = 一条 revision |
 | 工具输出（`tools[].output` / `droppedBytes` / `diagnostics`） | 闸 `outputIntervalMs = 100`，另按「每写 1 字节歇 1/100 KiB 秒」配速（`chord/src/output.ts:306` `PROGRESS_BYTES_PER_SECOND = 100 * 1024`，`:395` 用它算下一次） | **未落**（属工具执行票）。落的时候照抄这两个数，别自创 |
-| 书签类变更（`run` / `compactions` / `compactionFailure` / `runFailure` / `retry` / abort） | **无自家节拍**：都走 `PROGRESS_COMMIT`（deferred），攒到下一次读或写 `pi.live` 的提交顺手带走，最迟 `persistWithinMs = 1000` | **无窗口**：deferred 被砍（`docs/decisions.md`），这些变更落在调用方那次提交里，一次提交一条 revision。它们本来就低频（工具起止、压缩状态、重试标记、abort） |
+| 书签类变更（`run` / `compactions` / `compactionFailure` / `runFailure` / `retry` / abort） | **无自家节拍**：都走 `PROGRESS_COMMIT`（deferred），攒到下一次读或写 `pi.live` 的提交顺手带走，最迟 `persistWithinMs = 1000` | **无窗口，但必须自己提交**：deferred 被砍（`docs/decisions.md`）之后没有「攒着」这回事 —— **每次状态转换自带一次提交**（工具启动一次、结束一次、abort 一次），一次提交一条 revision。不许攒到工具结束，也不许「跟着下一个事件走」：一个跑 60 秒的 `bash` 期间没有下一个事件，攒就等于客户端 60 秒看不见它（`docs/harness.md` §1 ③ 附 (5)） |
 
-`live.rs` 的 7 个函数（`end_run` / `add_compaction_status` / `remove_compaction_status` /
-`fail_compaction_status` / `tool_slot` / `finish_slot` / `clear_progress`）**不提交**，只改
-`Draft<LiveState>`（与上游签名一致）。所以「书签类变更的节拍」不在 `#14` 里，它等于**调用方
-的提交节奏**；`#22` 的 SSE 出帧频率要从这里推出来，不能反过来假设。
+`live.rs` 的九个函数（`end_run` / `add_compaction_status` / `compaction_status` /
+`remove_compaction_status` / `fail_compaction_status` / `tool_slot` / `finish_slot` /
+`remove_nested_slots` / `clear_progress`）**不提交**，只改 `Draft<LiveState>`（与上游签名一致）。
+所以「书签类变更的提交点」不在 `#14` 里，在工具执行层 / 调度层；`#22` 的 SSE 出帧频率要从这里
+推出来（revision 在哪儿生成 → 帧在哪儿发），不能反过来假设「每条 commit 都有一帧」。
 
 为什么能这么定：
 
