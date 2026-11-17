@@ -52,14 +52,15 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 
 1. 正向依赖：`cargo tree -p nous-app --depth 1 -e normal` 含内核层的 `durable` / `wire` / `tools` / `runtime`，不含 `chord` / `rusqlite`。
 2. 反向依赖：内核层任一 crate `--depth 1` 都不依赖应用层。
-3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- crates/kernel` 与 `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。
+3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- crates/kernel` 与 `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
 4. 路由归属：`git grep -nE '\.route\(|axum::|tower::' -- crates/kernel` 为空。
 5. 数据面唯一入口：`crates/kernel` 之外不许出现 `rusqlite` / `Connection::open` / `.sqlite` / `PRAGMA` / `BEGIN IMMEDIATE`。
-6. 进程归应用层：`crates/kernel` 里不许出现 `std::process` / `Command::new` / `Child`。**内核不认识"进程"。**
+6. 进程归应用层：`crates/kernel` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。** 全仓**进程创建点恰好两个**、各一处：扩展子进程（`crates/app` 扩展监管）、工具子进程（`crates/platform/nous-tools` 的 `os_env` 适配文件，其余工具一律经它）；第三处即红（S1）。
+6b. 依赖方向：`cargo tree -p nous-durable --depth 2 | grep providers` 为空 —— 真相层不许依赖**会 sleep 的那个 crate**，不是"不许依赖 `nous-ai`"（拆完 `types` 允许被依赖，S2）。
 7. **端点索引唯一**：`git grep -l '^### GET /v1/'` 恰好 1 个文件（`wire.md`）。它只是索引——端点、用途、谁在用；**字段形状的权威在 `crates/*/tests/` 与 conformance 里**，两者冲突时**测试赢**。
 7b. **索引不抄字段**：`wire.md` 里出现 `"type":` 或 camelCase 字段名清单的段落数 = 0（抄一遍就会漂）。
-8. 代码不引文档：`git grep -c 'wire.md' -- crates/kernel` 为 0（测试引形状常量，不引文档路径）。
-9. 一个 workspace 根：全仓只有一个根 `Cargo.toml`；进 systemd 的 bin target 恰好 1 个。
+8. 代码不引文档：`git grep -n 'wire.md' -- crates/kernel` **去掉注释行后**为空（测试引形状常量，不引文档路径；注释里提一句不算，S8）。
+9. 一个 workspace 根：全仓只有一个根 `Cargo.toml`；**进 systemd 的 bin target 恰好 1 个**（排除 `nous-fixture`，S4）。
 10. 旧仓清空：`git grep -c 'Nous-Package'` 在代码与文档里为 0（只许出现在归档 README 与历史提交里）。
 11. 发现唯一：`grep -rn 'NOUS_SERVER_ADDR' -- crates/app` 为空（只许测试用；生产配置出现即红）。
 12. 进程只有一处：`git grep -n 'spawn' crates/app` 恰好 1 处，且位于扩展监管。
@@ -100,7 +101,7 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 - 因此客户端只有一个：**NousDesk**。它内部必须分层，否则将来移动端只能复制粘贴：
   - `core`：协议客户端、会话模型、状态重算，**无 UI 依赖**
   - `shell`：GPUI 渲染、输入法、窗口
-- 判据：`grep -rn 'gpui' NousDesk/crates/core` 为空；`core` 里不出现 `/p/<board>/`（只认 `resolve` + `/v1`）。
+- 判据：`grep -rn 'gpui' NousDesk/crates/nous-engine` 为空（核心层真名是 `nous-engine`；写 `crates/core` = 路径不存在 = 假绿）；`nous-engine` 里不出现 `/p/<board>/`（只认 `resolve` + `/v1`）。
 - 反悔点：移动端若最终必须用系统 WebView 而不是 core + 原生 shell，**ticket 机制要加回来**（形状照 §3.4 的反悔点）。
 - 不许做：不许复制粘贴 shell 代码做第二个客户端；不许为了"将来移动端"在 core 里塞平台分支。
 
@@ -128,6 +129,8 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 - **(b) 无契约调用必红**：`NousDesk` 里出现的每个 `/v1/…` 字面量，必须在 `wire.md` 里有对应标题；没有 → 要么补契约，要么这个调用是私有后门，删掉。
 
 **补那 5 个家族的顺序不许反过来：先写快照测试（真实请求 + 真实响应），再把标题加进 `wire.md`。**
+
+`/v1/machines` 另有两条（S10 / S11）：① 机器编目（机器 + 注解）**从块 `vq0f03` 搬进应用层**，搬完才允许删那个块；② 增补能力字段（os / arch / triple / rustc / 角色 / 兼容 target 列表），顺序同上——先快照测试，再进 `wire.md`。
 
 **反悔点**：出现"这条端点给将来的某个客户端留着"→ 直接删；真需要时再加回。
 **不许做**：不许按已死的面板/手机端的需求保留端点；不许在 `wire.md` 写字段清单；不许为了过判据 (a) 往客户端塞一个无人调用的函数。
@@ -159,8 +162,8 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 
 ### 3.5 部署与升级
 
-- j1900 不装 Rust：asus 编 `x86_64-unknown-linux-musl` 静态链接，`rsync` 过去。
-  判据：`sha256sum` 一致 + `ldd` 无动态依赖 + `systemctl restart` 后 `curl -s localhost:<port>/v1/device` 200。
+- **编译是带 target 的任务，派给"能力匹配且空闲"的机器**（S9）。每台机器登记 os / arch / target triple / rustc 版本 / 角色（`runtime` / `build` / 两者）+ **宿主兼容 target 列表**；运行时宿主**默认不收构建任务**（调度规则，不是物理限制；j1900 实测装有 `rustc 1.99.1`）。产物按 **target triple + 内容哈希**命名，装载前校验，不符即拒载（fail-closed，不重试不降级）。
+  判据：`sha256sum` 一致 + `ldd` 无动态依赖 + `systemctl restart` 后 `curl -s localhost:<port>/v1/device` 200；**运行时宿主进程树里不出现 `cargo`/`rustc`**（除开 build 角色）；产物 triple 在宿主**兼容列表**里（不是相等：musl 静态产物在 gnu 宿主上能跑，反过来不行）。
 - 一个单元：`nous-app` 是唯一进程，内核层是它的库。不搞两个 service。
 - 升级：`systemctl restart`（亚秒级），不做热升级、不做工号传递。
 - 资源硬顶，两类分开返回：连接数撞顶 → **503 + Retry-After**（可重试）；单文档/单库撞顶 → **413 / 507**（不可重试）。
@@ -200,7 +203,8 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 | `n8qkkj` | trigger 页 | node + `public/` | 面板前端 | **删**（NousDesk 已有 `/v1/triggers`） |
 | `k5411g` | 模型编目页 | node + `public/` | 面板前端 | **删**（NousDesk 已有 `/v1/models`） |
 | `d6s4v1` | storage X 光机 | node + `public/` | 面板前端 | **删**（诊断工具，不属于产品） |
-| `zefsvf` `vq0f03` | tailnet 面板 / vps 控制台 | node + `public/` | 运维本人 | **删**（运维不属于 Nous） |
+| `zefsvf` | tailnet 面板 | node + `public/` | 运维本人 | **删**（运维不属于 Nous） |
+| `vq0f03` | 机器编目（`/api/catalog`） | node + `public/` | `qrd3wh` 的 `/v1/machines`（缓存 60s） | **先搬后删**：编目搬进应用层 `/v1/machines`（S10），搬完才许删（S11） |
 | `cmqt66` | 块自带 agent 后端（一会话 + 四工具 + SSE） | node | 无 | **删**（被 nous-app + 扩展取代） |
 | `mcfpqm` `pxbgng` `hb7k3j` `7awa4h` | 归档库 / 对话列表 / 发起页 / 鱼骨（内容文档） | 只有文件 | 面板文档页 | **删**，需要的设计摘进 `docs/` |
 | `4qpzmw` `8ven4x` `n45` `p34pgp` `s9hzsp` `vh79pm` | 空/无标题 | 只有文件 | 无 | **删**前先看一眼（可能藏数据） |
@@ -241,7 +245,7 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 |---|---|---|
 | 明确返回错误 | 落一条 error 工具结果，模型看得到，继续 | 否 |
 | 超时 / 无响应 | 同上 + 一条可观测诊断（谁的调用、等了多久），不许静默降级 | 否 |
-| 崩溃 / 被 kill | 同上，允许自动重启**一次**；第二次崩 = 熔断（标 broken、不再调用、明确告知） | 仅"尚未开始执行"阶段 |
+| 崩溃 / 被 kill | 同上，允许自动重启**一次**；第二次崩 = **进程熔断**（标 broken、不再调用、明确告知；**无自动恢复**，只有重载能解）。段级「连续 3 次」熔断只用于**非崩**失败，**不因进程重启清零**。**进程熔断不写 `abandoned`** —— `abandoned` 只用于整机崩/重启的孤儿扫描（S6） | 仅"尚未开始执行"阶段 |
 
 铁律：**超时值由内核给**（不许扩展自己声明）；**只对"尚未开始执行"重试**（工具可能写文件、发请求，重试 = 重复副作用）。
 
@@ -257,7 +261,7 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 **三个触发源，一个实现**
 
 - 客户端 `POST /v1/sessions/:id/abort`、内核超时、扩展进程死 —— 三个源都调**同一个** `cancel`。
-- 判据：`grep -rn 'fn cancel' crates/` 恰好 1 处；三个源各有一条测试打这个实现。
+- 判据：取消**实现**只有一处（当前 `nous-chord/src/context.rs:323` `CancelHandle::cancel`；字面 `fn cancel` 另有 22 处是读取/测试/名字撞车，要逐行分类）；`abort` 的调用链上**必须出现它**（当前红：`nous-durable/src/session/commands.rs:172` 只写 `task["abortRequested"]`，全程没调 `cancel()`）；`grep -rn 'abortRequested'` 只命中一处函数；三个源各有一条测试打这个实现（S7）。
 - 不许做：不许任一触发源自己写一套收尾逻辑；不许把取消做成"只发信号不落提交"——那样重连后无痕，"谁取消的"永远查不出来。
 
 **终态形状：一个字段，四个值**
@@ -312,7 +316,7 @@ test -d crates/kernel || { echo "SKIP: crates/kernel 不存在，等 #14 搬迁"
 
 **背压：真正的风险不是任务数，是慢客户端**
 
-- 每条 SSE 连接必须有**未发送字节上限**（建议 1MB，计入硬顶）；到上限就断这条连接（复用现有 `Lagged` 断流路径），**不许无限缓冲**。
+- 每条 SSE 连接必须有**未发送字节上限**（建议 1MB，计入硬顶）；到上限就断这条连接（复用现有 `Lagged` 断流路径），**不许无限缓冲**。今天有界的是**帧数**不是字节（`routes.rs:214` `mpsc::channel(256)`、`hub.rs:59` `broadcast::channel`），所以这条现在是红的，且理由是"没有这个对象"（S5）。
 - 判据：一个只连不读的客户端，进程 RSS 涨不过 64 × 1MB 的余量，且到点被断开。
 
 **取消 vs 事务**
