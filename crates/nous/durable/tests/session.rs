@@ -82,8 +82,16 @@ fn base(value: Value) -> DocumentContent {
 
 // ── 1. 公开面就是 A3 那张表 ───────────────────────────────────────────────────
 
-/// A3 的五条：`commit` / `close` / `closed` / `snapshot` / `get_entry`。
-const A3_METHODS: [&str; 5] = ["close", "closed", "commit", "get_entry", "snapshot"];
+/// `Session` 的六条：A3 五条 + #42 加的 `create_conversation`（建会话是写，判据签字见
+/// `docs/decisions.md`）。
+const A3_METHODS: [&str; 6] = [
+    "close",
+    "closed",
+    "commit",
+    "create_conversation",
+    "get_entry",
+    "snapshot",
+];
 
 #[test]
 fn session_public_face_is_exactly_the_a3_table() {
@@ -122,7 +130,7 @@ fn session_public_face_is_exactly_the_a3_table() {
     assert_eq!(
         async_methods,
         A3_METHODS,
-        "`Session` 的 async 方法必须就是 A3 的五条；加方法先改 #13 票面与 docs/storage.md §10.5"
+        "`Session` 的 async 方法必须就是这六条；加方法先改 #13/#42 票面与 docs/decisions.md"
     );
     // 同步的只有构造器：公开面不含「再多一个同步入口」。
     assert_eq!(
@@ -504,5 +512,33 @@ fn stored_batches_describe_what_the_commit_stored() {
     assert_eq!(result.batches[0].changes.len(), 2);
     assert_eq!(result.batches[1].changes.len(), 1);
     drop(storage);
+    let _ = std::fs::remove_file(&path);
+}
+
+// ── 5. 建会话是写：经 Session 走观察者，不再有第二条裸 Storage ────────────────
+
+#[tokio::test]
+async fn create_conversation_publishes_through_the_observer_registry() {
+    let path = temp_db("create-publishes");
+    let registry = ObserverRegistry::new();
+    let recorder = Recorder::default();
+    let _observation = registry.attach(Arc::new(recorder.clone()));
+    let session = Session::with_observers(Storage::open(&path).unwrap(), registry);
+
+    // #42 的 bug：旧实现开第二条裸 Storage，建会话不经过 ObserverRegistry，
+    // recorder 里一条都没有 —— 多客户端下别人看不到新会话。
+    assert!(recorder.seen.lock().unwrap().is_empty());
+    let created = session
+        .create_conversation(json!({ "name": "from-test" }))
+        .await
+        .unwrap();
+    assert_eq!(created["name"], json!("from-test"));
+    assert!(created["id"].is_i64(), "返回里带新会话 id");
+    assert_eq!(
+        recorder.seen.lock().unwrap().len(),
+        1,
+        "建会话必须像 commit 一样广播一份 publication"
+    );
+    session.close().await.unwrap();
     let _ = std::fs::remove_file(&path);
 }

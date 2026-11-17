@@ -1,0 +1,23 @@
+{
+  "id": 2,
+  "name": "wire-shape",
+  "model": {
+    "provider": "snapshot",
+    "modelId": "snapshot/model-1"
+  },
+  "thinkingLevel": "medium",
+  "skills": [
+    "code-review"
+  ],
+  "template": null,
+  "extensions": [
+    "code-review",
+    "nous"
+  ],
+  "cwd": "/tmp",
+  "machine": "local",
+  "readOnly": false,
+  "missing": [],
+  "missingExtensions": [],
+  "missingTemplates": []
+}

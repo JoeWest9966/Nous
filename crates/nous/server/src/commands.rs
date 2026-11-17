@@ -14,13 +14,12 @@ use async_trait::async_trait;
 use nous_durable::session::commands::{
     abort, fork, submit_message, CommandError, ForkRequest, SubmitRequest,
 };
-use nous_durable::session::{
-    CommitObserver, ObserverRegistry, Session, SessionError,
-};
+use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
 use serde_json::Value;
 
 use crate::error::{Result, ServerError};
+use crate::records::{CreateSessionRequest, CreatedSession};
 
 /// 受理结果（`POST /messages` 的 202 体）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +37,9 @@ pub struct ForkResult {
 
 #[async_trait]
 pub trait CommandSource: Send + Sync {
+    /// 建会话：经 `Session::create_conversation`，和别的写共享一把锁并广播帧。
+    async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession>;
+
     async fn submit(
         &self,
         session: i64,
@@ -77,6 +79,15 @@ impl DurableCommands {
 
 #[async_trait]
 impl CommandSource for DurableCommands {
+    async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession> {
+        let config = request.into_config();
+        let value = self.session.create_conversation(config).await.map_err(|error| match error {
+            SessionError::Closed => ServerError::Conflict("session is closed".to_string()),
+            other => ServerError::Internal(other.to_string()),
+        })?;
+        serde_json::from_value(value).map_err(|error| ServerError::Internal(error.to_string()))
+    }
+
     async fn submit(
         &self,
         session: i64,
@@ -127,6 +138,10 @@ pub struct ReadOnlyCommands;
 
 #[async_trait]
 impl CommandSource for ReadOnlyCommands {
+    async fn create(&self, _: CreateSessionRequest) -> Result<CreatedSession> {
+        Err(read_only())
+    }
+
     async fn submit(&self, _: i64, _: Value, _: Option<String>) -> Result<SubmitResult> {
         Err(read_only())
     }

@@ -240,3 +240,24 @@ durable-until-acked），把这条 pragma 去掉，同时重跑 `commit_throughp
 
 **反悔点**：某条判据的"排除量"本身不稳定（依赖环境、依赖网络）→ 那就不是排除，是环境依赖，
 要改成 SKIP 并写明依赖什么；别为了 `N > 0` 去凑一个固定值。
+
+---
+
+## 2026-11-18 · `Session` 公开面从 5 改 6：建会话进 `Session`，不开第二条写通道
+
+**决定**：`nous-durable::session::Session` 加第六个 async 方法 `create_conversation(req)`；
+`POST /v1/sessions` 经它建会话，`DurableCommands` 只持一条 `Session`。判据
+`tests/session.rs::session_public_face_is_exactly_the_a3_table` 的 `A3_METHODS` 从 5 条改 6 条，
+理由在票面（#42）与本条同时签字。
+
+**理由**：#42 起初为绕开「`Session` 公开面恰好五个方法」这条判据，在 `DurableCommands` 里
+开了第二条裸 `Storage`（`create_storage`）。那不只是风格问题：裸 `Storage` 不挂
+`ObserverRegistry`，建会话不广播任何帧，多客户端下别人看不到新会话。用架构迁就判据，
+和禁掉的「单行豁免」是同一类东西。**建会话是写**（改库、要广播），和 `commit` / `fork`
+同类，本就该走 `Session` 的同一把写锁与同一份 publication。请求/响应形状
+（`CreateConversationRequest` / `CreatedConversation` / `ModelRef`）下沉到 durable 的
+`session::commands`，端点层复用，不让 `Session` 的签名反向依赖 `nous-server`。
+
+**反悔点**：如果 `create_conversation` 哪天退化成只写一条元数据、和 entry/task 提交
+不共享同一个写者与观察者（即建会话不再需要广播帧），就把它从 `Session` 挪出去，
+并把公开面判据改回 5 条 —— 同样要在这里签字、同时改票面，不许再偷偷开第二条通道。
