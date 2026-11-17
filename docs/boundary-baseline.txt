@@ -7,9 +7,11 @@
 # 只数文件，不数入口——同一个文件里 3 个入口是欠账，不是 3 个边界。
 #
 # 集合的生成命令（S12 字面，`scripts/verify.sh` 第 5 段判据 6 逐字执行）：
-#   grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
-#     | grep -vE '(/tests/|tests\.rs$)' | sort
-#   再从结果里减掉下面「排除项」里逐行列出的路径（目录以 / 结尾，文件可带 :行号）。
+#   grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' crates --include=*.rs | sort
+#   再从结果里减掉下面「排除项」里逐行列出的路径（目录以 / 结尾）。
+#   数的是**构造点**（谁建了进程），不是 `.spawn()`：`os_env.rs:443` 的 `cmd.status()`
+#   也在创建进程，`\.spawn\(\)` 数不到它。判据 12 用同一条 pattern（同一个概念不许两种写法）。
+#   判定口径变更（2026-11-17，集合成员不变、仍是 2 个）：`.spawn\(` → 构造点；
 spawn_files=2
 #   crates/nous/tools/src/os_env.rs   为什么留着：终端会话的唯一执行面（shell 与 taskkill）
 #   crates/nous/ext/src/spawn.rs      为什么留着：扩展子进程的唯一创建处（S1 白名单第二个位置）
@@ -19,9 +21,15 @@ spawn_files=2
 
 # 排除项（不数；逐行写理由。判据 6 会从集合里减掉这些路径）
 #   crates/nous/ext-probe/                       为什么排除：探针 binary（起一个 nous-server 逐帧验协议），不进 systemd，不是生产路径
-#   crates/nous/ext/src/runtime.rs:537           为什么排除：`scope.spawn(move || …)` 是 `std::thread::scope` 的**线程**，不是进程创建（S1 只数进程）
-#   crates/nous/tools/src/output_decode.rs:198   为什么排除：在 `#[cfg(windows)] fn console_code_page` 里（Linux 不编，判据排除该块）
+#   crates/nous/tools/src/output_decode.rs:198   为什么排除：在 `#[cfg(windows)] fn console_code_page` **整块**里（Linux 不编）。
+#                                               现状：该文件已无构造点（0 命中）；留着是给那个 block 备案，不是它在挡什么
 #   tests/ 与 *_test(s).rs                       为什么排除：测试夹具（S12 明写不算；生成命令里已 grep -vE '(/tests/|tests\.rs$)'）
+#
+# 排除项的规矩（2026-11-17 签字）：
+#   排除只许是**目录**或**整块**（`#[cfg]` 关掉的那种）。**单行排除一律当 smell** ——
+#   单行豁免是永久豁免：以后真在那行加进程创建也永远不红。要单行排除就得另找人签字。
+#   （原先给 `ext/src/runtime.rs:537` 的单行豁免已按这条规矩撤回：pattern 改成数**构造点**
+#    之后它根本不进集合，不需要豁免。）
 #
 # 已知欠账（不设判据，只记账）：
 #   os_env.rs 一个文件里有 3 个入口（363 主命令 / 412 taskkill / 915 shell），

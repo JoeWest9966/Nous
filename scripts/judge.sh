@@ -165,6 +165,8 @@ ex_id_set() {
   printf '%s\n' "$ids" | grep -qx 'EX-81' && has81=1
   printf '%s\n' "$ids" | grep -qx 'EX-82' && has82=1
   echo "has_EX-81=$has81 has_EX-82=$has82"
+  # 自检的另一半：附录 A 的编号集合 == --ids 集合（spec 在 $NOUS_SPEC 下才真判；缺失时走 SKIP）
+  ex_id_set_selfcheck
 }
 
 # EX-81：judge.sh 自己不许硬编码观测值。
@@ -178,11 +180,14 @@ different_sources() {
 ex_id_set_selfcheck() {
   # 附录 A 的编号集合与 --ids 的集合相等。
   # spec 的唯一真相在仓外（`/opt/Nous-spec`，本仓 `docs/spec/` 只留指针）：附录 A 的 EX 编号从那里读。
-  # `NOUS_SPEC` 可覆盖（CI / 别的机器上 spec 不在 /opt 时）。
-  local spec_dir="${NOUS_SPEC:-/opt/Nous-spec}/docs/spec"
+  # `NOUS_SPEC` 可覆盖（CI 把它指到 checkout 下来的 spec 树）。
+  spec_dir="${NOUS_SPEC:-/opt/Nous-spec}/docs/spec"
   if [ ! -f "$spec_dir/ext-runtime.md" ]; then
-    echo "ids_equal=0（spec 不在 $spec_dir：ext-runtime.md 缺失）"
-    return
+    # 载体不存在 = SKIP（stderr），**不是绿**：两端都空会假绿（EX-57 就是查这个的）。
+    echo "SKIP: spec 不在（EX-57 自检跳过）" >&2
+    echo "  spec 路径：$spec_dir/ext-runtime.md（缺省 /opt/Nous-spec，用 NOUS_SPEC 覆盖）" >&2
+    echo "ids_equal=SKIP"   # stdout 明写：不许出现 ids_equal=1（不许绿）
+    return 0
   fi
   want=$(sed -n '/^| EX-[0-9]/s/^| \(EX-[0-9]*\) .*/\1/p' "$spec_dir/ext-runtime.md" | sort -u)
   have=$(./scripts/judge.sh --ids | sort -u)

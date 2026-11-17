@@ -432,6 +432,19 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
 		fi
 	}
 
+	# 排除必须可观测（spec 读法第 6 条：负向断言要配一个只有真实现才产生的字节）。
+	# `grep -v` 的路径拼错会排掉 0 行，看上去和"排对了"一样绿 —— 所以每条判据都把
+	# 「排掉了 N 行，来自：<路径×行数>」打进输出，并断言 N > 0。
+	report_dropped() {  # $1=判据名 $2=被排掉的清单 $3=分隔符（默认 :）
+		local who="$1" dropped="$2" sep="${3:-:}" n
+		n=$(printf '%s\n' "$dropped" | grep -c . || true)
+		if [ "$n" -eq 0 ]; then
+			echo "$who 的排除项是死的：排掉 0 行（路径拼错？规则失效？）"
+			return 1
+		fi
+		echo "$who 排掉了 $n 行，来自：$(printf '%s\n' "$dropped" | cut -d"$sep" -f1 | sort | uniq -c | awk '{printf "%s×%s ", $2, $1}')"
+	}
+
 	# 1. 正向依赖：进 systemd 的那个 bin（`nous-app`，包名 `nous-server`）
 	#    --depth 1 含 durable/wire/tools/runtime，不含 chord/rusqlite。
 	#    spec 写的是产物名 `nous-app`；`cargo tree -p` 认的是**包名**，所以取它住的包。
@@ -504,17 +517,18 @@ PY
 	# 5. 数据面唯一入口：$K 之外不许出现 rusqlite / Connection::open / .sqlite / PRAGMA / BEGIN IMMEDIATE。
 	#    "之外"只算代码（crates/ 下的 .rs）；tests/ 与 *_test(s).rs 里的临时库名是夹具，不是第二入口。
 	c5() {
-		local ex=() p
+		local ex=() p RAW KEPT DROPPED
 		for p in $K; do ex+=(":(exclude)$p"); done
-		local F
+		RAW=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- crates "${ex[@]}" || true)
 		# 只算**生产**路径：.rs 代码行、去掉注释、去掉 tests/ 与两个测试夹具 crate
 		# （`fixture` / `ext-probe` 是测试用二进制，spec 判据 11 的「只许测试用」同样对待它们）。
-		F=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- crates "${ex[@]}" \
-			| grep '\.rs:' | grep -v '/tests/' | grep -vE '_tests?\.rs:' \
+		KEPT=$(printf '%s\n' "$RAW" | grep '\.rs:' | grep -v '/tests/' | grep -vE '_tests?\.rs:' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' \
 			| grep -v 'DEFAULT_FIXTURE' | grep -v 'fixtures/agent.sqlite' | grep -v '<legacy.sqlite>' \
 			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' || true)
-		[ -z "$F" ] || { echo "$F"; return 1; }
+		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
+		report_dropped "5." "$DROPPED" || return 1
+		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
 
 	# 6. 进程归应用层（S1 + S12）：内核层逐行为空；全仓进程创建点按**文件**数，
@@ -541,8 +555,11 @@ PY
 		EXCLUDED=$(awk '/^# 排除项/{g=1;next}
 			g && /^#[[:space:]]+crates\// {sub(/^#[[:space:]]+/,""); print $1}' "$BASE")
 
-		NOW=$(grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs \
+		# 数**构造点**（谁建了进程），与判据 12 共用一条 pattern。`.spawn()` 数不到
+		# `os_env.rs:443` 的 `cmd.status()` —— 它也在创建进程，只是不叫 spawn。
+		NOW=$(grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' crates --include=*.rs \
 			| grep -vE '(/tests/|tests\.rs$)' | sort || true)
+		local PRE="$NOW" DROPPEDF
 		local ex
 		while IFS= read -r ex; do
 			[ -z "$ex" ] && continue
@@ -552,6 +569,8 @@ PY
 			*)  NOW=$(printf '%s\n' "$NOW" | grep -vx -- "$ex" || true) ;;
 			esac
 		done <<< "$EXCLUDED"
+		DROPPEDF=$(comm -23 <(printf '%s\n' "$PRE" | sed '/^$/d' | sort) <(printf '%s\n' "$NOW" | sed '/^$/d' | sort) || true)
+		report_dropped "6." "$DROPPEDF" || return 1
 
 		DIFF=$(printf '%s\n%s\n' "$NOW" "$MEMBERS" | grep -v '^$' | sort | uniq -u || true)
 		if [ -n "$DIFF" ]; then
@@ -626,24 +645,32 @@ PY
 
 	# 9. 一个 workspace 根；进 systemd 的 bin target 恰好 1 个（排除 nous-fixture，S4）
 	c9() {
-		local NROOT BINS NBINS
+		local NROOT RAW RAWN KEPT DROPPEDN DROPPED NBINS
 		NROOT=$(git ls-files | grep -xc 'Cargo.toml' || true)
-		# 「进 systemd 的」= `crates/*/*` 里的生产模块的 bin：`nous-fixture`（测试夹具，S4 明写排除）
-		# 与 `nous-ext-probe`（探针）都不是部署产物；`exts/*` 不是本表里的模块（运行时外挂，按需加载）。
-		BINS=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
+		# name<TAB>目录：名字用来判，目录用来在「排掉了什么」里指认
+		RAW=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
 			| python3 -c "import json,os,sys
 m=json.load(sys.stdin)
-skip={'nous-fixture','nous-ext-probe'}
 for p in m['packages']:
-    d=os.path.dirname(p['manifest_path'])
-    if p['name'] in skip: continue
-    rel=os.path.relpath(d)
-    if not (rel.startswith('crates'+os.sep)): continue
+    d=os.path.relpath(os.path.dirname(p['manifest_path']))
     for t in p['targets']:
-        if 'bin' in t['kind']: print(t['name'])")
-		NBINS=$(printf '%s\n' "$BINS" | grep -c . || true)
-		[ "$NROOT" -eq 1 ] && [ "$NBINS" -eq 1 ] && [ "$BINS" = "nous-app" ] \
-			|| { echo "根 Cargo.toml 数=$NROOT（应为 1）；systemd bin 数=$NBINS（应为 1）：$(printf '%s' "$BINS" | tr '\n' ' ')"; return 1; }
+        if 'bin' in t['kind']: print(t['name']+'\\t'+d)")
+		RAWN=$(printf '%s\n' "$RAW" | cut -f1 | sed '/^$/d' | sort)
+		# 「进 systemd 的」= `crates/*/*` 里的生产模块：`nous-fixture`（测试夹具，S4 明写排除）
+		# 与 `nous-ext-probe`（探针）都不是部署产物；`exts/*` 不是本表里的模块（运行时外挂，按需加载）。
+		KEPT=$(printf '%s\n' "$RAW" | awk -F'\t' '$1!="nous-fixture" && $1!="nous-ext-probe" && $2 ~ /^crates\// {print $1}' | sed '/^$/d' | sort)
+		DROPPEDN=$(comm -23 <(printf '%s\n' "$RAWN") <(printf '%s\n' "$KEPT") || true)
+		DROPPED=$(printf '%s\n' "$DROPPEDN" | while IFS= read -r n; do
+			[ -z "$n" ] && continue
+			printf '%s\n' "$RAW" | awk -F'\t' -v n="$n" '$1==n {print $2"/"n}'
+		done)
+		report_dropped "9." "$DROPPED" || return 1
+		# 哨兵：部署产物 `nous-app` 必须在集合里（排干净之后不能把真的也排掉）
+		printf '%s\n' "$KEPT" | grep -qx 'nous-app' \
+			|| { echo "哨兵丢了：bin 集合里没有 nous-app（$(printf '%s' "$KEPT" | tr '\n' ' ')）"; return 1; }
+		NBINS=$(printf '%s\n' "$KEPT" | grep -c . || true)
+		[ "$NROOT" -eq 1 ] && [ "$NBINS" -eq 1 ] \
+			|| { echo "根 Cargo.toml 数=$NROOT（应为 1）；systemd bin 数=$NBINS（应为 1）：$(printf '%s' "$KEPT" | tr '\n' ' ')"; return 1; }
 	}
 
 	# 10. 旧仓清空：代码与文档里 'Nous-Package' 为 0（检查者自己那一行不算，content/ 是已死面板的数据）
@@ -658,37 +685,53 @@ for p in m['packages']:
 
 	# 11. 发现唯一：生产路径不许出现 NOUS_SERVER_ADDR（只许测试用；注释里提一句不算配置）
 	c11() {
-		local F
+		local RAW KEPT DROPPED
+		RAW=$(git grep -n 'NOUS_SERVER_ADDR' -- $A || true)
 		# spec：`NOUS_SERVER_ADDR` **只许测试用**。测试 = `tests/` + 两个测试夹具 crate。
-		F=$(git grep -n 'NOUS_SERVER_ADDR' -- $A | grep -v '/tests/' \
+		KEPT=$(printf '%s\n' "$RAW" | grep -v '/tests/' \
 			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' || true)
-		[ -z "$F" ] || { echo "$F"; return 1; }
+		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
+		report_dropped "11." "$DROPPED" || return 1
+		# 哨兵：探针给子进程设环境变量的那一行**必须被命中**（证明排除活着，且排的是测试用途）
+		printf '%s\n' "$DROPPED" | grep -q '^crates/nous/ext-probe/src/server.rs:36:' \
+			|| { echo "哨兵丢了：ext-probe/src/server.rs:36 没命中（排除规则没抓到它，或探针被挪走）"; return 1; }
+		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
 
 	# 12. 进程只有一处：应用层里 spawn 恰好 1 处，且位于扩展监管（spec 字面）
 	c12() {
-		local F N
-		# spec 的本意是「**进程**只有一处」：只数进程创建点（`Command::new(..).spawn()` 的那次
-		# `.spawn()`），不数 `std::thread::spawn` / `tokio::spawn` / `scope.spawn(closure)`
-		# —— 那是 §6 允许的线程/任务。
-		F=$(git grep -nE '\.spawn\(\)' -- $A | grep -v '/tests/' \
-			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' || true)
-		N=$(printf '%s\n' "$F" | grep -c . || true)
-		[ "$N" -eq 1 ] && printf '%s\n' "$F" | grep -qE 'crates/nous/ext/src/(spawn|supervis)' \
-			|| { echo "应用层进程创建点是 $N 处 ≠ 1（不是「仅扩展监管一处」）："; printf '%s\n' "$F" | head -40; return 1; }
+		local RAW KEPT DROPPED NF
+		# 与判据 6 共用一条 pattern：数**构造点**的文件集合，不数 `.spawn()`（`cmd.status()` 也是进程）。
+		RAW=$(grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' $A --include=*.rs 2>/dev/null | sort || true)
+		# 探针 / 夹具是测试用二进制（它们起 nous-server 验协议），不是生产路径。
+		KEPT=$(printf '%s\n' "$RAW" | grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' \
+			| grep -vE '(/tests/|tests\.rs$)' | sed '/^$/d' | sort || true)
+		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT") || true)
+		report_dropped "12." "$DROPPED" || return 1
+		# 哨兵：**恰好 1 个文件**，且就是扩展监管的 `crates/nous/ext/src/spawn.rs`
+		NF=$(printf '%s\n' "$KEPT" | grep -c . || true)
+		if [ "$NF" -ne 1 ] || [ "$(printf '%s\n' "$KEPT")" != "crates/nous/ext/src/spawn.rs" ]; then
+			echo "进程创建点不是恰好 1 个文件 == crates/nous/ext/src/spawn.rs（实得 $NF 个）："
+			printf '%s\n' "$KEPT" | sed 's/^/       /'
+			return 1
+		fi
 	}
 
 	# 13. 无文件锁（Q26：单进程不需要文件锁）—— spec 字面：flock / fs2 / File::lock / `.lock()` 为空
 	c13() {
-		local F L
+		local RAW KEPT DROPPED L
+		RAW=$(git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A || true)
 		# 文件锁 = flock / fs2 / File::lock（Q26：单进程不需要文件锁）。
-		# `.lock()` 单独统计并打印：spec §6 要求进程内同步原语，`Mutex::lock()` / `RwLock` 是
-		# 那一类（字段方法名相同），不是文件锁；把它一起判红会让 §6 与判据 13 互斥。
-		F=$(git grep -nE 'flock|fs2|File::lock' -- $A | grep -v '/tests/' || true)
-		L=$(git grep -nE '\.lock\(\)' -- $A | grep -v '/tests/' | grep -c . || true)
-		[ -z "$F" ] || { echo "应用层出现文件锁（flock/fs2/File::lock）："; printf '%s\n' "$F" | head -40; return 1; }
-		echo "flock/fs2/File::lock：0 处；\`.lock()\` 命中 $L 行，接收者全是进程内 Mutex/RwLock/Child（没有 File / fs2 的锁类型，§6 要求的原语不算文件锁）"
+		# `.lock()` 单独统计：spec §6 要求进程内同步原语，`Mutex::lock()` / `RwLock` 是那一类
+		# （字段方法名相同），不是文件锁；一起判红会让 §6 与判据 13 互斥。
+		KEPT=$(printf '%s\n' "$RAW" | grep -v '/tests/' \
+			| grep -E ':[0-9]+:.*(flock|fs2|File::lock)' | grep -v '\.lock\(\)' || true)
+		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
+		report_dropped "13." "$DROPPED" || return 1
+		L=$(printf '%s\n' "$DROPPED" | grep -c '\.lock\(\)' || true)
+		echo "       （其中 $L 行是 \`.lock()\`：接收者全是进程内 Mutex/RwLock/Child，没有 File / fs2 类型）"
+		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
 
 	judge "1. 正向依赖（nous-app 的包 --depth 1 含 durable/wire/tools/runtime，无 chord/rusqlite）" c1
