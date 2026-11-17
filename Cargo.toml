@@ -1,0 +1,79 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nous-telemetry",
+    "crates/nous-ai",
+    "crates/nous-wire",
+    "crates/nous-env",
+    "crates/nous-tools",
+    "crates/nous-chord",
+    "crates/nous-durable",
+    "crates/nous-runtime",
+    "crates/nous-server",
+    "crates/nous-fixture",
+]
+# `packages/env/daemon` 自带 Cargo.toml / Cargo.lock / rust-toolchain.toml，不是本 workspace 的成员。
+# 不 exclude 掉，cargo 会直接罢工。
+exclude = ["vendor/pi-env-daemon"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+
+# 版本表只列真用到的行。冻结纪律：这些版本号照 `pi-rust@v0.24.2` 的
+# workspace.dependencies 抄，不追新；要加一处依赖，先在这里落一行，再记进
+# SOURCES.md。
+#
+# 已 pin、等第一处使用再落成真行（现在没有 crate 用到，落了就是白绑约束）：
+#   yaml_serde = "=0.10.2"                                          ← nous-runtime
+[workspace.dependencies]
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "fs", "process", "sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["preserve_order", "raw_value", "float_roundtrip"] }
+schemars = { version = "0.8", features = ["preserve_order"] }
+# `default-features = false`：默认开的是 `cli`（→ clap）、`resolve-http`（→ reqwest → hyper、
+# tower-http）、`resolve-file`，都是 JSON Schema **命令行工具**和**远程 `$ref` 抓取**才要的。
+# 我们用它的只有 `JSONSchema::compile` + `validate`（`nous-ai/src/schema.rs`，工具参数校验，
+# schema 自包含）。不关的话 `cargo tree -p nous-durable` 里会冒出 hyper/tower-http ——
+# 语义层就"绑上传输"了（`scripts/verify.sh` 4e），而那是纯粹从依赖默认值漏进来的。
+# 副作用（有意）：外部 `$ref` 不再被自动抓取，校验会明确报错而不是悄悄发网络请求。
+jsonschema = { version = "0.18", default-features = false }
+indexmap = { version = "2", features = ["serde"] }
+# SQLite：`bundled` 自带一份 libsqlite3，不依赖系统库（部署机各不相同）。
+# 版本照 `pi-rust@v0.24.2` 的 workspace.dependencies pin 住。
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# 端点层（#22）。`AGENTS.md` §二：axum 只允许出现在 `nous-server`，durable 永久禁 HTTP。
+# 版本随本库自己的 minor pin（同 `thiserror = "1"` 的风格），不追上游 —— 本库没有哪个
+# 上游用 axum，这一行没有可对齐的 tag。
+axum = "0.8"
+
+# 错误 / 日志
+thiserror = "1"
+tracing = "0.1"
+
+# 杂项
+uuid = { version = "1", features = ["v4", "v7"] }
+base64 = "0.22"
+regex = "1"
+
+# nous-ai 的 `providers` feature（真 HTTP）用这三个；reqwest 保持 default-features = false。
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+bytes = "1"
+tempfile = "3"
+eventsource-stream = "0.2"
+
+nous-telemetry = { path = "crates/nous-telemetry", version = "0.1.0" }
+nous-chord = { path = "crates/nous-chord", version = "0.1.0" }
+nous-wire = { path = "crates/nous-wire", version = "0.1.0" }
+nous-ai = { path = "crates/nous-ai", version = "0.1.0" }
+nous-env = { path = "crates/nous-env", version = "0.1.0" }
+nous-tools = { path = "crates/nous-tools", version = "0.1.0" }
+nous-durable = { path = "crates/nous-durable", version = "0.1.0" }
+nous-server = { path = "crates/nous-server", version = "0.1.0" }
+nous-fixture = { path = "crates/nous-fixture", version = "0.1.0" }

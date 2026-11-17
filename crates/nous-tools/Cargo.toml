@@ -1,0 +1,53 @@
+[package]
+name = "nous-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Built-in agent tools (read/write/edit/bash/grep/find/ls) — frozen port of rpi-tools@v0.24.2, with tools depending only on nous-ai + nous-env"
+readme = "README.md"
+
+# AGENTS.md §二：`nous-tools → ai, env`，没有第三条内部边（票 #7）。
+# 上游的 `rpi-agent` 五个符号已在 #5 搬进 nous-ai::tool / nous-ai::types；
+# `rpi-plugin-sdk` 的两个环境变量名内联成 &str（见 os_env.rs）。
+[dependencies]
+nous-ai = { workspace = true }
+nous-env = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+fs2 = "0.4"
+serde = { workspace = true }
+serde_json = { workspace = true }
+jsonschema = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+base64 = { workspace = true }
+tempfile = { workspace = true }
+uuid = { workspace = true }
+
+# 来自上游 rpi-tools/Cargo.toml（版本不动，冻结）：
+dirs = "5"
+similar = { version = "2", features = ["text"] }
+unicode-normalization = "0.1"
+encoding_rs = "0.8"
+codepage = "0.1"
+regex = { workspace = true }
+globset = "=0.4.15"
+
+# 图像处理：冻结的上游 feature 集合（去掉 avif / rayon）。
+image = { version = "0.25", default-features = false, features = ["bmp", "dds", "exr", "ff", "gif", "hdr", "ico", "jpeg", "png", "pnm", "qoi", "tga", "tiff", "webp"] }
+fast_image_resize = { version = "5", default-features = false, features = ["image"] }
+
+[features]
+default = []
+webp = ["image/webp"]
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["process", "signal"] }
+
+[dev-dependencies]
+base64 = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
