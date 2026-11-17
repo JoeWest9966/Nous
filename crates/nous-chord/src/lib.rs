@@ -1,5 +1,6 @@
 //! `chord` 的语义层：`context` / `json` / `delta` / `sqlite` 已落地；
-//! `output` / `watch` 在 #19（harness 才用）。
+//! `watch` 只取了 `WatchEnd`（`nous-durable` 的 `CommitObserver.end` 要它，见 #13）；
+//! `watch` 的其余部分与 `output` 在 #19（harness 才用）。
 //!
 //! 来源与规则见仓库根 `AGENTS.md` §一（chord 只取六个目录）与 `SOURCES.md`。
 //!
@@ -13,3 +14,4 @@ pub mod context;
 pub mod delta;
 pub mod json;
 pub mod sqlite;
+pub mod watch;

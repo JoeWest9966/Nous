@@ -29,13 +29,43 @@ use super::sqlite::schema::SqliteSchema;
 use super::writes::{Id, Seq};
 use crate::error::{Result, StorageError};
 
-/// 读文档的哪个点。
+/// 读文档的哪个点。上游 `DocumentPoint = Seq | "current"`。
+///
+/// 序列化形状就是上游那个联合：`At(seq)` → `seq`，`Current` → `"current"`（字符串，不是
+/// `{"kind":"current"}`）。`CommitPublication` 里的 `document.copy` 带着它过线，所以必须在这
+/// 一层就对得上，不能在拼 publication 的地方临时凑一个。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DocumentPoint {
     /// 最新状态。
     Current,
     /// 某个 seq 上的状态（含那个 seq 的 revision）。
     At(Seq),
+}
+
+impl serde::Serialize for DocumentPoint {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            DocumentPoint::Current => serializer.serialize_str("current"),
+            DocumentPoint::At(seq) => serializer.serialize_i64(*seq),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DocumentPoint {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        match <serde_json::Value as serde::Deserialize>::deserialize(deserializer)? {
+            serde_json::Value::Number(number) => number
+                .as_i64()
+                .map(DocumentPoint::At)
+                .ok_or_else(|| serde::de::Error::custom("document point seq must be an integer")),
+            serde_json::Value::String(text) if text == "current" => Ok(DocumentPoint::Current),
+            other => Err(serde::de::Error::custom(format!(
+                "document point must be a seq or \"current\", got {other}"
+            ))),
+        }
+    }
 }
 
 impl DocumentPoint {

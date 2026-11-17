@@ -174,3 +174,55 @@ fn reads_submission_fields_without_the_id() {
         assert_eq!(serde_json::to_value(&fields).unwrap(), without_id);
     }
 }
+
+/// 陷阱守卫（`docs/pitfalls-from-pi.md`「`nous_ai::Message` 比引擎存的数据窄」）。
+///
+/// 这两条断言**故意断言「解析不了 / 会丢键」**：`nous-ai` 是 `rpi-ai@v0.24.2` 的冻结拷贝，
+/// 它的 `Message` 只有 `user` / `assistant` / `toolResult`，而 `pi` 引擎往同一张表里还写
+/// `pi.system`；`pi` 的 assistant / tool-result 还带 `durationMs`。所以**任何**「把库里存的
+/// `model` 解析成 `nous_ai::Message`」的地方都会失败或静默丢字段。
+///
+/// 哪天 `nous-ai` 补上了 system 变体和未知键兜底，这两条会红 —— 那时是**好事**：说明坑填了，
+/// 该删的是这两条断言和那条 pitfall，而不是改断言让它继续绿。
+#[test]
+fn nous_ai_message_is_narrower_than_what_the_engine_stored() {
+    let Some(path) = fixture_path() else {
+        println!("跳过：fixtures/agent.sqlite 不在");
+        return;
+    };
+    let store = ImportedStore::read(&path).expect("fixture 读得出来");
+
+    let mut system_error = None;
+    let mut dropped_duration = Vec::new();
+    for row in &store.entries {
+        let record: EntryRecord = round_trip(row, "entries");
+        let Some(model) = record.model else { continue };
+        let Some(first) = model.first() else { continue };
+        match serde_json::from_value::<nous_ai::Message>(first.clone()) {
+            Err(error) => {
+                if record.kind == "pi.system" {
+                    system_error.get_or_insert(error.to_string());
+                }
+            }
+            Ok(message) => {
+                // 解析成功的那几类：`durationMs` 在 `nous_ai` 的消息类型里不存在，往返即丢。
+                let back = serde_json::to_value(message).unwrap();
+                if first.get("durationMs").is_some() && back.get("durationMs").is_none() {
+                    dropped_duration.push(record.kind.clone());
+                }
+            }
+        }
+    }
+    let system_error = system_error.expect("fixture 里 pi.system 的 message 带 role:\"system\"");
+    assert!(
+        system_error.contains("system"),
+        "该是「认不出 system」这个错，实际：{system_error}"
+    );
+    dropped_duration.sort();
+    dropped_duration.dedup();
+    assert_eq!(
+        dropped_duration,
+        vec!["pi.assistant".to_string(), "pi.tool-result".to_string()],
+        "这几类 message 的 durationMs 会被 nous_ai::Message 吞掉"
+    );
+}

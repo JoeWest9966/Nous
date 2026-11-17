@@ -130,8 +130,8 @@ impl StorageWrite {
     }
 }
 
-/// 复制的源：哪份文档、哪个点。上游 `document.copy` 的 `source`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 复制的源：哪份文档、哪个点。上游 `document.copy` 的 `source`（`{id, at}`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CopySource {
     pub id: Id,
     pub at: super::documents::DocumentPoint,

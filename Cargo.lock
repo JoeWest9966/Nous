@@ -930,6 +930,7 @@ dependencies = [
 name = "nous-durable"
 version = "0.1.0"
 dependencies = [
+ "nous-ai",
  "nous-chord",
  "serde",
  "serde_json",

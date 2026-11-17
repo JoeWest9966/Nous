@@ -16,6 +16,11 @@ nous-chord = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# 只有一条测试用：证明 `nous_ai::Message` 比引擎存的数据窄（`docs/pitfalls-from-pi.md`）。
+# 生产代码**不**拿它解析库里存的 `model` —— 那正是那条坑。
+[dev-dependencies]
+nous-ai = { workspace = true }
+
 # `verify.sh` 的 1b 按这个名字找一致性套件；文件放在 `conformance/` 下，不混进 `tests/`。
 [[test]]
 name = "conformance"

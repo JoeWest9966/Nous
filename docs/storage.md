@@ -233,6 +233,34 @@ ZWJ 家族 emoji（多个代理对），断言的是**逐字符**相等，不是
 `nous-fixture`（`verify.sh` 第 2/3 段的对象）只干一件事：读 `agent.sqlite`（只读）→ 打
 `{ items: [...] }` → exit 0。无子命令、无 flag、不写库。
 
+### 10.5 13 落地的部分（记录类型 + 提交发布面）
+
+三个 commit，拆开是为了让每一个都能单独 review 完：
+
+| commit | 落点 | 判据 |
+|---|---|---|
+| ① | `src/types/{records,draft}.rs`（14 个类型 + 取值域枚举） | 五种记录从**真 fixture** 读进来再写回去，逐字段相等（189 / 209 / 128 / 56 / 961）；取值域逐格验 |
+| ② | `src/session/publish.rs` + `src/session/entries.rs` | publication 的 JSON 形状与上游 `types.ts` 逐字段相同；一次提交里三种记录各一次、只有一个 `seq`；文档 `ops` 原样透传 |
+| ③ | `src/session/mod.rs`（`Session`） | 见票 #13 |
+
+**publication 不是 SSE**（写在这里是因为这条最容易被顺手破坏）：
+
+- `CommitPublication = {seq, changes[]}` 是「**这次事务存了什么**」的事实；SSE 帧是「**客户端看到
+  什么**」的投影，投影住 `nous-server`（#22）。
+- 投影里有一半东西 publication 里本来就没有：`snapshot` 帧、`message_start`、
+  `message_update.changes[]` —— 那些是生成态（harness）的产物。按投影倒推 publication，等于让
+  存储层长出客户端概念，`#22` 也就不薄了。
+- `document` 变更带的 `value` + `ops` 是 live projection 的原料（#14 的 `partial-changes`），裁掉
+  它，#14 得回头重算 diff。
+- `conversationId` 在 **session 作用域**的文档上**键缺席**（上游 `ConversationId | undefined`），
+  不是 `null`；`document.copy` 的那个是必填。
+- 反序列化**逐键对账**：多一个键就是错（§12.6 的同一条规矩）。
+
+**观察者**：`CommitObserver::advance` 是同步回调（签名钉住，不许 await），先快照名单再逐个调，
+所以观察者可以在回调里 `detach()` 自己。上游把观察者抛的错接住并 `end(listener_error)`；Rust 没有
+「抛错」这个通道，`panic` 会冒到 `commit()` 的调用方 —— 我们**不** `catch_unwind` 兜住：把库里的
+bug 变成「事件静默丢失」比崩掉更难查。
+
 ## 12. 与上游的故意差别
 
 这四条是**我们和上游不一样的地方**，不是还没做完的地方。写在这里的唯一理由：以后最容易撞车的就是它们，
@@ -288,3 +316,24 @@ fixtures/agent.sqlite
 **判据**：这三处的测试只断言「写进去的 JSON 与读出来的一字不差」，**不**断言字段内部结构。
 哪天要追上（比如 #14 之后开始有 task runner），是**删掉这节**并同时改 `docs/storage.md` §11 与
 `SOURCES.md`，不是悄悄加类型。
+
+### 12.6 「我们比上游严」的地方，以及为它付的维护成本
+
+上游把一批约束写在**类型**里（TS 编译期），运行时收到一份宽松的对象不会有任何抱怨。我们把这些约束
+落在**反序列化**里：认不出、配不上就报错。代价是有的，所以逐条写下来，免得下一个人以为是手滑。
+
+| 约束 | 上游怎么表达 | 本库怎么落 | 维护成本 |
+|---|---|---|---|
+| `ContextEdit` 的两个动作各带自己的键 | `{action:"omit", messages?: never} \| {action:"replace", messages: Message[]}` | `records.rs` 里**手写 `Deserialize`**：`omit` 带 `messages` → 错，`replace` 不带 `messages` → 错 | 加字段要动三处（结构体、`Raw` 中转体、`match` 分支） |
+| `TaskRecord.abandonOnRestart` 是字面量 `true` | `readonly abandonOnRestart?: true` | `deserialize_true`：`false` 直接报错 | 同上，两行 |
+| 提交的 `type` × `status` 矩阵 | 判别联合，10 个合法格子 | `SubmissionFields::validate`：`continue`+`queued`、`write`+`placed`、`reason` 只在 `unanswered`…… 逐格拒 | 矩阵变了要同时改 `validate` 与 `tests/records_domains.rs` |
+| 文档 `scope` × `history` × `fork` | `DocumentCreate` 的判别联合 | `DocumentRecord::validate`：`asOf` 只在 `rewindable` 下、`session`/`task` 作用域不许带 `history`/`fork` | 同上 |
+
+**为什么 `ContextEdit` 必须手写，而不是加个 `deny_unknown_fields`**：serde 的**内部标签枚举**
+（`#[serde(tag = "action")]`）**不支持** `deny_unknown_fields` —— 加了也是静默无效。派生版本会把
+`{"action":"omit","target":9,"messages":[]}` 解析成功并把 `messages` 扔掉，也就是把「客户端塞了不该有的
+载荷」变成「悄悄忽略」。这个坑是**先写成测试、红了才发现的**，不是设计时想到的。
+
+**规矩**：只有「多出一个键就等于另一种语义」的枚举才手写反序列化；其余继续 derive。手写的那几处必须
+在同一次提交里带一条「非法形状明确报错」的测试，否则下次改结构不会有人发现约束已经松了。
+判据：`crates/nous-durable/tests/records_domains.rs`。
