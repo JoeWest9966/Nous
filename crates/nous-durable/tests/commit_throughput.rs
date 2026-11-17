@@ -6,10 +6,18 @@
 //!
 //! 这条测试量的就是「1,000 次提交（模拟 16 秒流式输出）本机总耗时」：
 //!
-//! - **≤ 2s** → deferred 永久砍掉，(a) 关票不做，不留「以后再说」；
-//! - **> 2s** → 那才是开 (a) 的证据，到那时 `#13` 的关闭语义一起改。
+//! - 预算 **3,000 ms**：实测散布 1,805-1,989 ms（五次运行，ext4 + `synchronous=NORMAL`）。
+//!   原来写的 2,000 ms 是拿最坏值当红线 —— 最坏一次 1,989 ms，离红线 11 ms，那是**假红制造机**。
+//!   留 50% 余量，判据才在说「数量级对不对」，而不是在测这台机器今天的运气。
+//! - 结论（`docs/decisions.md`）：deferred 永久砍掉，(a) 关票不做，不留「以后再说」。
 //!
-//! 不放进 `verify.sh`：时间数字在机器上有噪声，进去只会变成假红。手工跑：
+//! **为什么它是 `#[ignore]` 而不是判据**：墙上时间在共享机器上有噪声（同一个二进制两次跑能差
+//! 10%），而且这 1,000 次的耗时**大半来自 O(n²) 的读回**（`#25`），那张票一落地这个数就会掉到
+//! 500 ms 以下 —— 把它钉进 `verify.sh`，`#25` 落地那天就得改判据。所以：判据是
+//! `docs/bench-commit.md` 里那张表（人看、写明环境与散布），测试只负责**产出**数字。
+//! 唯一进 `verify.sh` 的前提条件反而是机器判的：`the_writer_connection_runs_in_wal_with_normal_synchronous`。
+//!
+//! 手工跑：
 //!
 //! ```text
 //! cargo test --release -p nous-durable --test commit_throughput -- --ignored --nocapture
@@ -28,7 +36,11 @@ use serde_json::json;
 
 const COMMITS: usize = 1_000;
 /// 1,000 次提交 ≈ 16 秒的 16ms 合帧（62.5 次/秒）。
-const BUDGET_MS: u128 = 2_000;
+///
+/// 3,000 ms = 实测最坏值（1,989 ms）留 50% 余量。写 2,000 就是拿最坏值当红线，必然假红；
+/// 而且这个数会被 `#25` 改掉（读回从 O(n²) 变 O(1) 后约 500 ms），所以它只是**预算**，
+/// 不是判据 —— 判据在 `docs/bench-commit.md`。
+const BUDGET_MS: u128 = 3_000;
 /// 每次追加的字节数，跟真实 token 流的分片同量级。
 const CHUNK: usize = 32;
 
@@ -169,7 +181,7 @@ async fn one_thousand_immediate_partial_commits_stay_within_the_budget() {
 
     assert!(
         ms <= BUDGET_MS,
-        "{ms} ms 超过 {BUDGET_MS} ms 预算 —— 这就是开 deferred（(a)）的证据。\
+        "{ms} ms 超过 {BUDGET_MS} ms 预算 —— 先查是不是又退回 O(n²)（`#25`），再谈 deferred。\
          别放宽这条测试：把数字和依据写进 docs/bench-commit.md，再动 #13 的关闭语义"
     );
 }

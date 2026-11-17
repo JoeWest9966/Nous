@@ -42,6 +42,34 @@ harness 是本库最后一个大未知，先出形状能省掉两轮返工。
 
 ---
 
+## 0.5 `nous-ai` 里会有两个「streaming json」，别删错
+
+提货之后 `nous-ai` 有两个名字里都带 streaming json 的东西，**分工不同、都有人用**：
+
+| | `json_parse::parse_streaming_json(Option<&str>) -> Value`（已有，304 行文件） | `utils::streaming_json::StreamingJsonParser`（本次提货） |
+|---|---|---|
+| 输入 | 一段前缀文本，**每次整段重解** | 增量片段，一次读一遍 |
+| 输出 | 一个「当前快照」 | 快照 **+ 这一段造成的 `JsonChange`（路径 + 值/文本）** |
+| 成本 | 与前缀长度成正比，**每个前缀都是 O(n)**，整条流 O(n²) | 整条流 O(n)（模块注释写明了复制额度机制） |
+| 谁在用 | `frames.rs`、`anthropic/mapper`、`openai_completions`、`openai_responses`（要的是「能拼出合法 JSON 的当前值」） | `ToolCallArgumentsStream`（provider 的流状态）、`harness/partial.rs` 的 `assign_json`（要的是「增量改了哪里」） |
+| 判据 | 任意前缀都给得出快照，不 panic | `changes` 依次 apply 到空值 == 同一时刻的 snapshot |
+
+上游把这条分工写在注释里（`packages/ai/src/utils/json-parse.ts:100-103`，`parseToolCallArguments`
+的文档）：
+
+> Unlike `parseStreamingJson`, this never keeps a partially parsed prefix: once the call is finished,
+> text that is not a valid JSON object means the model sent malformed arguments.
+
+换成我们的说法：`parse_streaming_json` 是**容错前缀解析**（喂它半句也要给出「现在读到哪」），
+`StreamingJsonParser` 是**增量解析器**（喂它一片，它告诉你「这一片改了哪个路径」）。
+前者做不到后者：拿新前缀和旧快照做 diff 也能得到 change，但那是 O(n²) 且会把「同值重复出现」
+误判成 change —— 而 `#14` 的整个前提正是「提交成本跟着新文本走」。
+
+**危险的动作**：看到两个 streaming json，删掉一个「重复的」。两个都有人用，删任何一个都会红，
+但**只看名字看不出这一点** —— 所以写在这里。
+
+---
+
 ## 1. 四件
 
 行数是 `pi@v1.5.2` / `pi-rust@v0.24.2` 的 `wc -l`，不是估计。
@@ -55,7 +83,7 @@ harness 是本库最后一个大未知，先出形状能省掉两轮返工。
 | 本库落点 | `crates/nous-durable/src/harness/partial.rs` + `crates/nous-durable/src/harness/json.rs` |
 | 公开面 | `PartialChanges`：`new()` / `observe(&AssistantMessageEvent)` / `take(&mut PartialMessage) -> PartialCommit` / `commit(&mut LiveGeneration, &PartialMessage, PartialCommit)` / `restore(PartialCommit)`；类型 `PartialCommit { plan: AssignPlan, tool_calls: BTreeMap<u64, ToolCallTake> }`、`ToolCallTake { changes: Vec<JsonChange>, snapshot: Value }`；`json.rs`：`AssignPlan::{Append{text}, Keep, Fields(BTreeMap<Seg, AssignPlan>)}` + `assign_json(...)` |
 | 依赖 | `nous_chord::delta::{append_text, ...}`、`nous_ai::types::AssistantMessageEvent`（已存在）、`nous_ai::Content` |
-| 阻塞点 | `StreamingJsonParser` / `JsonChange` 住在 `packages/ai/src/utils/streaming-json.ts`（**559 行**），不在 `AGENTS.md` §一 的契约面里（那里只写 `google-generative-ai.ts`）。见 §6 第 2 条 |
+| 上游依赖 | `StreamingJsonParser` / `JsonChange` 住在 `packages/ai/src/utils/streaming-json.ts`（**559 行**）。**已提货**（用户 2026-11-17 拍板，`AGENTS.md` §一 随之加了这行，commit `223cf61`）→ `nous-ai/src/utils/streaming_json.rs`，只取四个导出。它与 `nous-ai` 里已有的 `parse_streaming_json` **不是一回事**，见 §0.5 |
 
 ### ② `harness/live.ts`（452 行，取 139-410，不取 411-452）
 
@@ -187,7 +215,7 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 - `submissions.ts`(317) / `tool.ts`(1,146) / `compaction.ts`(1,003) / `prompt.ts`(158) / `inbox.ts` / `registry.ts`
 - `settleSchedulerOutcome`（要调度器）
 - deferred 持久化**本身** —— 除非 §6 第 1 条选 (a)
-- `streaming-json.ts` 的提货 —— 除非 §6 第 2 条选 (a)
+- `streaming-json.ts` 里四个导出之外的任何东西（其余 400+ 行：`parseStreamingJson` 的容错细节、注释、`repairJson` 相关）
 - SSE 帧、16ms 合帧、HTTP 端点（`#22`）
 - `watch` / `observe*` 订阅（`#19`）
 - `scan_*`（`#21`）
@@ -209,7 +237,7 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
 
 ---
 
-## 6. 三条要你拍的
+## 6. 三条要拍的（**2026-11-17 已全部拍完**，留档：结论 + 我写错的两处更正）
 
 1. **deferred 持久化：补还是不补？**
    (a) 把 `session/transaction.rs` 的 `plans` / `holds` 补上（`#13` 时判定「等真有并行提交需求再看」）。
@@ -219,16 +247,21 @@ fixture 机器查证（`python3` + `sqlite3.connect('file:…?mode=ro', uri=True
        好处：`#14` 小一半；代价：长回答的存储事务数从 ~1/秒 变成 ~10/秒（上游注释给的量级是 5.7x 事务、
        2.9x 磁盘写），语义不变、只是贵。
    **我倾向 (b) 先落地，(a) 单开一张票**，因为 (a) 会把 `#14` 胀成两张票，而且 `#22` 等不起。
-2. **`streaming-json.ts`（559 行）提不提？**
-   它是 `PartialChanges` 跟踪 tool-call 参数增量的唯一办法，住在 `packages/ai` 里 —— 而
-   `AGENTS.md` §一 只允许我们从那里拿 `google-generative-ai.ts`。
-   (a) 提货进 `nous-ai/src/utils/streaming_json.rs`，并把 §一 那行改成「+ `utils/streaming-json.ts`」。
-   (b) 不提：harness 里每次提交把 `arguments` 整块重写（`Set`，落 `Block`）。正确性一样，代价是长
-       参数工具调用每次部分提交都写整个参数对象。
-   **已定 (a)**（用户 2026-11-17，`AGENTS.md` §一 随之改了 `223cf61`）。更正一句我原来写错的话：
-   **上游没有它的测试** —— `packages/ai` 里 `find . -name '*.test.ts' | xargs grep StreamingJsonParser`
-   零命中。所以判据自建三条：(1) 完整合法输入上 `snapshot()` 等于 `serde_json` 的解析结果；
-   (2) 把 `append()` 返回的 `JsonChange` 依次应用到空值，**结果必须等于**同一时刻的 `snapshot()` ——
-   这正是 `PartialChanges` 依赖的性质；(3) 任意前缀都不 panic、快照只增不减（流式的容错规则）。
-   (b) 会让「提交成本跟着新文本走」在工具调用上失效 —— 那正是这条路径存在的理由。
+2. ~~**`streaming-json.ts`（559 行）提不提？**~~ **已定 (a)：提**（用户 2026-11-17）。
+   `AGENTS.md` §一 随之从「只有 `google-generative-ai.ts`」改成「+ `utils/streaming-json.ts`」（`223cf61`）。
+   落点 `nous-ai/src/utils/streaming_json.rs`，**只取四个导出** `JsonPath` / `JsonChange` /
+   `StreamingJsonParser` / `ToolCallArgumentsStream`，其余不搬。
+   两条更正（我自己写错过的）：
+   - 「上游零命中」是错的措辞。真话是：**上游有实现、无测试**。`packages/ai` 里
+     `ToolCallArgumentsStream` 被 `src/index.ts` 导出，并被 6 个 provider（`openai-completions` /
+     `anthropic-messages` / `pi-messages` / `openai-responses-shared` / `mistral-conversations` /
+     `bedrock-converse-stream`）+ `providers/faux.ts` 引用；`grep -rn StreamingJsonParser` 只命中定义
+     文件本身（它只被 `ToolCallArgumentsStream` 内部用）。**没有任何测试文件**：
+     `find . -name '*streaming*json*'` 只有源码本体。
+     所以判据自建三条：(1) 完整合法输入上 `snapshot()` 等于 `serde_json` 的解析结果；(2) 把
+     `append()` 返回的 `JsonChange` 依次应用到空值，**结果必须等于**同一时刻的 `snapshot()` ——
+     这正是 `PartialChanges` 依赖的性质；(3) 任意前缀都不 panic、快照只增不减。
+   - 「`rpi-ai` 无等价物」是对的（`/tmp/pi-rust/crates/rpi-ai/src` 全仓零命中
+     `StreamingJsonParser` / `ToolCallArgumentsStream`），提货是新东西，不是重写旧的。
+
 3. **3 条 delta 变体用构造数据**（§2.3）—— 认还是不认？不认的话这 3 行就永远没人验。
