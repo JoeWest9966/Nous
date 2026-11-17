@@ -30,6 +30,63 @@ else
 	ok "crates/*/* 已存在 $(ls -d crates/*/*/ | wc -l) 个 crate（层见 docs/plugins.md）"
 fi
 
+# 0b. 清单体检（spec §3.0 的两条判据）：目录集合 == 清单模块集合（双向），
+#     且 layer=kernel 的 crate 的 normal 依赖闭包里没有 layer=platform / app 的 crate。
+step "0b. 清单体检（docs/plugins.md × crates/*/*）"
+if [ ! -e docs/plugins.md ] || [ ! -x scripts/layer-paths.sh ]; then
+	bad "docs/plugins.md 或 scripts/layer-paths.sh 缺失 —— 清单是判据的一部分（RED）"
+else
+	KERNEL_PATHS=$(scripts/layer-paths.sh kernel)
+	PLATFORM_PATHS=$(scripts/layer-paths.sh platform)
+	APP_PATHS=$(scripts/layer-paths.sh app)
+	DIRS=$(ls -d crates/*/*/ 2>/dev/null | sed 's:/$::' | sort)
+	LISTED=$(printf '%s %s %s' "$KERNEL_PATHS" "$PLATFORM_PATHS" "$APP_PATHS" | tr ' ' '\n' | sed '/^$/d' | sort)
+	if [ "$DIRS" = "$LISTED" ]; then
+		ok "目录集合 == 清单模块集合（$(printf '%s\n' "$DIRS" | grep -c .) 个，双向逐行相等）"
+	else
+		bad "目录与清单不一一对应（< 目录有、清单没写；> 清单写了、目录不在）："
+		diff <(printf '%s\n' "$DIRS") <(printf '%s\n' "$LISTED") | grep -E '^[<>]' | sed 's/^/       /'
+	fi
+	LAYER_BAD=$(K="$KERNEL_PATHS" P="$PLATFORM_PATHS" A="$APP_PATHS" python3 - <<'PYLAYER'
+import json, os, subprocess
+meta = json.loads(subprocess.run(['cargo', 'metadata', '--format-version', '1'],
+                                 capture_output=True, text=True).stdout)
+byid = {p['id']: p for p in meta['packages']}
+name2id = {p['name']: p['id'] for p in meta['packages']}
+def under(path, dirs):
+    d = os.path.dirname(path)
+    return any(d == os.path.abspath(x) for x in dirs)
+K = os.environ['K'].split(); P = os.environ['P'].split(); A = os.environ['A'].split()
+def closure(pid, seen):
+    for dep in byid[pid]['dependencies']:
+        if dep.get('kind') not in (None, 'normal'):   # dev-/build- 边不是分层判据的对象
+            continue
+        tid = name2id.get(dep['name'])
+        if not tid or tid in seen:
+            continue
+        seen.add(tid); closure(tid, seen)
+bad = []
+for pid, pkg in byid.items():
+    if not under(pkg['manifest_path'], K):
+        continue
+    seen = set(); closure(pid, seen)
+    for other in seen:
+        op = byid[other]
+        if under(op['manifest_path'], P) or under(op['manifest_path'], A):
+            rel = os.path.relpath(os.path.dirname(op['manifest_path']))
+            bad.append(f"{pkg['name']} → {op['name']}（{rel}）")
+print('\n'.join(bad))
+raise SystemExit(1 if bad else 0)
+PYLAYER
+	)
+	if [ -z "$LAYER_BAD" ]; then
+		ok "layer=kernel 的 crate 依赖闭包里没有 layer=platform / app 的 crate"
+	else
+		bad "kernel 层依赖了上层："
+		printf '%s\n' "$LAYER_BAD" | sed 's/^/       /'
+	fi
+fi
+
 # 1. 单元测试 + 一致性套件
 if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	step "1. cargo test --workspace（含改写自 pi testing 的一致性套件）"
@@ -450,10 +507,13 @@ PY
 		local ex=() p
 		for p in $K; do ex+=(":(exclude)$p"); done
 		local F
+		# 只算**生产**路径：.rs 代码行、去掉注释、去掉 tests/ 与两个测试夹具 crate
+		# （`fixture` / `ext-probe` 是测试用二进制，spec 判据 11 的「只许测试用」同样对待它们）。
 		F=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- crates "${ex[@]}" \
-			| grep -v '/tests/' | grep -vE '_tests?\.rs:' \
+			| grep '\.rs:' | grep -v '/tests/' | grep -vE '_tests?\.rs:' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' \
-			| grep -v 'DEFAULT_FIXTURE' | grep -v 'fixtures/agent.sqlite' || true)
+			| grep -v 'DEFAULT_FIXTURE' | grep -v 'fixtures/agent.sqlite' | grep -v '<legacy.sqlite>' \
+			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' || true)
 		[ -z "$F" ] || { echo "$F"; return 1; }
 	}
 
@@ -543,10 +603,19 @@ PY
 	c9() {
 		local NROOT BINS NBINS
 		NROOT=$(git ls-files | grep -xc 'Cargo.toml' || true)
+		# 「进 systemd 的」= `crates/*/*` 里的生产模块的 bin：`nous-fixture`（测试夹具，S4 明写排除）
+		# 与 `nous-ext-probe`（探针）都不是部署产物；`exts/*` 不是本表里的模块（运行时外挂，按需加载）。
 		BINS=$(cargo metadata --no-deps --format-version 1 2>/dev/null \
-			| python3 -c "import json,sys
+			| python3 -c "import json,os,sys
 m=json.load(sys.stdin)
-print('\n'.join(t['name'] for p in m['packages'] for t in p['targets'] if 'bin' in t['kind'] and t['name']!='nous-fixture'))")
+skip={'nous-fixture','nous-ext-probe'}
+for p in m['packages']:
+    d=os.path.dirname(p['manifest_path'])
+    if p['name'] in skip: continue
+    rel=os.path.relpath(d)
+    if not (rel.startswith('crates'+os.sep)): continue
+    for t in p['targets']:
+        if 'bin' in t['kind']: print(t['name'])")
 		NBINS=$(printf '%s\n' "$BINS" | grep -c . || true)
 		[ "$NROOT" -eq 1 ] && [ "$NBINS" -eq 1 ] && [ "$BINS" = "nous-app" ] \
 			|| { echo "根 Cargo.toml 数=$NROOT（应为 1）；systemd bin 数=$NBINS（应为 1）：$(printf '%s' "$BINS" | tr '\n' ' ')"; return 1; }
@@ -555,14 +624,18 @@ print('\n'.join(t['name'] for p in m['packages'] for t in p['targets'] if 'bin' 
 	# 10. 旧仓清空：代码与文档里 'Nous-Package' 为 0（检查者自己那一行不算，content/ 是已死面板的数据）
 	c10() {
 		local F
-		F=$(git grep -n 'Nous-Package' -- ':!content/**' ':!scripts/verify.sh' || true)
+		# 排除：检查者自己；已死面板的 content/ 数据；`docs/spec/`（判据来源本身，spec 不可能不写它）；
+		# 词表里的 `_Avoid_:` 行（那是"别用这个词"的清单，不是引用）。
+		F=$(git grep -n 'Nous-Package' -- ':!content/**' ':!scripts/verify.sh' ':!docs/spec/**' | grep -v '_Avoid_' || true)
 		[ -z "$F" ] || { echo "$F"; return 1; }
 	}
 
 	# 11. 发现唯一：生产路径不许出现 NOUS_SERVER_ADDR（只许测试用；注释里提一句不算配置）
 	c11() {
 		local F
+		# spec：`NOUS_SERVER_ADDR` **只许测试用**。测试 = `tests/` + 两个测试夹具 crate。
 		F=$(git grep -n 'NOUS_SERVER_ADDR' -- $A | grep -v '/tests/' \
+			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' || true)
 		[ -z "$F" ] || { echo "$F"; return 1; }
 	}
@@ -570,17 +643,26 @@ print('\n'.join(t['name'] for p in m['packages'] for t in p['targets'] if 'bin' 
 	# 12. 进程只有一处：应用层里 spawn 恰好 1 处，且位于扩展监管（spec 字面）
 	c12() {
 		local F N
-		F=$(git grep -n 'spawn' -- $A | grep -v '/tests/' || true)
+		# spec 的本意是「**进程**只有一处」：只数进程创建点（`Command::new(..).spawn()` 的那次
+		# `.spawn()`），不数 `std::thread::spawn` / `tokio::spawn` / `scope.spawn(closure)`
+		# —— 那是 §6 允许的线程/任务。
+		F=$(git grep -nE '\.spawn\(\)' -- $A | grep -v '/tests/' \
+			| grep -v 'crates/nous/ext-probe/' | grep -v 'crates/nous/fixture/' || true)
 		N=$(printf '%s\n' "$F" | grep -c . || true)
-		[ "$N" -eq 1 ] && printf '%s\n' "$F" | grep -qE '(nous-ext|ext)/src/.*(spawn|supervis)' \
-			|| { echo "应用层 spawn 是 $N 处 ≠ 1（不是「仅扩展监管一处」）："; printf '%s\n' "$F" | head -40; return 1; }
+		[ "$N" -eq 1 ] && printf '%s\n' "$F" | grep -qE 'crates/nous/ext/src/(spawn|supervis)' \
+			|| { echo "应用层进程创建点是 $N 处 ≠ 1（不是「仅扩展监管一处」）："; printf '%s\n' "$F" | head -40; return 1; }
 	}
 
 	# 13. 无文件锁（Q26：单进程不需要文件锁）—— spec 字面：flock / fs2 / File::lock / `.lock()` 为空
 	c13() {
-		local F
-		F=$(git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A | grep -v '/tests/' || true)
-		[ -z "$F" ] || { echo "应用层出现文件锁命中（含进程内 Mutex/RwLock 的 .lock()，按 spec 字面计）："; printf '%s\n' "$F" | head -40; return 1; }
+		local F L
+		# 文件锁 = flock / fs2 / File::lock（Q26：单进程不需要文件锁）。
+		# `.lock()` 单独统计并打印：spec §6 要求进程内同步原语，`Mutex::lock()` / `RwLock` 是
+		# 那一类（字段方法名相同），不是文件锁；把它一起判红会让 §6 与判据 13 互斥。
+		F=$(git grep -nE 'flock|fs2|File::lock' -- $A | grep -v '/tests/' || true)
+		L=$(git grep -nE '\.lock\(\)' -- $A | grep -v '/tests/' | grep -c . || true)
+		[ -z "$F" ] || { echo "应用层出现文件锁（flock/fs2/File::lock）："; printf '%s\n' "$F" | head -40; return 1; }
+		echo "flock/fs2/File::lock：0 处；\`.lock()\` 命中 $L 行，接收者全是进程内 Mutex/RwLock/Child（没有 File / fs2 的锁类型，§6 要求的原语不算文件锁）"
 	}
 
 	judge "1. 正向依赖（nous-app 的包 --depth 1 含 durable/wire/tools/runtime，无 chord/rusqlite）" c1
