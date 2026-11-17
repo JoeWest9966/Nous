@@ -76,18 +76,21 @@ test -n "$K"                   || { echo "SKIP: K 为空（清单里没有 layer
 4. 路由归属：`git grep -nE '\.route\(|axum::|tower::' -- $K` 为空。
 5. 数据面唯一入口：`$K` 之外不许出现 `rusqlite` / `Connection::open` / `.sqlite` / `PRAGMA` / `BEGIN IMMEDIATE`。
 6. 进程归应用层：`$K` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。**
-   全仓的进程创建点按**文件**数，不按入口数。生成命令（逐字执行，`verify.sh` 第 5 段就是它）：
+   全仓的进程创建点按**文件**数，不按入口数。**只数构造点，不数方法调用**（Rust 里起进程必须先有 `Command`，`.spawn()` / `.output()` / `.status()` 都是它的方法，数方法必漏）。生成命令（逐字执行，`verify.sh` 第 5 段就是它）：
 
    ```bash
-   grep -rlE '(Command::new\(|\.spawn\(|::fork\(|posix_spawn|execve)' crates --include=*.rs | sort
+   grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' crates --include=*.rs | sort
    ```
+
+   **判定口径变更（2026-11-17）**：从"数方法调用"（`\.spawn\(`）改成"数构造点"（`Command::new` / `fork` / `posix_spawn` / `execve`）。理由：`os_env.rs:443` 是 `cmd.status().await`，**它也在创建进程**，`\.spawn\(` 与 `\.spawn\(\)` 都数不到；收紧到 `\.spawn\(\)` 会连 `.output()` / `.status()` 一起漏。数字与成员不变（仍 2 个），**不需要重新签字**。
 
    结果**逐行相等**于代码仓 `docs/boundary-baseline.txt` 的 `spawn_files=N` + 紧跟的成员清单（今天 **N=2**：`crates/nous/tools/src/os_env.rs`、`crates/nous/ext/src/spawn.rs`）。
    **排除项（逐条列出，判据从集合里减掉每一条；不许只写"排除 tests/"就完）**：
-   - `tests/`、`*_test.rs`、`*tests.rs` —— 测试夹具；
-   - `#[cfg(windows)]` 块 —— 今天就是 `crates/nous/tools/src/output_decode.rs:198`（Linux 不编）；
-   - 探针 crate `crates/nous/ext-probe/` —— 起一个 `nous-server` 逐帧验协议的探针，**不进 systemd，不是生产路径**；
-   - `crates/nous/ext/src/runtime.rs:537` —— `scope.spawn(…)` 是 `std::thread::scope` 的**线程**，S1 只数进程。
+   - `tests/`、`*_test.rs`、`*_tests.rs`、`*tests.rs` —— 测试夹具（今天命中 `crates/nous/runtime/src/provider/tests.rs`）。**排除式写 `(/tests/|tests?\.rs$)`**：`_tests?\.rs$` 抓不到 `provider/tests.rs`（没有下划线前缀），这是锚点选错的经典复发；
+   - `#[cfg(windows)]` 块 —— Linux 不编。**今天命中 0 个文件**（`output_decode.rs` 里那个 `chcp` 构造点已在 #14 移除）；规则留着，再出现 windows-only 构造点时自动不算；
+   - 探针 crate `crates/nous/ext-probe/` —— 起一个 `nous-server` 逐帧验协议的探针，**不进 systemd，不是生产路径**（今天 3 个文件）。
+
+   **已删的一条**：`crates/nous/ext/src/runtime.rs:537` 的 `scope.spawn(move || …)` —— 它是 `std::thread::scope` 的**线程**，不是 `Command`，数构造点后**自动不计**，不需要写进排除项。
 
    已知欠账（**不设判据**，只记在 baseline 注释里）：`os_env.rs` 一文件 3 个入口（363 / 412 / 915）；`ext/src/spawn.rs` 一文件 1 个入口（90 / 127）。口号仍是"其余工具一律经它"，但 `os_env.rs` 今天就是那个它本身。
    **成员变更要签字**："只减不增"管的是**成员**，不只是数字——`open_browser.rs` → `ext/src/spawn.rs` 换人时数字仍为 2，**换成员同样要签字**（数字相等不等于没变，这就是哨兵原则）。
@@ -98,7 +101,7 @@ test -n "$K"                   || { echo "SKIP: K 为空（清单里没有 layer
 9. 一个 workspace 根：全仓只有一个根 `Cargo.toml`；**进 systemd 的 bin target 恰好 1 个**（排除 `nous-fixture`，S4）。
 10. 旧仓清空：`git grep -c 'Nous-Package'` 在代码与文档里为 0（只许出现在归档 README 与历史提交里）。
 11. 发现唯一：`grep -rn 'NOUS_SERVER_ADDR' -- $A` 为空（只许测试用；生产配置出现即红）。
-12. 进程只有一处：`git grep -n 'spawn' -- $A` 恰好 1 处，且位于扩展监管。
+12. 进程只有一处（应用层）：与判据 6 **同一个 pattern**（只数构造点）+ **同一份排除项**，`grep -rlE 'Command::new\(|::fork\(|posix_spawn\(|execve\(' -- $A | grep -vE '(/tests/|tests?\.rs$|^crates/nous/ext-probe/)'` 的文件集合**恰好 1 个**，且必须等于 `crates/nous/ext/src/spawn.rs`（扩展监管）。**注意 `$A` 含探针 crate `ext-probe`**（它是 `layer = app`），不排除它就会数出 4 个。
 13. 无文件锁：`git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A` 为空（单进程不需要文件锁）。
 
 **反悔点**：出现"纯内核"部署形态（没有应用层、只跑 6 条路由）→ 契约拆两份。
@@ -265,12 +268,12 @@ K 为空 或 crates/*/* 一个都没有    → SKIP（打印），因为 #14 还
 
 **结论**：**块不再是进程，也没有"崩"这回事。** 块分三类：并成路由/特性、删、真需隔离的叫扩展。
 
-- 进程：`spawn` 只有一处，且**只服务扩展**（`git grep -n 'spawn' -- $A` 恰好 1 处，在 extensions 模块里）。"块崩溃只死自己"的监管逻辑**不用写**。
+- 进程：进程创建点只有一处，且**只服务扩展**（判据 12 的同一个 pattern，文件集合恰好 1 个 = `crates/nous/ext/src/spawn.rs`）。"块崩溃只死自己"的监管逻辑**不用写**。
 - content store：文件锁锁的是**多进程写同一份 `tree.json`**；块进程一消失，锁就没对手了，同一进程内 `Mutex<()>` 足够。**不许把文件锁移植进 Rust**——那是把多进程时代的问题带进单进程架构，还会在 j1900 上变成"CLI 一读就卡住"的新坑。
 
 **判据**
 
-1. `git grep -n 'spawn' -- $A` 恰好 1 处，位于扩展监管。
+1. 进程创建点（构造点 pattern，见判据 12）在应用层的文件集合恰好 1 个，且 == `crates/nous/ext/src/spawn.rs`。
 2. `git grep -nE 'flock|fs2|File::lock|\.lock\(\)' -- $A` 为空。
 3. `resolve` 由 nous-app 自己发，响应体 `url` 指向 nous-app 自己的监听。
 4. 停掉 `nous-panel.service` 之后，NousDesk 冷启动仍能连上（第 8 章之前跑一次）。
