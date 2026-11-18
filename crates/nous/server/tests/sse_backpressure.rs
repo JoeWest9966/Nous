@@ -19,9 +19,24 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tower::ServiceExt;
 
+/// 这三个测试共用**一个进程的 RSS**：`/proc/self/statm` 没有「这个任务用了多少」。
+/// 并行跑时别的测试分配的内存会算进本测试的涨幅（实测把 0.7MB 抬到 10.9MB），
+/// 所以全部串行：拿这把锁 = 独占进程 RSS 的那段时间。
+static SERIAL_RSS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn exclusive_rss() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL_RSS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// 未发送字节上限（`ext-sdk` 的单帧上限同数）。测试独立写常量，免得实现把数字改小
 /// 以后判据跟着一起绿。
 const LIMIT: usize = 1024 * 1024;
+
+/// RSS 涨幅的门槛。spec S5 的原话是「涨不过余量」，所以这里定 8MB（= 8 × 单连接上限）：
+/// 上限 1MB 的实现在 40MB 输入下不该逼近它（实测有界 0.7MB、拿掉字节上限后 8.4MB）。**这个数必须远小于输入总量**，`total_input`
+/// 那条自检会挡住「门槛配得比输入还大」的假绿 —— 上一版就是 16MB 输入配 64MB 门槛，
+/// 不做背压也能绿。
+const DELTA_LIMIT: usize = 4 * LIMIT;
 
 /// 判据是 RSS 不涨，不是「返回了码」。读 `/proc/self/statm` 的第二项（页数）。
 fn rss_bytes() -> usize {
@@ -35,18 +50,14 @@ fn rss_bytes() -> usize {
     pages * 4096
 }
 
-/// 往会话推一帧 payload 约为 `bytes` 的 entry_appended。
-fn publish_chunk(state: &AppState, session: i64, bytes: usize) {
-    let text = "x".repeat(bytes);
+/// 推一帧 payload 就是 `text` 的 entry_appended。
+///
+/// `text` 由调用方**提前分配并复用**：每帧新 `repeat` 一次的话，测试自己的 16MB 字符串
+/// 也会算进 RSS 涨幅里，判据就分不清「服务端在缓冲」和「测试自己在分配」。
+fn publish_chunk(state: &AppState, session: i64, text: &str) {
     let event = RemoteEvent::EntryAppended {
         entry: json!({ "text": text }),
     };
-    let frame = serde_json::to_string(&event).unwrap();
-    assert!(
-        frame.len() >= bytes,
-        "帧必须真的带这么多字节：{} < {bytes}",
-        frame.len()
-    );
     state.publish_event(session, event);
 }
 
@@ -77,12 +88,24 @@ async fn idle_client_is_disconnected(state: Arc<AppState>, session: i64) -> bool
         .unwrap();
     // 给服务端时间建立订阅、写出 snapshot。
     tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // payload 在**采样之前**就分配好、每帧复用（见 `publish_chunk` 的注释）。
+    const CHUNK: usize = 256 * 1024;
+    const FRAMES: usize = 160;
+    let payload = "x".repeat(CHUNK);
+    let total_input = CHUNK * FRAMES;
+    // 自检：判据的门槛必须**小于**灌进去的总量，否则「无界缓冲」也塞不满门槛、测试白绿
+    // （上一版就是 16MB 输入配 64MB 门槛，实测能过）。
+    assert!(
+        total_input >= 4 * DELTA_LIMIT,
+        "这条判据自证不了：输入 {total_input} 必须 ≥ 4 × 门槛 {DELTA_LIMIT}"
+    );
     let rss_before = rss_bytes();
 
     // 逐帧推到远超 1MB：socket 缓冲本身有几 MB，得让对端彻底不读才能把背压顶回来。
-    // 帧数（64）远低于旧上限 256，旧实现不会因帧数断；16MB 也远低于 64×1MB RSS 余量。
-    for _ in 0..64 {
-        publish_chunk(&state, session, 256 * 1024);
+    // 帧数（128）远低于旧上限 256，旧实现不会因帧数断。
+    for _ in 0..FRAMES {
+        publish_chunk(&state, session, &payload);
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
 
@@ -102,17 +125,20 @@ async fn idle_client_is_disconnected(state: Arc<AppState>, session: i64) -> bool
     .unwrap_or(false);
     let rss_after = rss_bytes();
     let delta = rss_after.saturating_sub(rss_before);
-    let ceiling = 64 * LIMIT;
     eprintln!(
-        "[rss] before={} after={} delta={} ceiling={} disconnected={disconnected}",
-        rss_before, rss_after, delta, ceiling
+        "[rss] before={rss_before} after={rss_after} delta={delta} \
+         limit={DELTA_LIMIT} input={total_input} disconnected={disconnected}"
     );
-    assert!(delta < ceiling, "RSS 涨幅 {} >= 上限 {ceiling}", delta);
+    assert!(
+        delta < DELTA_LIMIT,
+        "RSS 涨幅 {delta} >= 门槛 {DELTA_LIMIT}（灌了 {total_input} 字节；无界缓冲会一路涨到输入总量）"
+    );
     disconnected
 }
 
 #[tokio::test]
 async fn an_idle_client_is_disconnected_once_unsent_bytes_exceed_one_mb() {
+    let _serial = exclusive_rss();
     let state = AppState::with_source(FakeSource::two_sessions());
     assert!(
         idle_client_is_disconnected(state, 1).await,
@@ -123,6 +149,7 @@ async fn an_idle_client_is_disconnected_once_unsent_bytes_exceed_one_mb() {
 /// 每连接上限：一个只连不读的客户端被断，不能踢掉同时正常读的客户端。
 #[tokio::test]
 async fn a_slow_client_does_not_disturb_a_fast_one() {
+    let _serial = exclusive_rss();
     let state = AppState::with_source(FakeSource::two_sessions());
     let base = serve(state.clone()).await;
     let addr = base.trim_start_matches("http://");
@@ -147,19 +174,22 @@ async fn a_slow_client_does_not_disturb_a_fast_one() {
     assert!(seen > 0);
     let (reader_done_tx, reader_done_rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
     tokio::spawn(async move {
+        const MARKER: &[u8] = b"after-slow-kicked";
         let mut received = Vec::new();
         let mut buf = vec![0u8; 64 * 1024];
+        // 只扫**新到的那一段**（回退 MARKER.len()-1 字节，防标记跨块）——
+        // 每块都扫整个缓冲区是 O(n²)：16MB 灌进来能把 1 秒的测试拖到 70 秒。
+        let mut scanned = 0usize;
         loop {
             match fast.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     received.extend_from_slice(&buf[..n]);
-                    if received
-                        .windows(b"after-slow-kicked".len())
-                        .any(|w| w == b"after-slow-kicked")
-                    {
+                    let from = scanned.saturating_sub(MARKER.len() - 1);
+                    if received[from..].windows(MARKER.len()).any(|w| w == MARKER) {
                         break;
                     }
+                    scanned = received.len();
                 }
             }
         }
@@ -174,8 +204,9 @@ async fn a_slow_client_does_not_disturb_a_fast_one() {
     .await
     .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
+    let payload = "x".repeat(256 * 1024);
     for _ in 0..64 {
-        publish_chunk(&state, 1, 256 * 1024);
+        publish_chunk(&state, 1, &payload);
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
 
@@ -203,6 +234,7 @@ async fn a_slow_client_does_not_disturb_a_fast_one() {
 /// 快读客户端：同样的会话，snapshot + 两个增量帧的帧序和内容都不变。
 #[tokio::test]
 async fn a_fast_reader_keeps_snapshot_then_events_in_order() {
+    let _serial = exclusive_rss();
     let state = AppState::with_source(FakeSource::two_sessions());
     let app = router(state.clone());
     let response = app
