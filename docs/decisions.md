@@ -306,3 +306,22 @@ durable-until-acked），把这条 pragma 去掉，同时重跑 `commit_throughp
 
 **反悔点**：如果哪天需要"离线/回放模式"给用户选（比如没有凭证时用 faux 演示），那就得**显式**
 打开一个开关并在 `/v1/capabilities` 里声明 `provider: "offline"` —— 绝不能是默认行为。
+
+## 2026-11-18 · capabilities 的 `name` 强制等于清单的 `module` 列
+
+**决定**：`GET /v1/capabilities` 的 `modules[].name` **逐字**用 `docs/plugins.md` 的 `module` 列
+（`ext` 就是 `ext`，不是 `extensions`）。`enabled` = **清单 ∩ 代码**：清单关掉 → `disabled_by_manifest`、
+清单开但没实现 → `not_implemented`、冻结 → `frozen`、两者都有 → `enabled:true` + `endpoints`。
+`reason` 是 `{code, message}`，`code` 四值封闭，**客户端只许按 `code` 分支**。
+
+**为什么**：`AGENTS.md` 说"NOUS 不是代码，是一张清单"。表管**装什么**、注册表管**有哪些端点**，
+capabilities 是交集 —— 这正是"一个发行版 = 一张清单"能被客户端看见的那一面。名字一旦各起一套
+（表里 `ext`、协议里 `extensions`），两边迟早各按自己的叫法写分支，那就是两套真相的起点。
+代价是：**新增功能面必须先加表行，再写端点**（不许先出端点后补行 —— `#46` 就是对着记忆里的
+端点表开的票，票面数字本身是错的）。
+
+**落地**：`#47` 的 11 个 `name` 已在 `docs/plugins.md` 补齐 8 行（`documents` `presets` `skills`
+`archive` `combos` `triggers` `device` `selection`）。UI 文案（"扩展"）不算名字。
+
+**反悔点**：如果哪天同一个端点族要按租户/发行版给不同名字，那就说明 `name` 被当成显示名用了 ——
+那时该在响应里加 `label` 字段，不是让 `name` 变。
