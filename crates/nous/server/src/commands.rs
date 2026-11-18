@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nous_durable::session::commands::{
-    abort, fork, mark_read, rename_session, scan_orphans, submit_message, unread_map, CommandError,
-    ForkRequest, SubmitRequest,
+    abort, fork, mark_read, rename_session, scan_orphans, set_pin, submit_message, unread_map,
+    CommandError, ForkRequest, PinOutcome, PinRequest, SubmitRequest,
 };
 use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
@@ -51,6 +51,9 @@ pub struct RenameResult {
     pub name: String,
 }
 
+/// `POST /v1/sessions/:id/pin` 的回执。
+pub type PinResult = PinOutcome;
+
 #[async_trait]
 pub trait CommandSource: Send + Sync {
     /// 建会话：经 `Session::create_conversation`，和别的写共享一把锁并广播帧。
@@ -75,6 +78,9 @@ pub trait CommandSource: Send + Sync {
 
     /// 改名：走 `Session` 写者并广播。
     async fn rename(&self, session: i64, name: String) -> Result<RenameResult>;
+
+    /// 置顶/取消置顶：走 `Session` 写者并广播。
+    async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult>;
 
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
@@ -201,6 +207,19 @@ impl CommandSource for DurableCommands {
             name: outcome.name,
         })
     }
+
+    async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult> {
+        set_pin(
+            &self.session,
+            PinRequest {
+                conversation: session,
+                pinned,
+                request_id,
+            },
+        )
+        .await
+        .map_err(command_error)
+    }
 }
 
 /// 只读装配：写请求一律 409。
@@ -233,6 +252,10 @@ impl CommandSource for ReadOnlyCommands {
     }
 
     async fn rename(&self, _: i64, _: String) -> Result<RenameResult> {
+        Err(read_only())
+    }
+
+    async fn pin(&self, _: i64, _: bool, _: String) -> Result<PinResult> {
         Err(read_only())
     }
 

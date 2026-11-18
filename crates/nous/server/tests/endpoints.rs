@@ -54,6 +54,7 @@ async fn get_sessions_returns_the_wire_shape_newest_first() {
         "updatedAt",
         "last",
         "archived",
+        "pinned",
     ] {
         assert!(items[0].get(key).is_some(), "缺字段 {key}");
     }
