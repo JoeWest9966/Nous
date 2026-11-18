@@ -46,6 +46,9 @@ DATA_DIR=/var/lib/nous
 TOKEN=/etc/nous/token
 UNIT=/etc/systemd/system/nous-app.service
 BASE_URL=http://127.0.0.1:4789
+# 判据 9b 要用**局域网地址**打一次（回环地址测不出「对外暴露了但有钥匙」）。
+LAN_IP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -v '^127\.' | head -1)
+LAN_IP=${LAN_IP:-127.0.0.1}
 
 # 首版绑回环，不带 token；#50 落地后带 token 的请求也应可用。
 CURL_AUTH=()
@@ -65,13 +68,18 @@ step '判据 9：/health 是负空间'
 CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$BASE_URL/health" 2>/dev/null || true)
 [ "$CODE" = 404 ] && ok '/health → 404（没偷偷开豁免口）' || bad "/health → $CODE（应为 404）"
 
-step '判据 9b：只听回环（#50 落地前红线）'
+step '判据 9b：绑非回环就必须有钥匙（#50 落地后的口径）'
+# 新口径：Desk 永远不和 Nous 同机，所以**允许**绑 0.0.0.0；要守的不再是「只听回环」，
+# 而是「裸奔不许」——绑了非回环，未认证请求必须 401、token 文件必须在。
 LISTEN=$(ss -ltn 'sport = :4789' 2>/dev/null | tail -n +2 || true)
-if printf '%s\n' "$LISTEN" | grep -q '127\.0\.0\.1:4789' \
-   && ! printf '%s\n' "$LISTEN" | grep -qE '0\.0\.0\.0:4789|\*:4789|\[::\]:4789'; then
-	ok '4789 只绑 127.0.0.1'
+if ! printf '%s\n' "$LISTEN" | grep -qE '0\.0\.0\.0:4789|\*:4789|\[::\]:4789'; then
+	ok "4789 只听回环（${LISTEN:-（空）}）——那就不需要钥匙，跳过裸奔检查"
+elif [ ! -r "$TOKEN" ]; then
+	bad "4789 绑了非回环，但没有 token 文件 —— 这就是裸奔"
+elif [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$LAN_IP:4789/v1/device" 2>/dev/null)" = 401 ]; then
+	ok "4789 绑非回环（0.0.0.0），未认证请求 401、token 在位 —— 暴露但不裸奔"
 else
-	bad "4789 监听不对：${LISTEN:-（空）}"
+	bad "4789 绑非回环，但未认证请求不是 401（认证没生效？）"
 fi
 
 # 判据 8 要扫这三个词，判据 15 又不许脚本里出现它们 —— 用 shell 拼出来。
