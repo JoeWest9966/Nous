@@ -99,18 +99,17 @@ PY
 	info "产物 $BIN_NAME"
 }
 
-# 远端库状态。durable.db 是分叉依据（存储分离拍板）。
+# 远端库状态。票面 D9：首次/升级只按 nous.db 分叉，不按产物分叉。
 remote_state() {
 	local out rc=0
-	out=$(rs sh -c 'test -e /var/lib/nous/durable.db && echo durable=yes || echo durable=no; test -e /var/lib/nous/nous.db && echo plugins=yes || echo plugins=no; test -L /opt/nous-app/current && echo current=yes || echo current=no' 2>&1) || rc=$?
+	out=$(rs sh -c 'test -e /var/lib/nous/nous.db && echo db=yes || echo db=no; test -L /opt/nous-app/current && echo current=yes || echo current=no' 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "读远端状态失败：$out"
-	DURABLE_PRESENT=$(printf '%s\n' "$out" | sed -n 's/^durable=//p')
-	PLUGINS_PRESENT=$(printf '%s\n' "$out" | sed -n 's/^plugins=//p')
+	DB_PRESENT=$(printf '%s\n' "$out" | sed -n 's/^db=//p')
 	CURRENT_PRESENT=$(printf '%s\n' "$out" | sed -n 's/^current=//p')
-	if [ "$DURABLE_PRESENT" = yes ]; then
+	if [ "$DB_PRESENT" = yes ]; then
 		FIRST_RUN=0
-	elif [ "$PLUGINS_PRESENT" = yes ] || [ "$CURRENT_PRESENT" = yes ]; then
-		die "durable.db 不在但 nous.db/current 在：不猜首次，人工对账后再部署"
+	elif [ "$CURRENT_PRESENT" = yes ]; then
+		die "nous.db 不在但 current 在：不猜首次，人工对账后再部署"
 	else
 		FIRST_RUN=1
 	fi
@@ -122,23 +121,20 @@ local_checks() {
 	grep -q '^Environment=NOUS_LISTEN=127\.0\.0\.1:4789$' "$UNIT_SRC" || die "unit 不是回环监听（判据 9b）"
 }
 
-# 远端解析 --check 输出。两行契约（quick_check/schema）与三行拍板
-# （quick_check/schema_durable/schema_plugins）都认。
+# 票面契约：--check 固定两行 quick_check=ok / schema=<n>。
 parse_check() {
 	local text=$1
-	CHECK_OK=0; CHECK_DURABLE=""; CHECK_PLUGINS=""
+	CHECK_OK=0; CHECK_SCHEMA=""
 	CHECK_OK=$(printf '%s\n' "$text" | sed -n 's/^quick_check=//p' | head -1)
-	CHECK_DURABLE=$(printf '%s\n' "$text" | sed -n 's/^schema_durable=//p; s/^schema=//p' | head -1)
-	CHECK_PLUGINS=$(printf '%s\n' "$text" | sed -n 's/^schema_plugins=//p' | head -1)
+	CHECK_SCHEMA=$(printf '%s\n' "$text" | sed -n 's/^schema=//p' | head -1)
 	[ "$CHECK_OK" = ok ] || return 1
-	[ -n "$CHECK_DURABLE" ] || return 1
-	[ -z "$CHECK_PLUGINS" ] || [ "$CHECK_PLUGINS" = absent ] || printf '%s' "$CHECK_PLUGINS" | grep -qE '^[0-9]+$' || return 1
+	printf '%s' "$CHECK_SCHEMA" | grep -qE '^[0-9]+$' || return 1
 }
 
 ensure_dirs_and_token() {
 	local out rc=0
 	# 首次：只建 /srv/nous/work、/var/lib/nous、/etc/nous 和 token；
-	# 不建 backups/、不建 nous.db、不 chown/chgrp /opt/*。
+	# 不建 backups/、不提前建 nous.db（应用首次启动自己建）、不 chown/chgrp /opt/*。
 	out=$(rs sh -c 'set -e
 install -d -m 0750 -o nous -g nous /srv/nous/work
 install -d -m 0750 -o nous -g nous /var/lib/nous
@@ -153,36 +149,26 @@ install -d -m 0755 /opt/nous-app' 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "建目录/token 失败：$out"
 }
 
-# 备份两个库（存在才备），在备份上跑 --check；写 manifest（.tmp + rename）。
+# 单库备份：backups/nous-<ts>.db + nous-<ts>.json（票面 D8）。
 backup_and_manifest() {
-	local ts=$1 bin=$2 base backup_dir backup_durable backup_plugins manifest tmp_check out rc=0
+	local ts=$1 bin=$2 base backup manifest tmp_check out rc=0
 	base=/var/lib/nous/backups
-	backup_dir=$base/$ts
-	backup_durable=$backup_dir/durable.db
-	backup_plugins=$backup_dir/nous.db
-	manifest=$base/$ts.json
-	out=$(rs sh -c "set -e; install -d -m 0750 -o nous -g nous '$backup_dir'" 2>&1) || rc=$?
+	backup=$base/nous-$ts.db
+	manifest=$base/nous-$ts.json
+	out=$(rs sh -c "set -e; install -d -m 0750 -o nous -g nous '$base'" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "建备份目录失败：$out"
 
-	# 先备份 durable，再备份 plugins；不存在就跳过且不创建空库。
-	out=$(rs sh -c "set -e; '$bin' --backup '$backup_durable' >/dev/null; if [ -e /var/lib/nous/nous.db ]; then '$bin' --backup '$backup_plugins' --plugins >/dev/null; fi" 2>&1) || rc=$?
+	out=$(rs sh -c "'$bin' --backup '$backup' >/dev/null" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "备份失败：$out"
 
-	CHECK_TEXT=$(rs_out sh -c "'$bin' --check '$backup_durable'; if [ -e '$backup_plugins' ]; then '$bin' --check '$backup_plugins' --plugins; fi" 2>&1) || rc=$?
+	CHECK_TEXT=$(rs_out sh -c "'$bin' --check '$backup'" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "--check 失败：$CHECK_TEXT"
-	parse_check "$CHECK_TEXT" || die "--check 输出不可解析（必须 quick_check=ok + schema）：$CHECK_TEXT"
+	parse_check "$CHECK_TEXT" || die "--check 输出不可解析（必须 quick_check=ok + schema=<n>）：$CHECK_TEXT"
 
-	# manifest：schemas.durable / schemas.plugins（plugins absent → null）；
-	# 旧键 schema_version 也写，便于回退时比对。
-	local usha bytes plugins_json
+	local usha bytes
 	usha=$(unit_sha)
-	bytes=$(rs_out stat -c %s "$backup_durable" 2>/dev/null || echo 0)
-	if [ -n "$CHECK_PLUGINS" ] && [ "$CHECK_PLUGINS" != absent ]; then
-		plugins_json=$CHECK_PLUGINS
-	else
-		plugins_json=null
-	fi
-	PREV_MANIFEST=$(rs_out sh -c 'ls -1t /var/lib/nous/backups/*.json 2>/dev/null | head -1' 2>/dev/null || true)
+	bytes=$(rs_out stat -c %s "$backup" 2>/dev/null || echo 0)
+	PREV_MANIFEST=$(rs_out sh -c 'ls -1t /var/lib/nous/backups/nous-*.json 2>/dev/null | head -1' 2>/dev/null || true)
 	local predecessor
 	predecessor=${PREV_MANIFEST##*/}
 	[ -n "$predecessor" ] || predecessor=null
@@ -190,18 +176,17 @@ backup_and_manifest() {
 	jq -n \
 		--arg binary_sha8 "$BIN_SHA" \
 		--arg target "$TARGET" \
-		--argjson durable "$CHECK_DURABLE" \
-		--argjson plugins "$plugins_json" \
+		--argjson schema_version "$CHECK_SCHEMA" \
 		--arg unit_sha256 "$usha" \
 		--arg deployed_at "$(date -u +%FT%TZ)" \
 		--arg predecessor "$predecessor" \
 		--argjson db_bytes "$bytes" \
-		'{binary_sha8:$binary_sha8,target:$target,schemas:{durable:$durable,plugins:$plugins},schema_version:$durable,unit_sha256:$unit_sha256,deployed_at:$deployed_at,predecessor:$predecessor,db_bytes:$db_bytes}' >"$tmp_check"
+		'{binary_sha8:$binary_sha8,target:$target,schema_version:$schema_version,unit_sha256:$unit_sha256,deployed_at:$deployed_at,predecessor:$predecessor,db_bytes:$db_bytes}' >"$tmp_check"
 	out=$(rs sh -c "cat > '$manifest.tmp' && chmod 0640 '$manifest.tmp' && mv -f '$manifest.tmp' '$manifest'" <"$tmp_check" 2>&1) || rc=$?
 	rm -f "$tmp_check"
 	[ $rc -eq 0 ] || die "写 manifest 失败：$out"
 	MANIFEST_PATH=$manifest
-	BACKUP_DIR=$backup_dir
+	BACKUP_DIR=$base
 }
 
 prune_keep_two() {
@@ -265,14 +250,9 @@ mv -Tf '$REMOTE_ROOT/current.tmp' '$REMOTE_ROOT/current'
 if [ -n '$manifest' ] && [ -f '$manifest' ]; then
   m=\$(cat '$manifest')
   b=\$(printf '%s' \"\$m\" | jq -r .predecessor)
-  if [ \"\$b\" != null ] && [ -f '/var/lib/nous/backups/\$b.json' ]; then
-    b=\${b%.json}
-    cp '/var/lib/nous/backups/\$b/durable.db' /var/lib/nous/durable.db.tmp
-    mv -f /var/lib/nous/durable.db.tmp /var/lib/nous/durable.db
-    if [ -f '/var/lib/nous/backups/\$b/nous.db' ]; then
-      cp '/var/lib/nous/backups/\$b/nous.db' /var/lib/nous/nous.db.tmp
-      mv -f /var/lib/nous/nous.db.tmp /var/lib/nous/nous.db
-    fi
+  if [ \"\$b\" != null ] && [ -f '/var/lib/nous/backups/\$b' ]; then
+    cp '/var/lib/nous/backups/\$b' /var/lib/nous/nous.db.tmp
+    mv -f /var/lib/nous/nous.db.tmp /var/lib/nous/nous.db
   fi
 fi
 # 单元快照按部署时间戳命名：回退时恢复上一次部署留下的 unit（带 78 语义）。
@@ -350,8 +330,8 @@ do_deploy() {
 	install_unit_and_link "$TS"
 	if health_check; then
 		prune_keep_two "$REMOTE_ROOT" 'nous-app-*'
-		[ "$FIRST_RUN" -eq 0 ] && prune_keep_two /var/lib/nous/backups '2*.json'
-		[ "$FIRST_RUN" -eq 0 ] && prune_keep_two /var/lib/nous/backups '2*'
+		[ "$FIRST_RUN" -eq 0 ] && prune_keep_two /var/lib/nous/backups 'nous-*.json'
+		[ "$FIRST_RUN" -eq 0 ] && prune_keep_two /var/lib/nous/backups 'nous-*.db'
 		info "部署完成（$BIN_NAME，sha8=$BIN_SHA）"
 		exit 0
 	fi

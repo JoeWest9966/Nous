@@ -87,19 +87,19 @@ else
 	skip "${W1} 不存在（首版绑回环，允许没有；#50 后必须有）"
 fi
 
-step '判据 6：manifest ↔ 备份库一致'
-MANIFEST=$(ls -1t "$DATA_DIR"/backups/*.json 2>/dev/null | head -1 || true)
+step '判据 6：manifest ↔ 备份库一致（schema_version）'
+MANIFEST=$(ls -1t "$DATA_DIR"/backups/nous-*.json 2>/dev/null | head -1 || true)
 if [ -n "$MANIFEST" ] && [ -x "$CURRENT" ]; then
-	DURABLE=$(jq -r '.schemas.durable // .schema_version // empty' "$MANIFEST")
-	TS=${MANIFEST##*/}; TS=${TS%.json}
-	BACKUP="$DATA_DIR/backups/$TS/durable.db"
+	SCHEMA=$(jq -r '.schema_version // empty' "$MANIFEST")
+	TS=${MANIFEST##*/}; TS=${TS#nous-}; TS=${TS%.json}
+	BACKUP="$DATA_DIR/backups/nous-$TS.db"
 	if [ -f "$BACKUP" ]; then
 		CHECK=$("$CURRENT" --check "$BACKUP" 2>&1)
 		if printf '%s\n' "$CHECK" | grep -qx 'quick_check=ok' \
-		   && printf '%s\n' "$CHECK" | grep -qE "^(schema_durable|schema)=$DURABLE$"; then
-			ok "备份 quick_check=ok，schema=$DURABLE 与 manifest 一致"
+		   && printf '%s\n' "$CHECK" | grep -qx "schema=$SCHEMA"; then
+			ok "备份 quick_check=ok，schema=$SCHEMA 与 manifest.schema_version 一致"
 		else
-			bad "--check 输出与 manifest 不符：$(printf '%s' "$CHECK" | tr '\n' ' ')"
+			bad "--check 输出与 manifest.schema_version 不符：$(printf '%s' "$CHECK" | tr '\n' ' ')"
 		fi
 	else
 		skip "备份库 $BACKUP 不在（首次部署没有备份；人工哨兵）"
@@ -128,8 +128,8 @@ if [ -n "$PREV" ] && [ -n "$MANIFEST" ]; then
 	PREV_SHA=${PREV##*/}; PREV_SHA=${PREV_SHA#nous-app-}; PREV_SHA=${PREV_SHA%%-*}
 	ok "上一版存在：$PREV（回退时须 current 指回它 + 恢复快照，单次演练由 deploy.sh 自动回退完成）"
 	info=$(api /v1/device 2>/dev/null || true)
-	if printf '%s' "$info" | jq -e '.durable_schema.version != null or .version != null' >/dev/null 2>&1; then
-		ok '/v1/device 200 且带 schema/version 信息'
+	if printf '%s' "$info" | jq -e '.version != null' >/dev/null 2>&1; then
+		ok '/v1/device 200 且带 version 信息'
 	else
 		bad "/v1/device 回退后不可用：${info:-空}"
 	fi
@@ -139,8 +139,8 @@ fi
 
 step '判据 2c：拒绝启动停在 failed，300 秒不拉起（--wait）'
 if [ -x "$CURRENT" ]; then
-	TMPDB=$(mktemp -d)/durable.db
-	cp "$DATA_DIR/durable.db" "$TMPDB" 2>/dev/null || true
+	TMPDB=$(mktemp -d)/nous.db
+	cp "$DATA_DIR/nous.db" "$TMPDB" 2>/dev/null || true
 	python3 - "$TMPDB" <<'PY'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
@@ -174,7 +174,7 @@ PY
 		systemctl daemon-reload
 		systemctl restart nous-app || true
 	else
-		skip '造不出 schema+1 的坏库（durable.db 缺失？）'
+		skip '造不出 schema+1 的坏库（nous.db 缺失？）'
 	fi
 else
 	skip 'current 产物不存在'
@@ -193,10 +193,15 @@ else
 fi
 
 step '判据 5 / 14：卸载边界（人工哨兵：会停服务，不在自检里自动跑）'
-if [ -e "$DATA_DIR/durable.db" ] && [ ! -e "$DATA_DIR/nous.db" ]; then
-	ok '首次路径：durable.db 在，nous.db 未被顺手创建'
+# 判据 12：首次路径跑完 /var/lib/nous 只多出 nous.db（+ -wal/-shm），不多出别的。
+EXTRA=$(find "$DATA_DIR" -maxdepth 1 -type f \
+	! -name 'nous.db' ! -name 'nous.db-wal' ! -name 'nous.db-shm' 2>/dev/null || true)
+if [ -e "$DATA_DIR/nous.db" ] && [ -z "$EXTRA" ]; then
+	ok '首次路径：/var/lib/nous 只有 nous.db（+ -wal/-shm）'
+elif [ -e "$DATA_DIR/nous.db" ]; then
+	bad "判据 12：/var/lib/nous 多出文件：$(printf '%s\n' "$EXTRA" | tr '\n' ' ')"
 else
-	skip 'data 目录形状与首次路径预期不同（升级后 nous.db 可能存在）'
+	skip 'nous.db 不存在（首次部署前；升级后也不该缺）'
 fi
 skip '--uninstall / --purge 的删除边界由人执行：uninstall 后产物不在、库与 token 在；purge 不带确认串非 0 且数据仍在'
 

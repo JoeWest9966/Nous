@@ -33,13 +33,13 @@ scripts/deploy.sh
 ```
 
 脚本按顺序做：前置检查（SSH/sudo、命令、磁盘）→ 本地编 musl 产物 →
-**按数据分叉**（看 `/var/lib/nous/durable.db` 在不在，不看产物）→
+**按数据分叉**（看 `/var/lib/nous/nous.db` 在不在，不看产物）→
 建 `/srv/nous/work`、`/var/lib/nous`，`deploy.sh` 生成 `/etc/nous/token`（root:nous 0640）→
 rsync 到版本目录 → 写 manifest → `ln -sfn current` → unit 快照 + 安装 →
 `daemon-reload && enable --now` → 6 次 × 5 秒打 `/v1/device`，断言 `.build == sha8`。
 
-首次路径**只多出 `durable.db`（+ `-wal`/`-shm`）**；不建 `backups/`、不建 `nous.db`、
-不备份、不查活跃任务。`nous.db`（plugins 库）由别的票建表；它不存在时不是错。
+首次路径**只多出 `nous.db`（+ `-wal`/`-shm`）**；不建 `backups/`、不备份、不查活跃任务。
+库由应用自己建表；脚本不提前造一个空库。
 
 > 上线当天第一个 `bash` 工具会是 `EACCES`：`/srv/nous/work` 首版是空目录，`nous` 还没有
 > 可写的对象。那不是装坏了。脚本**不会** `chown`/`chgrp` 任何 `/opt/*` 仓。
@@ -63,7 +63,8 @@ ssh j1900 sudo -n curl -s http://127.0.0.1:4789/v1/device | jq '{version,build,t
 1. `stop nous-app`
 2. `--active-tasks` 查 `status <> 'terminal'`；有活就打印 task id + conversation id 并拒升级
    （判据 11；触发器上线前 `sleeping` 还不会出现，届时闸门口径改为「有 owned work 没收尾」）
-3. `--backup` 两个库（存在的才备），`--check` 备份（判据 6）
+3. `--backup` 单库到 `backups/nous-<ts>.db`，`--check` 打出两行
+   `quick_check=ok` / `schema=<n>`；manifest 里的 `schema_version` 必须等于那一行（判据 6）
 4. 新版本目录 → `ln -sfn current` → unit 快照 → `start`
 5. 健康检查里一旦看到 `refuse:`（journal 或响应），**立即**回退，不等 6 次
 
@@ -77,7 +78,7 @@ unit + `restart`；只换 binary 不换库会 `SchemaTooNew` → 78。回退也�
 ```sh
 ssh j1900 sudo -n ls -1d /opt/nous-app/nous-app-*/nous-app
 ssh j1900 sudo -n ls -1t /var/lib/nous/backups/*.json
-# 按上一版目录改 current 软链，按对应 <ts> 恢复 durable.db/nous.db 与 unit，再 restart
+# 按上一版目录改 current 软链，按 nous-<ts>.json 的 predecessor 恢复对应 nous-<ts>.db 与 unit，再 restart
 ```
 
 ## 3 · 显式切到 `0.0.0.0:4789`（**只在 #50 + Desk #8 都落地后**）
