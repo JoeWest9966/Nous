@@ -425,7 +425,7 @@ pub async fn classify(
 pub const DEFAULT_POLL_AFTER_MS: u64 = 5_000;
 
 /// 一条 assistant entry（上游 `appendAssistant`：`{ model: [message] }`，kind `pi.assistant`）。
-fn assistant_entry(
+pub fn assistant_entry(
     request: &ClassifyRequest,
     message: &AssistantMessage,
 ) -> Result<Value, HarnessError> {
@@ -439,7 +439,7 @@ fn assistant_entry(
 }
 
 /// 把 `pi.live.generation` 改成给定值（`None` = 整键删掉，不是设成 `null`）。
-fn generation_change(
+pub fn generation_change(
     live: Id,
     snapshot: &crate::StoredDocument,
     generation: Option<&super::live::LiveGeneration>,

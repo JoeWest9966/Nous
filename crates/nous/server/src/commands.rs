@@ -65,6 +65,11 @@ pub struct DurableCommands {
 }
 
 impl DurableCommands {
+    /// 用一条现成的 `Session` 装配写命令；与 sessions 的轮次共享同一个取消 token。
+    pub fn with_session(session: Arc<Session>, registry: Arc<ObserverRegistry>) -> Arc<Self> {
+        Arc::new(Self { session, registry })
+    }
+
     /// 打开**本库自己**的库（上游 v2 库在写模式下会明确失败，见 `storage/mod.rs`）。
     pub fn open(path: impl AsRef<Path>) -> Result<Arc<Self>> {
         let path = path.as_ref();

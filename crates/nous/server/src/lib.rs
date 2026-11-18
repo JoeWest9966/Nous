@@ -27,6 +27,7 @@ pub mod records;
 pub mod observer;
 pub mod project;
 pub mod routes;
+pub mod runtime;
 pub mod source;
 
 pub use app::AppState;
@@ -35,6 +36,7 @@ pub use commands::{CommandSource, DurableCommands, ForkResult, SubmitResult};
 pub use error::{Result, ServerError};
 pub use hub::Hub;
 pub use observer::SessionObserver;
-pub use records::{CreateSessionRequest, CreatedSession, ModelRef};
+pub use models::ModelRef;
+pub use records::{CreateSessionRequest, CreatedSession};
 pub use routes::router;
 pub use source::{ImportedSource, SessionSource};

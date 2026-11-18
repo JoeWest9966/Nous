@@ -97,7 +97,7 @@ fn document_events(document: &DocumentCommitChange) -> Result<Vec<RemoteEvent>> 
 /// `POST /messages` 之后客户端要靠第一条 `message_start` 开气泡（issue #22 的判据）。
 /// 同一个 entry 再发 `entry_appended` 是给**别的标签页**的（它们没有本次提交的上下文），
 /// 客户端按 `id` 去重。顺序必须是 start 在前 —— 反过来就等于没开气泡先收到内容。
-fn entry_events(entry: &EntryRecord) -> Vec<RemoteEvent> {
+pub fn entry_events(entry: &EntryRecord) -> Vec<RemoteEvent> {
     let value = match serde_json::to_value(entry) {
         Ok(value) => value,
         // 记录刚从库里读出来，序列化不该失败；真失败时宁可不发，也不发一个空 entry。
@@ -129,7 +129,7 @@ fn entry_events(entry: &EntryRecord) -> Vec<RemoteEvent> {
 }
 
 /// `Submission`：只有 `unanswered` 要弹「没答上来」。
-fn submission_events(submission: &SubmissionRecord) -> Vec<RemoteEvent> {
+pub fn submission_events(submission: &SubmissionRecord) -> Vec<RemoteEvent> {
     if !matches!(
         submission.fields.status,
         nous_durable::types::SubmissionStatus::Unanswered

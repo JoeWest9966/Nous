@@ -10,6 +10,7 @@ use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCo
 use nous_wire::RemoteEvent;
 
 use crate::commands::{CommandSource, DurableCommands, ReadOnlyCommands};
+use crate::runtime::AssembledRuntime;
 use crate::error::Result;
 use crate::hub::Hub;
 use crate::observer::SessionObserver;
@@ -22,6 +23,7 @@ pub struct AppState {
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
     models: crate::models::ModelsResponse,
+    runtime: std::sync::Mutex<Option<Arc<AssembledRuntime>>>,
 }
 
 impl AppState {
@@ -35,6 +37,7 @@ impl AppState {
             commands,
             hub,
             models: crate::models::ModelsResponse::default(),
+            runtime: std::sync::Mutex::new(None),
         })
     }
 
@@ -45,6 +48,13 @@ impl AppState {
 
     /// 读 + 写都接在**同一份库**上。写走 `Session`，`CommitObserver` 挂到同一个 hub ——
     /// 提交落库后帧立刻进 SSE，端点不用自己补发。
+    pub fn durable_with_commands(
+        source: Arc<dyn SessionSource>,
+        commands: Arc<dyn CommandSource>,
+    ) -> Arc<Self> {
+        Self::new(source, commands, Hub::new())
+    }
+
     pub fn durable(path: impl AsRef<std::path::Path>) -> Result<Arc<Self>> {
         let path = path.as_ref();
         // 先开写后端：空路径由它的迁移建表（`ImportedSource::open` 会立刻读一次，
@@ -56,6 +66,7 @@ impl AppState {
             commands: commands.clone(),
             hub: Hub::new(),
             models: crate::models::ModelsResponse::default(),
+            runtime: std::sync::Mutex::new(None),
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -85,6 +96,9 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models,
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
         })
     }
 
@@ -95,6 +109,16 @@ impl AppState {
     /// 启动时补写孤儿终态：走**已经持有的那个写者**，不另开 `Session`。
     pub async fn reclaim_orphans(&self) -> Result<usize> {
         self.commands.reclaim_orphans().await
+    }
+
+    /// 装上组装根（provider / tool 注册表），只在 `main` 里做一次。
+    pub fn with_runtime(self: Arc<Self>, runtime: Arc<AssembledRuntime>) -> Arc<Self> {
+        *self.runtime.lock().unwrap_or_else(|p| p.into_inner()) = Some(runtime);
+        self
+    }
+
+    pub fn runtime(&self) -> Option<Arc<AssembledRuntime>> {
+        self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。

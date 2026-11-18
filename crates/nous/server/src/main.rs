@@ -21,12 +21,13 @@
 //! 已逐字相同，不动任何行。**只对副本用**：跑完那份文件在本库眼里就是 v1。
 
 use std::io::Write;
+use std::sync::Arc;
 use std::path::Path;
 use std::process::ExitCode;
 
 use nous_durable::storage::{adopt_legacy_copy, SqliteStore};
 use nous_durable::StorageError;
-use nous_server::{router, AppState};
+use nous_server::{router, AppState, DurableCommands, SessionObserver};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
@@ -53,8 +54,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let state = match AppState::durable(&db) {
-        Ok(state) => state,
+    let registry = nous_durable::session::ObserverRegistry::new();
+    let session = match nous_durable::session::Session::open(&db) {
+        Ok(session) => Arc::new(session),
         Err(error) => {
             if is_upstream_v2(&db) {
                 return Err(format!(
@@ -69,7 +71,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             return Err(error.to_string().into());
         }
     };
-
+    let commands = DurableCommands::with_session(session.clone(), registry);
+    let state = AppState::durable_with_commands(
+        nous_server::ImportedSource::open(&db)?,
+        commands.clone(),
+    );
+    commands.attach(SessionObserver::new(state.clone()));
 
     // spec §3.4：监听地址是本进程自己的配置，不是「服务器地址发现」。生产配置里
     // 不许出现 `NOUS_SERVER_ADDR`（spec ch1 判据 11：发现唯一，走 resolve），所以
@@ -78,6 +85,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 进程熔断不走这里（那是 `extension_crash`）。**走 `state` 已经持有的那个写者** ——
     // 另开 `Session` 就是第二条写通道（`#38` 收尾，2026-11-18）。
     state.reclaim_orphans().await?;
+
+    // 组装根：这里构造 provider / tool 两张注册表，交给 sessions 的轮次驱动器。
+    // 只装配、不绑定监听；真轮次由命令层构造 TurnRequest 时调用 driver.run。
+    // 它和写命令**共用同一个 `Session`**（`session.clone()`）—— 另开一条就是第二个写者。
+    let assembled = nous_server::runtime::assemble(
+        std::env::current_dir()?,
+        &nous_server::runtime::ProcessEnvValues,
+        session,
+    )?;
+    let state = state.with_runtime(Arc::new(assembled));
 
     let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&address).await?;

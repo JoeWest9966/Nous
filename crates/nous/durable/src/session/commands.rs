@@ -596,3 +596,9 @@ fn now_ms() -> i64 {
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or_default()
 }
+
+/// 会话取消 token 的只读视图。不是 `Session` 的公开方法（A3 面不许动），
+/// 应用层停 provider 流时用它；落库终态仍只走 [`cancel`]。
+pub fn cancel_token(session: &Session) -> tokio_util::sync::CancellationToken {
+    session.cancellation.token().clone()
+}
