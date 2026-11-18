@@ -522,25 +522,65 @@ PY
 	}
 
 	# 3. 词表基线（S8：基线只减不增，新增一行即红）
+	#
+	# 基线按「路径 + 行文本」记，**不记行号**（#45 签字改的口径）：行号是缓存，
+	# 任何人在上面插一行，下面所有基线条目都会漂移成"新增"，判据假红。误红比漏红更贵 ——
+	# 红久了就有人重排基线把红变绿，S8 这条防线就是这么被磨掉的。
+	# 比对是**多重集**：同一路径同一文本出现两次要算两次，少算一次就等于给了个白名单。
 	c3() {
 		local BASE=docs/boundary-baseline.txt
 		[ -f "$BASE" ] || { echo "$BASE 不存在"; return 1; }
-		local HITS NEW STRIPPED
+		local HITS
 		HITS=$(git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K \
 			| grep -v -i licenses || true)
-		STRIPPED=$(grep -v '^\s*#' "$BASE" | grep -v '^\s*$' | sed 's/  # .*//' || true)
-		NEW=$(printf '%s\n' "$HITS" | while IFS= read -r line; do
-			[ -z "$line" ] && continue
-			printf '%s\n' "$STRIPPED" | grep -qF --text -- "$line" || printf '%s\n' "$line"
-		done)
-		if [ -n "$NEW" ]; then
-			echo "词表基线被新增 $(printf '%s\n' "$NEW" | grep -c .) 行 —— 改基线必须单独一张票："
-			printf '%s\n' "$NEW" | sed 's/^/       + /'
-			return 1
-		fi
-		echo "命中 $(printf '%s\n' "$HITS" | grep -c .) 行全部在基线里（只减不增）"
-	}
+		HITS="$HITS" BASE="$BASE" python3 - <<'PY'
+import collections, os, re, sys
 
+hits = [l for l in os.environ['HITS'].splitlines() if l.strip()]
+
+
+def key(line):
+    """`路径:行号:文本` → `路径: 文本`：键里不留行号，插入就不再误伤。"""
+    m = re.match(r'^(.+?):\d+:(.*)$', line)
+    return f'{m.group(1)}: {m.group(2)}' if m else line
+
+
+keys = [key(line) for line in hits]
+base = []
+for raw in open(os.environ['BASE'], encoding='utf-8'):
+    if raw.lstrip().startswith('#') or not raw.strip():
+        continue
+    text = re.split(r'  # ', raw.rstrip('\n'), maxsplit=1)[0].rstrip()
+    # 只认 `crates/...` 开头的条目：文件头的说明行、`spawn_files=N` 之类指令都不算词表
+    if not text.startswith('crates/'):
+        continue
+    base.append(text)
+
+# 空集不许绿：命中为空 = pattern 或 $K 写错了；基线为空 = 文件被清空了
+if not keys:
+    print('NOHIT 命中 0 行 —— pattern 或 $K 写错了？判据不许空跑绿')
+    sys.exit(1)
+if not base:
+    print('NOBASE 基线 0 条 —— 文件被清空了？判据不许空跑绿')
+    sys.exit(1)
+
+kh, bh = collections.Counter(keys), collections.Counter(base)
+new, dropped = kh - bh, bh - kh
+print(f'命中 {len(keys)} 行 / 基线 {len(base)} 条，按「路径 + 行文本」比对')
+
+if new:
+    print(f'词表基线被新增 {sum(new.values())} 行 —— 改基线必须单独一张票：')
+    seen = collections.Counter()
+    for line in hits:  # 打印带行号的原始命中行，定位用
+        seen[key(line)] += 1
+        if seen[key(line)] <= new.get(key(line), 0):
+            print(f'       + {line}')
+    sys.exit(1)
+if dropped:
+    print(f'（基线比命中多 {sum(dropped.values())} 条：只减不增，减少不红，顺手删掉）')
+print('命中全部在基线里（只减不增）')
+PY
+	}
 	# 4. 路由归属：内核层不许出现 HTTP 框架
 	c4() {
 		local F
