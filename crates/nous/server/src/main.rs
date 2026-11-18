@@ -144,7 +144,7 @@ async fn run() -> Result<(), RunError> {
         }
         Some("--print-token") => {
             // `--print-token`：只打印 token 本身，不启服务、不碰库。
-            let Some((token, _)) = auth::load_or_generate(&auth::default_token_path(), true)? else {
+            let Some((token, _)) = auth::load_or_generate(&auth::token_path(), true)? else {
                 return Err("generate=true 必有 token".into());
             };
             println!("{token}");
@@ -183,7 +183,7 @@ async fn run() -> Result<(), RunError> {
         refuse_startup("workdir-missing", Some(&detail));
     }
 
-    let token_path = auth::default_token_path();
+    let token_path = auth::token_path();
     let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
     if std::env::var("NOUS_ADOPT_LEGACY").is_ok_and(|value| value == "1") && Path::new(&db).exists() {
         match adopt_legacy_copy(&db) {
