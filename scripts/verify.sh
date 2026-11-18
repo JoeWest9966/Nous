@@ -96,6 +96,14 @@ PYLAYER
 	fi
 fi
 
+# 0c. plugin.toml 体检（issue #55）：清单变成可由程序读的数据
+step "0c. plugin.toml 体检（check-plugins.sh）"
+if ./scripts/check-plugins.sh; then
+	ok "plugin.toml 与目录 / Cargo.toml / docs/plugins.md / cargo metadata 一致"
+else
+	bad "plugin.toml 体检未过（详见 check-plugins.sh 的 checked/mismatched 汇总）"
+fi
+
 # 1. 单元测试 + 一致性套件
 if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	step "1. cargo test --workspace（含改写自 pi testing 的一致性套件）"
