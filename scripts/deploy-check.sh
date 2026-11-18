@@ -195,7 +195,12 @@ step '判据 11：活跃任务拒升级（人工哨兵：真流式会话）'
 if [ -x "$CURRENT" ]; then
 	N=$("$CURRENT" --active-tasks 2>&1 || true)
 	printf '  --active-tasks → %s\n' "$N"
-	skip '需开一个真流式会话再跑 deploy.sh，断言 entries 不变并打印 task id + conversation id'
+	skip '人工步骤见下（2026-11-18 在 j1900 上验过一次，结论见 #52）':
+	# 1) 往 /var/lib/nous/nous.db 插一行 tasks(status=''running'')（没有 sqlite3 CLI 就用 python3）
+	# 2) 把 /opt/nous-app/current 指向**上一版** —— 否则同 sha 幂等短路，走不到闸门
+	# 3) 跑 scripts/deploy.sh → 必须 `✗ 有 1 个活跃任务（status <> ''terminal''），拒绝升级`、退出码 1
+	# 4) 删掉那行、current 指回最新、restart，确认 /v1/device 200 且 entries 不变
+	# 自动化会先把服务拉停再拉起，不适合脚本自跑。
 else
 	skip 'current 产物不存在'
 fi
