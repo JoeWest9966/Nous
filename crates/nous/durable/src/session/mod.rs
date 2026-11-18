@@ -32,6 +32,7 @@
 pub mod commands;
 pub mod entries;
 pub mod publish;
+mod session_document;
 
 use std::sync::Arc;
 
@@ -42,10 +43,8 @@ use nous_chord::watch::WatchEnd;
 
 use crate::storage::commit::{StoredBatch, StoredChange, StoredDocumentChange};
 use crate::storage::writes::Refusal;
-use crate::types::{DocumentScope, EntryRecord};
-use crate::{
-    DocumentContent, DocumentPoint, Id, Seq, Storage, StorageError, StorageWrite, StoredDocument,
-};
+use crate::types::EntryRecord;
+use crate::{DocumentPoint, Id, Seq, Storage, StorageError, StorageWrite, StoredDocument};
 
 pub use entries::EntryKind;
 pub use publish::{
@@ -297,9 +296,11 @@ impl Session {
     /// 同一份 publication —— 落库后立刻经 `ObserverRegistry` 广播，别的客户端才看得见。
     ///
     /// 入参 `config` 是端点层拼好的一整份会话配置（名字 / 模型 / 各类设置），键名由 wire
-    /// 契约决定，durable 不认识也不解释。durable 只做三件语义事：铸会话 id、把配置写成
-    /// 一条会话记录、广播。这样 `Session` 的签名不携带任何产品词（判据 3 的词表基线只减
-    /// 不增），也不反向依赖端点层的请求类型。
+    /// 契约决定，durable 不认识也不解释。durable 只做三件语义事：铸会话 id、把 `name`
+    /// 合进 session 作用域的 `qrd3wh.sessions.names`（那份文档是单例，见
+    /// [`session_document`]）、广播。配置其余字段没有读者，不写进库；201 回包原样带回去。
+    /// 这样 `Session` 的签名不携带任何产品词（判据 3 的词表基线只减不增），也不反向依赖
+    /// 端点层的请求类型。
     ///
     /// 这是 `Session` 的第六个方法。#42 前这里只有五个，端点层为了绕开判据开过第二条
     /// 裸 `Storage` 写通道，结果建会话不广播帧 —— 判据迁就架构的反例，见 `docs/decisions.md`。
@@ -312,23 +313,21 @@ impl Session {
         let mut guard = self.storage.lock().await;
         let storage = guard.as_mut().ok_or(SessionError::Closed)?;
         let id = storage.mint_id()?;
-        let document_id = storage.mint_id()?;
         let name = config.get("name").cloned().unwrap_or(json!(""));
-        let writes = vec![
-            StorageWrite::Conversation(json!({ "id": id })),
-            StorageWrite::DocumentCreate {
-                id: document_id,
-                record: json!({
-                    "id": document_id,
-                    "kind": "qrd3wh.sessions",
-                    "scope": DocumentScope::Session,
-                }),
-                content: DocumentContent::Base {
-                    version: 1,
-                    value: json!({ "names": { id.to_string(): name }, "config": config }),
-                },
+
+        // `qrd3wh.sessions` 是 session 作用域的单例：第二、第三条会话都合并进同一份文档，
+        // 绝不再次 DocumentCreate（地址唯一，第二次会被 storage 拒绝）。本次只补 names 的
+        // 一个新键，不改 pins/archived 等别人管的字段；config 没有任何读者，不再写进去。
+        let mut document_writes = session_document::merge_session_document(
+            storage,
+            "qrd3wh.sessions",
+            "names",
+            |names| {
+                names[id.to_string()] = name;
             },
-        ];
+        )?;
+        let mut writes = vec![StorageWrite::Conversation(json!({ "id": id }))];
+        writes.append(&mut document_writes);
         let committed = storage.commit(&[writes], |_, _| {})?;
         if let Some(refusal) = committed.refused {
             return Err(SessionError::Shape(format!("create refused: {refusal}")));
