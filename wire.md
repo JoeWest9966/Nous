@@ -313,8 +313,9 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ### GET /v1/models
 
-返回默认模型 + 模型列表。**模型列表每项的字段形状暂无测试背书**（本库还没有该端点的快照测试）；
-这里只留语义，不带形状，也不假装有权威测试指针。
+返回默认模型 + 模型列表。
+
+字段形状以 `crates/nous/server/tests/wire_shapes.rs::models_response_pins_default_and_item_field_shape` 为准（本文件只索引端点与约束）。
 
 - `default` 是**盘上那只眼当前指着的**模型，不是我们的默认值。
 - `thinkingLevels` 从少想到多（`off` … `max`），**每个模型不一样**。换模型必须按新模型的表
@@ -357,8 +358,7 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ### POST /v1/sessions —— 建会话
 
-**建会话 body 的字段形状暂无测试背书**（本库还没有 `POST /v1/sessions` 的快照测试）；
-这里只留语义，不带形状，也不假装有权威测试指针。
+字段形状以 `crates/nous/server/tests/wire_shapes.rs::create_session_request_and_response_are_snapshotted` 为准（本文件只索引端点与约束）。
 
 - `skills` 可省 = 不挂。
 - 名字省略就是空串 `""` —— 本库不生成默认名；显示为「对话 N」是客户端自己的占位，别写回库里。

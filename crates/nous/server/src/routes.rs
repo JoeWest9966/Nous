@@ -38,19 +38,22 @@ use tokio::sync::{broadcast, mpsc};
 use crate::app::AppState;
 use crate::coalesce::{self, Framing};
 use crate::error::{Result, ServerError};
+use crate::models::ModelsResponse;
+use crate::records::CreateSessionRequest;
 use crate::source::SessionSource;
 
 /// 装配路由。`state` 里的 `source` 决定数据从哪来，`commands` 决定写往哪去，
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/v1/sessions", get(sessions))
+        .route("/v1/sessions", get(sessions).post(create_session))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))
         .route("/v1/sessions/{id}/events", get(events))
         .route("/v1/sessions/{id}/abort", post(abort))
         .route("/v1/sessions/{id}/fork", post(fork))
         .route("/v1/machines", get(machines))
+        .route("/v1/models", get(models))
         .with_state(state)
 }
 
@@ -63,6 +66,22 @@ async fn machines() -> Json<Value> {
 async fn sessions(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let items = state.source().sessions()?;
     Ok(Json(json!({ "items": items })))
+}
+
+/// `POST /v1/sessions`：建会话，201 带生效配置。字段形状由 `tests/wire_shapes.rs` 钉住。
+async fn create_session(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CreateSessionRequest>,
+) -> Result<(StatusCode, Json<Value>)> {
+    let created = state.commands().create(body).await?;
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(created).unwrap())))
+}
+
+/// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。
+///
+/// 本层不认识 provider，空目录是诚实的「不知道」；宿主可换入带 catalog 的 `AppState`。
+async fn models(State(state): State<Arc<AppState>>) -> Json<ModelsResponse> {
+    Json(state.models().clone())
 }
 
 #[derive(Debug, Deserialize)]
