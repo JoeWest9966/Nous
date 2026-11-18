@@ -997,5 +997,36 @@ for p in m['packages']:
 		"$TOTAL" "$B_GREEN" "$B_RED" "$B_SKIP"
 fi
 
+# ════════════════════════════════════════════════════════════════════════════
+# 6. #52 判据 2b / 16（不动第 5 段的 15 条边界判据口径）
+# ════════════════════════════════════════════════════════════════════════════
+if [ "$WHAT" = all ] || [ "$WHAT" = issue52 ]; then
+	step "6. #52：拒绝启动常量与理由表"
+
+	EXIT_REFUSED_SRC=$(grep -oE 'EXIT_REFUSED: u8 = [0-9]+' crates/nous/server/src/refusal.rs | sed -E 's/.*= ([0-9]+)/\1/' || true)
+	if [ "$EXIT_REFUSED_SRC" = 78 ]; then
+		ok "2b. 源码 EXIT_REFUSED == 78"
+	else
+		bad "2b. 源码 EXIT_REFUSED 找不到或不等于 78：'$EXIT_REFUSED_SRC'"
+	fi
+	# 52b 才写 unit；unit 不在时只守常量，不假绿也不假红。
+	if [ -f deploy/nous-app.service ]; then
+		UNIT_EXIT=$(grep -oE 'RestartPreventExitStatus=[0-9]+' deploy/nous-app.service | sed -E 's/.*=([0-9]+)/\1/' || true)
+		if [ -n "$EXIT_REFUSED_SRC" ] && [ "$UNIT_EXIT" = "$EXIT_REFUSED_SRC" ]; then
+			ok "2b. unit RestartPreventExitStatus == 源码 EXIT_REFUSED ($UNIT_EXIT)"
+		else
+			bad "2b. unit RestartPreventExitStatus='$UNIT_EXIT' 与源码 EXIT_REFUSED='$EXIT_REFUSED_SRC' 不同值"
+		fi
+	else
+		skip "2b. deploy/nous-app.service 不存在（52b 负责），只核对源码常量"
+	fi
+
+	if cargo test -p nous-server --lib refusal:: 2>/dev/null | grep -q 'test result: ok'; then
+		ok "16. 拒绝理由表 slug 唯一 + decide_refusal 覆盖每条（cargo test）"
+	else
+		bad "16. refusal 单测未通过（slug 唯一性 / decide_refusal 全覆盖）"
+	fi
+fi
+
 printf '\n'
 if [ $FAIL -eq 0 ]; then printf '\033[32m通过\033[0m\n'; exit 0; else printf '\033[31m未通过\033[0m\n'; exit 1; fi
