@@ -638,3 +638,40 @@ header 之后的**显式动作**」。今天两个前置都到位了：
 **反悔点**：如果 ext-sdk 真要独立发布（crates.io），它就得有自己的版本线；那时候
 `check-plugins.sh` 的这条校验要改成「允许 `[package] publish = true` 的 crate 自持版本」，
 而不是现在的一律相等。
+## 2026-11-19（JoeWest9966 定的）· 旧面板的壳子退场：删 `server/` / `templates/` / Node 构建配置 / 旧 unit
+
+**决定**：从编码仓删掉旧面板剩下的全部壳子：`server/*.ts` + `server/blank.mjs`（10 个文件）、
+`templates/{agent-block,conversations,models}/`（10 个文件）、`vite.config.ts`、`tsconfig.json`、
+`package.json` / `package-lock.json`、`.env.example`、`deploy/nous-panel.service`。
+`.gitignore` 里的 `content/**/*.sqlite-shm` / `-wal` 两行**保留**，理由改成实话：主线上
+`content/` 已于 2026-11-18 移出仓库（见上一条），这两行只对**本机 / j1900 上还没删的旧工作树**有用
+—— 那儿跑着真 sqlite，去掉只会让边车变成 `??` 噪声。`fixtures/*.sqlite-wal` / `-shm` 同理。
+
+**为什么现在能删**：前提有两条，都已经是事实 —— ① 引擎换成 Rust（`crates/nous/*`，
+`cargo test --workspace` 是唯一的"做完了"定义）；② 面板下线，`vite preview` 不再被任何
+systemd unit 拉起，`NOUS_HOST` 全仓 0 处读取。这些文件不参与 cargo 构建、不被任何 Rust
+代码读，只占着名字让新人（和 agent）以为 `server/` 里还有 `/v1` 的实现、`templates/` 里还有
+模板、`package.json` 里还有构建脚本。删掉它们是把"仓里有什么"和"系统是什么"对齐，
+不是顺手清垃圾。
+
+**怎么确认不是巧合**：正反两个方向都试过（issue #59 判据 5）。反向哨兵：临时留回
+`tsconfig.json` 再删，CI 判据不变红 —— 说明没人读它；正向哨兵：把 `server/tree.ts` 挪进
+`crates/nous/server/src/`，CI 也不变红 —— 说明它本来就不参与编译。两个方向都确认
+"删了没影响"不是因为测试瞎了。
+
+**判据**：`git ls-files` 里上述路径 0 条；`cargo metadata --no-deps` 的 workspace members
+仍是 23；`./scripts/verify.sh` 56 ✓、`./scripts/check-plugins.sh` `checked=17 mismatched=0`；
+`git grep -nE "vite|tsconfig|nous-panel\.service" -- ':!docs' ':!*.md'` 的旧壳引用零命中
+（`crates/nous/tools/shell_output.rs` 里的 `vite v6.4.3` 是日志清洗的**测试样本**；
+`vendor/pi-env-daemon` 的 `tsconfig.build.json` 是 vendor 自己的构建配置；
+以及 `invite` 里的 `vite` 子串误命中 —— 三处都与旧壳无关）。
+**判据 4 的口径据此收窄**：判的是「旧壳的**路径**还有没有人引用」，不是「文件里出现过 `vite` 这个词」，
+所以按路径名匹配（`vite\.config\.ts` / `tsconfig\.json` / `nous-panel\.service`），
+并排除 `vendor`（第三方树）、`:!docs`、`:!*.md`。
+
+**反悔点**：要回旧面板 —— unit 在 j1900 的 `/etc/systemd/system/nous-panel.service` 原地留着
+（本票只删编码仓那份副本），代码和配置在 git 历史里（`git show HEAD~1:server/api.ts` 之类），
+`npm ci` 照 `package-lock.json` 的旧内容还原依赖（本票提交 `abf1c0a`，用
+`git show abf1c0a^:server/api.ts` 之类内容寻址的写法，不要用会随提交漂移的 `HEAD~1`）。
+真要恢复之前先回答一个问题：
+恢复的是面板本身，还是只是想找某个旧实现做参照？后者直接从历史读，不用把壳子请回来。
