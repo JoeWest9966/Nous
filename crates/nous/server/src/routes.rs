@@ -56,6 +56,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/fork", post(fork))
         .route("/v1/machines", get(machines))
         .route("/v1/models", get(models))
+        .route("/v1/device", get(device))
+        .route("/v1/selection", get(selection))
+        .route("/v1/unread", get(unread))
+        .route("/v1/read/{id}", post(mark_read))
+        .route("/v1/sessions/{id}/rename", post(rename))
+        .route("/v1/skills", get(skills))
+        .route("/v1/prompts", get(prompts))
+        .route("/v1/extensions", get(extensions))
+        .route("/v1/capabilities", get(capabilities))
         .with_state(state)
 }
 
@@ -77,6 +86,77 @@ async fn create_session(
 ) -> Result<(StatusCode, Json<Value>)> {
     let created = state.commands().create(body).await?;
     Ok((StatusCode::CREATED, Json(serde_json::to_value(created).unwrap())))
+}
+
+/// `GET /v1/unread`：平铺 map（`{"id": {unread, readAt}}`），覆盖所有会话。
+async fn unread(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    Ok(Json(state.commands().unread().await?))
+}
+
+/// `POST /v1/read/:id`：把水位推到最新，回 `{id, readAt, unread: 0}`。
+async fn mark_read(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().read(id).await?;
+    Ok(Json(json!({
+        "id": result.id,
+        "readAt": result.read_at,
+        "unread": result.unread,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameBody {
+    name: String,
+}
+
+/// `POST /v1/sessions/:id/rename`：trim、空 → 400；回生效的 `{id, name}`。
+async fn rename(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let body: RenameBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("name is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("rename body: {error}")))?
+    };
+    let result = state.commands().rename(id, body.name).await?;
+    Ok(Json(json!({ "id": result.id, "name": result.name })))
+}
+
+/// `GET /v1/device`：进程/宿主配置，About 面板读它。
+async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(crate::meta::device(state.models()))
+}
+
+/// `GET /v1/selection`：当前选中的会话（配置里没有就 null）。
+async fn selection() -> Json<Value> {
+    Json(crate::meta::selection())
+}
+
+/// `GET /v1/skills`：空目录就是空表。
+async fn skills() -> Json<Value> {
+    Json(crate::meta::skills())
+}
+
+/// `GET /v1/prompts`：A 阶段空表。
+async fn prompts() -> Json<Value> {
+    Json(crate::meta::prompts())
+}
+
+/// `GET /v1/extensions`：ext 冻结，空清单。
+async fn extensions() -> Json<Value> {
+    Json(crate::meta::extensions())
+}
+
+/// `GET /v1/capabilities`：desk 按 modules 显示/隐藏功能面。
+async fn capabilities() -> Json<Value> {
+    Json(crate::meta::capabilities())
 }
 
 /// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。

@@ -22,6 +22,7 @@ pub mod commands;
 pub mod error;
 pub mod hub;
 pub mod machines;
+pub mod meta;
 pub mod models;
 pub mod records;
 pub mod observer;
