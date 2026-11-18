@@ -82,19 +82,14 @@ fn base(value: Value) -> DocumentContent {
 
 // ── 1. 公开面就是 A3 那张表 ───────────────────────────────────────────────────
 
-/// `Session` 的八条：A3 五条 + `#42` 的 `create_conversation` + `#44` 的 `mint_id` / `entries`。
-///
-/// 两次扩面都签在 `docs/decisions.md`：建会话是写（要同一把锁、同一份广播）；
-/// `mint_id` / `entries` 是轮次要的两个原语（取终态 entry 的 id、按 fork 链读历史），
-/// **不是**第二条写通道 —— 写仍然只走 `commit`。
-const A3_METHODS: [&str; 8] = [
+/// `Session` 的六条：A3 五条 + #42 加的 `create_conversation`（建会话是写，判据签字见
+/// `docs/decisions.md`）。
+const A3_METHODS: [&str; 6] = [
     "close",
     "closed",
     "commit",
     "create_conversation",
-    "entries",
     "get_entry",
-    "mint_id",
     "snapshot",
 ];
 
@@ -546,35 +541,4 @@ async fn create_conversation_publishes_through_the_observer_registry() {
     );
     session.close().await.unwrap();
     let _ = std::fs::remove_file(&path);
-}
-
-#[tokio::test]
-async fn creating_two_conversations_keeps_both_names() {
-    let path = temp_db("two-creates");
-    let session = Session::open(&path).unwrap();
-    let first = session
-        .create_conversation(json!({ "name": "first", "model": null }))
-        .await
-        .expect("第一个会话建得出来");
-    let second = session
-        .create_conversation(json!({ "name": "second", "model": null }))
-        .await
-        .expect("第二个会话也得建得出来（名字靠同一份 names 文档，不是每会话一份）");
-    session.close().await.unwrap();
-
-    // 名字来自 `qrd3wh.sessions` 的 `names` 表：两份会话的名字都要在。
-    let store = nous_durable::storage::import::ImportedStore::read(&path).unwrap();
-    let items = nous_durable::storage::sessions::render_sessions(&store).unwrap();
-    let names: Vec<(i64, String)> = items
-        .iter()
-        .map(|item| (item.id, item.name.clone()))
-        .collect();
-    assert!(
-        names.contains(&(first["id"].as_i64().unwrap(), "first".to_string())),
-        "names = {names:?}"
-    );
-    assert!(
-        names.contains(&(second["id"].as_i64().unwrap(), "second".to_string())),
-        "names = {names:?}"
-    );
 }

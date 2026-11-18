@@ -10,6 +10,9 @@ use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCo
 use nous_wire::RemoteEvent;
 
 use crate::commands::{CommandSource, DurableCommands, ReadOnlyCommands};
+use crate::documents::{DurableDocumentBackend, EmptyBackend};
+use crate::runtime::AssembledRuntime;
+use nous_documents::service::DocumentService;
 use crate::error::Result;
 use crate::hub::Hub;
 use crate::observer::SessionObserver;
@@ -22,11 +25,10 @@ pub struct AppState {
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
     models: crate::models::ModelsResponse,
-    /// 组装根装好的运行时（provider 注册表 + 工具表 + 同一个 `Session`）。
-    ///
-    /// `None` = 只读装配 / 测试装配：`/messages` 照常受理，但没有轮次被起 ——
-    /// 这种状态下端点**不许**假装跑过一轮（见 `docs/pitfalls.md` 2026-11-18 那条）。
-    runtime: std::sync::Mutex<Option<Arc<dyn crate::runtime::TurnFactory>>>,
+    runtime: std::sync::Mutex<Option<Arc<AssembledRuntime>>>,
+    documents: Option<DocumentService>,
+    /// `capabilities.services[engine].base` 的单一来源：环境变量优先，绑定后由 `main` 覆盖。
+    origin: String,
 }
 
 impl AppState {
@@ -41,6 +43,14 @@ impl AppState {
             hub,
             models: crate::models::ModelsResponse::default(),
             runtime: std::sync::Mutex::new(None),
+            documents: Some(DocumentService::new(
+                Arc::new(EmptyBackend),
+                Some(Arc::new(EmptyBackend)),
+            )),
+            origin: std::env::var("NOUS_ORIGIN")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
         })
     }
 
@@ -51,6 +61,13 @@ impl AppState {
 
     /// 读 + 写都接在**同一份库**上。写走 `Session`，`CommitObserver` 挂到同一个 hub ——
     /// 提交落库后帧立刻进 SSE，端点不用自己补发。
+    pub fn durable_with_commands(
+        source: Arc<dyn SessionSource>,
+        commands: Arc<dyn CommandSource>,
+    ) -> Arc<Self> {
+        Self::new(source, commands, Hub::new())
+    }
+
     pub fn durable(path: impl AsRef<std::path::Path>) -> Result<Arc<Self>> {
         let path = path.as_ref();
         // 先开写后端：空路径由它的迁移建表（`ImportedSource::open` 会立刻读一次，
@@ -63,6 +80,11 @@ impl AppState {
             hub: Hub::new(),
             models: crate::models::ModelsResponse::default(),
             runtime: std::sync::Mutex::new(None),
+            documents: None,
+            origin: std::env::var("NOUS_ORIGIN")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -85,26 +107,6 @@ impl AppState {
         &self.hub
     }
 
-    /// 挂上组装根装好的运行时。**必须在开监听之前**调（之后挂等于有请求没 provider）。
-    pub fn with_runtime(self: Arc<Self>, runtime: crate::runtime::AssembledRuntime) -> Arc<Self> {
-        self.with_turn_factory(Arc::new(runtime))
-    }
-
-    /// 挂一个任意的轮次工厂（端到端判据注入 faux 用）。
-    pub fn with_turn_factory(self: Arc<Self>, factory: Arc<dyn crate::runtime::TurnFactory>) -> Arc<Self> {
-        let mut slot = self.runtime.lock().unwrap_or_else(|poison| poison.into_inner());
-        *slot = Some(factory);
-        drop(slot);
-        self
-    }
-
-    pub fn runtime(&self) -> Option<Arc<dyn crate::runtime::TurnFactory>> {
-        self.runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
-    }
-
     /// 换入真编目：默认 catalog 是空的，宿主填进来才有内容。
     pub fn with_models(self: Arc<Self>, models: crate::models::ModelsResponse) -> Arc<Self> {
         Arc::new(Self {
@@ -112,8 +114,14 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models,
-            // 编目与运行时是两件事，换编目不该把运行时丢掉。
-            runtime: std::sync::Mutex::new(self.runtime()),
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            documents: self.documents.as_ref().map(|_| DocumentService::new(
+                Arc::new(EmptyBackend),
+                Some(Arc::new(EmptyBackend)),
+            )),
+            origin: self.origin.clone(),
         })
     }
 
@@ -121,9 +129,87 @@ impl AppState {
         &self.models
     }
 
+    /// `NOUS_ORIGIN` 优先；绑到实际端口后由 `main` 用真地址覆盖。
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// 绑定完成后把实际监听地址告诉 state；返回新的 `Arc` 供 router 使用。
+    pub fn with_origin(self: Arc<Self>, origin: impl Into<String>) -> Arc<Self> {
+        let origin = origin.into();
+        if origin == self.origin {
+            return self;
+        }
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            documents: self.documents.clone(),
+            origin,
+        })
+    }
+
     /// 启动时补写孤儿终态：走**已经持有的那个写者**，不另开 `Session`。
     pub async fn reclaim_orphans(&self) -> Result<usize> {
         self.commands.reclaim_orphans().await
+    }
+
+    /// 装上组装根（provider / tool 注册表），只在 `main` 里做一次。
+    pub fn with_runtime(self: Arc<Self>, runtime: Arc<AssembledRuntime>) -> Arc<Self> {
+        *self.runtime.lock().unwrap_or_else(|p| p.into_inner()) = Some(runtime);
+        self
+    }
+
+    pub fn runtime(&self) -> Option<Arc<AssembledRuntime>> {
+        self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// faux 轮次用的帧出口：把驱动器产出的状态帧送进**本进程唯一**的 Hub。
+    /// 会话 id 由调用点给出，不让事件自己猜路由。
+    pub fn turn_event_sink(
+        self: &Arc<Self>,
+        session: i64,
+    ) -> Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync> {
+        let state = self.clone();
+        Arc::new(move |event| state.publish_event(session, event.clone()))
+    }
+
+    /// faux 装配的 provider 种类（`"faux"` / `"real"`）。只读诊断，不参与轮次。
+    pub fn provider_kind(&self) -> &'static str {
+        self.runtime()
+            .map(|runtime| runtime.provider_kind)
+            .unwrap_or("real")
+    }
+
+    /// faux 装配的编目；没有装配时为空（诚实）。
+    pub fn assembled_models(&self) -> Option<crate::models::ModelsResponse> {
+        self.runtime().map(|runtime| runtime.models.clone())
+    }
+
+    /// documents 端点的泛型服务。生产装配里它持有同一个 `Session` 的写者。
+    pub fn document_service(&self) -> Option<DocumentService> {
+        self.documents.clone()
+    }
+
+    /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
+    pub fn with_documents_backend(self: Arc<Self>, path: std::path::PathBuf, session: Arc<nous_durable::session::Session>) -> Arc<Self> {
+        let backend = DurableDocumentBackend::new(path, session);
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: Some(DocumentService::new(
+                Arc::new(backend.clone()) as Arc<dyn nous_documents::store::DocumentReader>,
+                Some(Arc::new(backend) as Arc<dyn nous_documents::service::DocumentWriter>),
+            )),
+            origin: self.origin.clone(),
+        })
     }
 
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。

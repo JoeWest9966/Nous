@@ -38,6 +38,7 @@ use nous_chord::delta::draft::Draft;
 use nous_chord::delta::{Revision, Seg};
 use serde_json::{json, Value};
 
+use crate::actor::Actor;
 use crate::session::{CommitOptions, Session, SessionError};
 use crate::types::TerminalReason;
 use crate::{DocumentContent, Id, StorageWrite};
@@ -191,9 +192,7 @@ pub async fn stream_response(
                     pending = Some(partial);
                 }
                 if deadline.is_none() {
-                    // `saturating_add`：`interval_ms` 允许取很大的值（应用层用它关掉中途 flush），
-                    // 直接相加会在真时钟（now > 0）上溢出。
-                    deadline = Some(clock.now_ms().saturating_add(interval));
+                    deadline = Some(clock.now_ms() + interval);
                 }
             }
         }
@@ -331,6 +330,8 @@ pub struct ClassifyRequest {
     pub overflow: Option<String>,
     /// 这一轮为什么结束（issue #38）。终态与正文写进**同一条** `pi.assistant` entry。
     pub reason: TerminalReason,
+    /// 这一轮的作者，由组装根从 principal 传下来（#54）。
+    pub actor: Actor,
 }
 
 /// `classify` 的结论。上游是 `Next`；本库只落这四种去向。
@@ -355,7 +356,7 @@ pub async fn classify(
     now_ms: u64,
     timeline: Option<&Timeline>,
 ) -> Result<Classification, HarnessError> {
-    let entry = assistant_entry(request, message)?;
+    let entry = assistant_entry(request, message, &request.actor)?;
     let snapshot = session
         .snapshot(request.live)
         .await?
@@ -427,51 +428,22 @@ pub async fn classify(
 pub const DEFAULT_POLL_AFTER_MS: u64 = 5_000;
 
 /// 一条 assistant entry（上游 `appendAssistant`：`{ model: [message] }`，kind `pi.assistant`）。
-///
-/// 公开：应用层（`nous-sessions`）拼「一轮一条提交」时要按同一个形状造 entry ——
-/// 形状只在这里定义，别在应用层抄第二份。
-///
-/// `reason` 只写在**终态**那一条上（`#38`：终态与正文同一条，`entry_terminals_by_conversation`
-/// 只索引带 `reason` 的行）。一轮里带工具调用的中间 assistant entry 用
-/// [`assistant_entry_non_terminal`]，否则终态索引里会混进非终态。
 pub fn assistant_entry(
     request: &ClassifyRequest,
     message: &AssistantMessage,
+    actor: &Actor,
 ) -> Result<Value, HarnessError> {
-    assistant_record(request, message, Some(request.reason))
-}
-
-/// 同一形状，**不带 `reason`**：工具循环里那几条中间 assistant entry 用它。
-///
-/// 依据是真数据：fixture 里 `pi.assistant` → `pi.tool-result` → `pi.assistant` 是三条独立
-/// entry，只有终态那条带 `reason`（`fixtures/agent.small.sqlite`，task 63/67 一带）。
-pub fn assistant_entry_non_terminal(
-    request: &ClassifyRequest,
-    message: &AssistantMessage,
-) -> Result<Value, HarnessError> {
-    assistant_record(request, message, None)
-}
-
-fn assistant_record(
-    request: &ClassifyRequest,
-    message: &AssistantMessage,
-    terminal: Option<TerminalReason>,
-) -> Result<Value, HarnessError> {
-    let mut record = json!({
+    Ok(json!({
         "id": request.entry_id,
         "conversationId": request.conversation,
         "kind": "pi.assistant",
         "model": [message_json(message)?],
-    });
-    if let Some(terminal) = terminal {
-        record["reason"] = json!(terminal.as_str());
-    }
-    Ok(record)
+        "reason": request.reason.as_str(),
+        "actor": actor,
+    }))
 }
 
 /// 把 `pi.live.generation` 改成给定值（`None` = 整键删掉，不是设成 `null`）。
-///
-/// 公开的理由同 [`assistant_entry`]：轮次收尾要清 live，写形状必须与 harness 一致。
 pub fn generation_change(
     live: Id,
     snapshot: &crate::StoredDocument,

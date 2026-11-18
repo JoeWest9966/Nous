@@ -7,13 +7,7 @@
 use serde::Deserialize;
 use serde_json::json;
 
-/// 默认模型 / 请求里 `model` 的形状（camelCase 落在 wire 上）。
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelRef {
-    pub provider: String,
-    pub model_id: String,
-}
+use crate::models::ModelRef;
 
 /// `POST /v1/sessions` 的请求体。字段全 camelCase；snake_case 不报错但静默不生效，
 /// 所以这里显式写 `rename_all`，让字段表成为唯一权威。

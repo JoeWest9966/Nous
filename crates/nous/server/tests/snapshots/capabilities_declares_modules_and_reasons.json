@@ -1,0 +1,133 @@
+{
+  "contract": 1,
+  "server": {
+    "name": "nous",
+    "version": "0.1.0"
+  },
+  "modules": [
+    {
+      "name": "sessions",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/sessions",
+        "GET /v1/unread",
+        "POST /v1/read/:id",
+        "POST /v1/sessions",
+        "GET /v1/sessions/:id/entries",
+        "POST /v1/sessions/:id/messages",
+        "GET /v1/sessions/:id/events",
+        "POST /v1/sessions/:id/abort",
+        "POST /v1/sessions/:id/fork",
+        "POST /v1/sessions/:id/rename",
+        "POST /v1/sessions/:id/pin"
+      ]
+    },
+    {
+      "name": "documents",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/documents/{kind}",
+        "GET /v1/documents/{kind}/{section}/{name}",
+        "PUT /v1/documents/{kind}/{section}/{name}",
+        "POST /v1/documents/{kind}/{section}",
+        "POST /v1/documents/{kind}/{section}/{name}/rename",
+        "POST /v1/documents/{kind}/{section}/{name}/publish",
+        "POST /v1/documents/{kind}/{section}/{name}/reload",
+        "GET /v1/documents/{kind}/{section}/{name}/validate",
+        "GET /v1/documents/{kind}/{section}/{name}/history",
+        "GET /v1/documents/{kind}/{section}/{name}/history/diff",
+        "GET /v1/documents/{kind}/{section}/{name}/pending",
+        "GET /v1/documents/{kind}/{section}/{name}/pending/diff"
+      ]
+    },
+    {
+      "name": "presets",
+      "enabled": false,
+      "reason": {
+        "code": "not_implemented",
+        "message": "presets 模块尚未落地"
+      }
+    },
+    {
+      "name": "skills",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/skills"
+      ]
+    },
+    {
+      "name": "archive",
+      "enabled": false,
+      "reason": {
+        "code": "not_implemented",
+        "message": "archive 模块尚未落地"
+      }
+    },
+    {
+      "name": "combos",
+      "enabled": false,
+      "reason": {
+        "code": "not_implemented",
+        "message": "combos 模块尚未落地"
+      }
+    },
+    {
+      "name": "triggers",
+      "enabled": false,
+      "reason": {
+        "code": "not_implemented",
+        "message": "triggers 模块尚未落地"
+      }
+    },
+    {
+      "name": "device",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/machines",
+        "GET /v1/models",
+        "GET /v1/device",
+        "GET /v1/capabilities",
+        "GET /v1/_routes"
+      ]
+    },
+    {
+      "name": "selection",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/selection"
+      ]
+    },
+    {
+      "name": "prompts",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/prompts"
+      ]
+    },
+    {
+      "name": "ext",
+      "enabled": false,
+      "reason": {
+        "code": "frozen",
+        "message": "扩展运行时已冻结，这里只返回空清单"
+      }
+    }
+  ],
+  "runtime": {
+    "provider": {
+      "configured": false,
+      "kind": "real",
+      "message": "没有配置真实 provider 凭证，发消息会 503"
+    }
+  },
+  "services": [
+    {
+      "name": "engine",
+      "base": "http://127.0.0.1:4789"
+    },
+    {
+      "name": "triggers",
+      "enabled": false
+    }
+  ]
+}

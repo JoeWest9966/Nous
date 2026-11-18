@@ -166,3 +166,12 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 **解**：已 `disable --now` + 摘单元 + 删 `/var/nous-dist`、`/root/.nous`、`/usr/local/bin/nous*`（含 12 个 `.bak`），
 复验 `status` 为 not-found、`ss` 里 8090 已无人监听。**结论：这台机器上凡是 `nous` 开头的单元，
 只有 `nous-panel`（旧 TS 面板，待下线）与将来的 `nous-app` 是本项目的。**
+
+## 7 · `verify.sh` 冷启动段把产物路径写死成 `./target/release`，设了 `CARGO_TARGET_DIR` 就假红
+
+**症状**：`CARGO_TARGET_DIR=/xxx ./scripts/verify.sh` 前 50 多条全绿，最后一条红：
+`没打出 listening 行 —— env: './target/release/nous-app': 没有那个文件或目录`。
+**根因**：冷启动那段写死 `./target/release/$BIN`，而同一个脚本另两处（`AUTH_BIN` / `FAUX_BIN`）用的是
+`${CARGO_TARGET_DIR:-...}`。**同一个路径三处写法**，两处对一处错。
+**解**：三处统一 `${CARGO_TARGET_DIR:-./target}/release/$BIN`。找不到产物时的报错要能读出路径，
+别只说「没打出 listening 行」——那句会把「产物路径错」伪装成「服务起不来」。

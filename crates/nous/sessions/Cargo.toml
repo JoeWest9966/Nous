@@ -9,7 +9,7 @@ description = "最小轮次（pi 本体）：一轮 = 流 → 工具 → 唯一�
 [dependencies]
 nous-durable = { workspace = true }
 nous-wire = { workspace = true }
-nous-ai = { workspace = true, features = ["providers"] }
+nous-ai = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

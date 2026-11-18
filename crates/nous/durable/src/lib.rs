@@ -11,8 +11,10 @@
 //! `nous-durable → chord, ai, wire, telemetry, env`。工具靠 `nous-ai::Tool` trait 注入，
 //! 所以 `cargo tree -p nous-durable` 里**永远不该出现 `nous-tools`**。
 
+pub mod actor;
 pub mod error;
 pub mod harness;
+pub mod ops;
 pub mod session;
 pub mod storage;
 pub mod types;

@@ -38,6 +38,13 @@ pub enum StorageError {
     UnknownConversation { id: i64 },
 }
 
+impl StorageError {
+    /// 库比代码新 —— D11 里这是「不想起」（78），不是「崩了」（2）。
+    pub fn is_schema_too_new(&self) -> bool {
+        matches!(self, StorageError::Sqlite(error) if error.kind == nous_chord::sqlite::SqliteErrorKind::SchemaTooNew)
+    }
+}
+
 impl From<SqliteError> for StorageError {
     fn from(error: SqliteError) -> Self {
         StorageError::Sqlite(error)

@@ -11,12 +11,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use nous_durable::actor::Actor;
 use nous_durable::session::commands::{
-    abort, fork, scan_orphans, submit_message, CommandError, ForkRequest, SubmitRequest,
+    abort, fork, mark_read, rename_session, scan_orphans, set_pin, submit_message, unread_map,
+    CommandError, ForkRequest, PinOutcome, PinRequest, SubmitRequest,
 };
 use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::error::{Result, ServerError};
 use crate::records::{CreateSessionRequest, CreatedSession};
@@ -26,6 +28,11 @@ use crate::records::{CreateSessionRequest, CreatedSession};
 pub struct SubmitResult {
     pub submission_id: i64,
     pub status: String,
+    /// durable 的 `submit_message` 同批分配的 id：user entry、submission。
+    /// 轮次需要的辅助 id 由这两个推出来（submit 同批铸两个 id，下一个从 entry_id+2 起）。
+    pub entry_id: i64,
+    pub assistant_entry_id: i64,
+    pub live_id: i64,
 }
 
 /// fork 结果（`POST /fork` 的 201 体）。
@@ -34,6 +41,24 @@ pub struct ForkResult {
     pub id: i64,
     pub at: i64,
 }
+
+/// `POST /v1/read/:id` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadResult {
+    pub id: i64,
+    pub read_at: i64,
+    pub unread: u64,
+}
+
+/// `POST /v1/sessions/:id/rename` 的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameResult {
+    pub id: i64,
+    pub name: String,
+}
+
+/// `POST /v1/sessions/:id/pin` 的回执。
+pub type PinResult = PinOutcome;
 
 #[async_trait]
 pub trait CommandSource: Send + Sync {
@@ -51,10 +76,17 @@ pub trait CommandSource: Send + Sync {
 
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
 
-    /// 组装根要的那个 `Arc<Session>`（起轮次用它，取消 token 才同源）。
-    ///
-    /// 只读装配返回 `None`：那套装配没有写者，也就不该能起轮次。
-    fn session(&self) -> Option<Arc<Session>>;
+    /// 全部会话的未读状态（平铺 map），只读。
+    async fn unread(&self) -> Result<Value>;
+
+    /// 标已读：走 `Session` 写者并广播。
+    async fn read(&self, session: i64) -> Result<ReadResult>;
+
+    /// 改名：走 `Session` 写者并广播。
+    async fn rename(&self, session: i64, name: String) -> Result<RenameResult>;
+
+    /// 置顶/取消置顶：走 `Session` 写者并广播。
+    async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult>;
 
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
@@ -67,9 +99,25 @@ pub trait CommandSource: Send + Sync {
 pub struct DurableCommands {
     session: Arc<Session>,
     registry: Arc<ObserverRegistry>,
+    /// 写 entry / submission 时显式传下去的 actor；将来认证在这里换成 principal。
+    actor: Actor,
 }
 
 impl DurableCommands {
+    /// 用一条现成的 `Session` 装配写命令；与 sessions 的轮次共享同一个取消 token。
+    pub fn with_session(session: Arc<Session>, registry: Arc<ObserverRegistry>) -> Arc<Self> {
+        Arc::new(Self { session, registry, actor: Actor::system("nous-app") })
+    }
+
+    /// 换掉写命令用的 actor（认证落地时由 principal 派生；现在只有显式调用）。
+    pub fn with_actor(&self, actor: Actor) -> Arc<Self> {
+        Arc::new(Self {
+            session: self.session.clone(),
+            registry: self.registry.clone(),
+            actor,
+        })
+    }
+
     /// 打开**本库自己**的库（上游 v2 库在写模式下会明确失败，见 `storage/mod.rs`）。
     pub fn open(path: impl AsRef<Path>) -> Result<Arc<Self>> {
         let path = path.as_ref();
@@ -79,7 +127,13 @@ impl DurableCommands {
         Ok(Arc::new(Self {
             session: Arc::new(Session::with_observers(storage, registry.clone())),
             registry,
+            actor: Actor::system("nous-app"),
         }))
+    }
+
+    /// 同一条 `Session` 的只读句柄，给 #48 的 documents 写后端复用（不另开写者）。
+    pub fn session(&self) -> &Arc<Session> {
+        &self.session
     }
 
     /// 挂观察者。必须在开始接请求之前调用；挂上之后的每一次提交都会走到它。
@@ -112,22 +166,23 @@ impl CommandSource for DurableCommands {
                 content,
                 request_id,
             },
+            &self.actor,
         )
         .await
         .map_err(command_error)?;
         Ok(SubmitResult {
             submission_id: outcome.submission_id,
             status: outcome.status,
+            entry_id: outcome.entry_id,
+            // submit 同批铸了 entry_id、submission_id 两个 id；下一个可用 id 从 entry_id+2 起。
+            assistant_entry_id: outcome.entry_id + 2,
+            live_id: outcome.entry_id + 3,
         })
     }
 
     async fn abort(&self, session: i64) -> Result<()> {
         abort(&self.session, session).await.map_err(command_error)?;
         Ok(())
-    }
-
-    fn session(&self) -> Option<Arc<Session>> {
-        Some(Arc::clone(&self.session))
     }
 
     async fn reclaim_orphans(&self) -> Result<usize> {
@@ -149,6 +204,44 @@ impl CommandSource for DurableCommands {
             id: outcome.id,
             at: outcome.at,
         })
+    }
+
+    async fn unread(&self) -> Result<Value> {
+        unread_map(&self.session).await.map_err(command_error)
+    }
+
+    async fn read(&self, session: i64) -> Result<ReadResult> {
+        let outcome = mark_read(&self.session, session)
+            .await
+            .map_err(command_error)?;
+        Ok(ReadResult {
+            id: outcome.id,
+            read_at: outcome.read_at,
+            unread: outcome.unread,
+        })
+    }
+
+    async fn rename(&self, session: i64, name: String) -> Result<RenameResult> {
+        let outcome = rename_session(&self.session, session, &name)
+            .await
+            .map_err(command_error)?;
+        Ok(RenameResult {
+            id: outcome.id,
+            name: outcome.name,
+        })
+    }
+
+    async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult> {
+        set_pin(
+            &self.session,
+            PinRequest {
+                conversation: session,
+                pinned,
+                request_id,
+            },
+        )
+        .await
+        .map_err(command_error)
     }
 }
 
@@ -173,8 +266,20 @@ impl CommandSource for ReadOnlyCommands {
         Err(read_only())
     }
 
-    fn session(&self) -> Option<Arc<Session>> {
-        None
+    async fn unread(&self) -> Result<Value> {
+        Ok(json!({}))
+    }
+
+    async fn read(&self, _: i64) -> Result<ReadResult> {
+        Err(read_only())
+    }
+
+    async fn rename(&self, _: i64, _: String) -> Result<RenameResult> {
+        Err(read_only())
+    }
+
+    async fn pin(&self, _: i64, _: bool, _: String) -> Result<PinResult> {
+        Err(read_only())
     }
 
     /// 只读装配没有写者，也就没有孤儿要补：明确返回 0，不报错。

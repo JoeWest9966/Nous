@@ -32,6 +32,7 @@ use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
 use nous_durable::storage::sessions::ENTRIES_MAX_LIMIT;
+use nous_sessions::turn::TurnRequest;
 use nous_wire::{Generation, RemoteEvent};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -47,7 +48,7 @@ use crate::source::SessionSource;
 /// 装配路由。`state` 里的 `source` 决定数据从哪来，`commands` 决定写往哪去，
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/v1/sessions", get(sessions).post(create_session))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))
@@ -56,7 +57,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/fork", post(fork))
         .route("/v1/machines", get(machines))
         .route("/v1/models", get(models))
-        .with_state(state)
+        .route("/v1/device", get(device))
+        .route("/v1/selection", get(selection))
+        .route("/v1/unread", get(unread))
+        .route("/v1/read/{id}", post(mark_read))
+        .route("/v1/sessions/{id}/rename", post(rename))
+        .route("/v1/sessions/{id}/pin", post(pin))
+        .route("/v1/skills", get(skills))
+        .route("/v1/prompts", get(prompts))
+        .route("/v1/extensions", get(extensions))
+        .route("/v1/triggers", get(triggers))
+        .route("/v1/capabilities", get(capabilities));
+    // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
+    crate::documents::attach(state, router)
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
@@ -79,11 +92,133 @@ async fn create_session(
     Ok((StatusCode::CREATED, Json(serde_json::to_value(created).unwrap())))
 }
 
+/// `GET /v1/unread`：平铺 map（`{"id": {unread, readAt}}`），覆盖所有会话。
+async fn unread(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    Ok(Json(state.commands().unread().await?))
+}
+
+/// `POST /v1/read/:id`：把水位推到最新，回 `{id, readAt, unread: 0}`。
+async fn mark_read(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().read(id).await?;
+    Ok(Json(json!({
+        "id": result.id,
+        "readAt": result.read_at,
+        "unread": result.unread,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+struct RenameBody {
+    name: String,
+}
+
+/// `POST /v1/sessions/:id/rename`：trim、空 → 400；回生效的 `{id, name}`。
+async fn rename(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let body: RenameBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("name is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("rename body: {error}")))?
+    };
+    let result = state.commands().rename(id, body.name).await?;
+    Ok(Json(json!({ "id": result.id, "name": result.name })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PinBody {
+    pinned: bool,
+    request_id: Option<String>,
+}
+
+/// `POST /v1/sessions/:id/pin`：置顶写穿。`requestId` 必填，重放回第一次的回执。
+async fn pin(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let body: PinBody = if body.is_empty() {
+        return Err(ServerError::BadRequest(
+            "pinned and requestId are required".to_string(),
+        ));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("pin body: {error}")))?
+    };
+    let request_id = body
+        .request_id
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ServerError::BadRequest("requestId is required".to_string()))?;
+    let result = state.commands().pin(id, body.pinned, request_id).await?;
+    Ok(Json(serde_json::to_value(result).map_err(|error| {
+        ServerError::Internal(format!("serialize pin receipt: {error}"))
+    })?))
+}
+
+/// `GET /v1/device`：进程/宿主配置，About 面板读它。
+async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(crate::meta::device(state.models()))
+}
+
+/// `GET /v1/selection`：当前选中的会话（配置里没有就 null）。
+async fn selection() -> Json<Value> {
+    Json(crate::meta::selection())
+}
+
+/// `GET /v1/skills`：空目录就是空表。
+async fn skills() -> Json<Value> {
+    Json(crate::meta::skills())
+}
+
+/// `GET /v1/prompts`：A 阶段空表。
+async fn prompts() -> Json<Value> {
+    Json(crate::meta::prompts())
+}
+
+/// `GET /v1/extensions`：ext 冻结，空清单。
+async fn extensions() -> Json<Value> {
+    Json(crate::meta::extensions())
+}
+
+/// `GET /v1/triggers`：没实现，回空清单，不 404。
+async fn triggers() -> Json<Value> {
+    Json(crate::meta::triggers())
+}
+
+/// `GET /v1/capabilities`：desk 按 modules 显示/隐藏功能面。
+/// #51 只改 `runtime.provider` 一段：kind 由装配决定，不另造一张能力表。
+async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let kind = state.provider_kind();
+    let configured = kind == "faux";
+    let message = if configured {
+        "假 provider，回复固定"
+    } else {
+        "没有配置真实 provider 凭证，发消息会 503"
+    };
+    let mut body = crate::meta::capabilities(state.origin());
+    body["runtime"]["provider"] = json!({
+        "configured": configured,
+        "kind": kind,
+        "message": message,
+    });
+    Json(body)
+}
+
 /// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。
 ///
 /// 本层不认识 provider，空目录是诚实的「不知道」；宿主可换入带 catalog 的 `AppState`。
 async fn models(State(state): State<Arc<AppState>>) -> Json<ModelsResponse> {
-    Json(state.models().clone())
+    Json(state.assembled_models().unwrap_or_else(|| state.models().clone()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,42 +311,43 @@ async fn messages(
         ));
     }
     let _ = body.when_busy;
-
-    // 先解析 provider：解析不出来就 503，**不写用户 entry** —— 「先受理再假装」是禁止的
-    // （`#44` 复核：把 faux provider 当生产 provider，等于发出去永远没有回复）。
-    let handle = {
-        let runtime = state.runtime().ok_or_else(|| {
-            ServerError::Unavailable(
-                "this server was assembled without a runtime (no providers)".to_string(),
-            )
-        })?;
-        let model = conversation_model(&state, session)?;
-        runtime.turn_for(&model)?
-    };
-
-    // 受理写一条用户 entry。
+    let faux = state.provider_kind() == "faux";
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
         .await?;
 
-    // 一轮就真的在这里起：`handle` 带着 provider / 工具表 / 同一个 Session，
-    // 落库与 SSE 都走那一个写者（帧由 `CommitObserver` 推到 hub，路由不用补发）。
-    let submission = result.submission_id;
-    let conversation = session;
-    tokio::spawn(async move {
-        match handle.run(conversation, submission).await {
-            Ok(outcome) => eprintln!(
-                "nous-server: turn done conversation={conversation} submission={submission} tool_calls={}",
-                outcome.tool_calls.len()
-            ),
-            // 失败**不写终态**：终态五值里没有「provider 挂了」，编一个就是自创第六个。
-            // 客户端要么重发，要么 abort（那条会落 `user_cancel`）。
-            Err(error) => eprintln!(
-                "nous-server: turn failed conversation={conversation} submission={submission}: {error}"
-            ),
+    // #51：只有显式 faux 装配才在受理后跑一轮。真 provider 的解析/503 语义不在本票改；
+    // 没有装配时保持原行为（只受理）。
+    // 事件只用 wire 已有的类型：user entry 的 message_start/entry_appended 由
+    // durable 的 CommitObserver → project 投影发出，assistant 由轮次的投影发；
+    // 这里不再手工补帧（之前补的假 entry 是重复且形状不对的）。
+    if faux {
+        if let Some(runtime) = state.runtime() {
+            let submitted = result.clone();
+            let driver = runtime.driver.clone();
+            let model = nous_ai::Model::new(
+                crate::runtime::FAUX_MODEL_ID,
+                "Faux Echo",
+                nous_ai::Api::Faux,
+                "faux",
+                "http://localhost:0",
+            );
+            tokio::spawn(async move {
+                let _ = driver
+                    .run(TurnRequest {
+                        conversation: session,
+                        submission: submitted.submission_id,
+                        entry_id: submitted.assistant_entry_id,
+                        live: submitted.live_id,
+                        model,
+                        context: nous_ai::Context::new(Vec::new()),
+                        attempt: 1,
+                    })
+                    .await;
+            });
         }
-    });
+    }
 
     Ok((
         StatusCode::ACCEPTED,
@@ -220,20 +356,6 @@ async fn messages(
             "status": result.status,
         })),
     ))
-}
-
-/// 会话配置里的模型（`"provider/modelId"`）。
-///
-/// 走 [`SessionSource::sessions`]（唯一读路径）：`/messages` 不带 model，模型是会话的属性。
-fn conversation_model(state: &AppState, conversation: i64) -> Result<String> {
-    let items = state.source().sessions()?;
-    let item = items
-        .into_iter()
-        .find(|item| item.id == conversation)
-        .ok_or_else(|| ServerError::NotFound(format!("session {conversation}")))?;
-    item.model.ok_or_else(|| {
-        ServerError::Unavailable(format!("session {conversation} has no model configured"))
-    })
 }
 
 /// `POST /v1/sessions/:id/abort`：没有活跃任务时 409（不是 200「假装停了」）。

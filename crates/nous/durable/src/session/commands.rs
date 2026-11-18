@@ -26,11 +26,13 @@ use nous_chord::context::Context;
 use nous_chord::watch::WatchEnd;
 use serde_json::{json, Value};
 
+use crate::actor::Actor;
 use crate::harness::generation::LIVE_KIND;
 use crate::storage::writes::StorageWrite;
 use crate::types::{DocumentScope, EntryRecord, TerminalReason};
-use crate::{DocumentContent, Id, Storage, StorageError};
+use crate::{DocumentContent, DocumentPoint, Id, Storage, StorageError};
 
+use super::session_document::{merge_session_document, session_scope_document, upsert_session_document};
 use super::{publication_of, CommitPublication, Session, SessionEnd, SessionError};
 
 /// 命令失败。`Session` 是「会话已经不能用了」，另外三条是调用方要看到的语义错误。
@@ -61,6 +63,12 @@ impl From<StorageError> for CommandError {
     }
 }
 
+impl From<SessionError> for CommandError {
+    fn from(error: SessionError) -> Self {
+        CommandError::Session(error)
+    }
+}
+
 /// `POST /v1/sessions/:id/messages` 的入参。`content` 原样存（字符串或段落数组都行）。
 #[derive(Debug, Clone)]
 pub struct SubmitRequest {
@@ -81,6 +89,7 @@ pub struct SubmitOutcome {
 pub async fn submit_message(
     session: &Session,
     request: SubmitRequest,
+    actor: &Actor,
 ) -> Result<SubmitOutcome, CommandError> {
     if !valid_content(&request.content) {
         return Err(CommandError::BadRequest(
@@ -131,6 +140,7 @@ pub async fn submit_message(
             "content": request.content,
             "timestamp": now_ms(),
         }],
+        "actor": actor,
     });
     // `input/queued` 的合法形状里**没有** `entry`（`types::SubmissionFields::validate` 的
     // 矩阵：entry 要等 `placed` 才出现）。这里写 `entry` 会被提交拒绝 —— 那不是类型啰嗦，
@@ -140,6 +150,7 @@ pub async fn submit_message(
         "conversationId": request.conversation,
         "type": "input",
         "status": "queued",
+        "actor": actor,
     });
     if let Some(request_id) = request.request_id {
         submission["requestId"] = Value::String(request_id);
@@ -459,9 +470,10 @@ pub struct ForkOutcome {
 
 /// `POST /v1/sessions/:id/fork`：开一条带 `parent: {conversationId, at}` 的新会话。
 ///
-/// **名字不给就是空串**（`wire.md`：本库不生成默认名）。给了名字就写成一条
-/// `qrd3wh.sessions` 的 base —— 会话树的名字就是那张 `names` 表，`render_sessions` 会合并
-/// 全部同名文档。空闲才允许分叉：正在跑的会话分出去，两个会话会共享同一条还在写的生成态。
+/// **名字不给就是空串**（`wire.md`：本库不生成默认名）。给了名字就并进 session 作用域
+/// 那份单例 `qrd3wh.sessions` 的 `names` 表（和 create/rename 同一条路）：该地址只允许一个
+/// 在世化身，再 DocumentCreate 会以地址冲突失败。空闲才允许分叉：正在跑的会话分出去，
+/// 两个会话会共享同一条还在写的生成态。
 pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome, CommandError> {
     let mut guard = session.storage.lock().await;
     let (id, at, writes) = {
@@ -497,19 +509,12 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
         let mut writes = vec![StorageWrite::Conversation(record)];
         let name = request.name.unwrap_or_default();
         if !name.is_empty() {
-            let document_id = storage.mint_id()?;
-            writes.push(StorageWrite::DocumentCreate {
-                id: document_id,
-                record: json!({
-                    "id": document_id,
-                    "kind": "qrd3wh.sessions",
-                    "scope": DocumentScope::Session,
-                }),
-                content: DocumentContent::Base {
-                    version: 1,
-                    value: json!({ "names": { id.to_string(): name } }),
-                },
-            });
+            // 同 create/rename：改单例文档的 names 一个键，pins 等别的键原样留着。
+            let mut document_writes =
+                merge_session_document(storage, NAMES_KIND, "names", |names| {
+                    names[id.to_string()] = json!(name);
+                })?;
+            writes.append(&mut document_writes);
         }
         (id, at, writes)
     };
@@ -519,8 +524,291 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
 }
 
 // ---------------------------------------------------------------------------
+// #47：rename / read / unread
+//
+// 三种写都走 `commit_and_publish`（同一把锁、同一个事务、同一份广播）；读走同一 Session
+// 的存储引用（只读扫描），不另开第二条 Storage。名字/水位住在本库自己的文档里，键是会话 id。
+// ---------------------------------------------------------------------------
+
+const NAMES_KIND: &str = "qrd3wh.sessions";
+const UNREAD_KIND: &str = "qrd3wh.unread";
+
+/// `POST /v1/sessions/:id/pin` 的入参。`request_id` 是必填的幂等锚。
+#[derive(Debug, Clone)]
+pub struct PinRequest {
+    pub conversation: Id,
+    pub pinned: bool,
+    pub request_id: String,
+}
+
+/// 置顶回执，同时也是存进 `pins.requests` 的锚值。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinOutcome {
+    pub id: Id,
+    pub pinned: bool,
+    pub changed: bool,
+    pub request_id: String,
+    pub version: i64,
+}
+
+/// 每个会话保留的最近锚数。按 version 淘汰旧的。
+const PIN_ANCHOR_LIMIT: usize = 50;
+
+/// 置顶/取消置顶：读 pins → 判幂等 → 算回执 → 一次提交 + 广播。
+///
+/// 状态住在 `qrd3wh.sessions` 的 `pins` 键里：`{ ids, requests }`。整份文档用 base
+/// 覆盖写（同 rename 的 `upsert_session_document`），`names` 必须原样保留。
+pub async fn set_pin(session: &Session, request: PinRequest) -> Result<PinOutcome, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let (writes, outcome) = {
+        let storage = storage_mut(&mut guard)?;
+        if storage.conversation(request.conversation)?.is_none() {
+            return Err(CommandError::NotFound(format!(
+                "session {} not found",
+                request.conversation
+            )));
+        }
+        let (existing_id, existing) = session_scope_document(storage, NAMES_KIND)?;
+        let mut value = existing.unwrap_or_else(|| json!({}));
+        if !value.is_object() {
+            value = json!({});
+        }
+        let mut pins = value.get("pins").cloned().unwrap_or_else(|| json!({}));
+        if !pins.is_object() {
+            pins = json!({});
+        }
+        let mut ids: Vec<String> = pins
+            .get("ids")
+            .and_then(Value::as_array)
+            .map(|ids| ids.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        let mut requests = pins
+            .get("requests")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+
+        // 幂等锚：重放第一次的回包，不落新提交、不涨版本。
+        if let Some(previous) = requests.get(&request.request_id) {
+            if let Ok(outcome) = serde_json::from_value::<PinOutcome>(previous.clone()) {
+                return Ok(outcome);
+            }
+        }
+
+        let version = requests
+            .values()
+            .filter_map(|value| value.get("version").and_then(Value::as_i64))
+            .max()
+            .unwrap_or_default()
+            + 1;
+        let key = request.conversation.to_string();
+        let present = ids.iter().any(|id| id == &key);
+        let changed = if request.pinned {
+            if present {
+                false
+            } else {
+                ids.insert(0, key);
+                true
+            }
+        } else if present {
+            ids.retain(|id| id != &key);
+            true
+        } else {
+            false
+        };
+        let outcome = PinOutcome {
+            id: request.conversation,
+            pinned: request.pinned,
+            changed,
+            request_id: request.request_id.clone(),
+            version,
+        };
+        let stored = serde_json::to_value(&outcome).map_err(|error| {
+            CommandError::Session(SessionError::Shape(error.to_string()))
+        })?;
+        requests.insert(request.request_id.clone(), stored);
+        while requests.len() > PIN_ANCHOR_LIMIT {
+            let oldest = requests
+                .iter()
+                .filter_map(|(id, value)| {
+                    value
+                        .get("version")
+                        .and_then(Value::as_i64)
+                        .map(|version| (version, id.clone()))
+                })
+                .min()
+                .map(|(_, id)| id);
+            let Some(oldest) = oldest else { break };
+            requests.remove(&oldest);
+        }
+        pins["ids"] = json!(ids);
+        pins["requests"] = Value::Object(requests);
+        value["pins"] = pins;
+        let writes = upsert_session_document(storage, NAMES_KIND, existing_id, value)?;
+        (writes, outcome)
+    };
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(outcome)
+}
+const NAME_MAX_LEN: usize = 120;
+
+/// `POST /v1/sessions/:id/rename` 的结果（回包就是生效值）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenamedOutcome {
+    pub id: Id,
+    pub name: String,
+}
+
+/// `POST /v1/read/:id` 的回执。`read_at` 是 epoch 毫秒；水位只进不退。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkReadOutcome {
+    pub id: Id,
+    pub read_at: i64,
+    pub unread: u64,
+}
+
+/// 会话改名：trim、空串拒绝、最长 120（旧引擎语义）。
+///
+/// 名字住在 `qrd3wh.sessions` 的 `names` 表里 —— `render_sessions` 合并所有这种文档的
+/// names。session 作用域的同地址文档只有一份在世化身，内容用整份 base 覆盖。
+pub async fn rename_session(
+    session: &Session,
+    id: Id,
+    raw_name: &str,
+) -> Result<RenamedOutcome, CommandError> {
+    let name = raw_name.trim();
+    if name.is_empty() {
+        return Err(CommandError::BadRequest("name 是空的".to_string()));
+    }
+    let name = name.chars().take(NAME_MAX_LEN).collect::<String>();
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    // 只替换 names 的一个键，整份值（pins / archived / 旧键）原样写回。
+    let writes = merge_session_document(storage, NAMES_KIND, "names", |names| {
+        names[id.to_string()] = json!(name);
+    })?;
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(RenamedOutcome { id, name })
+}
+
+/// 全部会话的未读状态：`{"id": {"unread": N, "readAt": ms|null}}`。
+///
+/// `unread` = 「水位 entry id 之后还有几条 entry」；水位文档缺席给 `{0, null}`。
+pub async fn unread_map(session: &Session) -> Result<Value, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let conversations = storage
+        .scan_conversations(
+            &crate::ConversationQuery {
+                owner_conversation_id: None,
+                owner_task_id: None,
+                order: None,
+            },
+            10_000,
+            None,
+        )?
+        .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+    let marks = session_scope_document(storage, UNREAD_KIND)?
+        .1
+        .and_then(|value| value.get("marks").cloned())
+        .unwrap_or_else(|| json!({}));
+    let mut result = serde_json::Map::new();
+    for conversation in conversations.items {
+        let id = id_of(&conversation)?;
+        let mark = marks.get(id.to_string());
+        let watermark = mark
+            .and_then(|entry| entry.get("entryId"))
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
+        // 没有水位 = 引擎种的 0（wire.md：没标过已读也给 0，不是把全部 history 算成未读）。
+        let unread = if mark.is_none() {
+            0
+        } else {
+            let entries = storage.scan_entries(
+                &crate::storage::storage::EntryQuery {
+                    conversation_id: id,
+                    min_entry_id: Some(watermark.saturating_add(1)),
+                    max_entry_id: None,
+                    order: None,
+                },
+                10_000,
+                None,
+            )?
+            .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+            entries.items.len() as u64
+        };
+        result.insert(
+            id.to_string(),
+            json!({
+                "unread": unread,
+                "readAt": mark.and_then(|entry| entry.get("readAt")).cloned().unwrap_or(Value::Null),
+            }),
+        );
+    }
+    Ok(Value::Object(result))
+}
+
+/// 标已读：水位推到该会话当前最新 entry id（只进不退），并广播。
+pub async fn mark_read(
+    session: &Session,
+    id: Id,
+) -> Result<MarkReadOutcome, CommandError> {
+    let read_at = now_ms();
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    let latest = storage.latest_entry_id(id)?.unwrap_or_default();
+    let (existing_id, existing) = session_scope_document(storage, UNREAD_KIND)?;
+    let mut marks = existing
+        .as_ref()
+        .and_then(|value| value.get("marks").cloned())
+        .unwrap_or_else(|| json!({}));
+    let previous = marks
+        .get(id.to_string())
+        .and_then(|entry| entry.get("entryId"))
+        .and_then(Value::as_i64)
+        .unwrap_or(i64::MIN);
+    let effective_watermark = previous.max(latest);
+    let effective_read_at = marks
+        .get(id.to_string())
+        .and_then(|entry| entry.get("readAt"))
+        .and_then(Value::as_i64)
+        .unwrap_or(read_at)
+        .max(read_at);
+    marks[id.to_string()] =
+        json!({ "entryId": effective_watermark, "readAt": effective_read_at });
+
+    let writes = upsert_session_document(storage, UNREAD_KIND, existing_id, json!({ "marks": marks }))?;
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(MarkReadOutcome {
+        id,
+        read_at: effective_read_at,
+        unread: 0,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // 提交：与 `Session::commit` 同一条路径（同一把锁、同一个事务、同一份 publication）
 // ---------------------------------------------------------------------------
+
+/// 与 [`commit_and_publish`] 同一条提交/广播路径，只是自己拿锁。
+/// 用在「先只读扫描 + mint_id，再放开锁提交」的命令里（rename / read）。
+async fn commit_and_publish_with_new_guard(
+    session: &Session,
+    batch: Vec<StorageWrite>,
+) -> Result<CommitPublication, CommandError> {
+    let mut guard = session.storage.lock().await;
+    commit_and_publish(session, &mut guard, batch).await
+}
 
 async fn commit_and_publish(
     session: &Session,
@@ -562,6 +850,80 @@ async fn commit_and_publish(
     Ok(publication)
 }
 
+/// 一次通用的文档写入。应用层（#48 的 `documents`）用它写任何 kind 的文档：
+/// durable 只认 `StorageWrite`，产品词只留在应用层。
+///
+/// [`DocumentMutation::Create`] 的 id 由**同一把写锁下**的分配器铸出，和写一起落库；
+/// 调用方不需要（也不许）自己猜一个 id —— 那是第二条写者才需要的做法。
+///
+/// 和 [`submit_message`](super::commands::submit_message) / [`fork`](super::commands::fork)
+/// 走**同一条** `commit_and_publish`：同一把写锁、同一个事务、同一个 `ObserverRegistry`。
+#[derive(Debug, Clone)]
+pub enum DocumentMutation {
+    /// 新建一份文档。`kind` 是 opaque 字符串（例如 `"presets.Session-Template"`）。
+    Create { kind: String, key: String, value: Value },
+    /// 改一份已有文档的内容。`base_version` 是当前 base 的版本（乐观锁），
+    /// `value` 是新的整份值；durable 自己 diff 出 delta，历史因此逐次累积。
+    Change { id: Id, base_version: i64, value: Value },
+    /// 追加一批 delta 操作（中性 op 数组，durable 不解释内容）。
+    Delta { id: Id, version: i64, ops: Value },
+    /// 退役一份文档（名字改动 = 旧名退役 + 新名创建，同一批里）。
+    Retire { id: Id },
+}
+
+impl DocumentMutation {
+    /// 聚成一批 `StorageWrite`。只有 `Create` 需要 id 分配器。
+    fn into_write(self, storage: &mut Storage) -> Result<StorageWrite, CommandError> {
+        Ok(match self {
+            DocumentMutation::Create { kind, key, value } => {
+                let id = storage.mint_id()?;
+                StorageWrite::DocumentCreate {
+                    id,
+                    record: json!({
+                        "id": id, "kind": kind, "key": key,
+                        "scope": { "kind": "session" },
+                    }),
+                    content: DocumentContent::Base { version: 1, value },
+                }
+            }
+            DocumentMutation::Change { id, base_version, value } => {
+                let before = storage.materialize(id, DocumentPoint::Current)?
+                    .ok_or_else(|| CommandError::NotFound(format!("document {id} not found")))?;
+                if before.version != base_version {
+                    return Err(CommandError::Conflict(format!(
+                        "document {id} version changed: expected {base_version}, found {}", before.version
+                    )));
+                }
+                let trusted = nous_chord::delta::diff::diff_revisions(&before.value, &value);
+                let ops = Value::Array(nous_chord::delta::codec::Encoder::new().encode(trusted.as_ops()));
+                StorageWrite::DocumentChange {
+                    id,
+                    content: DocumentContent::Delta { version: before.version, ops },
+                }
+            }
+            DocumentMutation::Delta { id, version, ops } => StorageWrite::DocumentChange {
+                id,
+                content: DocumentContent::Delta { version, ops },
+            },
+            DocumentMutation::Retire { id } => StorageWrite::DocumentRetire { id },
+        })
+    }
+}
+
+pub async fn write_document(
+    session: &Session,
+    mutations: Vec<DocumentMutation>,
+) -> Result<CommitPublication, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let writes = {
+        let storage = storage_mut(&mut guard)?;
+        mutations.into_iter()
+            .map(|mutation| mutation.into_write(storage))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    commit_and_publish(session, &mut guard, writes).await
+}
+
 /// 会话已经关了（或在排队期间关的）→ 409。
 fn storage_mut(guard: &mut Option<Storage>) -> Result<&mut Storage, CommandError> {
     guard
@@ -597,10 +959,8 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// 会话取消 token 的只读视图。
-///
-/// **不是 `Session` 的方法**（A3 面不为此加一个方法）：应用层停 provider 流时拿它的 clone，
-/// 落库终态仍只走 [`cancel`] 这一条通道 —— token 只是同源，不是第二个写者。
+/// 会话取消 token 的只读视图。不是 `Session` 的公开方法（A3 面不许动），
+/// 应用层停 provider 流时用它；落库终态仍只走 [`cancel`]。
 pub fn cancel_token(session: &Session) -> tokio_util::sync::CancellationToken {
     session.cancellation.token().clone()
 }

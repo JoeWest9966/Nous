@@ -12,6 +12,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use nous_durable::actor::Actor;
 use nous_durable::harness::clock::{Clock, ManualClock};
 
 use nous_ai::{
@@ -156,6 +157,7 @@ fn classify_request(entry_id: i64) -> ClassifyRequest {
         retryable: false,
         overflow: None,
         reason: TerminalReason::Done,
+        actor: Actor::system("nous-app"),
     }
 }
 
@@ -267,7 +269,7 @@ async fn harness_stream_commits_partials_at_most_every_interval() {
         .and_then(|generation| generation.message.as_ref())
         .and_then(|message| message.get("content"))
         .and_then(|content| content.get(0))
-        .and_then(|block| block.get("text"))
+        .and_then(|part| part.get("text"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();

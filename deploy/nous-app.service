@@ -1,0 +1,27 @@
+[Unit]
+Description=Nous kernel (nous-app) — /v1/* on 127.0.0.1:4789
+Documentation=https://github.com/JoeWest9966/Nous
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nous
+Group=nous
+WorkingDirectory=/srv/nous/work
+Environment=HOME=/var/lib/nous
+Environment=NOUS_LISTEN=127.0.0.1:4789
+Environment=NOUS_DB=/var/lib/nous/nous.db
+Environment=NOUS_TOKEN_FILE=/etc/nous/token
+ExecStart=/opt/nous-app/current/nous-app
+# 78 = EX_CONFIG：拒绝启动（库比代码新 / 没 token / workdir 不可写 …）。
+# on-failure + PreventExitStatus=78 让「不想起」停在 failed，而不是每 3 秒拉一次。
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=3
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

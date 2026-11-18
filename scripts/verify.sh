@@ -5,6 +5,7 @@
 #   ./scripts/verify.sh unit         # 只跑测试
 #   ./scripts/verify.sh fixture      # 只跑 agent.sqlite fixture
 #   ./scripts/verify.sh boundary     # 只跑 spec 第 1 章的边界判据（15 条）
+#   ./scripts/verify.sh auth         # 只跑 #50 的 /v1/* 认证判据（真起进程）
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -93,6 +94,14 @@ PYLAYER
 		bad "kernel 层依赖了上层："
 		printf '%s\n' "$LAYER_BAD" | sed 's/^/       /'
 	fi
+fi
+
+# 0c. plugin.toml 体检（issue #55）：清单变成可由程序读的数据
+step "0c. plugin.toml 体检（check-plugins.sh）"
+if ./scripts/check-plugins.sh; then
+	ok "plugin.toml 与目录 / Cargo.toml / docs/plugins.md / cargo metadata 一致"
+else
+	bad "plugin.toml 体检未过（详见 check-plugins.sh 的 checked/mismatched 汇总）"
 fi
 
 # 1. 单元测试 + 一致性套件
@@ -215,7 +224,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ]; then
 		if cargo build --release --quiet -p "$BIN_PKG" --bin "$BIN" >/dev/null 2>&1; then
 			# 端口用 0（临时端口）：固定端口会和「正在跑的那个服务」撞车。
 			# 顺手把「到底 bind 上了没有」变成断言：只打日志不看 rc 的话，起不来也算过。
-			timeout 5 env NOUS_LISTEN=127.0.0.1:0 "./target/release/$BIN" >/tmp/nous-boot.log 2>&1
+			timeout 5 env NOUS_LISTEN=127.0.0.1:0 "${CARGO_TARGET_DIR:-./target}/release/$BIN" >/tmp/nous-boot.log 2>&1
 			rc=$?
 			if ! grep -q "listening on 127.0.0.1:" /tmp/nous-boot.log; then
 				bad "没打出 listening 行 —— 起来了但没 bind，或启动日志变了：$(head -3 /tmp/nous-boot.log)"
@@ -224,6 +233,152 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ]; then
 		else
 			bad "编译失败"
 		fi
+	fi
+fi
+
+# 3b. #50 认证判据（判据 1/3 进脚本：真起进程、真 curl、真拒绝启动）
+if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = auth ]; then
+	step "3b. #50 /v1/* Bearer 认证与启动门槛（判据 1/3）"
+	BIN=nous-app
+	AUTH_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	if [ ! -x "$AUTH_BIN" ]; then
+		bad "$AUTH_BIN 不存在 —— 先跑一次 boot 段构建"
+	else
+		AUTH_TMP=$(mktemp -d)
+		mkdir -p "$AUTH_TMP/home"
+
+		# 源码哨兵：删掉中间件挂载 / 删掉启动门槛，下面两行 grep 就红。
+		if grep -q 'require_bearer' crates/nous/server/src/main.rs \
+		   && grep -q -- '--print-token' crates/nous/server/src/main.rs; then
+			ok "源码哨兵：中间件挂载 + 启动门槛提示都在"
+		else
+			bad "源码哨兵丢了：中间件挂载或 --print-token 提示不在 main.rs"
+		fi
+
+		# 判据 6：`--print-token` 生成 0600 token 且输出可直接用于 curl。
+		TOKEN=$(HOME="$AUTH_TMP/home" "$AUTH_BIN" --print-token 2>"$AUTH_TMP/print.err")
+		TOKEN_FILE="$AUTH_TMP/home/.config/nous/token"
+		if [ ${#TOKEN} -eq 43 ] && [ "$(stat -c %a "$TOKEN_FILE" 2>/dev/null)" = 600 ]; then
+			ok "--print-token 生成 32B base64url token，文件 0600"
+		else
+			bad "--print-token 输出异常（len=${#TOKEN} mode=$(stat -c %a "$TOKEN_FILE" 2>/dev/null)）"
+		fi
+
+		# 起真进程（端口 0，从 stdout 抓实际地址）。
+		HOME="$AUTH_TMP/home" NOUS_DB="$AUTH_TMP/test.db" \
+			NOUS_LISTEN=127.0.0.1:0 "$AUTH_BIN" >"$AUTH_TMP/out" 2>"$AUTH_TMP/err" &
+		AUTH_PID=$!
+		for _ in $(seq 1 50); do grep -q 'listening on ' "$AUTH_TMP/out" && break; sleep 0.1; done
+		AUTH_ADDR=$(sed -n 's/^listening on //p' "$AUTH_TMP/out" | head -1)
+		if [ -z "$AUTH_ADDR" ]; then
+			bad "带 token 的进程起不来：$(head -3 "$AUTH_TMP/err")"
+		else
+			ok "带 token 进程启动并 bind（$AUTH_ADDR）"
+
+			# 判据 1：无 header / 错 token / 空 token → 401 + WWW-Authenticate，
+			# 且库里 entries 条数不变。
+			count_entries() {
+				python3 -c 'import sqlite3,sys
+try:
+ c=sqlite3.connect(sys.argv[1]); print(c.execute("select count(*) from entries").fetchone()[0])
+except Exception: print("ERR")' "$AUTH_TMP/test.db" 2>/dev/null || echo ERR
+			}
+			BEFORE=$(count_entries)
+			A1_OK=1
+			for HEADER in __NONE__ 'Authorization: Bearer wrong-token' 'Authorization: Bearer '; do
+				if [ "$HEADER" = __NONE__ ]; then
+					CODE=$(curl -s -D "$AUTH_TMP/h" -o /dev/null -w '%{http_code}' "http://$AUTH_ADDR/v1/sessions")
+				else
+					CODE=$(curl -s -D "$AUTH_TMP/h" -o /dev/null -w '%{http_code}' -H "$HEADER" "http://$AUTH_ADDR/v1/sessions")
+				fi
+				WWW=$(grep -i '^www-authenticate:' "$AUTH_TMP/h" | tr -d '\r' || true)
+				if [ "$CODE" != 401 ] || ! printf '%s' "$WWW" | grep -qi 'Bearer'; then
+					bad "缺/错/空 token 判据失效（header=$HEADER code=$CODE www=$WWW）"; A1_OK=0
+				fi
+			done
+			AFTER=$(count_entries)
+			if [ "$A1_OK" -eq 1 ] && [ "$BEFORE" = "$AFTER" ]; then
+				ok "无/错/空 token → 401 + WWW-Authenticate: Bearer，entries $BEFORE → $AFTER 不变"
+			fi
+
+			# 判据 2：对 token → 200（SSE 也在下面单独打一发）。
+			CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "http://$AUTH_ADDR/v1/sessions")
+			[ "$CODE" = 200 ] && ok "对 token → /v1/sessions 200" || bad "对 token → /v1/sessions 拿到 $CODE"
+
+			kill "$AUTH_PID" 2>/dev/null || true
+			wait "$AUTH_PID" 2>/dev/null || true
+		fi
+
+		# 判据 4：绑回环且无 token → 照常起、照常可用。
+		mkdir -p "$AUTH_TMP/loop-home"
+		HOME="$AUTH_TMP/loop-home" NOUS_DB="$AUTH_TMP/loop.db" \
+			NOUS_LISTEN=127.0.0.1:0 "$AUTH_BIN" >"$AUTH_TMP/loop.out" 2>"$AUTH_TMP/loop.err" &
+		LOOP_PID=$!
+		for _ in $(seq 1 50); do grep -q 'listening on ' "$AUTH_TMP/loop.out" && break; sleep 0.1; done
+		LOOP_ADDR=$(sed -n 's/^listening on //p' "$AUTH_TMP/loop.out" | head -1)
+		if [ -n "$LOOP_ADDR" ]; then
+			LOOP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://$LOOP_ADDR/v1/sessions")
+			[ "$LOOP_CODE" = 200 ] \
+				&& ok "绑 127.0.0.1 且无 token → 照常起、无 header 也能用（200）" \
+				|| bad "回环无 token 不该拦，却拿到 $LOOP_CODE"
+			kill "$LOOP_PID" 2>/dev/null || true
+			wait "$LOOP_PID" 2>/dev/null || true
+		else
+			bad "回环无 token 起不来：$(head -3 "$AUTH_TMP/loop.err")"
+		fi
+
+		# 判据 3：绑 0.0.0.0 且 token 文件不存在 → 拒绝启动，stderr 含 --print-token。
+		mkdir -p "$AUTH_TMP/empty-home"
+		HOME="$AUTH_TMP/empty-home" NOUS_DB="$AUTH_TMP/empty.db" \
+			timeout 5 env NOUS_LISTEN=0.0.0.0:4791 "$AUTH_BIN" >"$AUTH_TMP/refuse.out" 2>"$AUTH_TMP/refuse.err"
+		REFUSE_RC=$?
+		# 124 = timeout 杀掉 = 其实起来了一直跑，那就是门槛失效（负向哨兵靠这一条）。
+		if [ "$REFUSE_RC" -ne 0 ] && [ "$REFUSE_RC" -ne 124 ] \
+		   && grep -q -- '--print-token' "$AUTH_TMP/refuse.err" \
+		   && ! grep -q 'listening on ' "$AUTH_TMP/refuse.out"; then
+			ok "绑 0.0.0.0 且无 token → 拒绝启动（rc=$REFUSE_RC，stderr 指名 --print-token）"
+		else
+			bad "非回环无 token 没拒绝启动（rc=$REFUSE_RC，stderr=$(head -2 "$AUTH_TMP/refuse.err")）"
+		fi
+
+		# 判据 5：token 文件权限不对 → 警告但不拦。
+		mkdir -p "$AUTH_TMP/warn-home/.config/nous"
+		printf '%s' "$TOKEN" >"$AUTH_TMP/warn-home/.config/nous/token"
+		chmod 644 "$AUTH_TMP/warn-home/.config/nous/token"
+		HOME="$AUTH_TMP/warn-home" NOUS_DB="$AUTH_TMP/warn.db" \
+			NOUS_LISTEN=127.0.0.1:0 timeout 3 "$AUTH_BIN" >"$AUTH_TMP/warn.out" 2>"$AUTH_TMP/warn.err"
+		if grep -qi 'warning' "$AUTH_TMP/warn.err" && grep -q 'listening on ' "$AUTH_TMP/warn.out"; then
+			ok "token 文件权限 0644 → 警告且不拦启动"
+		else
+			bad "权限警告失效或误拦启动（stderr=$(head -2 "$AUTH_TMP/warn.err")）"
+		fi
+
+		rm -rf "$AUTH_TMP"
+	fi
+fi
+
+# 3c. #51 faux provider 启动闸门（判据 4：非回环拒绝启动）
+#     cargo test 里验不了「进程拒绝启动」，只能用真进程 + 真 stderr。
+if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = faux ]; then
+	step "3c. #51 faux 只允许绑回环"
+	BIN=nous-app
+	FAUX_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	if [ ! -x "$FAUX_BIN" ]; then
+		bad "$FAUX_BIN 不存在 —— 先跑一次 boot 段构建"
+	else
+		FAUX_TMP=$(mktemp -d)
+		# 无 token（清空 HOME）才能单独验 faux 这条理由；否则先被 #50 拦下。
+		mkdir -p "$FAUX_TMP/home"
+		HOME="$FAUX_TMP/home" NOUS_DB="$FAUX_TMP/refuse.db" \
+			NOUS_LISTEN=0.0.0.0:4792 NOUS_PROVIDER=faux \
+			"$FAUX_BIN" >"$FAUX_TMP/out" 2>"$FAUX_TMP/err"
+		FAUX_RC=$?
+		if [ "$FAUX_RC" -ne 0 ] && grep -q '只允许绑回环' "$FAUX_TMP/err"; then
+			ok "faux + 非回环 → 拒绝启动（rc=$FAUX_RC，stderr 含「只允许绑回环」）"
+		else
+			bad "faux + 非回环没拒绝（rc=$FAUX_RC，stderr=$(head -2 "$FAUX_TMP/err")）"
+		fi
+		rm -rf "$FAUX_TMP"
 	fi
 fi
 
@@ -352,25 +507,23 @@ allow={
  'nous-tools': {'nous-ai','nous-env'},
  'nous-runtime': {'nous-ai'},
  'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
- # `#44` 起 server 是**组装根**：它真的装东西，所以这三条边是实的（不是为过判据挂的）。
- 'nous-server': {'nous-durable','nous-wire','nous-telemetry','nous-sessions','nous-tools','nous-runtime'},
+ # nous-server 是**组装根**：它必须摸到这些层才能把 HTTP 面拼起来（#44/#47/#48/#49/#51）。
+ # 这一节扩边不等于放宽「内核层不依赖应用层」——那条是判据 2，另有人在守。
+ 'nous-server': {'nous-durable','nous-wire','nous-telemetry',
+                 'nous-ai','nous-runtime','nous-sessions','nous-tools','nous-documents'},
+ # #56：Nous 自己的库。**没有内部依赖**（尤其没有 nous-durable）—— 多一条边就是判据 1 破了。
+ 'nous-store': set(),
 }
 meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
                                capture_output=True,text=True).stdout)
 bad=[]
-skipped=0
 for pkg in meta['packages']:
     name=pkg['name']
     if name not in allow: continue
     for dep in pkg['dependencies']:
         d=dep['name']
         if not d.startswith('nous-') or d==name: continue
-        # 只算**进产物**的边（normal/build）。dev 依赖不进二进制，端到端判据要靠它注入
-        # 不联网的 provider —— 把 dev 也算进来就等于禁止写端到端判据。
-        if dep.get('kind') == 'dev': skipped+=1; continue
         if d not in allow[name]: bad.append(f'{name} → {d}')
-import sys
-print(f'略过 {skipped} 条 dev 依赖边（不进产物）', file=sys.stderr)
 print('\n'.join(bad))
 PY
 )
@@ -395,6 +548,13 @@ PY
 		[ "$TODO" -eq 0 ] && ok "没有 todo!()/unimplemented!() 占位桩" || bad "有 $TODO 行 todo!()/unimplemented!() —— 占位桩不算实现"
 		ok "注释里的 占位/stub/FIXME：$NOTES 行（只报数，逐条看）"
 	fi
+
+	# 4f. #54 判据 6：actor 不许走全局 / 线程局部，只许显式传参。
+	# 排除检查者自己（下面这行 pattern 本身会命中自己）。
+	ACTOR_GLOBAL=$(git grep -nE 'thread_local|static ACTOR' -- ':!scripts/verify.sh' || true)
+	[ -z "$ACTOR_GLOBAL" ] \
+		&& ok "actor 零全局/线程局部（git grep thread_local|static ACTOR == 0）" \
+		|| { bad "actor 走了全局/线程局部："; printf '%s\n' "$ACTOR_GLOBAL" | sed 's/^/       /'; }
 fi
 # ════════════════════════════════════════════════════════════════════════════
 # 5. spec 第 1 章「边界与仲裁」的 15 条判据（Q18 / S1 / S2 / S4 / S8 / S12）
@@ -597,18 +757,44 @@ PY
 
 	# 5. 数据面唯一入口：$K 之外不许出现 rusqlite / Connection::open / .sqlite / PRAGMA / BEGIN IMMEDIATE。
 	#    "之外"只算代码（crates/ 下的 .rs）；tests/ 与 *_test(s).rs 里的临时库名是夹具，不是第二入口。
+	# #56 起这条从「恰好一个入口」改成「**可数的**入口」：数据面入口 = $K ∪ `sqlite-entry` 的 crate。
+	# 第二个库（`nous.db`，`crates/nous/store`）自己开连接是正当的 —— 它就是这个库的所有者。
+	# 名单从 `cargo metadata` 的 `[package.metadata.nous] sqlite-entry = true` 读，**不点名目录**；
+	# 每一条入口都必须在「排掉了 N 行」里出现过，否则豁免是死的。
+	sqlite_entry_paths() {
+		cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c '
+import json, os, sys
+meta = json.load(sys.stdin)
+for pkg in meta["packages"]:
+    ns = (pkg.get("metadata") or {}).get("nous") or {}
+    if ns.get("sqlite-entry"):
+        print(os.path.relpath(os.path.dirname(pkg["manifest_path"])))
+'
+	}
 	c5() {
-		local ex=() p RAW KEPT DROPPED
+		local ex=() p RAW KEPT DROPPED ENTRY
+		ENTRY=$(sqlite_entry_paths)
+		# 哨兵：豁免名单不许是空的（空名单 = 第二个数据面入口不见了，或 metadata 写错了名）。
+		[ -n "$ENTRY" ] || { echo "数据面入口名单是空的（cargo metadata 里没有 sqlite-entry 的包）"; return 1; }
 		for p in $K; do ex+=(":(exclude)$p"); done
 		RAW=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- crates "${ex[@]}" || true)
 		# 只算**生产**路径：.rs 代码行、去掉注释、去掉 tests/，再**减 `dev` 层**
-		# （测试夹具与探针；spec 判据 11 的「只许测试用」同样对待它们）。
+		# （测试夹具与探针；spec 判据 11 的「只许测试用」同样对待它们），最后减数据面入口
+		# （`$ENTRY`：豁免一样要**可观测** —— 排掉了属于它们的哪几行）。
 		KEPT=$(printf '%s\n' "$RAW" | grep '\.rs:' | grep -v '/tests/' | grep -vE '_tests?\.rs:' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' \
 			| grep -v 'DEFAULT_FIXTURE' | grep -v 'fixtures/agent.sqlite' | grep -v '<legacy.sqlite>' \
 			| dev_reject || true)   # 排掉的是 `dev` 层（探针/夹具），名单来自清单
+		for p in $ENTRY; do
+			KEPT=$(printf '%s\n' "$KEPT" | grep -v "^${p}/" || true)
+		done
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
 		report_dropped "5." "$DROPPED" || return 1
+		for p in $ENTRY; do
+			printf '%s\n' "$DROPPED" | grep -q "^${p}/" \
+				|| { echo "哨兵丢了：数据面入口 $p 一行都没命中（豁免规则失效）"; return 1; }
+		done
+		echo "       数据面入口：$(printf '%s' "$K $ENTRY" | tr ' ' '\n' | sed '/^$/d' | tr '\n' ' ')"
 		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
 
@@ -825,7 +1011,7 @@ for p in m['packages']:
 	judge "2. 反向依赖（内核层 --depth 1 不依赖应用层）" c2
 	judge "3. 词表基线（S8：只减不增）" c3
 	judge "4. 路由归属（内核层无 .route(/axum::/tower::）" c4
-	judge "5. 数据面唯一入口（内核层之外无 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE）" c5
+	judge "5. 数据面入口可数（$K ∪ sqlite-entry 的 crate 之外无 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE）" c5
 	judge "6. 进程归应用层（内核层零进程 + spawn 文件集合 == baseline）" c6
 	judge "6b. 依赖方向（nous-durable --depth 2 无 providers）" c6b
 	judge "7. 端点索引唯一（^### GET /v1/ 恰好 wire.md）" c7
@@ -841,6 +1027,95 @@ for p in m['packages']:
 	printf '\n  \033[1mspec 第 1 章边界判据：%d 条 —— 绿 %d / 红 %d / SKIP %d\033[0m\n' \
 		"$TOTAL" "$B_GREEN" "$B_RED" "$B_SKIP"
 fi
+
+# ════════════════════════════════════════════════════════════════════════════
+# 6a. #52 判据 2b / 16（不动第 5 段的 15 条边界判据口径）
+# ════════════════════════════════════════════════════════════════════════════
+if [ "$WHAT" = all ] || [ "$WHAT" = issue52 ]; then
+	step "6a. #52：拒绝启动常量与理由表"
+
+	EXIT_REFUSED_SRC=$(grep -oE 'EXIT_REFUSED: u8 = [0-9]+' crates/nous/server/src/refusal.rs | sed -E 's/.*= ([0-9]+)/\1/' || true)
+	if [ "$EXIT_REFUSED_SRC" = 78 ]; then
+		ok "2b. 源码 EXIT_REFUSED == 78"
+	else
+		bad "2b. 源码 EXIT_REFUSED 找不到或不等于 78：'$EXIT_REFUSED_SRC'"
+	fi
+	# 52b 才写 unit；unit 不在时只守常量，不假绿也不假红。
+	if [ -f deploy/nous-app.service ]; then
+		UNIT_EXIT=$(grep -oE 'RestartPreventExitStatus=[0-9]+' deploy/nous-app.service | sed -E 's/.*=([0-9]+)/\1/' || true)
+		if [ -n "$EXIT_REFUSED_SRC" ] && [ "$UNIT_EXIT" = "$EXIT_REFUSED_SRC" ]; then
+			ok "2b. unit RestartPreventExitStatus == 源码 EXIT_REFUSED ($UNIT_EXIT)"
+		else
+			bad "2b. unit RestartPreventExitStatus='$UNIT_EXIT' 与源码 EXIT_REFUSED='$EXIT_REFUSED_SRC' 不同值"
+		fi
+	else
+		skip "2b. deploy/nous-app.service 不存在（52b 负责），只核对源码常量"
+	fi
+
+	if cargo test -p nous-server --lib refusal:: 2>/dev/null | grep -q 'test result: ok'; then
+		ok "16. 拒绝理由表 slug 唯一 + decide_refusal 覆盖每条（cargo test）"
+	else
+		bad "16. refusal 单测未通过（slug 唯一性 / decide_refusal 全覆盖）"
+	fi
+fi
+
+# 6. #52 部署资产（追加段：不改上面任何判据的口径与顺序）
+#    2a 单元文本断言 + systemd-analyze verify（可用时）
+#    15 脚本零凭据（git grep 命中数 == 0）
+# ════════════════════════════════════════════════════════════════════════════
+if [ "$WHAT" = all ] || [ "$WHAT" = deploy ]; then
+	step "6. #52 部署资产（判据 2a / 15）"
+	UNIT=deploy/nous-app.service
+	if [ ! -f "$UNIT" ]; then
+		bad "$UNIT 不存在 —— 单元文件是判据的载体"
+	else
+		MISSING=""
+		for LINE in 'User=nous' 'WorkingDirectory=' 'Environment=HOME=' \
+		            'Restart=on-failure' 'RestartPreventExitStatus=78'; do
+			grep -qxF "$LINE" "$UNIT" || grep -q "^$LINE" "$UNIT" || MISSING="$MISSING $LINE"
+		done
+		if [ -z "$MISSING" ]; then
+			ok "单元五条文本断言都在（User/WorkingDirectory/HOME/Restart/RestartPreventExitStatus=78）"
+		else
+			bad "单元缺：$MISSING"
+		fi
+		# 回环哨兵（判据 9b 的静态那一半）：#50 落地前不许把 env 改成 0.0.0.0。
+		if grep -qxF 'Environment=NOUS_LISTEN=127.0.0.1:4789' "$UNIT"; then
+			ok "单元静态哨兵：NOUS_LISTEN=127.0.0.1:4789（#50 前不许 0.0.0.0）"
+		else
+			bad "单元监听不是回环（判据 9b）"
+		fi
+		if command -v systemd-analyze >/dev/null 2>&1; then
+			if SYSTEMD_OUT=$(systemd-analyze verify "$UNIT" 2>&1); then
+				ok "systemd-analyze verify $UNIT 通过"
+			else
+				# 本机没有 /opt/nous-app/current/nous-app 时 systemd-analyze 只报
+				# "ExecStart not executable"；那不是单元自身的问题，先剥掉再看。
+				REAL=$(printf '%s\n' "$SYSTEMD_OUT" | grep -v 'is not executable' || true)
+				if [ -z "$REAL" ]; then
+					skip "systemd-analyze verify 仅因 ExecStart 产物不在本机未过（单元语法本身无错）"
+				else
+					bad "systemd-analyze verify 失败：$(printf '%s' "$REAL" | head -3 | tr '\n' ' ')"
+				fi
+			fi
+		else
+			skip "systemd-analyze 不可用（本机不做单元语义校验）"
+		fi
+	fi
+
+	# 检查者自己那一行 pattern 不算命中（与 c10 排除 verify.sh 同一手法）。
+	CRED=$(git grep -inE 'ssh(PASS)|pass(word)|se(cret)|crab(port)' -- scripts/ | grep -v '零凭据（' || true)
+	if [ -z "$CRED" ]; then
+		ok "脚本零凭据（git grep -inE 'sshpass|password|secret|crabport' scripts/ == 0）"
+	else
+		bad "脚本里出现凭据字样："
+		printf '%s\n' "$CRED" | sed 's/^/       /'
+	fi
+fi
+
+# 7. #56 判据 1/6/7：存储分离（Nous 自己的库 nous.db ↔ pi 的语义层 durable.db，互不相干）
+step "7. 存储分离判据（scripts/check-separation.sh）"
+if ./scripts/check-separation.sh; then ok "存储分离：判据 1/6/7 全绿"; else bad "存储分离判据未过（详见上方 checked/mismatched 汇总）"; fi
 
 printf '\n'
 if [ $FAIL -eq 0 ]; then printf '\033[32m通过\033[0m\n'; exit 0; else printf '\033[31m未通过\033[0m\n'; exit 1; fi

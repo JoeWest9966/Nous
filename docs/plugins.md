@@ -39,16 +39,10 @@
 | `tools` | nous | `nous-tools` | platform | 编译期 | read / write / edit / bash / grep / find / ls | 否 | 第一方工具，唯一进程创建面 |
 | `runtime` | nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
 | `telemetry` | nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
-| `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**；`#44` 已落地：一轮 = provider 流 → 工具 → 唯一写者 → 一条提交 |
+| `store` | nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
+| `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
+| `documents` | nous | `nous-documents` | app | 编译期 | `DocumentKind` + 泛型文档端点 + 路由注册表 | 是 | #48：一个实现生成 presets / prompts 两套端点 |
 | `prompts` | nous | (待建) `nous-prompts` | app | 编译期 | `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
-| `documents` | nous | (待建) `nous-documents` | app | 编译期 | 文档读写 / 历史 / 待发布 + `/v1/documents/*` | 否 | `#48` 落地；16 条 `presets/*` 端点收敛到它 |
-| `presets` | nous | — | app | 声明式 | `DocumentKind` 的一个实现（不是独立 crate） | 否 | `#48` 之后才有；在那之前 capabilities 报 `not_implemented` |
-| `skills` | nous | — | app | 声明式 | 宿主目录扫描出的技能清单 | 否 | 只读投影，不落库 |
-| `archive` | nous | — | app | 声明式 | 归档 / 清理 | 否 | 「待判」那条 `archive.js` 归位后决定要不要 crate |
-| `combos` | nous | — | app | 声明式 | 组合预设 | 否 | 未实现 |
-| `triggers` | nous | — | app | 声明式 | 触发器（agent 主动工作） | 否 | 用户愿景那块，未设计 |
-| `device` | nous | — | platform | 声明式 | 宿主身份 / 版本（About 面板读它） | 否 | 读 `runtime` 的宿主配置，无自有状态 |
-| `selection` | nous | — | platform | 声明式 | 当前板 / 机器 / 模型 | 否 | `#49` 砍掉 board/block 后重新定义 |
 | `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 | 否 | 已落地（#17–#37）；`ext-host` 行是它后续的重划 |
 | `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
 | `ext-sdk` | nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
@@ -95,26 +89,10 @@
 
 ## 注：与 `ls -d crates/*/*/` 的一一对应
 
-今天 `crates/nous/` 下 14 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 14 行：
-`wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
-`ext` `ext-probe` `ext-sdk` `server` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
+今天 `crates/nous/` 下 17 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 17 行：
+`wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry` `documents`
+`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用
 `cargo tree -p nous-durable --depth 2 | grep providers`，路径里带 `providers` 会让它永远假红。
 T2 拆完再改成 `ai-providers`，那时包里只有 IO 那半，判据按包名判。）
-
-## 注：capabilities 的 `name` **就是**上表的 `module` 列
-
-`GET /v1/capabilities` 里 `modules[].name` **必须**逐字等于本表 `module` 列（`ext` 就是 `ext`，
-不是 `extensions`；`prompts` 就是 `prompts`）。UI 上显示"扩展"还是"Extensions"是**文案**，
-改文案不许改 `name`（`name` 是协议标识符，客户端按它分支）。
-
-**为什么强制同名**：`AGENTS.md` 说"NOUS 不是代码，是一张清单"。表管**装什么**，注册表管**有哪些端点**，
-capabilities 是两者的交集。名字一旦各起一套，以后对着两张表找 `presets` 会对不上，就会有人开始
-"按需翻译" —— 那正是两套真相的开始。
-
-**新增一个功能面 → 先在这张表加一行**（`crate` 写 `(待建) …` 或 `—`），再写端点和 capabilities 声明。
-不许先出端点、后补行（`#46` 就是对着记忆里的端点表开的票，票面数字本身是错的）。
-
-覆盖面（11 个 `name`）：`sessions` `documents` `presets` `skills` `archive` `combos` `triggers`
-`device` `selection` `prompts` `ext`。

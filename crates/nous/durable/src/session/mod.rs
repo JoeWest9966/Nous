@@ -32,6 +32,7 @@
 pub mod commands;
 pub mod entries;
 pub mod publish;
+mod session_document;
 
 use std::sync::Arc;
 
@@ -42,11 +43,8 @@ use nous_chord::watch::WatchEnd;
 
 use crate::storage::commit::{StoredBatch, StoredChange, StoredDocumentChange};
 use crate::storage::writes::Refusal;
-use crate::storage::sessions::LEGACY_NAMES_DOCUMENT_KIND;
-use crate::types::{DocumentScope, EntryRecord};
-use crate::{
-    DocumentContent, DocumentPoint, Id, Seq, Storage, StorageError, StorageWrite, StoredDocument,
-};
+use crate::types::EntryRecord;
+use crate::{DocumentPoint, Id, Seq, Storage, StorageError, StorageWrite, StoredDocument};
 
 pub use entries::EntryKind;
 pub use publish::{
@@ -298,9 +296,11 @@ impl Session {
     /// 同一份 publication —— 落库后立刻经 `ObserverRegistry` 广播，别的客户端才看得见。
     ///
     /// 入参 `config` 是端点层拼好的一整份会话配置（名字 / 模型 / 各类设置），键名由 wire
-    /// 契约决定，durable 不认识也不解释。durable 只做三件语义事：铸会话 id、把配置写成
-    /// 一条会话记录、广播。这样 `Session` 的签名不携带任何产品词（判据 3 的词表基线只减
-    /// 不增），也不反向依赖端点层的请求类型。
+    /// 契约决定，durable 不认识也不解释。durable 只做三件语义事：铸会话 id、把 `name`
+    /// 合进 session 作用域的 `qrd3wh.sessions.names`（那份文档是单例，见
+    /// [`session_document`]）、广播。配置其余字段没有读者，不写进库；201 回包原样带回去。
+    /// 这样 `Session` 的签名不携带任何产品词（判据 3 的词表基线只减不增），也不反向依赖
+    /// 端点层的请求类型。
     ///
     /// 这是 `Session` 的第六个方法。#42 前这里只有五个，端点层为了绕开判据开过第二条
     /// 裸 `Storage` 写通道，结果建会话不广播帧 —— 判据迁就架构的反例，见 `docs/decisions.md`。
@@ -313,82 +313,21 @@ impl Session {
         let mut guard = self.storage.lock().await;
         let storage = guard.as_mut().ok_or(SessionError::Closed)?;
         let id = storage.mint_id()?;
-        let document_id = storage.mint_id()?;
-        let agent_id = storage.mint_id()?;
         let name = config.get("name").cloned().unwrap_or(json!(""));
-        // 会话的 `pi.agent` 文档：`/v1/sessions` 的 `model` / `thinkingLevel` 从这里读
-        // （`storage::sessions::render_sessions`），所以**建会话时必须写**，否则新会话在列表里
-        // 永远是 `model: null`，`/messages` 也就解析不出用哪个 provider。
-        // 形状照上游：`{ cwd, extensions: {add, remove}, model: {provider, modelId}, thinkingLevel }`。
-        let extensions = config
-            .get("extensions")
-            .cloned()
-            .unwrap_or_else(|| json!([]));
-        let agent = json!({
-            "cwd": config.get("cwd").cloned().unwrap_or(serde_json::Value::Null),
-            "extensions": { "add": extensions, "remove": [] },
-            "model": config.get("model").cloned().unwrap_or(serde_json::Value::Null),
-            "thinkingLevel": config.get("thinkingLevel").cloned().unwrap_or(serde_json::Value::Null),
-        });
-        // 名字进**同一份** `qrd3wh.sessions` 文档（`names` 是 id → 名字的表；上游就是这个形状，
-        // `render_sessions` 也只从这里读名字）。这份文档的地址没有区分键，所以「每个会话
-        // DocumentCreate 一次」在第二个会话上就撞 "address already has a current incarnation"
-        // —— 实测踩到过，不是理论问题。已经存在就改成追加一个名字。
-        let names_address = json!({ "kind": LEGACY_NAMES_DOCUMENT_KIND, "scope": { "kind": "session" } });
-        let existing = storage.find_document(&names_address, DocumentPoint::Current)?;
-        let names_write = match existing {
-            Some(record) => {
-                let names_id = record
-                    .get("id")
-                    .and_then(serde_json::Value::as_i64)
-                    .ok_or_else(|| SessionError::Shape("names document has no id".to_string()))?;
-                let snapshot = storage.materialize(names_id, DocumentPoint::Current)?;
-                let (version, mut value) = match snapshot {
-                    Some(snapshot) => (snapshot.version, snapshot.value),
-                    None => (0, json!({ "names": {} })),
-                };
-                if !value["names"].is_object() {
-                    value["names"] = json!({});
-                }
-                value["names"][id.to_string()] = name.clone();
-                StorageWrite::DocumentChange {
-                    id: names_id,
-                    content: DocumentContent::Base {
-                        version: version + 1,
-                        value,
-                    },
-                }
-            }
-            None => StorageWrite::DocumentCreate {
-                id: document_id,
-                record: json!({
-                    "id": document_id,
-                    "kind": LEGACY_NAMES_DOCUMENT_KIND,
-                    "scope": DocumentScope::Session,
-                }),
-                content: DocumentContent::Base {
-                    version: 1,
-                    value: json!({ "names": { id.to_string(): name } }),
-                },
+
+        // `qrd3wh.sessions` 是 session 作用域的单例：第二、第三条会话都合并进同一份文档，
+        // 绝不再次 DocumentCreate（地址唯一，第二次会被 storage 拒绝）。本次只补 names 的
+        // 一个新键，不改 pins/archived 等别人管的字段；config 没有任何读者，不再写进去。
+        let mut document_writes = session_document::merge_session_document(
+            storage,
+            "qrd3wh.sessions",
+            "names",
+            |names| {
+                names[id.to_string()] = name;
             },
-        };
-        let writes = vec![
-            StorageWrite::Conversation(json!({ "id": id })),
-            names_write,
-            StorageWrite::DocumentCreate {
-                id: agent_id,
-                // 会话作用域的文档必须声明历史与 fork 语义：形状照上游 `pi.agent`
-                // （`history: rewindable` / `fork: asOf`，见 fixture 的 documents 行）。
-                record: json!({
-                    "id": agent_id,
-                    "kind": "pi.agent",
-                    "scope": { "kind": "conversation", "conversationId": id },
-                    "history": "rewindable",
-                    "fork": "asOf",
-                }),
-                content: DocumentContent::Base { version: 1, value: agent },
-            },
-        ];
+        )?;
+        let mut writes = vec![StorageWrite::Conversation(json!({ "id": id }))];
+        writes.append(&mut document_writes);
         let committed = storage.commit(&[writes], |_, _| {})?;
         if let Some(refusal) = committed.refused {
             return Err(SessionError::Shape(format!("create refused: {refusal}")));
@@ -415,51 +354,6 @@ impl Session {
         let record: EntryRecord = serde_json::from_value(record)
             .map_err(|error| SessionError::Shape(format!("entry {id}: {error}")))?;
         Ok(Some((record, seq)))
-    }
-
-    /// 取一个 entry id（给"一轮的终态 entry"这类由应用层装配记录的情形）。
-    ///
-    /// 只推进内存里的 id，跟着下一次 [`commit`](Self::commit) 落盘 —— 所以「取了 id 但没提交」
-    /// 不会在库里留洞。**这不是第二条写通道**：写仍然只走 `commit`。
-    pub async fn mint_id(&self) -> Result<Id, SessionError> {
-        let mut guard = self.storage.lock().await;
-        let storage = guard.as_mut().ok_or(SessionError::Closed)?;
-        storage
-            .mint_id()
-            .map_err(|error| SessionError::Storage(error))
-    }
-
-    /// 一条会话的 entry 历史（含 fork 祖先链），**最老的在前**，最多 `limit` 条。
-    ///
-    /// 走库里现成的 [`Storage::scan_entries`]：fork 出来的会话只存自己那一段，历史住在父会话里；
-    /// 按 id 硬扫（`for id in 1..N { get_entry(id) }`）既慢又会静默截断，别那么写。
-    pub async fn entries(
-        &self,
-        conversation: i64,
-        limit: usize,
-    ) -> Result<Vec<EntryRecord>, SessionError> {
-        use crate::storage::cursor::ScanOrder;
-        let guard = self.storage.lock().await;
-        let storage = guard.as_ref().ok_or(SessionError::Closed)?;
-        let query = crate::EntryQuery {
-            conversation_id: conversation,
-            min_entry_id: None,
-            max_entry_id: None,
-            order: Some(ScanOrder::Ascending),
-        };
-        let page = storage
-            .scan_entries(&query, limit, None)
-            .map_err(|error| SessionError::Storage(error))?;
-        let page = page.map_err(|refusal| {
-            SessionError::Shape(format!("conversation {conversation}: {refusal:?}"))
-        })?;
-        page.items
-            .into_iter()
-            .map(|value| {
-                serde_json::from_value(value)
-                    .map_err(|error| SessionError::Shape(format!("entry: {error}")))
-            })
-            .collect()
     }
 
     fn end_all(&self, end: &WatchEnd) {

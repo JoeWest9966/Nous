@@ -523,7 +523,7 @@ mod tests {
         token.cancel();
         test_timeout(Duration::from_secs(1), waiting)
             .await
-            .expect("cancelled() must resolve")
+            .expect("the token was cancelled above")
             .unwrap();
     }
 

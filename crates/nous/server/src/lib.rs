@@ -17,11 +17,14 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod auth;
 pub mod coalesce;
 pub mod commands;
+pub mod documents;
 pub mod error;
 pub mod hub;
 pub mod machines;
+pub mod meta;
 pub mod models;
 pub mod records;
 pub mod observer;
@@ -36,6 +39,10 @@ pub use commands::{CommandSource, DurableCommands, ForkResult, SubmitResult};
 pub use error::{Result, ServerError};
 pub use hub::Hub;
 pub use observer::SessionObserver;
-pub use records::{CreateSessionRequest, CreatedSession, ModelRef};
+pub use models::ModelRef;
+pub use records::{CreateSessionRequest, CreatedSession};
 pub use routes::router;
 pub use source::{ImportedSource, SessionSource};
+pub mod version;
+pub mod refusal;
+pub mod workdir;
