@@ -547,3 +547,34 @@ async fn create_conversation_publishes_through_the_observer_registry() {
     session.close().await.unwrap();
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn creating_two_conversations_keeps_both_names() {
+    let path = temp_db("two-creates");
+    let session = Session::open(&path).unwrap();
+    let first = session
+        .create_conversation(json!({ "name": "first", "model": null }))
+        .await
+        .expect("第一个会话建得出来");
+    let second = session
+        .create_conversation(json!({ "name": "second", "model": null }))
+        .await
+        .expect("第二个会话也得建得出来（名字靠同一份 names 文档，不是每会话一份）");
+    session.close().await.unwrap();
+
+    // 名字来自 `qrd3wh.sessions` 的 `names` 表：两份会话的名字都要在。
+    let store = nous_durable::storage::import::ImportedStore::read(&path).unwrap();
+    let items = nous_durable::storage::sessions::render_sessions(&store).unwrap();
+    let names: Vec<(i64, String)> = items
+        .iter()
+        .map(|item| (item.id, item.name.clone()))
+        .collect();
+    assert!(
+        names.contains(&(first["id"].as_i64().unwrap(), "first".to_string())),
+        "names = {names:?}"
+    );
+    assert!(
+        names.contains(&(second["id"].as_i64().unwrap(), "second".to_string())),
+        "names = {names:?}"
+    );
+}
