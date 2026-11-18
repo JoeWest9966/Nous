@@ -145,3 +145,12 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 有就 `DocumentChange` 追加一个名字（`version + 1`）。判据：`creating_two_conversations_keeps_both_names`
 （负向哨兵验过 —— 退回「每次都 Create」立刻红）。
 **通用规矩**：`DocumentCreate` 之前先问「这个地址会不会已经有主」，尤其当地址里没有 `key`。
+
+---
+
+## 5 · `git push` 报 `GnuTLS, handshake failed`，但 `curl` / `gh api` 全都正常
+
+**症状**：`git push origin main` → `致命错误：无法访问 'https://github.com/…'：GnuTLS, handshake failed`；
+同一台机器 `curl https://github.com` 返回 200、`gh api repos/…` 正常。
+**根因**：git 的 GnuTLS 后端在某次握手上的兼容问题（同一网络下 http 栈能通），不是凭据、不是代理、不是仓库权限。
+**解**：`git -c http.version=HTTP/1.1 push origin main`。连续重试无效时别再等，直接换协议版本。
