@@ -89,6 +89,8 @@ async fn device_response_pins_client_shape() {
             ("origin", is_string_or_null),
             ("node", is_string_or_null),
             ("version", is_string),
+            ("build", is_string),
+            ("target", is_string),
             ("startedAt", |v| v.is_string() || v.is_number() || v.is_null()),
             ("model", |_| true), // types.rs: Option<Value> —— 空目录就是 null
             ("faux", is_bool),
@@ -101,10 +103,14 @@ async fn device_response_pins_client_shape() {
         body["available"].as_array().unwrap().iter().all(Value::is_string),
         "available 是 string[]"
     );
-    // 启动时刻每次进程不同；单独断言类型后归一，再快照其余形状。
+    // build 是正在跑的这份测试二进制的哈希，target 是编译目标；两者都单独断言过，
+    // 快照前归一，避免每换一次编译产物就假红。启动时刻每次进程也不同。
     assert!(body["startedAt"].is_number());
+    assert_eq!(body["build"].as_str().unwrap().len(), 8);
     let mut stable = body.clone();
     stable["startedAt"] = json!(0);
+    stable["build"] = json!("00000000");
+    stable["target"] = json!("test-target");
     snapshot("device_response_pins_client_shape", &stable);
 }
 
