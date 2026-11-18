@@ -135,6 +135,11 @@ impl From<nous_durable::StorageError> for RunError {
 const _: u8 = EXIT_REFUSED;
 
 async fn run() -> Result<(), RunError> {
+    // D12：工作目录断言在任何可能需要写文件的动作之前；失败 = refuse: workdir-missing。
+    if let Err(detail) = nous_server::workdir::assert_workdir() {
+        refuse_startup("workdir-missing", Some(&detail));
+    }
+
     // `--print-token`：只打印 token 本身（给 `curl -H "Authorization: Bearer $(…)"` 直接用），
     // 不启服务、不碰库。缺失时按首次启动生成。
     let token_path = auth::default_token_path();
