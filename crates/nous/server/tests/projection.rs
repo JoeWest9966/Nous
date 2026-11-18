@@ -176,3 +176,31 @@ async fn a_tool_start_reaches_the_subscriber_within_one_event_loop() {
     assert_eq!(tool_call_id, "call-1");
     assert_eq!(tool_name, "bash");
 }
+
+#[test]
+fn sse_frames_for_actor_stamped_entries_do_not_carry_actor() {
+    let user = entry(json!({
+        "id": 21,
+        "conversationId": 1,
+        "kind": "pi.user",
+        "model": [{"role": "user", "timestamp": 1, "content": "hi"}],
+        "actor": {"kind": "agent", "id": "test-agent"}
+    }));
+    let assistant = entry(json!({
+        "id": 22,
+        "conversationId": 1,
+        "kind": "pi.assistant",
+        "model": [{"role": "assistant", "timestamp": 2, "content": [{"type": "text", "text": "hi"}]}],
+        "reason": "done",
+        "actor": {"kind": "agent", "id": "test-agent"}
+    }));
+    let mut events = project::of_change(&user).expect("user 投影");
+    events.extend(project::of_change(&assistant).expect("assistant 投影"));
+    let tags: Vec<_> = events.iter().filter_map(|event| event.type_tag()).collect();
+    assert_eq!(tags, ["message_start", "entry_appended", "message_end"]);
+    for event in &events {
+        let value = serde_json::to_value(event).expect("帧可序列化");
+        let text = value.to_string();
+        assert!(!text.contains("\"actor\""), "SSE 帧不许带 actor：{value}");
+    }
+}

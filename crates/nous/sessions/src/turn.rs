@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use nous_ai::provider::{Provider, SimpleStreamOptions};
 use nous_ai::tool::AgentTool;
 use nous_ai::{AssistantMessage, Context, Message, Model, StopReason};
+use nous_durable::actor::Actor;
 use nous_durable::harness::clock::ManualClock;
 use nous_durable::harness::generation::{
     self, assistant_entry, generation_change, live_record, ClassifyRequest, RetryPolicy,
@@ -91,6 +92,8 @@ pub async fn on_extension_process_death(
 pub struct HarnessTurnDriver {
     session: Arc<Session>,
     runtime: TurnRuntime,
+    /// 这一轮写进 entry 的 actor。来自组装根；将来认证落地只换源头，不改这里。
+    actor: Actor,
     /// SSE 出口。生产由 server 注入，测试可观测。
     on_event: Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>,
 }
@@ -101,7 +104,13 @@ impl HarnessTurnDriver {
             on_event: Arc::new(|_| {}),
             session,
             runtime,
+            actor: Actor::system("nous-app"),
         }
+    }
+
+    pub fn with_actor(mut self, actor: Actor) -> Self {
+        self.actor = actor;
+        self
     }
 
     pub fn with_event_sink(
@@ -272,8 +281,10 @@ impl TurnDriver for HarnessTurnDriver {
                     retryable: false,
                     overflow: None,
                     reason: terminal,
+                    actor: self.actor.clone(),
                 },
                 &assistant,
+                &self.actor,
             )
             .map_err(|error| error.to_string())?;
         final_entry["submissionId"] = serde_json::json!(submission);

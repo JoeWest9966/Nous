@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nous_ai::tool::AgentTool;
+use nous_durable::actor::Actor;
 use nous_runtime::{ProviderRegistry, ValueSource};
 use nous_sessions::turn::{AbortWatcher, HarnessTurnDriver, TurnDriver, TurnRuntime};
 use nous_tools::tools::tool_context::ExecutionToolContext as ToolsExecutionToolContext;
@@ -17,6 +18,9 @@ use crate::error::Result;
 
 /// server 构造好的轮次驱动器，备给路由/命令层使用。
 pub struct AssembledRuntime {
+    /// 这一台组装根写进 entry / submission 的 actor。
+    /// 默认 `system("nous-app")`；将来认证落地只在这里换成 principal 派生的值。
+    pub actor: Actor,
     pub driver: Arc<dyn TurnDriver>,
     pub provider_registry: ProviderRegistry,
     pub watcher: Arc<AbortWatcher>,
@@ -67,11 +71,13 @@ pub fn assemble(
         "ls".into(),
         nous_tools::tools::create_ls_tool(&tool_ctx, None),
     );
+    let actor = Actor::system("nous-app");
     Ok(AssembledRuntime {
+        actor: actor.clone(),
         driver: Arc::new(HarnessTurnDriver::new(session.clone(), TurnRuntime {
             providers: crate::runtime::offline_provider(),
             tools: Arc::new(tools.clone()),
-        })),
+        }).with_actor(actor)),
         provider_registry: registry,
         watcher: Arc::new(AbortWatcher::new(nous_sessions::turn::abort_token(&session))),
         tool_names: tools.keys().cloned().collect(),
@@ -89,6 +95,7 @@ pub fn assemble_with_provider(
     let tool_names = runtime.tools.keys().cloned().collect();
     let watcher = Arc::new(AbortWatcher::new(nous_sessions::turn::abort_token(&session)));
     AssembledRuntime {
+        actor: Actor::system("nous-app"),
         driver: Arc::new(HarnessTurnDriver::new(session, runtime)),
         provider_registry: registry,
         watcher,

@@ -1,5 +1,6 @@
 //! `session::commands` 的判据：幂等、中止、fork。三条都在真 sqlite 上跑。
 
+use nous_durable::actor::Actor;
 use nous_durable::session::commands::{
     abort, fork, submit_message, CommandError, ForkRequest, SubmitRequest,
 };
@@ -44,17 +45,18 @@ fn request(content: Value, request_id: Option<&str>) -> SubmitRequest {
 async fn the_same_request_id_yields_one_submission_not_two() {
     let (session, path) = seeded("idempotent").await;
 
-    let first = submit_message(&session, request(json!("hello"), Some("req-1")))
+    let actor = Actor::human("joe");
+    let first = submit_message(&session, request(json!("hello"), Some("req-1")), &actor)
         .await
         .expect("第一次受理");
-    let second = submit_message(&session, request(json!("hello again"), Some("req-1")))
+    let second = submit_message(&session, request(json!("hello again"), Some("req-1")), &actor)
         .await
         .expect("第二次受理");
     assert_eq!(second.submission_id, first.submission_id, "同一个 requestId → 同一条 submission");
     assert_eq!(second.status, "queued");
 
     // 不同 requestId 才会再写一条。
-    let third = submit_message(&session, request(json!("third"), Some("req-2")))
+    let third = submit_message(&session, request(json!("third"), Some("req-2")), &actor)
         .await
         .expect("第三次受理");
     assert_ne!(third.submission_id, first.submission_id);
@@ -76,7 +78,7 @@ async fn the_same_request_id_yields_one_submission_not_two() {
 #[tokio::test]
 async fn content_that_is_neither_text_nor_parts_is_a_bad_request() {
     let (session, path) = seeded("bad-content").await;
-    let error = submit_message(&session, request(json!(42), None))
+    let error = submit_message(&session, request(json!(42), None), &Actor::system("test"))
         .await
         .expect_err("数字不是 content");
     assert!(matches!(error, CommandError::BadRequest(_)), "实测 {error:?}");
@@ -88,6 +90,7 @@ async fn content_that_is_neither_text_nor_parts_is_a_bad_request() {
             content: json!("hi"),
             request_id: None,
         },
+        &Actor::system("test"),
     )
     .await
     .expect_err("会话不存在");

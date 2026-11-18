@@ -38,6 +38,7 @@ use nous_chord::delta::draft::Draft;
 use nous_chord::delta::{Revision, Seg};
 use serde_json::{json, Value};
 
+use crate::actor::Actor;
 use crate::session::{CommitOptions, Session, SessionError};
 use crate::types::TerminalReason;
 use crate::{DocumentContent, Id, StorageWrite};
@@ -329,6 +330,8 @@ pub struct ClassifyRequest {
     pub overflow: Option<String>,
     /// 这一轮为什么结束（issue #38）。终态与正文写进**同一条** `pi.assistant` entry。
     pub reason: TerminalReason,
+    /// 这一轮的作者，由组装根从 principal 传下来（#54）。
+    pub actor: Actor,
 }
 
 /// `classify` 的结论。上游是 `Next`；本库只落这四种去向。
@@ -353,7 +356,7 @@ pub async fn classify(
     now_ms: u64,
     timeline: Option<&Timeline>,
 ) -> Result<Classification, HarnessError> {
-    let entry = assistant_entry(request, message)?;
+    let entry = assistant_entry(request, message, &request.actor)?;
     let snapshot = session
         .snapshot(request.live)
         .await?
@@ -428,6 +431,7 @@ pub const DEFAULT_POLL_AFTER_MS: u64 = 5_000;
 pub fn assistant_entry(
     request: &ClassifyRequest,
     message: &AssistantMessage,
+    actor: &Actor,
 ) -> Result<Value, HarnessError> {
     Ok(json!({
         "id": request.entry_id,
@@ -435,6 +439,7 @@ pub fn assistant_entry(
         "kind": "pi.assistant",
         "model": [message_json(message)?],
         "reason": request.reason.as_str(),
+        "actor": actor,
     }))
 }
 
