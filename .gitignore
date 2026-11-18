@@ -10,9 +10,10 @@ dist/
 *.log
 
 # sqlite 的 WAL 边车文件：随进程来去，提交它没意义（库本体照旧跟踪）。
+# 仓里**已不跟踪** `content/`（2026-11-18 移出，见 decisions）；这两行留下是为了
+# 本机 / j1900 上还没删的旧工作树 —— 那儿跑着真 sqlite，去掉只会让边车变成 `??` 噪声。
 content/**/*.sqlite-shm
 content/**/*.sqlite-wal
-
 # ── Rust workspace（#14 搬迁）────────────────────────────
 /target
 # 扩展的判据执行器也会生成 target/

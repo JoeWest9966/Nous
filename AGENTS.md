@@ -1,7 +1,5 @@
 # Nous
 
-**内核**的仓库：一个 Rust workspace、一个产物（`nous-app`）、一个 systemd 单元。
-不是网页、不是面板、不是谁的子进程。客户端（NousDesk 桌面 / 手机端）只吃 `/v1/*`。
 
 **架构一句话**：NOUS 不是代码，是一张清单（发行版 metapackage）。内核只剩三样 ——
 **契约**（`wire.md`）· **装载器 + 版本闸** · **调度**。其余全是插件，由 `docs/plugins.md`
@@ -21,8 +19,9 @@ scripts/                    ← 判据与部署，唯一的"做完了"来源
 deploy/nous-app.service     ← j1900 上的那个单元
 ```
 
-`server/`、`templates/`、`package.json`、`vite.config.ts` 是**旧面板残留**：2026-11-18 面板
-下线、引擎换成 `nous-app`，这些只剩历史价值。不改、不复活、不往里加东西（要删另开一票）。
+旧面板的壳子（`server/*.ts`、`templates/`、`vite.config.ts`、`tsconfig.json`、`package*.json`、
+`.env.example`、`deploy/nous-panel.service`）**已在 #59 从仓里删掉**。要回旧面板就从 git 历史读
+（别把壳子请回来）；j1900 上的 `nous-panel.service` 还留在 `/etc/systemd/system`，可回。
 
 ## 常用命令
 
