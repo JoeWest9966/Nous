@@ -9,14 +9,6 @@ dist/
 .vscode/
 *.log
 
-content/*/*.tmp
-
-# content/ 整盘都在版本控制里（2024-11 起不再把运行时数据排除在外）：
-# clone 下来就是完整盘面 —— tree.json、log.json、锁、块代码和数据全在。
-# 只排除可再生的：嵌套 .git（块自己 git init 的历史不并入主仓）、node_modules、
-# dist（构建产物）、*.log（audit.log 等带 IP 的活日志，见顶部全局规则）。
-content/**/.git/
-
 # sqlite 的 WAL 边车文件：随进程来去，提交它没意义（库本体照旧跟踪）。
 content/**/*.sqlite-shm
 content/**/*.sqlite-wal

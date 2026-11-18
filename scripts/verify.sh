@@ -169,7 +169,9 @@ if [ "$WHAT" = all ] || [ "$WHAT" = fixture ]; then
 	fi
 	if [ ! -f "$FIX" ]; then
 		skip "SKIP: $FIX 缺失（小样本应在仓里；真数据从 j1900 scp）"
-		skip "取法：scp root@192.168.1.7:/opt/Nous/content/new1/map/qrd3wh/data/agent.sqlite fixtures/"
+		skip "取法：旧面板已下线（2026-11-18），真数据在 j1900 的归档里："
+		skip "  sudo tar -xzf /var/backups/nous-panel/content-*.tar.gz -C /var/tmp \\"
+		skip "  scp root@192.168.1.7:/var/tmp/content/new1/map/qrd3wh/data/agent.sqlite fixtures/"
 		skip "重做小样本：python3 scripts/make-small-fixture.py"
 	else
 		if cargo run --quiet -p nous-fixture -- "$FIX" > /tmp/nous-fixture.json 2>/tmp/nous-fixture.err; then
