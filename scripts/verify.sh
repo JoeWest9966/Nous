@@ -242,7 +242,7 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = auth ]; then
 	step "3b. #50 /v1/* Bearer 认证与启动门槛（判据 1/3）"
 	BIN=nous-app
-	AUTH_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	AUTH_BIN="${CARGO_TARGET_DIR:-./target}/release/$BIN"
 	if [ ! -x "$AUTH_BIN" ]; then
 		bad "$AUTH_BIN 不存在 —— 先跑一次 boot 段构建"
 	else
@@ -364,7 +364,7 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = faux ]; then
 	step "3c. #51 faux 只允许绑回环"
 	BIN=nous-app
-	FAUX_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	FAUX_BIN="${CARGO_TARGET_DIR:-./target}/release/$BIN"
 	if [ ! -x "$FAUX_BIN" ]; then
 		bad "$FAUX_BIN 不存在 —— 先跑一次 boot 段构建"
 	else
@@ -388,30 +388,23 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = triggers ]; then
 	step "3d. #58 触发器观测（--triggers 与 HTTP 同一读口）"
 	BIN=nous-app
-	TRG_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	TRG_BIN="${CARGO_TARGET_DIR:-./target}/release/$BIN"
 	if [ ! -x "$TRG_BIN" ]; then
 		bad "$TRG_BIN 不存在 —— 先跑一次 boot 段构建"
 	else
 		TRG_TMP=$(mktemp -d)
+		# 先用真迁移链建库：--triggers 对一个不存在的库会走 Store::open 的迁移。
+		TRG_TMP="$TRG_TMP" NOUS_DB="$TRG_TMP/nous.db" NOUS_PLUGINS_DB="$TRG_TMP/nous-plugins.db" \
+			"$TRG_BIN" --triggers >"$TRG_TMP/init.out" 2>"$TRG_TMP/init.err" || {
+			bad "--triggers 迁移建库失败：$(head -2 "$TRG_TMP/init.err")"
+			rm -rf "$TRG_TMP"
+			continue
+		}
 		TRG_TMP="$TRG_TMP" python3 - <<'PY'
 import sqlite3, json, os, sys
 base = os.environ['TRG_TMP']
-# 触发器库（nous-store 迁移链）：先建表（列与 V1 逐字一致），再插一行触发器 + 两笔账。
-conn = sqlite3.connect(os.path.join(base, 'nous-triggers.db'))
-conn.executescript('''
-CREATE TABLE IF NOT EXISTS schema_version (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), version INTEGER NOT NULL) STRICT;
-INSERT OR REPLACE INTO schema_version VALUES (1, 1);
-CREATE TABLE IF NOT EXISTS triggers (
-  id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
-  spec TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, next_fire_at INTEGER,
-  created_at INTEGER NOT NULL, deleted_at INTEGER) STRICT;
-CREATE TABLE IF NOT EXISTS fires (
-  trigger_code TEXT NOT NULL, fire_at INTEGER NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ("pending","done","orphaned","skipped")),
-  request_id TEXT NOT NULL, note TEXT,
-  PRIMARY KEY (trigger_code, fire_at)) STRICT;
-''')
-spec = json.dumps({"spec_version": 1, "schedule": None, "on": None}, separators=(',', ':'))
+# 表已由 --triggers 自己的迁移链建好（手写 DDL 会和 migrations.rs 漂移）；这里只插数据。
+conn = sqlite3.connect(os.path.join(base, 'nous-plugins.db'))
 definition = json.dumps({
     "spec": {"spec_version": 1, "schedule": None, "on": None},
     "template_ref": {"kind": "preset", "ref": "nightly"},
@@ -428,7 +421,7 @@ PY
 			bad "造触发器库失败"
 		else
 			# durable 库也要存在（CLI 不写它，但 --triggers 只需要 triggers 库；NOUS_DB 只用来推默认目录）。
-			OUT=$(NOUS_DB="$TRG_TMP/nous.db" NOUS_TRIGGER_DB="$TRG_TMP/nous-triggers.db" "$TRG_BIN" --triggers 2>"$TRG_TMP/err")
+			OUT=$(NOUS_DB="$TRG_TMP/nous.db" NOUS_PLUGINS_DB="$TRG_TMP/nous-plugins.db" "$TRG_BIN" --triggers 2>"$TRG_TMP/err")
 			rc=$?
 			if [ $rc -ne 0 ]; then
 				bad "--triggers 退出码 $rc：$(head -2 "$TRG_TMP/err")"
@@ -437,7 +430,7 @@ PY
 				if printf '%s' "$OUT" | TRG_TMP="$TRG_TMP" python3 -c '
 import json, os, sqlite3, sys
 report = json.load(sys.stdin)
-conn = sqlite3.connect(os.path.join(os.environ["TRG_TMP"], "nous-triggers.db"))
+conn = sqlite3.connect(os.path.join(os.environ["TRG_TMP"], "nous-plugins.db"))
 from_db = dict(conn.execute("SELECT state, count(*) FROM fires GROUP BY state").fetchall())
 item = report["triggers"][0]
 assert item["code"] == "nightly_digest"

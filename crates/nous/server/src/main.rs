@@ -36,6 +36,33 @@ use refusal::REFUSAL_REASONS;
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
 
+/// 插件库路径（启动与 `--triggers` 共用这一份推导，不许两处漂移）：
+/// `NOUS_PLUGINS_DB` 显式给；缺省和 `NOUS_DB` 同目录（systemd 的 WorkingDirectory 是
+/// /srv/nous/work，落 cwd 会把数据写到工作目录而不是数据目录）。
+///
+/// **名字跟所有者走，不跟第一个用户走**：这张库归 `nous-store`（插件侧），触发器只是它
+/// 第一个住户；叫 `nous-triggers.db` 的话第二个住户落地就得再改一次名（改数据文件名 =
+/// 迁移）。所以环境变量与文件名同字：`NOUS_PLUGINS_DB` / `nous-plugins.db`。
+fn plugins_db_path(db: &str) -> String {
+    std::env::var("NOUS_PLUGINS_DB").unwrap_or_else(|_| {
+        Path::new(db)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join("nous-plugins.db")
+            .to_string_lossy()
+            .into_owned()
+    })
+}
+
+/// epoch 毫秒（fire 与观测的时钟入口；store 层零时钟，时间都由这里传入）。
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
+}
+
 /// 启动门槛的统一出口：一行 `refuse: <slug>` 到 stderr，退出码走理由表。
 /// #50 的 token 门槛、#51 的 faux 门槛、D12 的 cwd 门槛共用这一个函数。
 fn refuse_startup(code: &str, detail: Option<&str>) -> ! {
@@ -177,27 +204,14 @@ async fn run() -> Result<(), RunError> {
         }
         Some("--triggers") => {
             // #58：观测读口的 CLI 出口。与 `GET /v1/triggers` **同一个函数、同一份序列化**
-            // （判据 4：不许另写一份 SQL）。库路径与启动同一套规则：NOUS_TRIGGER_DB，
-            // 缺省和 NOUS_DB 同目录的 nous-triggers.db。
+            // （判据 4：不许另写一份 SQL）。库路径与启动同一套规则（同一个函数）。
             let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
-            let triggers_db = std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
-                Path::new(&db)
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                    .unwrap_or_else(|| Path::new("."))
-                    .join("nous-triggers.db")
-                    .to_string_lossy()
-                    .into_owned()
-            });
-            let store = nous_store::Store::open(&triggers_db)
-                .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
+            let plugins_db = plugins_db_path(&db);
+            let store = nous_store::Store::open(&plugins_db)
+                .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
             let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store)?;
             // CLI 里没有调度循环在跑：lastTickAt = null，lag 由纯函数现算（也是 0）。
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_millis() as i64)
-                .unwrap_or_default();
-            let report = nous_server::triggers::observation_report(&store, &definitions, None, now_ms)?;
+            let report = nous_server::triggers::observation_report(&store, &definitions, None, now_ms())?;
             println!("{}", serde_json::to_string(&report).map_err(|e| e.to_string())?);
             return Ok(());
         }
@@ -290,21 +304,10 @@ async fn run() -> Result<(), RunError> {
     );
 
     // #57：Nous 自己的库（`nous-plugins.db`：triggers/fires，往后是审计与别的插件数据），
-    // 点火走的是上面那条同一个 Session。
-    // **名字跟所有者走，不跟第一个用户走**：这张库归 `nous-store`（插件侧），触发只是它第一个
-    // 住户；叫 `nous-triggers.db` 的话，第二个用户落地就得再改一次名（改数据文件名 = 迁移）。
-    // 环境变量与文件名同字：`NOUS_PLUGINS_DB` / `nous-plugins.db`，一条规则。
-    // 默认和 `NOUS_DB` 同目录，不落 cwd：systemd 的 WorkingDirectory 是 /srv/nous/work，
-    // 落 cwd 会把数据写到工作目录而不是数据目录。
-    let plugins_db = std::env::var("NOUS_PLUGINS_DB").unwrap_or_else(|_| {
-        Path::new(&db)
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .join("nous-plugins.db")
-            .to_string_lossy()
-            .into_owned()
-    });
+    // 点火走的是上面那条同一个 Session。路径推导和 `--triggers` 共用一个函数
+    // （`plugins_db_path`）—— 两处各推一次就会分叉：CLI 读 A 库、服务写 B 库，
+    // 「同一个读口」就只剩函数名相同了。
+    let plugins_db = plugins_db_path(&db);
     let trigger_store = nous_store::Store::open(&plugins_db)
         .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
