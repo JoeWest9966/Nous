@@ -376,6 +376,17 @@ fn parse_actors(raw: &str) -> std::result::Result<Vec<FireActor>, TriggerError> 
     array
         .iter()
         .map(|item| {
+            // 票面示例里允许 `"cron"` / `"human"` 这样的短写法；设计文档里是 #54 的
+            // `{kind,id}`。两种都认，但落库后统一成 #54 的形状。
+            if let Some(id) = item.as_str() {
+                return Ok(match id {
+                    "human" => FireActor::Human("human".to_string()),
+                    id if id.starts_with("ext:") || id.starts_with("agent:") => {
+                        FireActor::Agent(id.to_string())
+                    }
+                    other => FireActor::System(other.to_string()),
+                });
+            }
             let kind = item.get("kind").and_then(serde_json::Value::as_str).ok_or(TriggerError::NoFiringSource)?;
             let id = item.get("id").and_then(serde_json::Value::as_str).ok_or(TriggerError::NoFiringSource)?.to_string();
             Ok(match kind {
