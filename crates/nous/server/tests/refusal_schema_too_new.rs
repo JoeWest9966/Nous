@@ -24,14 +24,13 @@ impl Drop for Booted {
     }
 }
 
+/// 二进制路径**只问 cargo**：`CARGO_BIN_EXE_<bin>` 是集成测试能拿到的唯一权威。
+///
+/// 之前是 `CARGO_TARGET_DIR` + 猜相对路径（`CARGO_MANIFEST_DIR/../../target`，少一层，
+/// 指向 `crates/target`；而机器上一旦有全局 `CARGO_TARGET_DIR`，又会被指到别的仓去），
+/// 表现是「`verify.sh` 有时红」—— 红的不是产品，是这条判据在猜路。别猜。
 fn bin() -> PathBuf {
-    let target = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target")
-            .to_string_lossy()
-            .into_owned()
-    });
-    Path::new(&target).join("debug/nous-app")
+    PathBuf::from(env!("CARGO_BIN_EXE_nous-app"))
 }
 
 fn workdir(tag: &str) -> PathBuf {
