@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nous_durable::session::commands::{
-    abort, fork, submit_message, CommandError, ForkRequest, SubmitRequest,
+    abort, fork, scan_orphans, submit_message, CommandError, ForkRequest, SubmitRequest,
 };
 use nous_durable::session::{
     CommitObserver, ObserverRegistry, Session, SessionError,
@@ -48,6 +48,12 @@ pub trait CommandSource: Send + Sync {
     async fn abort(&self, session: i64) -> Result<()>;
 
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
+
+    /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
+    ///
+    /// 放在这条 trait 上是为了让**同一个 `Session` 写者**做这件事：另开一个 `Session`
+    /// 等于第二条写通道（`#38` 收尾，2026-11-18）。
+    async fn reclaim_orphans(&self) -> Result<usize>;
 }
 
 /// 生产写后端：一条 `Session` + 它的观察者名单。
@@ -104,6 +110,10 @@ impl CommandSource for DurableCommands {
         Ok(())
     }
 
+    async fn reclaim_orphans(&self) -> Result<usize> {
+        scan_orphans(&self.session).await.map_err(command_error)
+    }
+
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult> {
         let outcome = fork(
             &self.session,
@@ -137,6 +147,11 @@ impl CommandSource for ReadOnlyCommands {
 
     async fn fork(&self, _: i64, _: Option<i64>, _: Option<String>) -> Result<ForkResult> {
         Err(read_only())
+    }
+
+    /// 只读装配没有写者，也就没有孤儿要补：明确返回 0，不报错。
+    async fn reclaim_orphans(&self) -> Result<usize> {
+        Ok(0)
     }
 }
 

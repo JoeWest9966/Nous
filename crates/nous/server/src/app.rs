@@ -75,6 +75,11 @@ impl AppState {
         &self.hub
     }
 
+    /// 启动时补写孤儿终态：走**已经持有的那个写者**，不另开 `Session`。
+    pub async fn reclaim_orphans(&self) -> Result<usize> {
+        self.commands.reclaim_orphans().await
+    }
+
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。
     ///
     /// 不是「整个 AppState 一个会话」：`Session` 不绑会话，一次提交里的 `Entry` / `Document`

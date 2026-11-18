@@ -28,7 +28,7 @@ use std::path::Path;
 
 use nous_chord::sqlite::{
     apply_sqlite_migrations, LocalDatabase, SqliteDatabase, SqliteError, SqliteErrorKind,
-    SqliteExecutor, SqliteValue as Cell,
+    SqliteExecutor,
 };
 
 use crate::error::{Result, StorageError};
@@ -186,13 +186,13 @@ pub fn adopt_legacy_copy(path: impl AsRef<Path>) -> Result<()> {
     let table = schema.table("durable_schema");
     db.transaction(|tx| -> Result<()> {
         tx.exec(&format!("ALTER TABLE {table} ADD COLUMN writer TEXT"))?;
-        // 版本记成**当前版本**：上游 v2 的表结构与本库 v2 相同（含 #38 的终态索引），
-        // 若硬写 1，下次打开会重跑 v2 迁移、撞「index already exists」。
+        // 版本写成 **1**（不是当前版本）：本库 v2 是 `#38` 加的终态索引，**上游 v2 没有它**。
+        // 写当前版本等于宣称"迁移已跑完"，索引就永远补不上（领养库上 `terminal_entry_in`
+        // 会静默退化成 `entries_by_conversation` 索引 + 排序，实测 2026-11-18）。
+        // 写 1 → 下次 `Storage::open` 重跑 v2 → `CREATE INDEX IF NOT EXISTS` 幂等建上 → 版本到 2。
         tx.run(
-            &format!(
-                "UPDATE {table} SET writer = ?, version = ? WHERE singleton = 1"
-            ),
-            &[WRITER.into(), Cell::Integer(CURRENT_VERSION as i64)],
+            &format!("UPDATE {table} SET writer = ?, version = 1 WHERE singleton = 1"),
+            &[WRITER.into()],
         )?;
         Ok(())
     })?;

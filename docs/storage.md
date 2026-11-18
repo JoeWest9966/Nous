@@ -556,9 +556,14 @@ body 里出现 `whenBusy` → 收下、不解释、**不改变行为**：这次�
 ### 12.9 上游 v2 副本的「领养」（`NOUS_ADOPT_LEGACY=1`）
 
 `nous-server` 的 bin 可以对一份**上游 v2 库的副本**做一次性领养：补 `durable_schema.writer`
-列（值 `nous`）、把 `version` 记成**本库当前版本**（今天是 2）。**表结构不动、行数据不动** ——
-本库 v1 的 DDL 就是上游 v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）；v2 只加一条
-终态索引，领养时它已在库里，写回 1 会重跑建索引并撞名。
+列（值 `nous`）、把 `version` 写成 **1**。**表结构不动、行数据不动** ——
+本库 v1 的 DDL 就是上游 v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）。
+
+**为什么写 1 而不是当前版本（2）**：本库 v2 是 `#38` 加的终态索引，**上游 v2 没有它**
+（2026-11-18 在真库副本上实测：领养后 `entry_terminals_by_conversation` 不存在）。写当前版本
+等于宣称「迁移已跑完」，索引就永远补不上 —— 而且**不会报错**：`terminal_entry_in` 会静默掉回
+`entries_by_conversation` 索引 + 排序。写 1 让下一次写模式打开重跑 v2，`CREATE INDEX IF NOT
+EXISTS` 幂等地把索引建出来、版本站到 2（`tests/adoption.rs::adopting_backfills_the_terminal_index_on_the_next_open` 钉住）。
 
 - **默认拒绝**：不设这个开关时，`NOUS_DB` 指向上游 v2 库会明确报错并打印操作提示（§12.3：
   版本号不可比，写模式拒 v2）。

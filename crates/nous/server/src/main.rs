@@ -70,21 +70,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // 整机崩 / 重启留下的孤儿：启动扫一次，补一条 `abandoned`。
-    // 幂等（连重启三次只多一条），进程熔断不走这里（那是 `extension_crash`）。
-    // 只扫**本进程真正持有**的那份可写库；只读装配没有 Session，也就不补写。
-    // AppState::durable 建好的写后端已经 drop 了 Session 引用，这里用同一路径再开一次
-    // 临时 Session 完成扫描（幂等，且与路由里的写事务串行由 SQLite 写锁承担）。
-    {
-        let session = nous_durable::session::Session::open(&db)?;
-        nous_durable::session::commands::scan_orphans(&session)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
 
     // spec §3.4：监听地址是本进程自己的配置，不是「服务器地址发现」。生产配置里
     // 不许出现 `NOUS_SERVER_ADDR`（spec ch1 判据 11：发现唯一，走 resolve），所以
     // 这个变量叫 `NOUS_LISTEN`。测试与 verify.sh 冷启动段用它给临时端口。
+    // 整机崩 / 重启留下的孤儿：启动扫一次，补一条 `abandoned`。幂等（连重启三次只多一条），
+    // 进程熔断不走这里（那是 `extension_crash`）。**走 `state` 已经持有的那个写者** ——
+    // 另开 `Session` 就是第二条写通道（`#38` 收尾，2026-11-18）。
+    state.reclaim_orphans().await?;
+
     let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let actual = listener.local_addr()?;

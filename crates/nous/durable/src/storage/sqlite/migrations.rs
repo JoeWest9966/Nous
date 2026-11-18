@@ -198,12 +198,13 @@ pub fn migrations(schema: &SqliteSchema) -> Vec<SqliteMigration> {
             ),
         ],
     )];
-    // v2：`entries` 的终态条目索引。终态是 `EntryRecord.reason`（JSON 字段，不拆列，
+    // v2：`entries` 的终态条目索引。`IF NOT EXISTS` 是必须的：领养来的上游 v2 副本没有
+    // 这个索引，领养只把版本写成 1，v2 会在这里重跑一次把它补上（#38 收尾）。终态是 `EntryRecord.reason`（JSON 字段，不拆列，
     // 不改表结构）；这个 partial expression index 让 abort 热路径上的「找终态」
     // 变成 `SEARCH ... USING INDEX ... (conversation_id=?) ORDER BY ... LIMIT 1`。
     // 只索引带 reason 的行 —— 普通 entry 一条都不进索引，长会话不付代价。
     chain.push(SqliteMigration::new(2, [format!(
-        "CREATE INDEX {} ON {} (conversation_id, id DESC) \
+        "CREATE INDEX IF NOT EXISTS {} ON {} (conversation_id, id DESC) \
          WHERE json_extract(record, '$.reason') IS NOT NULL",
         i("entry_terminals_by_conversation"),
         t("entries"),
