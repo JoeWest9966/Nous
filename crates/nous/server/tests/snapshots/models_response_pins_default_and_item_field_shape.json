@@ -1,0 +1,30 @@
+{
+  "default": {
+    "provider": "snapshot",
+    "modelId": "snapshot/model-1"
+  },
+  "items": [
+    {
+      "provider": "snapshot",
+      "modelId": "snapshot/model-1",
+      "name": "Snapshot One",
+      "thinkingLevels": [
+        "off",
+        "medium",
+        "high"
+      ],
+      "contextWindow": 200000,
+      "maxTokens": 16384
+    },
+    {
+      "provider": "snapshot",
+      "modelId": "snapshot/model-2",
+      "name": "Snapshot Two",
+      "thinkingLevels": [
+        "off"
+      ],
+      "contextWindow": null,
+      "maxTokens": null
+    }
+  ]
+}

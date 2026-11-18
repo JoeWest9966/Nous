@@ -12,15 +12,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nous_durable::session::commands::{
-    abort, fork, submit_message, CommandError, ForkRequest, SubmitRequest,
+    abort, fork, scan_orphans, submit_message, CommandError, ForkRequest, SubmitRequest,
 };
-use nous_durable::session::{
-    CommitObserver, ObserverRegistry, Session, SessionError,
-};
+use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
 use serde_json::Value;
 
 use crate::error::{Result, ServerError};
+use crate::records::{CreateSessionRequest, CreatedSession};
 
 /// 受理结果（`POST /messages` 的 202 体）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,6 +37,9 @@ pub struct ForkResult {
 
 #[async_trait]
 pub trait CommandSource: Send + Sync {
+    /// 建会话：经 `Session::create_conversation`，和别的写共享一把锁并广播帧。
+    async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession>;
+
     async fn submit(
         &self,
         session: i64,
@@ -48,6 +50,12 @@ pub trait CommandSource: Send + Sync {
     async fn abort(&self, session: i64) -> Result<()>;
 
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
+
+    /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
+    ///
+    /// 放在这条 trait 上是为了让**同一个 `Session` 写者**做这件事：另开一个 `Session`
+    /// 等于第二条写通道（`#38` 收尾，2026-11-18）。
+    async fn reclaim_orphans(&self) -> Result<usize>;
 }
 
 /// 生产写后端：一条 `Session` + 它的观察者名单。
@@ -77,6 +85,15 @@ impl DurableCommands {
 
 #[async_trait]
 impl CommandSource for DurableCommands {
+    async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession> {
+        let config = request.into_config();
+        let value = self.session.create_conversation(config).await.map_err(|error| match error {
+            SessionError::Closed => ServerError::Conflict("session is closed".to_string()),
+            other => ServerError::Internal(other.to_string()),
+        })?;
+        serde_json::from_value(value).map_err(|error| ServerError::Internal(error.to_string()))
+    }
+
     async fn submit(
         &self,
         session: i64,
@@ -104,6 +121,10 @@ impl CommandSource for DurableCommands {
         Ok(())
     }
 
+    async fn reclaim_orphans(&self) -> Result<usize> {
+        scan_orphans(&self.session).await.map_err(command_error)
+    }
+
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult> {
         let outcome = fork(
             &self.session,
@@ -127,6 +148,10 @@ pub struct ReadOnlyCommands;
 
 #[async_trait]
 impl CommandSource for ReadOnlyCommands {
+    async fn create(&self, _: CreateSessionRequest) -> Result<CreatedSession> {
+        Err(read_only())
+    }
+
     async fn submit(&self, _: i64, _: Value, _: Option<String>) -> Result<SubmitResult> {
         Err(read_only())
     }
@@ -137,6 +162,11 @@ impl CommandSource for ReadOnlyCommands {
 
     async fn fork(&self, _: i64, _: Option<i64>, _: Option<String>) -> Result<ForkResult> {
         Err(read_only())
+    }
+
+    /// 只读装配没有写者，也就没有孤儿要补：明确返回 0，不报错。
+    async fn reclaim_orphans(&self) -> Result<usize> {
+        Ok(0)
     }
 }
 

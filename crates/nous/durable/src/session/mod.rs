@@ -16,11 +16,13 @@
 //!
 //! - [`entries`] —— 六个 entry 判别键（`pi.user` … `pi.compaction`）；
 //! - [`publish`] —— 提交发布面：`CommitPublication` / `CommitChange` 与观察者名单；
-//! - [`Session`] —— 五个方法的公开面（`commit` / `close` / `closed` / `snapshot` / `get_entry`）。
+//! - [`Session`] —— 六个方法的公开面（`commit` / `close` / `closed` / `snapshot` / `get_entry`
+//!   / `create_conversation`）。第六个是 #42 加的建会话写命令；判据从 5 改 6 已在
+//!   `docs/decisions.md` 签字。
 //!
-//! ## 公开面只有五个方法，这是判据不是愿望
+//! ## 公开面就是这张表，这是判据不是愿望
 //!
-//! `tests/session_face.rs` 扫这个文件的源码，断言 `pub async fn` 恰好是那五个、`pub fn` 恰好是
+//! `tests/session.rs` 扫这个文件的源码，断言 `pub async fn` 恰好是那六个、`pub fn` 恰好是
 //! 两个构造器。多一个就红 —— 因为这张表是 `#22` 的输入，让它漂就等于让端点层猜。
 //!
 //! `observe_doc` / `watch_doc` / `observe_commits` / `subscribe_close` **不在**这里：订阅机制属
@@ -40,8 +42,10 @@ use nous_chord::watch::WatchEnd;
 
 use crate::storage::commit::{StoredBatch, StoredChange, StoredDocumentChange};
 use crate::storage::writes::Refusal;
-use crate::types::EntryRecord;
-use crate::{DocumentPoint, Id, Seq, Storage, StorageError, StorageWrite, StoredDocument};
+use crate::types::{DocumentScope, EntryRecord};
+use crate::{
+    DocumentContent, DocumentPoint, Id, Seq, Storage, StorageError, StorageWrite, StoredDocument,
+};
 
 pub use entries::EntryKind;
 pub use publish::{
@@ -156,6 +160,10 @@ pub struct Session {
     /// settle 点。写进去之后不再改动（先写再 `notify`）。
     end: tokio::sync::Mutex<Option<SessionEnd>>,
     settled: tokio::sync::Notify,
+    /// 这个会话唯一的取消通道。客户端 abort / 内核超时 / 扩展进程死全拿到它的 clone，
+    /// 三个源都调 [`CancelHandle::cancel`](nous_chord::context::CancelHandle::cancel) ——
+    /// 取消的**实现**只有 chord 那一处（spec ch5 / S7）。
+    cancellation: nous_chord::context::CancelHandle,
 }
 
 impl Session {
@@ -170,11 +178,13 @@ impl Session {
     /// 用现成的存储与观察者名单。观察者名单要由调用方留着 —— `Session` 不提供「给我名单」的
     /// 访问器，因为公开面就是五个方法，而挂观察者是构造期的事。
     pub fn with_observers(storage: Storage, observers: Arc<ObserverRegistry>) -> Self {
+        let (_, cancellation) = nous_chord::context::with_cancel(nous_chord::context::Context::new());
         Self {
             storage: tokio::sync::Mutex::new(Some(storage)),
             observers,
             end: tokio::sync::Mutex::new(None),
             settled: tokio::sync::Notify::new(),
+            cancellation,
         }
     }
 
@@ -281,6 +291,58 @@ impl Session {
         let guard = self.storage.lock().await;
         let storage = guard.as_ref().ok_or(SessionError::Closed)?;
         Ok(storage.materialize(id, DocumentPoint::Current)?)
+    }
+
+    /// 建一条新会话（写命令）。和 [`commit`](Self::commit) 走同一把写锁、同一个事务、
+    /// 同一份 publication —— 落库后立刻经 `ObserverRegistry` 广播，别的客户端才看得见。
+    ///
+    /// 入参 `config` 是端点层拼好的一整份会话配置（名字 / 模型 / 各类设置），键名由 wire
+    /// 契约决定，durable 不认识也不解释。durable 只做三件语义事：铸会话 id、把配置写成
+    /// 一条会话记录、广播。这样 `Session` 的签名不携带任何产品词（判据 3 的词表基线只减
+    /// 不增），也不反向依赖端点层的请求类型。
+    ///
+    /// 这是 `Session` 的第六个方法。#42 前这里只有五个，端点层为了绕开判据开过第二条
+    /// 裸 `Storage` 写通道，结果建会话不广播帧 —— 判据迁就架构的反例，见 `docs/decisions.md`。
+    pub async fn create_conversation(
+        &self,
+        config: serde_json::Value,
+    ) -> Result<serde_json::Value, SessionError> {
+        use serde_json::json;
+
+        let mut guard = self.storage.lock().await;
+        let storage = guard.as_mut().ok_or(SessionError::Closed)?;
+        let id = storage.mint_id()?;
+        let document_id = storage.mint_id()?;
+        let name = config.get("name").cloned().unwrap_or(json!(""));
+        let writes = vec![
+            StorageWrite::Conversation(json!({ "id": id })),
+            StorageWrite::DocumentCreate {
+                id: document_id,
+                record: json!({
+                    "id": document_id,
+                    "kind": "qrd3wh.sessions",
+                    "scope": DocumentScope::Session,
+                }),
+                content: DocumentContent::Base {
+                    version: 1,
+                    value: json!({ "names": { id.to_string(): name }, "config": config }),
+                },
+            },
+        ];
+        let committed = storage.commit(&[writes], |_, _| {})?;
+        if let Some(refusal) = committed.refused {
+            return Err(SessionError::Shape(format!("create refused: {refusal}")));
+        }
+        let Some(batch) = committed.batches.first() else {
+            return Err(SessionError::Shape("create stored no batch".to_string()));
+        };
+        let publication = publication_of(batch)?;
+        // 在释放锁之前发布：提交是串行的，发布顺序就是落库顺序。
+        self.observers.publish(&publication, &Context::new());
+        drop(guard);
+        let mut result = config;
+        result["id"] = json!(id);
+        Ok(result)
     }
 
     /// 一条 entry 与它落库时的 `seq`。

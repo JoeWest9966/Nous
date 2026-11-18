@@ -333,3 +333,57 @@ fn submission_fields_alone_validate_the_same_matrix() {
     }))
     .is_err());
 }
+
+// ── 终态五值（issue #38 / spec ch5）────────────────────────────────────────────
+
+#[test]
+fn terminal_reason_has_exactly_five_literals() {
+    use nous_durable::types::TerminalReason;
+
+    let cases = [
+        (TerminalReason::Done, "done"),
+        (TerminalReason::UserCancel, "user_cancel"),
+        (TerminalReason::Timeout, "timeout"),
+        (TerminalReason::ExtensionCrash, "extension_crash"),
+        (TerminalReason::Abandoned, "abandoned"),
+    ];
+    for (value, literal) in cases {
+        assert_eq!(serde_json::to_value(value).unwrap(), json!(literal));
+        assert_eq!(
+            serde_json::from_value::<TerminalReason>(json!(literal)).unwrap(),
+            value
+        );
+    }
+    for bad in ["cancelled", "crash", "abandon", "broken"] {
+        assert!(
+            serde_json::from_value::<TerminalReason>(json!(bad)).is_err(),
+            "{bad} 不是终态值"
+        );
+    }
+}
+
+#[test]
+fn terminal_reason_lives_on_an_entry_record_not_a_second_entry_kind() {
+    use nous_durable::types::{EntryRecord, TerminalReason};
+
+    let source = json!({
+        "id": 12,
+        "conversationId": 1,
+        "kind": "pi.assistant",
+        "model": [{ "role": "assistant", "content": [] }],
+        "reason": "extension_crash",
+    });
+    let entry: EntryRecord = serde_json::from_value(source.clone()).unwrap();
+    assert_eq!(entry.reason, Some(TerminalReason::ExtensionCrash));
+    assert_eq!(serde_json::to_value(entry).unwrap(), source, "终态不改 entry 的形状");
+
+    let live = json!({
+        "id": 13,
+        "conversationId": 1,
+        "kind": "pi.assistant",
+        "model": [{ "role": "assistant", "content": [] }],
+    });
+    let entry: EntryRecord = serde_json::from_value(live.clone()).unwrap();
+    assert_eq!(entry.reason, None, "没有终态的 entry 不许凭空带 reason");
+    assert_eq!(serde_json::to_value(entry).unwrap(), live);
+}

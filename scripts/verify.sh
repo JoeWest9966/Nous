@@ -151,14 +151,22 @@ fi
 # 2. fixture：线上那份 agent.sqlite 读得出 /v1/sessions 同形的 JSON
 if [ "$WHAT" = all ] || [ "$WHAT" = fixture ]; then
 	step "2. agent.sqlite fixture"
-	FIX="${NOUS_FIXTURE:-fixtures/agent.sqlite}"
+	# 默认用**进仓的脱敏小样本**（#43）：干净 clone 也能真跑，CI 才不是永远 SKIP。
+	# 真数据（190 条，不入库）用 NOUS_FIXTURE=fixtures/agent.sqlite 指过去做人工验。
+	FIX="${NOUS_FIXTURE:-fixtures/agent.small.sqlite}"
+	if [ ! -f "$FIX" ] && [ -z "${NOUS_FIXTURE:-}" ] && [ -f fixtures/agent.sqlite ]; then
+		FIX=fixtures/agent.sqlite
+		skip "小样本不在，退到真数据：$FIX"
+	fi
 	if [ ! -f "$FIX" ]; then
-		skip "$FIX 不存在（真实用户数据，不进 git）"
+		skip "SKIP: $FIX 缺失（小样本应在仓里；真数据从 j1900 scp）"
 		skip "取法：scp root@192.168.1.7:/opt/Nous/content/new1/map/qrd3wh/data/agent.sqlite fixtures/"
-		bad "fixture 缺了就无法验证会话树读得对不对"
+		skip "重做小样本：python3 scripts/make-small-fixture.py"
 	else
 		if cargo run --quiet -p nous-fixture -- "$FIX" > /tmp/nous-fixture.json 2>/tmp/nous-fixture.err; then
-			# 判据必须是「189 条、id 降序、字段齐、无重复」，不是数 "id" 字符串
+			# 判据必须是「**至少 100 条**、id 降序、字段齐、无重复」，不是数 "id" 字符串。
+			# 下限 100 是哨兵：只剩 3 条的库照样「字段齐、降序、无重复」，但没有下限时
+			# 删到 3 条也是绿的 —— 那条判据就成了摆设（#43）。
 			CHECK=$(python3 - <<'PY'
 import json
 try:
@@ -177,6 +185,8 @@ if len(ids)!=len(set(ids)):
     print('BAD'); print(f'id 有重复（{len(ids)} 条，{len(set(ids))} 个唯一）'); raise SystemExit
 if ids!=sorted(ids,reverse=True):
     print('BAD'); print('不是 id 降序'); raise SystemExit
+if len(ids)<100:
+    print('BAD'); print(f'只有 {len(ids)} 条会话（下限 100 —— 小样本被截过头了？）'); raise SystemExit
 print('OK'); print(len(ids))
 PY
 )
@@ -338,10 +348,10 @@ allow={
  'nous-chord': set(),
  'nous-wire': set(),
  'nous-env': {'nous-chord'},
- 'nous-ai': {'nous-telemetry'},
+ 'nous-ai': {'nous-telemetry','nous-ai-types'},
  'nous-tools': {'nous-ai','nous-env'},
  'nous-runtime': {'nous-ai'},
- 'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env'},
+ 'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
  'nous-server': {'nous-durable','nous-wire','nous-telemetry'},
 }
 meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
@@ -512,25 +522,65 @@ PY
 	}
 
 	# 3. 词表基线（S8：基线只减不增，新增一行即红）
+	#
+	# 基线按「路径 + 行文本」记，**不记行号**（#45 签字改的口径）：行号是缓存，
+	# 任何人在上面插一行，下面所有基线条目都会漂移成"新增"，判据假红。误红比漏红更贵 ——
+	# 红久了就有人重排基线把红变绿，S8 这条防线就是这么被磨掉的。
+	# 比对是**多重集**：同一路径同一文本出现两次要算两次，少算一次就等于给了个白名单。
 	c3() {
 		local BASE=docs/boundary-baseline.txt
 		[ -f "$BASE" ] || { echo "$BASE 不存在"; return 1; }
-		local HITS NEW STRIPPED
+		local HITS
 		HITS=$(git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K \
 			| grep -v -i licenses || true)
-		STRIPPED=$(grep -v '^\s*#' "$BASE" | grep -v '^\s*$' | sed 's/  # .*//' || true)
-		NEW=$(printf '%s\n' "$HITS" | while IFS= read -r line; do
-			[ -z "$line" ] && continue
-			printf '%s\n' "$STRIPPED" | grep -qF --text -- "$line" || printf '%s\n' "$line"
-		done)
-		if [ -n "$NEW" ]; then
-			echo "词表基线被新增 $(printf '%s\n' "$NEW" | grep -c .) 行 —— 改基线必须单独一张票："
-			printf '%s\n' "$NEW" | sed 's/^/       + /'
-			return 1
-		fi
-		echo "命中 $(printf '%s\n' "$HITS" | grep -c .) 行全部在基线里（只减不增）"
-	}
+		HITS="$HITS" BASE="$BASE" python3 - <<'PY'
+import collections, os, re, sys
 
+hits = [l for l in os.environ['HITS'].splitlines() if l.strip()]
+
+
+def key(line):
+    """`路径:行号:文本` → `路径: 文本`：键里不留行号，插入就不再误伤。"""
+    m = re.match(r'^(.+?):\d+:(.*)$', line)
+    return f'{m.group(1)}: {m.group(2)}' if m else line
+
+
+keys = [key(line) for line in hits]
+base = []
+for raw in open(os.environ['BASE'], encoding='utf-8'):
+    if raw.lstrip().startswith('#') or not raw.strip():
+        continue
+    text = re.split(r'  # ', raw.rstrip('\n'), maxsplit=1)[0].rstrip()
+    # 只认 `crates/...` 开头的条目：文件头的说明行、`spawn_files=N` 之类指令都不算词表
+    if not text.startswith('crates/'):
+        continue
+    base.append(text)
+
+# 空集不许绿：命中为空 = pattern 或 $K 写错了；基线为空 = 文件被清空了
+if not keys:
+    print('NOHIT 命中 0 行 —— pattern 或 $K 写错了？判据不许空跑绿')
+    sys.exit(1)
+if not base:
+    print('NOBASE 基线 0 条 —— 文件被清空了？判据不许空跑绿')
+    sys.exit(1)
+
+kh, bh = collections.Counter(keys), collections.Counter(base)
+new, dropped = kh - bh, bh - kh
+print(f'命中 {len(keys)} 行 / 基线 {len(base)} 条，按「路径 + 行文本」比对')
+
+if new:
+    print(f'词表基线被新增 {sum(new.values())} 行 —— 改基线必须单独一张票：')
+    seen = collections.Counter()
+    for line in hits:  # 打印带行号的原始命中行，定位用
+        seen[key(line)] += 1
+        if seen[key(line)] <= new.get(key(line), 0):
+            print(f'       + {line}')
+    sys.exit(1)
+if dropped:
+    print(f'（基线比命中多 {sum(dropped.values())} 条：只减不增，减少不红，顺手删掉）')
+print('命中全部在基线里（只减不增）')
+PY
+	}
 	# 4. 路由归属：内核层不许出现 HTTP 框架
 	c4() {
 		local F

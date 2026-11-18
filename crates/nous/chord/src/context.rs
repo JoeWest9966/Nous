@@ -314,6 +314,10 @@ fn derive_cancel(context: Context, slot: CancelSlot, label: &'static str) -> Con
 }
 
 /// 一个可独立取消的子 context。TS 的 `withCancel` 返回 `{ context, cancel }`。
+///
+/// `Clone` 出来的 handle **共享同一个 token**：三个触发源（客户端 abort / 内核超时 /
+/// 扩展进程死）各持一个 clone，任何一处 `cancel()` 都打在同一条通道上。
+#[derive(Clone)]
 pub struct CancelHandle {
     token: CancellationToken,
 }

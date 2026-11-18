@@ -34,10 +34,28 @@ jobs:
         working-directory: repo
         run: ./scripts/judge.sh ex-id-set | grep -F 'ids_equal=1'
 
+      - name: fixture（进仓的脱敏小样本，#43）
+        working-directory: repo
+        # 读的是**进仓**的 `fixtures/agent.small.sqlite`（`scripts/make-small-fixture.py`
+        # 从真库生成：字符串截断 200 字、usage/cost 归零、120 个会话）。真数据永不入库。
+        # 缺了就打 error —— CI 上不许出现 SKIP，那等于这一步什么都没验。
+        run: |
+          test -f fixtures/agent.small.sqlite || {
+            echo '::error::CI 缺少 fixtures/agent.small.sqlite（脱敏小样本，应当进仓）'; exit 1; }
+          rc=0
+          NOUS_FIXTURE=fixtures/agent.small.sqlite ./scripts/verify.sh fixture \
+            > /tmp/nous-fixture-ci.log 2>&1 || rc=$?
+          sed -r 's/\x1B\[[0-9;]*[mK]//g' /tmp/nous-fixture-ci.log
+          [ "$rc" -eq 0 ] || { echo '::error::verify fixture 未通过'; exit "$rc"; }
+          if grep -qF 'SKIP:' /tmp/nous-fixture-ci.log; then
+            echo '::error::CI 中不允许 fixture SKIP'
+            exit 1
+          fi
+
       - name: 边界判据（spec 第 1 章 15 条）
         working-directory: repo
-        # 判据 1（nous-app 还没接 tools/runtime）与 7b（wire.md 抄字段清单）现在如实红着，
-        # 归属见 #14 交付说明；这里不挡流水线，但红/绿/数字都会打在日志里。
+        # 现在只剩判据 1 红（nous-app 还没接 tools/runtime，T5 接线）；7b 已由 #41 变绿。
+        # 这里不挡流水线，但红/绿/数字都会打在日志里 —— 别加 continue-on-error 之后就没人看。
         continue-on-error: true
         run: ./scripts/verify.sh boundary
 

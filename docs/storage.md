@@ -194,8 +194,8 @@ with the transaction.`
 
 | 文件 | 内容 | 判据 |
 |---|---|---|
-| `sqlite/schema.rs` | 九张表 + 十六个索引的名字（可带前缀） | 键写错在开发期 panic；`every_key_is_present_exactly_once` |
-| `sqlite/migrations.rs` | v1 = 最终形状（含 `sleeping`）+ `writer` 列；27 条语句 | 9 表 / 16 索引 / `writer='nous'` / `version=1` 全断言 |
+| `sqlite/schema.rs` | 九张表 + 十七个索引的名字（可带前缀） | 键写错在开发期 panic；`every_key_is_present_exactly_once` |
+| `sqlite/migrations.rs` | v1 = 最终形状（含 `sleeping`）+ `writer` 列（27 条语句）；v2 = `entries` 终态条目的 partial expression index（1 条语句） | 9 表 / 17 索引 / `writer='nous'` / `version=2` 全断言 |
 | `sqlite/rows.rs` | `record` 原样、索引字符串 JSON 编码、哨兵 `0` / `""` | 孤立代理对与 `\u0000` 往返无损 |
 | `sqlite/statements.rs` | 一条 JSON 数组 + `json_each` 批量写；大行走多行 `VALUES` | 500 行 = **1 条语句**；20 个大行 ≤ 2 条 |
 | `sqlite/tables.rs` | 四张记录表 + `record_ids` / `documents` / `revisions` 的行构造 | 每张表一条单测 |
@@ -482,6 +482,7 @@ fixtures/agent.sqlite
 ### 12.3 版本号从 1 数起
 
 上游 `durable_schema.version` 从 2 数（v1 是历史包袱）；**本库从 1 数起**，迁移链单向。
+当前本库版本 **2**（v2 只加 `entries` 终态条目的 partial expression index，不改表结构）。
 
 所以两边的数字**不许互相比较**：看到上游 v2 不等于本库 v2。表结构照抄，版本号自定 —— 这条在
 `SOURCES.md` 的迁移行里有说明。
@@ -555,8 +556,14 @@ body 里出现 `whenBusy` → 收下、不解释、**不改变行为**：这次�
 ### 12.9 上游 v2 副本的「领养」（`NOUS_ADOPT_LEGACY=1`）
 
 `nous-server` 的 bin 可以对一份**上游 v2 库的副本**做一次性领养：补 `durable_schema.writer`
-列（值 `nous`）、把 `version` 记成 1。**表结构不动、行数据不动** —— 本库 v1 的 DDL 就是上游
-v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）。
+列（值 `nous`）、把 `version` 写成 **1**。**表结构不动、行数据不动** ——
+本库 v1 的 DDL 就是上游 v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）。
+
+**为什么写 1 而不是当前版本（2）**：本库 v2 是 `#38` 加的终态索引，**上游 v2 没有它**
+（2026-11-18 在真库副本上实测：领养后 `entry_terminals_by_conversation` 不存在）。写当前版本
+等于宣称「迁移已跑完」，索引就永远补不上 —— 而且**不会报错**：`terminal_entry_in` 会静默掉回
+`entries_by_conversation` 索引 + 排序。写 1 让下一次写模式打开重跑 v2，`CREATE INDEX IF NOT
+EXISTS` 幂等地把索引建出来、版本站到 2（`tests/adoption.rs::adopting_backfills_the_terminal_index_on_the_next_open` 钉住）。
 
 - **默认拒绝**：不设这个开关时，`NOUS_DB` 指向上游 v2 库会明确报错并打印操作提示（§12.3：
   版本号不可比，写模式拒 v2）。
@@ -579,3 +586,8 @@ v2 的最终形状（`tasks.status` 的 `sleeping` 已含在内）。
 
 **反悔点**：某天要给「不存在的会话」返回 404 而不是 500 时，改的是端点层的映射，不是这里的语义
 （`StorageError::UnknownConversation` 是给端点层分类用的）。
+
+**启动孤儿扫描实测**（#38，`scan_orphans` 在临时库上，1 会话 / 1 份 pi.live / 1 条孤儿）：
+第 1 轮补写 3.30 ms，第 2/3 轮（无事可做）0.45 ms / 0.39 ms（`cargo test -p nous-durable
+--test cancel startup_scan_adds_exactly_one_abandoned_and_stays_idempotent -- --nocapture`）。
+这只是这条测试上的读数，不是吞吐承诺；扫描上限 10,000，撞到会 `eprintln!` 报可能漏的条目。

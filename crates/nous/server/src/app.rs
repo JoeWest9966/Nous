@@ -21,6 +21,7 @@ pub struct AppState {
     source: Arc<dyn SessionSource>,
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
+    models: crate::models::ModelsResponse,
 }
 
 impl AppState {
@@ -33,6 +34,7 @@ impl AppState {
             source,
             commands,
             hub,
+            models: crate::models::ModelsResponse::default(),
         })
     }
 
@@ -53,6 +55,7 @@ impl AppState {
             source,
             commands: commands.clone(),
             hub: Hub::new(),
+            models: crate::models::ModelsResponse::default(),
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -73,6 +76,25 @@ impl AppState {
 
     pub fn hub(&self) -> &Arc<Hub> {
         &self.hub
+    }
+
+    /// 换入真编目：默认 catalog 是空的，宿主填进来才有内容。
+    pub fn with_models(self: Arc<Self>, models: crate::models::ModelsResponse) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models,
+        })
+    }
+
+    pub fn models(&self) -> &crate::models::ModelsResponse {
+        &self.models
+    }
+
+    /// 启动时补写孤儿终态：走**已经持有的那个写者**，不另开 `Session`。
+    pub async fn reclaim_orphans(&self) -> Result<usize> {
+        self.commands.reclaim_orphans().await
     }
 
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。
