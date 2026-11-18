@@ -107,6 +107,11 @@ impl DurableCommands {
         }))
     }
 
+    /// 同一条 `Session` 的只读句柄，给 #48 的 documents 写后端复用（不另开写者）。
+    pub fn session(&self) -> &Arc<Session> {
+        &self.session
+    }
+
     /// 挂观察者。必须在开始接请求之前调用；挂上之后的每一次提交都会走到它。
     pub fn attach(&self, observer: Arc<dyn CommitObserver>) {
         self.registry.attach(observer);

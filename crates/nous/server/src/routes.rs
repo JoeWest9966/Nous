@@ -47,7 +47,7 @@ use crate::source::SessionSource;
 /// 装配路由。`state` 里的 `source` 决定数据从哪来，`commands` 决定写往哪去，
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/v1/sessions", get(sessions).post(create_session))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))
@@ -64,8 +64,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
-        .route("/v1/capabilities", get(capabilities))
-        .with_state(state)
+        .route("/v1/capabilities", get(capabilities));
+    // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
+    crate::documents::attach(state, router)
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。

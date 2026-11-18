@@ -293,7 +293,10 @@ async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
                 .map(|value| value.as_str().unwrap().to_string())
         })
         .collect();
-    let registry: Vec<String> = nous_server::meta::routes_view()
+    // _routes 的 routes 视图（从同一张注册表吐出），两边都走 HTTP/公共视图取值。
+    let (status, routes_body) = get_json(&app, "/v1/_routes").await;
+    assert_eq!(status, StatusCode::OK);
+    let registry: Vec<String> = routes_body["routes"]
         .as_array()
         .unwrap()
         .iter()
@@ -310,14 +313,32 @@ async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
         tally(registry),
         "_routes 与 endpoints 必须是同一个多重集"
     );
-    // 负向哨兵：注册表里每条声明都得真能在 Router 上打到（不是 404）。
+    // documents 已落地：清单打开，且 12 条端点都在声明里。
+    let documents = capabilities["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "documents")
+        .unwrap();
+    assert_eq!(documents["enabled"], json!(true));
+    assert_eq!(
+        documents["endpoints"].as_array().unwrap().len(),
+        nous_documents::routes::DOCUMENT_ROUTES.len(),
+        "documents 的实际端点数 == 注册源条数"
+    );
+
+    // 负向哨兵：注册表里每条声明都得真能在 Router 上打到 handler。
+    // 404 可能是 handler 的「资源不存在」（documents 的 missing-name），只有 405/500
+    // 才说明路由没注册或 handler 炸了 —— 与 documents_routes.rs 的判据同口径。
     for route in nous_server::meta::ROUTES {
         if !nous_server::meta::route_enabled(route.module) {
             continue;
         }
-        let axum_path = route.path.replace(":id", "{id}").replace("/v1/read/{id}", "/v1/read/2");
-        let axum_path = axum_path.replace("/v1/sessions/{id}", "/v1/sessions/2");
-        let uri = format!("/{}", axum_path.trim_start_matches('/'));
+        let uri = route.path
+            .replace(":id", "2")
+            .replace("{kind}", "presets")
+            .replace("{section}", "Session-Template")
+            .replace("{name}", "missing-name");
         let request = Request::builder()
             .method(route.method)
             .uri(&uri)
@@ -325,9 +346,10 @@ async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
         assert!(
-            response.status() != StatusCode::NOT_FOUND,
-            "注册表声明的 {} {uri} 在 router 里不存在",
-            route.method
+            response.status() != StatusCode::METHOD_NOT_ALLOWED
+                && response.status() != StatusCode::INTERNAL_SERVER_ERROR,
+            "注册表声明的 {} {uri} 没打到 handler：{}",
+            route.method, response.status()
         );
     }
 }

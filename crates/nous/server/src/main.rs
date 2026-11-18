@@ -95,6 +95,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         session,
     )?;
     let state = state.with_runtime(Arc::new(assembled));
+    // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
+    // 不另开第二个 Storage。
+    let state = state.with_documents_backend(
+        std::path::PathBuf::from(&db),
+        commands.session().clone(),
+    );
 
     let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&address).await?;

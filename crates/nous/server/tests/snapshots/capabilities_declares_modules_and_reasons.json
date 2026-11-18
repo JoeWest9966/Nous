@@ -23,11 +23,21 @@
     },
     {
       "name": "documents",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "documents 模块尚未落地"
-      }
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/documents/{kind}",
+        "GET /v1/documents/{kind}/{section}/{name}",
+        "PUT /v1/documents/{kind}/{section}/{name}",
+        "POST /v1/documents/{kind}/{section}",
+        "POST /v1/documents/{kind}/{section}/{name}/rename",
+        "POST /v1/documents/{kind}/{section}/{name}/publish",
+        "POST /v1/documents/{kind}/{section}/{name}/reload",
+        "GET /v1/documents/{kind}/{section}/{name}/validate",
+        "GET /v1/documents/{kind}/{section}/{name}/history",
+        "GET /v1/documents/{kind}/{section}/{name}/history/diff",
+        "GET /v1/documents/{kind}/{section}/{name}/pending",
+        "GET /v1/documents/{kind}/{section}/{name}/pending/diff"
+      ]
     },
     {
       "name": "presets",
@@ -75,7 +85,8 @@
         "GET /v1/machines",
         "GET /v1/models",
         "GET /v1/device",
-        "GET /v1/capabilities"
+        "GET /v1/capabilities",
+        "GET /v1/_routes"
       ]
     },
     {

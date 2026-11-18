@@ -470,6 +470,29 @@ pub(crate) fn materialize(
     id: Id,
     at: DocumentPoint,
 ) -> Result<Option<StoredDocument>> {
+    materialize_inner(executor, schema, id, at, false)
+}
+
+/// 只读的历史重放：允许 current-only 文档在某个 seq 上读值。
+///
+/// 用途只有上层 documents 的 history/diff；它读的是**已经落库的 revision**，
+/// 不会把“当前值”冒充成过去 —— `as_of` 走的是和 `materialize(At)` 同一条 base+delta 重放。
+pub(crate) fn revision_value(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    id: Id,
+    seq: Seq,
+) -> Result<Option<StoredDocument>> {
+    materialize_inner(executor, schema, id, DocumentPoint::At(seq), true)
+}
+
+fn materialize_inner(
+    executor: &dyn SqliteExecutor,
+    schema: &SqliteSchema,
+    id: Id,
+    at: DocumentPoint,
+    allow_past: bool,
+) -> Result<Option<StoredDocument>> {
     let Some(row) = executor.get(
         &format!("SELECT record FROM {} WHERE id = ?", schema.table("documents")),
         &[Cell::Integer(id)],
@@ -483,7 +506,7 @@ pub(crate) fn materialize(
             .ok_or_else(|| StorageError::Shape("document row has no record".to_string()))?,
     )?;
     // 只留最新态的文档没有历史可读：给最新的值就是伪造。
-    if at != DocumentPoint::Current && is_current_only(&record) {
+    if at != DocumentPoint::Current && is_current_only(&record) && !allow_past {
         return Err(StorageError::HistoryNotRetained { document_id: id });
     }
     if !alive_at(&record, at) {

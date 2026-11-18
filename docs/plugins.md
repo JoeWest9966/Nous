@@ -40,6 +40,7 @@
 | `runtime` | nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
 | `telemetry` | nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
 | `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
+| `documents` | nous | `nous-documents` | app | 编译期 | `DocumentKind` + 泛型文档端点 + 路由注册表 | 是 | #48：一个实现生成 presets / prompts 两套端点 |
 | `prompts` | nous | (待建) `nous-prompts` | app | 编译期 | `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
 | `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 | 否 | 已落地（#17–#37）；`ext-host` 行是它后续的重划 |
 | `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |

@@ -1,8 +1,12 @@
-//! #47 的静态元数据端点：`device` / `selection` / `skills` / `prompts` /
-//! `extensions` / `capabilities`。
+//! 静态元数据端点：`device` / `selection` / `skills` / `prompts` /
+//! `extensions` / `capabilities` / `_routes`（#47 + #48 合并后的唯一注册表）。
 //!
 //! 这里只做**数据装配**，没有第二份事实源：进程配置来自环境，能力声明是这张表本身。
 //! 形状以 `wire.md` + `NousDesk/crates/nous-engine/src/types.rs` 为准；未知字段透传给客户端。
+//!
+//! `ROUTES` 是 `/v1/*` 端点的唯一真相：`router()` 从这里装配真路由（documents 那一族由
+//! `documents::DOCUMENT_ROUTES` 生成，逐条登记在这里）、`capabilities()` 从这里生成
+//! `endpoints`、`_routes` 从这里吐调试视图。三处同源，才撑得住「声明不许说谎」。
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -92,13 +96,13 @@ pub fn extensions() -> Value {
     json!({ "items": [] })
 }
 
-// ── 端点注册表：唯一真相（#47 拷问结果 §2/§4/§8）─────────────────────────
+// ── 端点注册表：唯一真相（#47 拷问结果 §2/§4/§8 + #48 的 _routes）──────
 //
 // `router()` 从这里装配真路由；`capabilities()` 从这里生成 endpoints；
-// `routes_view()` 是给 #48 的 `GET /v1/_routes` 用的同一份视图。
-// 三处共用一张表：手抄数组会让「声明不许说谎」的判据失去意义。
+// `routes_view()` 是 `GET /v1/_routes` 的同一份视图。三处共用一张表：
+// 手抄数组会让「声明不许说谎」的判据失去意义。
 
-/// 一条已注册路由：`(method, 路由模板原文)`。模板保留 `:id` 的原文形态。
+/// 一条已注册路由：`(method, 路由模板原文)`。模板保留 `:id` / `{kind}` 的注册形态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegisteredRoute {
     pub method: &'static str,
@@ -108,6 +112,9 @@ pub struct RegisteredRoute {
 }
 
 /// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
+///
+/// documents 一族既在 `documents::DOCUMENT_ROUTES`（泛型 handler 的注册源），也在这里
+/// 逐条登记；`documents_routes.rs` 的判据守住两张表不漂移。
 pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
@@ -127,19 +134,37 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
+    // #48：documents 的 12 条端点（模板原文来自 nous_documents::DOCUMENT_ROUTES）。
+    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}", module: "documents" },
+    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}", module: "documents" },
+    RegisteredRoute { method: "PUT", path: "/v1/documents/{kind}/{section}/{name}", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}/{name}/rename", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}/{name}/publish", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}/{name}/reload", module: "documents" },
+    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/validate", module: "documents" },
+    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history", module: "documents" },
+    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history/diff", module: "documents" },
+    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending", module: "documents" },
+    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending/diff", module: "documents" },
+    RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
 
-/// `GET /v1/_routes` 与 capabilities 共用的视图：清单开着且代码注册了什么，就说什么。
+/// `GET /v1/_routes`：debug 视图与 capabilities 从同一张表吐出。
 ///
-/// 被清单关掉的模块（`ext` 冻结等）物理路由仍在，但不对客户端声明——判据是「_routes ↔
-/// enabled 模块 endpoints 多重集相等」，两侧同源才不会说谎。#48 合入时直接
-/// `Json(meta::routes_view())`，不要再建第二张表。
+/// `modules` 覆盖全部清单行（含未实现的，便于 desk 调试），`routes` 只列清单开着且
+/// 代码注册了的端点——和 enabled 模块的 `endpoints` 多重集相等（不声明不存在的端点，
+/// 冻结的 `ext` 物理路由仍在但不声明；`GET /v1/extensions` 照旧 200 空清单）。
 pub fn routes_view() -> Value {
-    Value::Array(
-        enabled_routes()
-            .map(|route| json!({ "method": route.method, "path": route.path }))
-            .collect(),
-    )
+    json!({
+        "routes": enabled_routes()
+            .map(|route| json!({ "module": route.module, "method": route.method, "path": route.path }))
+            .collect::<Vec<_>>(),
+        "modules": MANIFEST
+            .iter()
+            .map(|(name, _)| json!({ "name": name, "enabled": route_enabled(name) }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// 某模块是否在发行清单里开着且可用（给判据与 _routes 用）。
@@ -158,7 +183,8 @@ fn enabled_routes() -> impl Iterator<Item = &'static RegisteredRoute> {
 /// `enabled` = 清单 ∩ 代码：没有注册路由的模块一律 disabled + reason。
 const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("sessions", None),
-    ("documents", Some(ReasonCode::NotImplemented)),
+    // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
+    ("documents", None),
     ("presets", Some(ReasonCode::NotImplemented)),
     ("skills", None),
     ("archive", Some(ReasonCode::NotImplemented)),
@@ -200,6 +226,9 @@ impl ReasonCode {
 }
 
 /// `GET /v1/capabilities`：一个发行版一张清单，endpoints 全从注册表生成。
+///
+/// 形状是前向兼容的：未来（#51）可能给 module 加可选的 `kind` 字段，那是**加法**，
+/// 不替换 `name` / `enabled` / `endpoints` / `reason` 的既有语义。
 pub fn capabilities() -> Value {
     let modules: Vec<Value> = MANIFEST
         .iter()
