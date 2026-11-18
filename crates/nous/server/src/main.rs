@@ -28,33 +28,113 @@ use std::process::ExitCode;
 use axum::Router;
 use nous_durable::storage::{adopt_legacy_copy, SqliteStore};
 use nous_durable::StorageError;
-use nous_server::{auth, router, AppState, DurableCommands, SessionObserver};
+use nous_server::{auth, refusal, router, AppState, DurableCommands, SessionObserver};
+use nous_server::refusal::{decide_refusal, EXIT_ERROR, EXIT_REFUSED};
+#[allow(unused_imports)]
+use refusal::REFUSAL_REASONS;
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
 
-/// 启动门槛的统一出口：收集所有「不许启动」的理由，一次写 stderr 后以非 0 退出。
-/// #50 的 token 门槛与 #51 的 faux 门槛共用这一个函数（一个函数、多条理由）。
-fn refuse_startup(reasons: &[String]) -> ! {
-    assert!(!reasons.is_empty(), "refuse_startup 至少要有 1 条理由");
-    for reason in reasons {
-        eprintln!("nous-server: 拒绝启动：{reason}");
+/// 启动门槛的统一出口：一行 `refuse: <slug>` 到 stderr，退出码走理由表。
+/// #50 的 token 门槛、#51 的 faux 门槛、D12 的 cwd 门槛共用这一个函数。
+fn refuse_startup(code: &str, detail: Option<&str>) -> ! {
+    match decide_refusal(code) {
+        Some(reason) => {
+            eprintln!("{}", reason.line());
+            if let Some(detail) = detail {
+                eprintln!("nous-server: {detail}");
+            }
+            std::process::exit(reason.exit as i32);
+        }
+        None => {
+            eprintln!("nous-server: unknown refusal code: {code}");
+            std::process::exit(EXIT_ERROR as i32);
+        }
     }
-    std::process::exit(2)
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
+        Err(RunError::Refused(code, detail)) => {
+            refuse_startup(&code, Some(&detail))
+        }
+        Err(RunError::Failed(error)) => {
             eprintln!("nous-server: {error}");
-            ExitCode::from(2)
+            ExitCode::from(EXIT_ERROR)
         }
     }
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// 运行错误分两类：拒绝启动（78，理由表）与一般失败（2）。
+enum RunError {
+    Refused(&'static str, String),
+    Failed(Box<dyn std::error::Error>),
+}
+
+impl From<Box<dyn std::error::Error>> for RunError {
+    fn from(error: Box<dyn std::error::Error>) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<String> for RunError {
+    fn from(message: String) -> Self {
+        Self::Failed(message.into())
+    }
+}
+
+impl From<&str> for RunError {
+    fn from(message: &str) -> Self {
+        Self::Failed(message.to_string().into())
+    }
+}
+
+impl From<std::io::Error> for RunError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Failed(Box::new(error))
+    }
+}
+
+impl From<std::net::AddrParseError> for RunError {
+    fn from(error: std::net::AddrParseError) -> Self {
+        Self::Failed(Box::new(error))
+    }
+}
+
+macro_rules! run_error_from {
+    ($($ty:ty),* $(,)?) => {
+        $(impl From<$ty> for RunError {
+            fn from(error: $ty) -> Self {
+                Self::Failed(Box::new(error))
+            }
+        })*
+    };
+}
+
+run_error_from!(
+    axum::Error,
+    nous_server::ServerError,
+);
+
+impl From<nous_durable::StorageError> for RunError {
+    fn from(error: nous_durable::StorageError) -> Self {
+        if error.is_schema_too_new() {
+            return Self::Refused(
+                "schema-too-new",
+                format!("database schema is newer than this binary: {error}"),
+            );
+        }
+        Self::Failed(error.into())
+    }
+}
+
+// verify.sh 2b 读 EXIT_REFUSED；保证常量与本文件同一处定义。
+const _: u8 = EXIT_REFUSED;
+
+async fn run() -> Result<(), RunError> {
     // `--print-token`：只打印 token 本身（给 `curl -H "Authorization: Bearer $(…)"` 直接用），
     // 不启服务、不碰库。缺失时按首次启动生成。
     let token_path = auth::default_token_path();
@@ -140,20 +220,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 门槛理由集中在**这一个**数组里：#51 的 faux 检查与 #50 的 token 检查共用
     // refuse_startup。不许再写第二个 if + refuse_startup —— 那会让两条理由的日志口径分叉。
-    let mut reasons: Vec<String> = Vec::new();
     if faux && !loopback {
-        reasons.push(format!(
-            "faux provider 只允许绑回环（127.0.0.1），当前监听 {address}"
-        ));
+        refuse_startup(
+            "faux-on-non-loopback",
+            Some(&format!(
+                "faux provider 只允许绑回环（127.0.0.1），当前监听 {address}"
+            )),
+        );
     }
     if loaded.is_none() && !loopback {
-        reasons.push(format!(
-            "NOUS_LISTEN={address} 绑非回环但没有可用 token；请先用 `nous-app --print-token` 生成/抄取 token（文件：{}）",
-            token_path.display()
-        ));
-    }
-    if !reasons.is_empty() {
-        refuse_startup(&reasons);
+        refuse_startup(
+            "no-token-on-non-loopback",
+            Some(&format!(
+                "NOUS_LISTEN={address} 绑非回环但没有可用 token；请先用 `nous-app --print-token` 生成/抄取 token（文件：{}）",
+                token_path.display()
+            )),
+        );
     }
 
     let token = match loaded {
