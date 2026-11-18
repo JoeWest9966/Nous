@@ -290,3 +290,82 @@ async fn next_frame(stream: &mut axum::body::BodyDataStream) -> Value {
         .expect("data 行");
     serde_json::from_str(data).expect("帧是 JSON")
 }
+
+/// abort 两次：都 200、响应字节相等、`entries` 只多一条终态提交。
+#[tokio::test]
+async fn abort_twice_is_byte_identical_and_adds_one_entry() {
+    let path = temp_db("abort-idempotent-http");
+    seed(
+        &path,
+        Some(json!({
+            "id": 10,
+            "conversationId": 1,
+            "kind": "pi.generation",
+            "version": 1,
+            "input": {},
+            "background": false,
+            "abortRequested": false,
+            "state": { "status": "running" }
+        })),
+    )
+    .await;
+    let app = AppState::durable(&path).unwrap();
+    let routes = router(app.clone());
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/sessions/1/abort")
+        .body(Body::empty())
+        .unwrap();
+    let first = routes.clone().oneshot(request).await.unwrap();
+    let first_status = first.status();
+    let first_bytes = axum::body::to_bytes(first.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let second = routes.clone().oneshot(request_clone()).await.unwrap();
+    let second_status = second.status();
+    let second_bytes = axum::body::to_bytes(second.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(first_status, StatusCode::OK);
+    assert_eq!(second_status, StatusCode::OK);
+    assert_eq!(first_bytes, second_bytes, "两次响应字节相等");
+
+    drop(routes);
+    drop(app);
+    let storage = Storage::open_read_only(&path).unwrap();
+    let entries = storage
+        .scan_entries(
+            &nous_durable::EntryQuery {
+                conversation_id: 1,
+                min_entry_id: None,
+                max_entry_id: None,
+                order: None,
+            },
+            100,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+    let terminal: Vec<&Value> = entries
+        .items
+        .iter()
+        .filter(|entry| entry.get("reason").is_some())
+        .collect();
+    assert_eq!(terminal.len(), 1, "abort 两次只多一条终态 entry");
+    assert_eq!(
+        terminal[0]["kind"],
+        json!("pi.assistant"),
+        "没有第二种 entry 类型"
+    );
+    assert_eq!(terminal[0]["reason"], json!("user_cancel"));
+    let _ = std::fs::remove_file(&path);
+}
+
+fn request_clone() -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/v1/sessions/1/abort")
+        .body(Body::empty())
+        .unwrap()
+}

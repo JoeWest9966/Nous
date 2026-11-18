@@ -20,4 +20,5 @@ pub use records::{
     AbortReason, ContextEdit, ConversationOwner, ConversationOwnership, ConversationParent,
     ConversationRecord, DocumentFork, DocumentHistory, DocumentRecord, DocumentScope, EntryRecord,
     SubmissionFields, SubmissionRecord, SubmissionStatus, SubmissionType, TaskRecord,
+    TerminalReason,
 };

@@ -24,6 +24,7 @@ use nous_durable::harness::generation::{
 };
 use nous_durable::harness::live::LiveState;
 use nous_durable::session::Session;
+use nous_durable::types::TerminalReason;
 use nous_durable::{DocumentContent, StorageWrite};
 use serde_json::{json, Value};
 
@@ -154,6 +155,7 @@ fn classify_request(entry_id: i64) -> ClassifyRequest {
         retry: RetryPolicy::default(),
         retryable: false,
         overflow: None,
+        reason: TerminalReason::Done,
     }
 }
 
@@ -562,4 +564,77 @@ async fn an_empty_partial_never_commits() {
         live_value(&session).await.get("generation").is_none(),
         "整条流没有内容，`pi.live` 不该长出 generation"
     );
+}
+
+// ── issue #38：终态五值落在同一条 entry 的同一个字段 ───────────────────────────
+
+/// 终态值进入 `ClassifyRequest`，落到 entry 的 `reason` 字段；正文与终态同一条提交。
+#[tokio::test]
+async fn classify_carries_the_terminal_reason_into_the_same_entry_as_the_body() {
+    let clock = Arc::new(ManualClock::new(0));
+    let session = open("reason-done").await;
+    let message = stream_response(
+        &session,
+        &request(100),
+        streaming(vec!["he".to_string(), "llo".to_string()], 10, clock.clone()),
+        None,
+        clock.clone(),
+    )
+    .await
+    .expect("流能跑完");
+    let mut req = classify_request(9_101);
+    req.reason = TerminalReason::Done;
+    classify(&session, &req, &message, 0, None)
+        .await
+        .expect("终态能提交");
+
+    let (entry, seq) = session
+        .get_entry(9_101)
+        .await
+        .expect("能读")
+        .expect("entry 在");
+    assert_eq!(entry.kind, "pi.assistant");
+    assert_eq!(entry.reason, Some(TerminalReason::Done));
+    assert_eq!(
+        entry.model.expect("带正文")[0]["content"][0]["text"],
+        json!("hello"),
+        "正文与 reason 必须同一条 entry"
+    );
+
+    // 「同一条提交」是可观测的：终态那次提交只有一条 entry，正文与 reason 就在它里面。
+    assert_eq!(seq, 2, "建库 1 次 + 终态 1 次；中间没有第二条终态提交");
+    assert_eq!(
+        entry.reason,
+        Some(TerminalReason::Done),
+        "这条 entry 同时带正文与终态"
+    );
+}
+
+/// 四种非正常终止也只写 `pi.assistant` 一种 entry，reason 各不同。
+#[tokio::test]
+async fn all_five_reasons_use_the_same_entry_kind() {
+    let reasons = [
+        TerminalReason::Done,
+        TerminalReason::UserCancel,
+        TerminalReason::Timeout,
+        TerminalReason::ExtensionCrash,
+        TerminalReason::Abandoned,
+    ];
+    let clock = Arc::new(ManualClock::new(0));
+    let session = open("reason-five").await;
+    for (index, reason) in reasons.into_iter().enumerate() {
+        let message = AssistantMessage::empty(Api::Faux, "faux", "faux", 0);
+        let mut req = classify_request(9_200 + index as i64);
+        req.reason = reason;
+        classify(&session, &req, &message, 0, None)
+            .await
+            .expect("终态能提交");
+        let (entry, _) = session
+            .get_entry(req.entry_id)
+            .await
+            .expect("能读")
+            .expect("entry 在");
+        assert_eq!(entry.kind, "pi.assistant", "不许有第二种 entry 类型");
+        assert_eq!(entry.reason, Some(reason));
+    }
 }

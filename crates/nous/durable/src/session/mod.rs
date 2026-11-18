@@ -160,6 +160,10 @@ pub struct Session {
     /// settle 点。写进去之后不再改动（先写再 `notify`）。
     end: tokio::sync::Mutex<Option<SessionEnd>>,
     settled: tokio::sync::Notify,
+    /// 这个会话唯一的取消通道。客户端 abort / 内核超时 / 扩展进程死全拿到它的 clone，
+    /// 三个源都调 [`CancelHandle::cancel`](nous_chord::context::CancelHandle::cancel) ——
+    /// 取消的**实现**只有 chord 那一处（spec ch5 / S7）。
+    cancellation: nous_chord::context::CancelHandle,
 }
 
 impl Session {
@@ -174,11 +178,13 @@ impl Session {
     /// 用现成的存储与观察者名单。观察者名单要由调用方留着 —— `Session` 不提供「给我名单」的
     /// 访问器，因为公开面就是五个方法，而挂观察者是构造期的事。
     pub fn with_observers(storage: Storage, observers: Arc<ObserverRegistry>) -> Self {
+        let (_, cancellation) = nous_chord::context::with_cancel(nous_chord::context::Context::new());
         Self {
             storage: tokio::sync::Mutex::new(Some(storage)),
             observers,
             end: tokio::sync::Mutex::new(None),
             settled: tokio::sync::Notify::new(),
+            cancellation,
         }
     }
 

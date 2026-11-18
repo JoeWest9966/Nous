@@ -17,7 +17,7 @@
 //!
 //! 上游 v2 库在写模式下是**明确拒绝**的（`docs/storage.md` §12.3）：两边的版本号不可比，
 //! 认门靠 `durable_schema.writer`。所以拿 `fixtures/agent.sqlite` 的副本起服务，默认会
-//! 报错并提示这个开关。它只做两件事：补 `writer` 列（值 `nous`）、版本号记成 1 —— 表结构
+//! 报错并提示这个开关。它只做两件事：补 `writer` 列（值 `nous`）、版本号记成本库当前版本（2）—— 表结构
 //! 已逐字相同，不动任何行。**只对副本用**：跑完那份文件在本库眼里就是 v1。
 
 use std::io::Write;
@@ -70,9 +70,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+
     // spec §3.4：监听地址是本进程自己的配置，不是「服务器地址发现」。生产配置里
     // 不许出现 `NOUS_SERVER_ADDR`（spec ch1 判据 11：发现唯一，走 resolve），所以
     // 这个变量叫 `NOUS_LISTEN`。测试与 verify.sh 冷启动段用它给临时端口。
+    // 整机崩 / 重启留下的孤儿：启动扫一次，补一条 `abandoned`。幂等（连重启三次只多一条），
+    // 进程熔断不走这里（那是 `extension_crash`）。**走 `state` 已经持有的那个写者** ——
+    // 另开 `Session` 就是第二条写通道（`#38` 收尾，2026-11-18）。
+    state.reclaim_orphans().await?;
+
     let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let actual = listener.local_addr()?;
