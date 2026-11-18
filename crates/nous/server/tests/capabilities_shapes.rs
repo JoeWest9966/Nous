@@ -88,6 +88,7 @@ async fn device_response_pins_client_shape() {
             ("self", is_string_or_null),
             ("origin", is_string_or_null),
             ("node", is_string_or_null),
+            ("version", is_string),
             ("startedAt", |v| v.is_string() || v.is_number() || v.is_null()),
             ("model", |_| true), // types.rs: Option<Value> —— 空目录就是 null
             ("faux", is_bool),
@@ -166,46 +167,167 @@ async fn extensions_response_pins_empty_items() {
     snapshot("extensions_response_pins_empty_items", &body);
 }
 
-/// GET /v1/capabilities —— desk 按 modules 显示/隐藏功能面。
+/// GET /v1/capabilities —— 拷问结果 §1–§7：contract/server/11 模块/reason 对象/runtime。
 #[tokio::test]
 async fn capabilities_declares_modules_and_reasons() {
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
     let (status, body) = get_json(&app, "/v1/capabilities").await;
     assert_eq!(status, StatusCode::OK, "GET /v1/capabilities 应 200");
-    fields(&body, "capabilities", &[("modules", is_array)]);
+    fields(
+        &body,
+        "capabilities",
+        &[
+            ("contract", |v| v.is_i64()),
+            ("server", |v| v.is_object()),
+            ("modules", is_array),
+            ("runtime", |v| v.is_object()),
+        ],
+    );
+    assert_eq!(body["contract"], json!(1));
+    fields(
+        &body["server"],
+        "server",
+        &[("name", is_string), ("version", is_string)],
+    );
+    assert_eq!(body["server"]["name"], json!("nous"));
+    fields(
+        &body["runtime"]["provider"],
+        "runtime.provider",
+        &[("configured", is_bool), ("message", is_string)],
+    );
+
     let modules = body["modules"].as_array().unwrap();
     let by_name: std::collections::BTreeMap<&str, &Value> = modules
         .iter()
         .map(|m| (m["name"].as_str().expect("name 是字符串"), m))
         .collect();
+    // 名字 == docs/plugins.md 的 module 列（评论拍板：ext，不是 extensions）。
     for name in [
         "sessions",
+        "documents",
         "presets",
         "archive",
         "combos",
         "triggers",
-        "fs",
         "extensions",
+        "skills",
+        "prompts",
+        "selection",
+        "device",
+        "ext",
     ] {
+        if name == "extensions" {
+            continue; // 旧名不许出现；下面的断言单独钉死
+        }
         let module = by_name
             .get(name)
             .unwrap_or_else(|| panic!("capabilities 缺模块 {name}"));
         fields(module, "module", &[("name", is_string), ("enabled", is_bool)]);
+        if module["enabled"].as_bool() == Some(true) {
+            let endpoints = module["endpoints"].as_array().unwrap_or_else(|| {
+                panic!("enabled:true 的 {name} 必须有 endpoints 数组")
+            });
+            assert!(
+                endpoints.iter().all(|e| e.is_string()),
+                "{name}.endpoints 元素是字符串"
+            );
+            assert!(
+                module.get("reason").is_none(),
+                "enabled:true 不该带 reason"
+            );
+        } else {
+            let reason = module["reason"]
+                .as_object()
+                .unwrap_or_else(|| panic!("enabled:false 的 {name} 必须有 reason 对象"));
+            let code = reason["code"].as_str().unwrap();
+            assert!(
+                matches!(
+                    code,
+                    "not_implemented"
+                        | "disabled_by_manifest"
+                        | "frozen"
+                        | "needs_credentials"
+                ),
+                "非法 reason.code: {code}"
+            );
+            assert!(reason["message"].is_string(), "reason.message 是人话");
+            assert!(
+                module.get("endpoints").is_none(),
+                "enabled:false 不该声明 endpoints"
+            );
+        }
     }
+    assert!(by_name.get("extensions").is_none(), "模块名是 ext，不是 extensions");
     assert_eq!(by_name["sessions"]["enabled"], json!(true));
-    assert_eq!(by_name["extensions"]["enabled"], json!(true));
-    for name in ["presets", "archive", "combos", "triggers", "fs"] {
-        assert_eq!(by_name[name]["enabled"], json!(false), "{name} 该关掉");
+    assert_eq!(by_name["ext"]["enabled"], json!(false));
+    assert_eq!(by_name["ext"]["reason"]["code"], json!("frozen"));
+    snapshot("capabilities_declares_modules_and_reasons", &body);
+}
+
+/// 拷问结果 §8：_routes ↔ enabled 模块 endpoints 多重集相等（双向）。
+/// 两侧都来自 `meta` 的同一注册表；这里从 HTTP 响应分别取值，不让手抄数组蒙混。
+#[tokio::test]
+async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
+    use std::collections::BTreeMap;
+    fn tally(items: Vec<String>) -> BTreeMap<String, usize> {
+        let mut map = BTreeMap::new();
+        for item in items {
+            *map.entry(item).or_insert(0) += 1;
+        }
+        map
+    }
+
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (status, capabilities) = get_json(&app, "/v1/capabilities").await;
+    assert_eq!(status, StatusCode::OK);
+    let declared: Vec<String> = capabilities["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|module| module["enabled"].as_bool() == Some(true))
+        .flat_map(|module| {
+            module["endpoints"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap().to_string())
+        })
+        .collect();
+    let registry: Vec<String> = nous_server::meta::routes_view()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|route| {
+            format!(
+                "{} {}",
+                route["method"].as_str().unwrap(),
+                route["path"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert_eq!(
+        tally(declared),
+        tally(registry),
+        "_routes 与 endpoints 必须是同一个多重集"
+    );
+    // 负向哨兵：注册表里每条声明都得真能在 Router 上打到（不是 404）。
+    for route in nous_server::meta::ROUTES {
+        if !nous_server::meta::route_enabled(route.module) {
+            continue;
+        }
+        let axum_path = route.path.replace(":id", "{id}").replace("/v1/read/{id}", "/v1/read/2");
+        let axum_path = axum_path.replace("/v1/sessions/{id}", "/v1/sessions/2");
+        let uri = format!("/{}", axum_path.trim_start_matches('/'));
+        let request = Request::builder()
+            .method(route.method)
+            .uri(&uri)
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
         assert!(
-            by_name[name]["reason"].is_string(),
-            "{name} 关掉必须给一句 reason"
+            response.status() != StatusCode::NOT_FOUND,
+            "注册表声明的 {} {uri} 在 router 里不存在",
+            route.method
         );
     }
-    for name in ["sessions", "extensions"] {
-        let endpoints = by_name[name]["endpoints"]
-            .as_array()
-            .unwrap_or_else(|| panic!("{name}.endpoints 该是数组"));
-        assert!(endpoints.iter().all(Value::is_string));
-    }
-    snapshot("capabilities_declares_modules_and_reasons", &body);
 }

@@ -20,6 +20,7 @@ pub fn device(models: &ModelsResponse) -> Value {
         "self": std::env::var("NOUS_SELF").ok(),
         "origin": std::env::var("NOUS_ORIGIN").ok(),
         "node": env!("CARGO_PKG_VERSION"),
+        "version": env!("CARGO_PKG_VERSION"),
         "startedAt": started_at(),
         "model": default,
         "faux": false,
@@ -91,36 +92,153 @@ pub fn extensions() -> Value {
     json!({ "items": [] })
 }
 
-/// `GET /v1/capabilities`：一个发行版一张清单。desk 按它显示/隐藏功能面。
-pub fn capabilities() -> Value {
-    json!({ "modules": [
-        {
-            "name": "sessions",
-            "enabled": true,
-            "endpoints": [
-                "GET /v1/sessions",
-                "POST /v1/sessions",
-                "GET /v1/sessions/:id/entries",
-                "GET /v1/sessions/:id/events",
-                "POST /v1/sessions/:id/messages",
-                "POST /v1/sessions/:id/abort",
-                "POST /v1/sessions/:id/fork",
-                "POST /v1/sessions/:id/rename"
-            ]
-        },
-        {
-            "name": "presets",
-            "enabled": false,
-            "reason": "document 模块未落地（#47）"
-        },
-        { "name": "archive", "enabled": false, "reason": "A 阶段关闭" },
-        { "name": "combos", "enabled": false, "reason": "A 阶段关闭" },
-        { "name": "triggers", "enabled": false, "reason": "A 阶段关闭" },
-        { "name": "fs", "enabled": false, "reason": "宿主目录浏览的安全面另议" },
-        {
-            "name": "extensions",
-            "enabled": true,
-            "endpoints": ["GET /v1/extensions"]
+// ── 端点注册表：唯一真相（#47 拷问结果 §2/§4/§8）─────────────────────────
+//
+// `router()` 从这里装配真路由；`capabilities()` 从这里生成 endpoints；
+// `routes_view()` 是给 #48 的 `GET /v1/_routes` 用的同一份视图。
+// 三处共用一张表：手抄数组会让「声明不许说谎」的判据失去意义。
+
+/// 一条已注册路由：`(method, 路由模板原文)`。模板保留 `:id` 的原文形态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegisteredRoute {
+    pub method: &'static str,
+    pub path: &'static str,
+    /// `docs/plugins.md` 的 module 列（用户功能面，不是 crate 名）。
+    pub module: &'static str,
+}
+
+/// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
+pub const ROUTES: &[RegisteredRoute] = &[
+    RegisteredRoute { method: "GET", path: "/v1/sessions", module: "sessions" },
+    RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
+    RegisteredRoute { method: "POST", path: "/v1/read/:id", module: "sessions" },
+    RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
+    RegisteredRoute { method: "POST", path: "/v1/sessions", module: "sessions" },
+    RegisteredRoute { method: "GET", path: "/v1/sessions/:id/entries", module: "sessions" },
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
+    RegisteredRoute { method: "GET", path: "/v1/sessions/:id/events", module: "sessions" },
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/abort", module: "sessions" },
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/fork", module: "sessions" },
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/rename", module: "sessions" },
+    RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/selection", module: "selection" },
+    RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
+    RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
+    RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
+    RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
+];
+
+/// `GET /v1/_routes` 与 capabilities 共用的视图：清单开着且代码注册了什么，就说什么。
+///
+/// 被清单关掉的模块（`ext` 冻结等）物理路由仍在，但不对客户端声明——判据是「_routes ↔
+/// enabled 模块 endpoints 多重集相等」，两侧同源才不会说谎。#48 合入时直接
+/// `Json(meta::routes_view())`，不要再建第二张表。
+pub fn routes_view() -> Value {
+    Value::Array(
+        enabled_routes()
+            .map(|route| json!({ "method": route.method, "path": route.path }))
+            .collect(),
+    )
+}
+
+/// 某模块是否在发行清单里开着且可用（给判据与 _routes 用）。
+pub fn route_enabled(module: &str) -> bool {
+    MANIFEST
+        .iter()
+        .find(|(name, _)| *name == module)
+        .is_some_and(|(_, reason)| reason.is_none())
+}
+
+fn enabled_routes() -> impl Iterator<Item = &'static RegisteredRoute> {
+    ROUTES.iter().filter(|route| route_enabled(route.module))
+}
+
+/// 清单：模块名 == `docs/plugins.md` 的 module 列（评论第二条的拍板）。
+/// `enabled` = 清单 ∩ 代码：没有注册路由的模块一律 disabled + reason。
+const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
+    ("sessions", None),
+    ("documents", Some(ReasonCode::NotImplemented)),
+    ("presets", Some(ReasonCode::NotImplemented)),
+    ("skills", None),
+    ("archive", Some(ReasonCode::NotImplemented)),
+    ("combos", Some(ReasonCode::NotImplemented)),
+    ("triggers", Some(ReasonCode::NotImplemented)),
+    ("device", None),
+    ("selection", None),
+    ("prompts", None),
+    ("ext", Some(ReasonCode::Frozen)),
+];
+
+#[derive(Debug, Clone, Copy)]
+enum ReasonCode {
+    NotImplemented,
+    #[allow(dead_code)] // 四值封闭：desk 按这个枚举分支，不许少一个
+    DisabledByManifest,
+    Frozen,
+    #[allow(dead_code)] // 同上；#51 接上凭证后才真正构造
+    NeedsCredentials,
+}
+
+impl ReasonCode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::NotImplemented => "not_implemented",
+            Self::DisabledByManifest => "disabled_by_manifest",
+            Self::Frozen => "frozen",
+            Self::NeedsCredentials => "needs_credentials",
         }
-    ]})
+    }
+    fn message(self, name: &str) -> String {
+        match self {
+            Self::NotImplemented => format!("{name} 模块尚未落地"),
+            Self::DisabledByManifest => format!("{name} 在发行清单里关闭"),
+            Self::Frozen => "扩展运行时已冻结，这里只返回空清单".to_string(),
+            Self::NeedsCredentials => format!("{name} 需要凭证才能使用"),
+        }
+    }
+}
+
+/// `GET /v1/capabilities`：一个发行版一张清单，endpoints 全从注册表生成。
+pub fn capabilities() -> Value {
+    let modules: Vec<Value> = MANIFEST
+        .iter()
+        .map(|(name, manifest_reason)| {
+            let registered: Vec<&RegisteredRoute> = enabled_routes()
+                .filter(|route| route.module == *name)
+                .collect();
+            // 清单关掉的模块即便有代码也不声明；清单开着但没代码就 not_implemented。
+            let reason = manifest_reason.or_else(|| {
+                registered
+                    .is_empty()
+                    .then_some(ReasonCode::NotImplemented)
+            });
+            match reason {
+                Some(code) => json!({
+                    "name": name,
+                    "enabled": false,
+                    "reason": { "code": code.as_str(), "message": code.message(name) },
+                }),
+                None => json!({
+                    "name": name,
+                    "enabled": true,
+                    "endpoints": registered
+                        .iter()
+                        .map(|route| format!("{} {}", route.method, route.path))
+                        .collect::<Vec<_>>(),
+                }),
+            }
+        })
+        .collect();
+    json!({
+        "contract": 1,
+        "server": { "name": "nous", "version": env!("CARGO_PKG_VERSION") },
+        "modules": modules,
+        "runtime": {
+            "provider": {
+                "configured": false,
+                "message": "没有配置真实 provider 凭证，发消息会 503",
+            }
+        }
+    })
 }

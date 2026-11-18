@@ -1,50 +1,110 @@
 {
+  "contract": 1,
+  "server": {
+    "name": "nous",
+    "version": "0.1.0"
+  },
   "modules": [
     {
       "name": "sessions",
       "enabled": true,
       "endpoints": [
         "GET /v1/sessions",
+        "GET /v1/unread",
+        "POST /v1/read/:id",
         "POST /v1/sessions",
         "GET /v1/sessions/:id/entries",
-        "GET /v1/sessions/:id/events",
         "POST /v1/sessions/:id/messages",
+        "GET /v1/sessions/:id/events",
         "POST /v1/sessions/:id/abort",
         "POST /v1/sessions/:id/fork",
         "POST /v1/sessions/:id/rename"
       ]
     },
     {
+      "name": "documents",
+      "enabled": false,
+      "reason": {
+        "code": "not_implemented",
+        "message": "documents 模块尚未落地"
+      }
+    },
+    {
       "name": "presets",
       "enabled": false,
-      "reason": "document 模块未落地（#47）"
+      "reason": {
+        "code": "not_implemented",
+        "message": "presets 模块尚未落地"
+      }
+    },
+    {
+      "name": "skills",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/skills"
+      ]
     },
     {
       "name": "archive",
       "enabled": false,
-      "reason": "A 阶段关闭"
+      "reason": {
+        "code": "not_implemented",
+        "message": "archive 模块尚未落地"
+      }
     },
     {
       "name": "combos",
       "enabled": false,
-      "reason": "A 阶段关闭"
+      "reason": {
+        "code": "not_implemented",
+        "message": "combos 模块尚未落地"
+      }
     },
     {
       "name": "triggers",
       "enabled": false,
-      "reason": "A 阶段关闭"
+      "reason": {
+        "code": "not_implemented",
+        "message": "triggers 模块尚未落地"
+      }
     },
     {
-      "name": "fs",
-      "enabled": false,
-      "reason": "宿主目录浏览的安全面另议"
-    },
-    {
-      "name": "extensions",
+      "name": "device",
       "enabled": true,
       "endpoints": [
-        "GET /v1/extensions"
+        "GET /v1/machines",
+        "GET /v1/models",
+        "GET /v1/device",
+        "GET /v1/capabilities"
       ]
+    },
+    {
+      "name": "selection",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/selection"
+      ]
+    },
+    {
+      "name": "prompts",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/prompts"
+      ]
+    },
+    {
+      "name": "ext",
+      "enabled": false,
+      "reason": {
+        "code": "frozen",
+        "message": "扩展运行时已冻结，这里只返回空清单"
+      }
     }
-  ]
+  ],
+  "runtime": {
+    "provider": {
+      "configured": false,
+      "message": "没有配置真实 provider 凭证，发消息会 503"
+    }
+  }
 }
