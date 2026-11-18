@@ -232,3 +232,107 @@ fn mark_done_and_mark_orphaned_are_idempotent() {
     assert_eq!(row.state, FireState::Done, "重放成功后 done 覆盖 orphaned");
     assert_eq!(row.note.as_deref(), Some("首轮"), "note 不因状态变而丢");
 }
+
+// ── #58：观测读口（counts / lastFire / recent / lagMs）──────────────────────
+
+#[test]
+fn fire_counts_groups_by_state_from_the_ledger() {
+    let (_dir, store) = open();
+    // done×2、skipped×1、orphaned×1、pending×1 —— 逐项对上 `GROUP BY state`。
+    store.record_fire("nightly_digest", 100, None).expect("fire");
+    store.mark_done("nightly_digest", 100).expect("done");
+    store.record_fire("nightly_digest", 200, None).expect("fire");
+    store.mark_done("nightly_digest", 200).expect("done");
+    store.record_fire("nightly_digest", 300, None).expect("fire");
+    store.mark_skipped("nightly_digest", 300).expect("skipped");
+    store.record_fire("nightly_digest", 400, None).expect("fire");
+    store.mark_orphaned("nightly_digest", 400).expect("orphaned");
+    store.record_fire("nightly_digest", 500, None).expect("fire");
+
+    let counts = store.fire_counts("nightly_digest").expect("fire_counts");
+    assert_eq!(counts.done, 2);
+    assert_eq!(counts.skipped, 1);
+    assert_eq!(counts.orphaned, 1);
+    assert_eq!(counts.pending, 1);
+
+    // 对照库：`GROUP BY state` 逐项相等（#58 判据 1 的 store 半边）。
+    let mut stmt = store
+        .conn()
+        .prepare("SELECT state, count(*) FROM fires GROUP BY state")
+        .expect("stmt");
+    let from_db: std::collections::BTreeMap<String, i64> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .expect("map")
+        .collect::<rusqlite::Result<_>>()
+        .expect("collect");
+    assert_eq!(from_db.get("done"), Some(&2));
+    assert_eq!(from_db.get("skipped"), Some(&1));
+    assert_eq!(from_db.get("orphaned"), Some(&1));
+    assert_eq!(from_db.get("pending"), Some(&1));
+}
+
+#[test]
+fn fire_counts_is_zero_for_a_trigger_without_ledger_rows() {
+    let (_dir, store) = open();
+    let counts = store.fire_counts("nightly_digest").expect("fire_counts");
+    assert_eq!(counts, nous_store::FireCounts::default());
+}
+
+#[test]
+fn last_resolved_fire_skips_pending_and_orders_desc() {
+    let (_dir, store) = open();
+    assert!(store.last_resolved_fire("nightly_digest").expect("r").is_none());
+
+    store.record_fire("nightly_digest", 100, None).expect("fire");
+    store.mark_skipped("nightly_digest", 100).expect("skipped");
+    store.record_fire("nightly_digest", 200, None).expect("fire");
+    store.mark_done("nightly_digest", 200).expect("done");
+    // pending 的 300 不算「上次点火」。
+    store.record_fire("nightly_digest", 300, None).expect("fire");
+
+    let last = store.last_resolved_fire("nightly_digest").expect("r").expect("行");
+    assert_eq!(last.fire_at, 200);
+    assert_eq!(last.state, FireState::Done);
+}
+
+#[test]
+fn recent_fires_orders_desc_and_limits() {
+    let (_dir, store) = open();
+    for at in [100, 200, 300] {
+        store.record_fire("nightly_digest", at, None).expect("fire");
+    }
+    let recent = store.recent_fires("nightly_digest", 2).expect("recent");
+    let ats: Vec<i64> = recent.iter().map(|fire| fire.fire_at).collect();
+    assert_eq!(ats, vec![300, 200], "时间倒序 + limit");
+    assert!(store.recent_fires("nightly_digest", 0).expect("r").is_empty());
+    assert!(store.recent_fires("nightly_digest", -1).expect("r").is_empty());
+    assert!(store.recent_fires("no_such", 10).expect("r").is_empty());
+}
+
+// ── #58 判据 3 的纯函数半边：lagMs 注入时钟、手动不推进 tick ────────────────
+
+#[test]
+fn scheduler_lag_is_zero_while_heartbeats_arrive() {
+    let tick = nous_store::SCHEDULER_TICK_MS;
+    // 心跳准点：lastTickAt 恰好 = 上拍 + tick，lag 恒 0。
+    for beat in 0..5_i64 {
+        let now = (beat + 1) * tick;
+        assert_eq!(nous_store::scheduler_lag(now, Some(beat * tick), tick), 0);
+    }
+    // 晚一点（如 GC 停顿 500ms）：lag 如实上报 500 —— 自报迟到量，不粉饰。
+    assert_eq!(nous_store::scheduler_lag(tick + 500, Some(0), tick), 500);
+}
+
+#[test]
+fn scheduler_lag_grows_when_the_heartbeat_stalls() {
+    let tick = nous_store::SCHEDULER_TICK_MS;
+    // 心跳停在 0，时钟走到 3×tick：下一拍该响而未响的量是 2×tick。
+    assert_eq!(nous_store::scheduler_lag(3 * tick, Some(0), tick), 2 * tick);
+    // 卡死 10 分钟：lag 继续长，不封顶 —— 这是「循环卡住」的第一个信号。
+    assert_eq!(
+        nous_store::scheduler_lag(600_000, Some(0), tick),
+        600_000 - tick
+    );
+    // 一拍都没响过（刚启动）：0，不是无限大。
+    assert_eq!(nous_store::scheduler_lag(600_000, None, tick), 0);
+}

@@ -52,7 +52,7 @@
 | `audit` | nous | (待建) `nous-audit` | app | 编译期 | 事件追加与投影 | 否 | 今天 `activity.js`（55 行） |
 | `dispatcher` | nous | (待建) `nous-dispatcher` | app | 编译期 | 调度节拍（trigger → 会话） | 否 | 内核算核心三件之一，见下注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
-| `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session） | 否 | #57 落地；调度循环不在本票 |
+| `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口） | 否 | #57 落地；调度循环不在本票 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | nous | — | app | 声明式 | 模板 / 终极模板名册 | 否 | Rust 版是否保留待判 |
 | `skills` | nous | — | app | 声明式 | skill 目录（提供） | 否 | 数据；管理面见下一行 |

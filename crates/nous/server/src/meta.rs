@@ -145,6 +145,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
     RegisteredRoute { method: "GET", path: "/v1/triggers", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/fire", module: "triggers" },
+    // #58：观测读口 —— 每个触发器自己的账，可读（时间倒序）。
+    RegisteredRoute { method: "GET", path: "/v1/triggers/{code}/fires", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
     // #48：documents 的 12 条端点（模板原文来自 nous_documents::DOCUMENT_ROUTES）。
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}", module: "documents" },

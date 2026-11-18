@@ -10,7 +10,8 @@ use nous_durable::actor::{Actor, ActorKind};
 use nous_durable::session::commands::{submit_message, SubmitRequest};
 use nous_durable::session::Session;
 use nous_store::{
-    FireActor, FireState, Inserted, Store as TriggerStore, Trigger as TriggerDefinition, TriggerError,
+    FireActor, TriggerError, scheduler_lag, FireCounts, FireState, Inserted, SCHEDULER_TICK_MS,
+    Store as TriggerStore, Trigger as TriggerDefinition,
 };
 use serde_json::{json, Value};
 
@@ -156,6 +157,84 @@ fn durable_storage(path: &std::path::Path) -> std::result::Result<nous_durable::
         .map_err(|error| ServerError::Internal(format!("read durable: {error}")))
 }
 
+/// 触发器观测的**唯一读口**（#58）：HTTP 端点与 CLI `--triggers` 都走这一个函数、
+/// 同一份 `serde_json` 序列化 —— 不许另写一份 SQL 或第二套 JSON 装配（#58 判据 4）。
+///
+/// 故意是**同步**的：HTTP 侧锁住 `Mutex<Store>` 后把 `&Store` 递进来，CLI 侧直接递
+/// 自己开的那个 `Store` —— 两边拿着同一个函数、同一份序列化，字节只能相同。
+/// `counts` 每次从 `fires` 表现算（`GROUP BY state`），没有内存计数器；
+/// `lagMs` 由调用方注入时钟，这个函数自身零时钟。
+pub fn observation_report(
+    store: &TriggerStore,
+    definitions: &[TriggerDefinition],
+    last_tick_at: Option<i64>,
+    now_ms: i64,
+) -> Result<Value> {
+    let mut items = Vec::with_capacity(definitions.len());
+    for trigger in definitions {
+        let counts = store.fire_counts(trigger.code()).map_err(internal)?;
+        let last_fire = store.last_resolved_fire(trigger.code()).map_err(internal)?;
+        items.push(json!({
+            "code": trigger.code(),
+            "name": trigger.name(),
+            "enabled": trigger.enabled(),
+            "nextFireAt": trigger.next_fire_at(),
+            "lastFire": last_fire.as_ref().map(|fire| json!({
+                "at": fire.fire_at,
+                "state": fire.state.as_str(),
+            })),
+            "counts": counts_json(&counts),
+        }));
+    }
+    Ok(json!({
+        "triggers": items,
+        "root": Value::Null,
+        "scheduler": {
+            "lastTickAt": last_tick_at,
+            "lagMs": scheduler_lag(now_ms, last_tick_at, SCHEDULER_TICK_MS),
+            "tickMs": SCHEDULER_TICK_MS,
+        },
+    }))
+}
+
+/// 一个触发器最近的账（#58 的 `GET /v1/triggers/:code/fires`），时间倒序。
+/// 与 [`observation_report`] 同一条接缝：`&Store` 进，JSON 出。
+pub fn fire_history(
+    store: &TriggerStore,
+    definitions: &[TriggerDefinition],
+    code: &str,
+    limit: i64,
+) -> Result<Value> {
+    if !definitions.iter().any(|trigger| trigger.code() == code) {
+        return Err(ServerError::NotFound(format!("trigger {code} not found")));
+    }
+    let rows = store.recent_fires(code, limit).map_err(internal)?;
+    Ok(json!({
+        "code": code,
+        "fires": rows.iter().map(|fire| fire_row_json(fire)).collect::<Vec<_>>(),
+    }))
+}
+
+fn fire_row_json(fire: &nous_store::Fire) -> Value {
+    json!({
+        "fireAt": fire.fire_at,
+        "state": fire.state.as_str(),
+        "requestId": fire.request_id,
+        "note": fire.note,
+    })
+}
+
+/// `FireCounts` → JSON。四个键恒在：没账就是 0，读者不用猜缺键的意思。
+/// **不是从内存攒的**，入参就是刚从库里 `GROUP BY` 回来的那份。
+fn counts_json(counts: &FireCounts) -> Value {
+    json!({
+        "done": counts.done,
+        "skipped": counts.skipped,
+        "orphaned": counts.orphaned,
+        "pending": counts.pending,
+    })
+}
+
 fn internal<E: std::fmt::Display>(error: E) -> ServerError {
     ServerError::Internal(error.to_string())
 }
@@ -183,6 +262,9 @@ pub struct TriggerRuntime {
     driver_with_actor: Option<Arc<dyn Fn(&Actor) -> Arc<dyn nous_sessions::turn::TurnDriver> + Send + Sync>>,
     // durable 库路径：submission 反查与模板读取都指同一个库，不读环境。
     durable_db: std::path::PathBuf,
+    /// #58 调度心跳：最近一次 tick 的 epoch 毫秒。调度循环（下一张票）每拍写入；
+    /// 循环不存在时保持 `None`，观测端点诚实回 `null`，不伪造一拍心跳。
+    last_tick_at: Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl TriggerRuntime {
@@ -197,7 +279,27 @@ impl TriggerRuntime {
     durable_db: std::path::PathBuf,
     ) -> Result<Self> {
         let definitions = Self::load_definitions(&store)?;
-        Ok(Self { store: Arc::new(tokio::sync::Mutex::new(store)), durable, lookup, definitions: Arc::new(std::sync::RwLock::new(definitions)), driver, driver_with_actor, durable_db })
+        Ok(Self {
+            store: Arc::new(tokio::sync::Mutex::new(store)),
+            durable,
+            lookup,
+            definitions: Arc::new(std::sync::RwLock::new(definitions)),
+            driver,
+            driver_with_actor,
+            durable_db,
+            // `i64::MIN` = 「一拍都没响过」。用 0 当哨兵的话，「1970-01-01 的那一拍」
+            // 会被读成 null —— 哨兵值不许和合法取值重叠。
+            last_tick_at: Arc::new(std::sync::atomic::AtomicI64::new(Self::NO_TICK)),
+        })
+    }
+
+    /// CLI 观测读口用的轻装配（#58）：只从 store 装载定义快照，不接 Session、不接 driver。
+    /// HTTP 端点与 `nous-app --triggers` 走同一个 [`observation_report`]，接缝只有这一条。
+    /// **故意返回快照而非自构造的 runtime**：CLI 不需要那份多余的 store/Session 句柄。
+    pub fn open_definitions_only(
+        store: &TriggerStore,
+    ) -> Result<Vec<TriggerDefinition>> {
+        Self::load_definitions(store)
     }
 
     pub async fn reload_definitions(&self) {
@@ -223,6 +325,23 @@ impl TriggerRuntime {
 
     pub fn definitions(&self) -> std::sync::RwLockReadGuard<'_, Vec<TriggerDefinition>> {
         self.definitions.read().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// #58 调度心跳：调度循环每拍调一次。循环还没落地时没人调，`lastTickAt` 诚实为 `null`。
+    pub fn record_tick(&self, now_ms: i64) {
+        self.last_tick_at
+            .store(now_ms, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// 「还没响过」的哨兵值。和合法时间戳不可能重叠（epoch 毫秒不会是 `i64::MIN`）。
+    const NO_TICK: i64 = i64::MIN;
+
+    /// 最近一拍心跳（`None` = 还没响过）。`record_tick` 的读侧，配对用。
+    pub fn last_tick_at(&self) -> Option<i64> {
+        match self.last_tick_at.load(std::sync::atomic::Ordering::Relaxed) {
+            Self::NO_TICK => None,
+            value => Some(value),
+        }
     }
 
     /// 经统一六步点火；成功时若有 faux 装配就顺手跑一轮 assistant。

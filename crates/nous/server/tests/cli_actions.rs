@@ -4,6 +4,8 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use serde_json::{json, Value};
+
 fn app() -> Command {
     Command::new(env!("CARGO_BIN_EXE_nous-app"))
 }
@@ -106,6 +108,71 @@ fn active_tasks_uses_terminal_gate() {
         .unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
     assert_eq!(stdout(&output).trim(), "0", "新库没有未收尾的任务");
+}
+
+/// #58 判据 4：`nous-app --triggers` 与 HTTP 端点**逐字节相同**（同一函数、同一序列化）。
+///
+/// CLI 的 lastTickAt 恒为 null（CLI 里没有调度循环），now_ms 也随时间漂 —— 所以把
+/// HTTP 侧的比对面固定在同一口径：两边都从同一份库文件出发，走同一个
+/// `observation_report`，直接比函数输出与 CLI stdout 的 JSON。
+#[test]
+fn triggers_cli_prints_the_same_json_as_the_endpoint_reader() {
+    let dir = tempfile::tempdir().unwrap();
+    let durable_db = dir.path().join("nous.db");
+    let _storage = nous_durable::Storage::open(&durable_db).unwrap();
+    let trigger_db = dir.path().join("nous-plugins.db");
+    let store = nous_store::Store::open(&trigger_db).unwrap();
+
+    // 造一个真触发器 + 两笔账（done + skipped）。
+    let trigger = nous_store::Trigger::new(
+        nous_store::NewTriggerDefinition {
+            code: "nightly_digest",
+            name: "夜报",
+            spec: r#"{"spec_version":1,"schedule":null,"on":null}"#,
+            template_ref: r#"{"kind":"preset","ref":"nightly"}"#,
+            fires_allowed_by: r#"[{"kind":"system","id":"cron"},{"kind":"system","id":"local"}]"#,
+            target: r#"{"kind":"new"}"#,
+            policy: "serial",
+        },
+        1_000,
+        Some(&store),
+    )
+    .unwrap();
+    store.update_definition(trigger.code(), &trigger.definition_json()).unwrap();
+    store.record_fire("nightly_digest", 7_000, None).unwrap();
+    store.mark_done("nightly_digest", 7_000).unwrap();
+    store.record_fire("nightly_digest", 8_000, None).unwrap();
+    store.mark_skipped("nightly_digest", 8_000).unwrap();
+
+    let output = app()
+        .arg("--triggers")
+        .env("NOUS_DB", &durable_db)
+        .env("NOUS_PLUGINS_DB", &trigger_db)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let cli_json: Value = serde_json::from_str(stdout(&output).trim()).expect("CLI 输出必须是合法 JSON");
+
+    // 同一份库 + 同一个函数：triggers 数组与端点读口**逐字节**相同（判据 4）。
+    // scheduler 段不比：CLI 用真时钟、HTTP 侧测试用固定 0 —— 计时字段本来就随时刻漂。
+    let store = nous_store::Store::open(&trigger_db).unwrap();
+    let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store).unwrap();
+    let endpoint_reader =
+        nous_server::triggers::observation_report(&store, &definitions, None, 0).unwrap();
+    // **逐字节**：比 stdout 原文，不是比解析后的 Value —— 比 Value 的话，CLI 换成
+    // `to_string_pretty` 也照样绿（实测：故意弄脏成 pretty，这条判据不红），
+    // 而票面要的正是「同一份序列化」。字段顺序、键名、缩进任何一处漂都要红。
+    // CLI 侧没有调度循环：lastTickAt=null、lagMs=0，两个时刻下的 body 因此完全相同，
+    // 可以直接比整段 —— 不用挖掉 scheduler 段。
+    let expected = serde_json::to_string(&endpoint_reader).unwrap();
+    assert_eq!(
+        stdout(&output).trim_end_matches('\n'),
+        expected,
+        "CLI 与端点读口必须逐字节相同（#58 判据 4）"
+    );
+    assert_eq!(cli_json["triggers"][0]["counts"]["done"], json!(1));
+    assert_eq!(cli_json["triggers"][0]["counts"]["skipped"], json!(1));
+    assert_eq!(cli_json["triggers"][0]["lastFire"]["state"], json!("skipped"));
 }
 
 #[test]

@@ -242,7 +242,7 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = auth ]; then
 	step "3b. #50 /v1/* Bearer 认证与启动门槛（判据 1/3）"
 	BIN=nous-app
-	AUTH_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	AUTH_BIN="${CARGO_TARGET_DIR:-./target}/release/$BIN"
 	if [ ! -x "$AUTH_BIN" ]; then
 		bad "$AUTH_BIN 不存在 —— 先跑一次 boot 段构建"
 	else
@@ -364,7 +364,7 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = faux ]; then
 	step "3c. #51 faux 只允许绑回环"
 	BIN=nous-app
-	FAUX_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	FAUX_BIN="${CARGO_TARGET_DIR:-./target}/release/$BIN"
 	if [ ! -x "$FAUX_BIN" ]; then
 		bad "$FAUX_BIN 不存在 —— 先跑一次 boot 段构建"
 	else
@@ -384,8 +384,72 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = faux ]; then
 	fi
 fi
 
+# 3d. #58 观测判据：`nous-app --triggers` 与 HTTP 端点同一读口（真进程）
+if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = triggers ]; then
+	step "3d. #58 触发器观测（--triggers 与 HTTP 同一读口）"
+	BIN=nous-app
+	TRG_BIN="${CARGO_TARGET_DIR:-./target}/release/$BIN"
+	if [ ! -x "$TRG_BIN" ]; then
+		bad "$TRG_BIN 不存在 —— 先跑一次 boot 段构建"
+	else
+		TRG_TMP=$(mktemp -d)
+		# 先用真迁移链建库：--triggers 对一个不存在的库会走 Store::open 的迁移。
+		TRG_TMP="$TRG_TMP" NOUS_DB="$TRG_TMP/nous.db" NOUS_PLUGINS_DB="$TRG_TMP/nous-plugins.db" \
+			"$TRG_BIN" --triggers >"$TRG_TMP/init.out" 2>"$TRG_TMP/init.err" || {
+			bad "--triggers 迁移建库失败：$(head -2 "$TRG_TMP/init.err")"
+			rm -rf "$TRG_TMP"
+			continue
+		}
+		TRG_TMP="$TRG_TMP" python3 - <<'PY'
+import sqlite3, json, os, sys
+base = os.environ['TRG_TMP']
+# 表已由 --triggers 自己的迁移链建好（手写 DDL 会和 migrations.rs 漂移）；这里只插数据。
+conn = sqlite3.connect(os.path.join(base, 'nous-plugins.db'))
+definition = json.dumps({
+    "spec": {"spec_version": 1, "schedule": None, "on": None},
+    "template_ref": {"kind": "preset", "ref": "nightly"},
+    "fires_allowed_by": [{"kind": "system", "id": "cron"}, {"kind": "system", "id": "local"}],
+    "target": {"kind": "new"},
+    "policy": "serial",
+}, separators=(',', ':'))
+conn.execute("INSERT INTO triggers (id, code, name, spec, enabled, next_fire_at, created_at) VALUES (1, 'nightly_digest', '夜报', ?, 1, NULL, 1000)", (definition,))
+conn.execute("INSERT INTO fires VALUES ('nightly_digest', 7000, 'done', 'trigger:nightly_digest:7000', NULL)")
+conn.execute("INSERT INTO fires VALUES ('nightly_digest', 8000, 'skipped', 'trigger:nightly_digest:8000', NULL)")
+conn.commit()
+PY
+		if [ $? -ne 0 ]; then
+			bad "造触发器库失败"
+		else
+			# durable 库也要存在（CLI 不写它，但 --triggers 只需要 triggers 库；NOUS_DB 只用来推默认目录）。
+			OUT=$(NOUS_DB="$TRG_TMP/nous.db" NOUS_PLUGINS_DB="$TRG_TMP/nous-plugins.db" "$TRG_BIN" --triggers 2>"$TRG_TMP/err")
+			rc=$?
+			if [ $rc -ne 0 ]; then
+				bad "--triggers 退出码 $rc：$(head -2 "$TRG_TMP/err")"
+			else
+				# 判据 4：stdout 必须是合法 JSON，且 counts 与库里的 GROUP BY 逐项相等。
+				if printf '%s' "$OUT" | TRG_TMP="$TRG_TMP" python3 -c '
+import json, os, sqlite3, sys
+report = json.load(sys.stdin)
+conn = sqlite3.connect(os.path.join(os.environ["TRG_TMP"], "nous-plugins.db"))
+from_db = dict(conn.execute("SELECT state, count(*) FROM fires GROUP BY state").fetchall())
+item = report["triggers"][0]
+assert item["code"] == "nightly_digest"
+for state in ("done", "skipped", "orphaned", "pending"):
+    want = from_db.get(state, 0)
+    assert item["counts"][state] == want, "counts.%s != %s" % (state, want)
+assert report["scheduler"]["lastTickAt"] is None, "CLI 没有心跳，lastTickAt 必须 null"
+' 2>"$TRG_TMP/check.err"; then
+					ok "--triggers 输出合法 JSON，counts 与库逐项相等，lastTickAt 诚实 null"
+				else
+					bad "--triggers 输出不对：$(head -2 "$TRG_TMP/check.err")"
+				fi
+			fi
+		fi
+		rm -rf "$TRG_TMP"
+	fi
+fi
+
 # 4. 台账体检：四件事机器判，不靠自觉
-#   4a 「待提货」的行不许已经有代码
 #   4b 每一行的上游路径都要能用 git cat-file 在 pin 的那个 tag 上对上
 #   4c 占位桩：todo!()/unimplemented!() 必须 0；注释里的 占位/stub/FIXME 只报数
 #   4d 台账的四列 + 状态值不许出现别的取值

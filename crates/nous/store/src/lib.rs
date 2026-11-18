@@ -41,7 +41,10 @@ use std::path::Path;
 use rusqlite::Connection;
 
 pub use error::{Result, StoreError};
-pub use fires::{reclaim, request_id, Action, Fire, FireState, Inserted, GRACE_MS};
+pub use fires::{
+    reclaim, request_id, scheduler_lag, Action, Fire, FireCounts, FireState, Inserted,
+    SCHEDULER_TICK_MS, GRACE_MS,
+};
 pub use migrations::{CURRENT_VERSION, VERSION_TABLE};
 pub use trigger::{
     ensure_code_immutable, fire_due, parse_five_field_cron, DueFire, FireActor, NewTrigger as NewTriggerDefinition,
