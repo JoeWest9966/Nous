@@ -130,3 +130,18 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 
 **解**：`generation.rs` 改成 `saturating_add`。规矩：**凡是用"极大值"关掉某个定时器的地方，
 都要假设它会被加到真实时间上** —— 虚拟时钟不会替你发现这类问题。
+
+## 2026-11-18 · 第二个会话永远建不出来：`DocumentCreate` 撞同一份地址
+
+**症状**：`POST /v1/sessions` 第一次 201，第二次 500 ——
+`create refused: Document address already has a current incarnation: ["qrd3wh.sessions","session",0,0,""]`。
+单测全绿（每个测试只建一个会话），真机上第二个人建会话就炸。
+
+**原因**：会话名字存在**一份共享**的 `qrd3wh.sessions` 文档里（`names: {会话id: 名字}`，上游就是这个
+形状）。建会话代码写成了「每个会话 `DocumentCreate` 一份」，而这份文档的地址没有区分键
+（`kind` + `scope=session`，没有 `key`），第二个会话就撞上同一个地址。
+
+**解**：先 `find_document` 看有没有这份文档：没有就 `DocumentCreate`（`{names:{id:名字}}`），
+有就 `DocumentChange` 追加一个名字（`version + 1`）。判据：`creating_two_conversations_keeps_both_names`
+（负向哨兵验过 —— 退回「每次都 Create」立刻红）。
+**通用规矩**：`DocumentCreate` 之前先问「这个地址会不会已经有主」，尤其当地址里没有 `key`。

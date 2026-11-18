@@ -42,6 +42,7 @@ use nous_chord::watch::WatchEnd;
 
 use crate::storage::commit::{StoredBatch, StoredChange, StoredDocumentChange};
 use crate::storage::writes::Refusal;
+use crate::storage::sessions::LEGACY_NAMES_DOCUMENT_KIND;
 use crate::types::{DocumentScope, EntryRecord};
 use crate::{
     DocumentContent, DocumentPoint, Id, Seq, Storage, StorageError, StorageWrite, StoredDocument,
@@ -329,20 +330,51 @@ impl Session {
             "model": config.get("model").cloned().unwrap_or(serde_json::Value::Null),
             "thinkingLevel": config.get("thinkingLevel").cloned().unwrap_or(serde_json::Value::Null),
         });
-        let writes = vec![
-            StorageWrite::Conversation(json!({ "id": id })),
-            StorageWrite::DocumentCreate {
+        // 名字进**同一份** `qrd3wh.sessions` 文档（`names` 是 id → 名字的表；上游就是这个形状，
+        // `render_sessions` 也只从这里读名字）。这份文档的地址没有区分键，所以「每个会话
+        // DocumentCreate 一次」在第二个会话上就撞 "address already has a current incarnation"
+        // —— 实测踩到过，不是理论问题。已经存在就改成追加一个名字。
+        let names_address = json!({ "kind": LEGACY_NAMES_DOCUMENT_KIND, "scope": { "kind": "session" } });
+        let existing = storage.find_document(&names_address, DocumentPoint::Current)?;
+        let names_write = match existing {
+            Some(record) => {
+                let names_id = record
+                    .get("id")
+                    .and_then(serde_json::Value::as_i64)
+                    .ok_or_else(|| SessionError::Shape("names document has no id".to_string()))?;
+                let snapshot = storage.materialize(names_id, DocumentPoint::Current)?;
+                let (version, mut value) = match snapshot {
+                    Some(snapshot) => (snapshot.version, snapshot.value),
+                    None => (0, json!({ "names": {} })),
+                };
+                if !value["names"].is_object() {
+                    value["names"] = json!({});
+                }
+                value["names"][id.to_string()] = name.clone();
+                StorageWrite::DocumentChange {
+                    id: names_id,
+                    content: DocumentContent::Base {
+                        version: version + 1,
+                        value,
+                    },
+                }
+            }
+            None => StorageWrite::DocumentCreate {
                 id: document_id,
                 record: json!({
                     "id": document_id,
-                    "kind": "qrd3wh.sessions",
+                    "kind": LEGACY_NAMES_DOCUMENT_KIND,
                     "scope": DocumentScope::Session,
                 }),
                 content: DocumentContent::Base {
                     version: 1,
-                    value: json!({ "names": { id.to_string(): name }, "config": config }),
+                    value: json!({ "names": { id.to_string(): name } }),
                 },
             },
+        };
+        let writes = vec![
+            StorageWrite::Conversation(json!({ "id": id })),
+            names_write,
             StorageWrite::DocumentCreate {
                 id: agent_id,
                 // 会话作用域的文档必须声明历史与 fork 语义：形状照上游 `pi.agent`
