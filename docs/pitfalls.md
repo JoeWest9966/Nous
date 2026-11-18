@@ -118,3 +118,15 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 **解**：任何"接上了"的验收，必须有一条**从 HTTP 进来、到库里多一行出去**的实测输出
 （`entries` 计数 +1、SSE 有 `message_start`），不许拿 `cargo tree` / `git grep` / 判据绿代替。
 顺手记一条：注释里写"传给 X"而下面没有传，比不写注释更坏 —— 它会让 reviewer 跳过这一段。
+
+## 2026-11-18 · `interval_ms: u64::MAX` 撞上真时钟 → `attempt to add with overflow`
+
+**症状**：轮次的集成测试从虚拟时钟（`ManualClock::new(0)`，`now_ms()` 恒为 0）切到真时钟后，
+一跑就 panic：`attempt to add with overflow`，栈落在 `generation.rs` 的
+`deadline = Some(clock.now_ms() + interval)`。
+
+**原因**：为了"这一轮只提交终态、不中途 flush"，应用层把 `interval_ms` 设成 `u64::MAX`。
+虚拟时钟下 `0 + u64::MAX` 不溢出，所以测试一直是绿的；真时钟下 `now_ms() > 0` 立刻溢出。
+
+**解**：`generation.rs` 改成 `saturating_add`。规矩：**凡是用"极大值"关掉某个定时器的地方，
+都要假设它会被加到真实时间上** —— 虚拟时钟不会替你发现这类问题。

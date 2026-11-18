@@ -79,6 +79,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 另开 `Session` 就是第二条写通道（`#38` 收尾，2026-11-18）。
     state.reclaim_orphans().await?;
 
+    // 组装根：provider 注册表 + 工具表 + **同一个** `Session`（取消 token 同源）。
+    // 装配失败就不起监听 —— 一个没有 provider 的 `nous-app` 起来只会让人以为它能答话。
+    let session = state.commands().session().ok_or("durable state has no writer session")?;
+    let workdir = std::env::var("NOUS_WORKDIR").unwrap_or_else(|_| ".".to_string());
+    let runtime = nous_server::runtime::assemble(
+        &workdir,
+        &nous_server::runtime::ProcessEnvValues,
+        session,
+    )
+    .map_err(|error| format!("assemble runtime: {error}"))?;
+    let state = state.with_runtime(runtime);
+
     let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let actual = listener.local_addr()?;

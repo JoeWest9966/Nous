@@ -115,3 +115,29 @@ pub async fn first_sse_data(body: axum::body::Body) -> String {
 pub fn not_found() -> ServerError {
     ServerError::NotFound("nope".into())
 }
+
+/// 给 `AppState` 挂一个不联网的轮次工厂。
+///
+/// `/messages` 现在的语义是「解析不出 provider 就 503，不假装受理」（`#44`），
+/// 所以凡是要走受理那条路的端点判据，都得给它一个能解析的 provider。
+/// 这里用 `nous_sessions::turn::TurnHandle::faux`，正是生产代码里那个离线句柄，
+/// **不是**测试专用的第二套实现。
+pub fn attach_faux_turns(state: Arc<nous_server::AppState>) -> Arc<nous_server::AppState> {
+    struct Faux(Arc<nous_durable::session::Session>);
+    impl nous_server::runtime::TurnFactory for Faux {
+        fn turn_for(
+            &self,
+            _model: &str,
+        ) -> nous_server::Result<nous_server::runtime::TurnHandle> {
+            let script =
+                nous_ai::providers::faux::FauxScript::new().with_text("answer from the fixture");
+            Ok(nous_sessions::turn::TurnHandle::faux(
+                Arc::clone(&self.0),
+                Arc::new(nous_tools::ToolMap::new()),
+                script,
+            ))
+        }
+    }
+    let session = state.commands().session().expect("durable 装配有写者");
+    state.with_turn_factory(Arc::new(Faux(session)))
+}

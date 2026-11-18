@@ -176,10 +176,43 @@ async fn messages(
         ));
     }
     let _ = body.when_busy;
+
+    // 先解析 provider：解析不出来就 503，**不写用户 entry** —— 「先受理再假装」是禁止的
+    // （`#44` 复核：把 faux provider 当生产 provider，等于发出去永远没有回复）。
+    let handle = {
+        let runtime = state.runtime().ok_or_else(|| {
+            ServerError::Unavailable(
+                "this server was assembled without a runtime (no providers)".to_string(),
+            )
+        })?;
+        let model = conversation_model(&state, session)?;
+        runtime.turn_for(&model)?
+    };
+
+    // 受理写一条用户 entry。
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
         .await?;
+
+    // 一轮就真的在这里起：`handle` 带着 provider / 工具表 / 同一个 Session，
+    // 落库与 SSE 都走那一个写者（帧由 `CommitObserver` 推到 hub，路由不用补发）。
+    let submission = result.submission_id;
+    let conversation = session;
+    tokio::spawn(async move {
+        match handle.run(conversation, submission).await {
+            Ok(outcome) => eprintln!(
+                "nous-server: turn done conversation={conversation} submission={submission} tool_calls={}",
+                outcome.tool_calls.len()
+            ),
+            // 失败**不写终态**：终态五值里没有「provider 挂了」，编一个就是自创第六个。
+            // 客户端要么重发，要么 abort（那条会落 `user_cancel`）。
+            Err(error) => eprintln!(
+                "nous-server: turn failed conversation={conversation} submission={submission}: {error}"
+            ),
+        }
+    });
+
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -187,6 +220,20 @@ async fn messages(
             "status": result.status,
         })),
     ))
+}
+
+/// 会话配置里的模型（`"provider/modelId"`）。
+///
+/// 走 [`SessionSource::sessions`]（唯一读路径）：`/messages` 不带 model，模型是会话的属性。
+fn conversation_model(state: &AppState, conversation: i64) -> Result<String> {
+    let items = state.source().sessions()?;
+    let item = items
+        .into_iter()
+        .find(|item| item.id == conversation)
+        .ok_or_else(|| ServerError::NotFound(format!("session {conversation}")))?;
+    item.model.ok_or_else(|| {
+        ServerError::Unavailable(format!("session {conversation} has no model configured"))
+    })
 }
 
 /// `POST /v1/sessions/:id/abort`：没有活跃任务时 409（不是 200「假装停了」）。

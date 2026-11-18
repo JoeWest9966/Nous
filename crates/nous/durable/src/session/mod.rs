@@ -313,7 +313,22 @@ impl Session {
         let storage = guard.as_mut().ok_or(SessionError::Closed)?;
         let id = storage.mint_id()?;
         let document_id = storage.mint_id()?;
+        let agent_id = storage.mint_id()?;
         let name = config.get("name").cloned().unwrap_or(json!(""));
+        // 会话的 `pi.agent` 文档：`/v1/sessions` 的 `model` / `thinkingLevel` 从这里读
+        // （`storage::sessions::render_sessions`），所以**建会话时必须写**，否则新会话在列表里
+        // 永远是 `model: null`，`/messages` 也就解析不出用哪个 provider。
+        // 形状照上游：`{ cwd, extensions: {add, remove}, model: {provider, modelId}, thinkingLevel }`。
+        let extensions = config
+            .get("extensions")
+            .cloned()
+            .unwrap_or_else(|| json!([]));
+        let agent = json!({
+            "cwd": config.get("cwd").cloned().unwrap_or(serde_json::Value::Null),
+            "extensions": { "add": extensions, "remove": [] },
+            "model": config.get("model").cloned().unwrap_or(serde_json::Value::Null),
+            "thinkingLevel": config.get("thinkingLevel").cloned().unwrap_or(serde_json::Value::Null),
+        });
         let writes = vec![
             StorageWrite::Conversation(json!({ "id": id })),
             StorageWrite::DocumentCreate {
@@ -327,6 +342,19 @@ impl Session {
                     version: 1,
                     value: json!({ "names": { id.to_string(): name }, "config": config }),
                 },
+            },
+            StorageWrite::DocumentCreate {
+                id: agent_id,
+                // 会话作用域的文档必须声明历史与 fork 语义：形状照上游 `pi.agent`
+                // （`history: rewindable` / `fork: asOf`，见 fixture 的 documents 行）。
+                record: json!({
+                    "id": agent_id,
+                    "kind": "pi.agent",
+                    "scope": { "kind": "conversation", "conversationId": id },
+                    "history": "rewindable",
+                    "fork": "asOf",
+                }),
+                content: DocumentContent::Base { version: 1, value: agent },
             },
         ];
         let committed = storage.commit(&[writes], |_, _| {})?;
@@ -355,6 +383,51 @@ impl Session {
         let record: EntryRecord = serde_json::from_value(record)
             .map_err(|error| SessionError::Shape(format!("entry {id}: {error}")))?;
         Ok(Some((record, seq)))
+    }
+
+    /// 取一个 entry id（给"一轮的终态 entry"这类由应用层装配记录的情形）。
+    ///
+    /// 只推进内存里的 id，跟着下一次 [`commit`](Self::commit) 落盘 —— 所以「取了 id 但没提交」
+    /// 不会在库里留洞。**这不是第二条写通道**：写仍然只走 `commit`。
+    pub async fn mint_id(&self) -> Result<Id, SessionError> {
+        let mut guard = self.storage.lock().await;
+        let storage = guard.as_mut().ok_or(SessionError::Closed)?;
+        storage
+            .mint_id()
+            .map_err(|error| SessionError::Storage(error))
+    }
+
+    /// 一条会话的 entry 历史（含 fork 祖先链），**最老的在前**，最多 `limit` 条。
+    ///
+    /// 走库里现成的 [`Storage::scan_entries`]：fork 出来的会话只存自己那一段，历史住在父会话里；
+    /// 按 id 硬扫（`for id in 1..N { get_entry(id) }`）既慢又会静默截断，别那么写。
+    pub async fn entries(
+        &self,
+        conversation: i64,
+        limit: usize,
+    ) -> Result<Vec<EntryRecord>, SessionError> {
+        use crate::storage::cursor::ScanOrder;
+        let guard = self.storage.lock().await;
+        let storage = guard.as_ref().ok_or(SessionError::Closed)?;
+        let query = crate::EntryQuery {
+            conversation_id: conversation,
+            min_entry_id: None,
+            max_entry_id: None,
+            order: Some(ScanOrder::Ascending),
+        };
+        let page = storage
+            .scan_entries(&query, limit, None)
+            .map_err(|error| SessionError::Storage(error))?;
+        let page = page.map_err(|refusal| {
+            SessionError::Shape(format!("conversation {conversation}: {refusal:?}"))
+        })?;
+        page.items
+            .into_iter()
+            .map(|value| {
+                serde_json::from_value(value)
+                    .map_err(|error| SessionError::Shape(format!("entry: {error}")))
+            })
+            .collect()
     }
 
     fn end_all(&self, end: &WatchEnd) {

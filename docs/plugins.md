@@ -39,7 +39,7 @@
 | `tools` | nous | `nous-tools` | platform | 编译期 | read / write / edit / bash / grep / find / ls | 否 | 第一方工具，唯一进程创建面 |
 | `runtime` | nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
 | `telemetry` | nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
-| `sessions` | nous | (待建) `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**，今天埋在 `server.js` |
+| `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**；`#44` 已落地：一轮 = provider 流 → 工具 → 唯一写者 → 一条提交 |
 | `prompts` | nous | (待建) `nous-prompts` | app | 编译期 | `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
 | `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 | 否 | 已落地（#17–#37）；`ext-host` 行是它后续的重划 |
 | `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |

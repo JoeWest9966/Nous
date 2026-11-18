@@ -82,14 +82,19 @@ fn base(value: Value) -> DocumentContent {
 
 // ── 1. 公开面就是 A3 那张表 ───────────────────────────────────────────────────
 
-/// `Session` 的六条：A3 五条 + #42 加的 `create_conversation`（建会话是写，判据签字见
-/// `docs/decisions.md`）。
-const A3_METHODS: [&str; 6] = [
+/// `Session` 的八条：A3 五条 + `#42` 的 `create_conversation` + `#44` 的 `mint_id` / `entries`。
+///
+/// 两次扩面都签在 `docs/decisions.md`：建会话是写（要同一把锁、同一份广播）；
+/// `mint_id` / `entries` 是轮次要的两个原语（取终态 entry 的 id、按 fork 链读历史），
+/// **不是**第二条写通道 —— 写仍然只走 `commit`。
+const A3_METHODS: [&str; 8] = [
     "close",
     "closed",
     "commit",
     "create_conversation",
+    "entries",
     "get_entry",
+    "mint_id",
     "snapshot",
 ];
 

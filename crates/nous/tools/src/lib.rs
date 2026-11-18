@@ -38,6 +38,34 @@ pub use tools::{
 };
 
 pub use in_memory::{InMemoryExecutionEnv, ShellScript};
+
+/// 组装根要能写出「工具表」这个类型，但不必为此依赖 `nous-ai`。
+///
+/// 重导出的是**同一个 trait**（不是包装）：`nous-ai` 是工具层的上游，
+/// 端点层只经由这一层碰它，依赖图上就没有 `nous-server → nous-ai` 那条边。
+pub use nous_ai::tool::AgentTool;
+
+/// 工具名 → 工具实例。组装根用它把工具表交给轮次层，不必自己拼 `BTreeMap` 的类型。
+pub type ToolMap = std::collections::BTreeMap<String, std::sync::Arc<dyn AgentTool>>;
+
+/// 内置工具的一整张表：bash / read / grep / find / ls，工作目录是 `cwd`。
+///
+/// **这里是工具表唯一的构造点**：谁要装工具就调它，别在各处重复 `insert("bash", …)` ——
+/// 那样每加一个工具就要改 N 个地方，且"某个入口少装了一个工具"这种 bug 不会报错。
+pub fn builtin_tools(cwd: impl AsRef<std::path::Path>) -> ToolMap {
+    let env = std::sync::Arc::new(OsExecutionEnv::with_cwd(cwd.as_ref().to_path_buf()));
+    let context = tools::tool_context::ExecutionToolContext::new(
+        env.clone(),
+        Some(env as std::sync::Arc<dyn file_mutation_queue::MutatingEnv>),
+    );
+    let mut map: ToolMap = std::collections::BTreeMap::new();
+    map.insert("bash".into(), create_bash_tool(&context, None));
+    map.insert("read".into(), create_read_tool(&context, None));
+    map.insert("grep".into(), create_grep_tool(&context, None));
+    map.insert("find".into(), create_find_tool(&context, None));
+    map.insert("ls".into(), create_ls_tool(&context, None));
+    map
+}
 pub use crate::compat::{
     LegacyExecutionEnv as ExecutionEnv, LegacyFileSystem as FileSystem, LegacyShell as Shell,
     LegacyShellExecOptions as ShellExecOptions, ShellOutput,

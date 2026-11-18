@@ -352,18 +352,25 @@ allow={
  'nous-tools': {'nous-ai','nous-env'},
  'nous-runtime': {'nous-ai'},
  'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
- 'nous-server': {'nous-durable','nous-wire','nous-telemetry'},
+ # `#44` 起 server 是**组装根**：它真的装东西，所以这三条边是实的（不是为过判据挂的）。
+ 'nous-server': {'nous-durable','nous-wire','nous-telemetry','nous-sessions','nous-tools','nous-runtime'},
 }
 meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
                                capture_output=True,text=True).stdout)
 bad=[]
+skipped=0
 for pkg in meta['packages']:
     name=pkg['name']
     if name not in allow: continue
     for dep in pkg['dependencies']:
         d=dep['name']
         if not d.startswith('nous-') or d==name: continue
+        # 只算**进产物**的边（normal/build）。dev 依赖不进二进制，端到端判据要靠它注入
+        # 不联网的 provider —— 把 dev 也算进来就等于禁止写端到端判据。
+        if dep.get('kind') == 'dev': skipped+=1; continue
         if d not in allow[name]: bad.append(f'{name} → {d}')
+import sys
+print(f'略过 {skipped} 条 dev 依赖边（不进产物）', file=sys.stderr)
 print('\n'.join(bad))
 PY
 )

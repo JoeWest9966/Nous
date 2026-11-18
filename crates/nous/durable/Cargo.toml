@@ -21,6 +21,7 @@ async-trait = { workspace = true }
 # 契约面里有这一条；事件只在这一层"成形"，传输仍然在 `nous-server`（#22）。
 nous-wire = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
