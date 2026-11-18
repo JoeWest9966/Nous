@@ -31,7 +31,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
-use nous_durable::storage::sessions::ENTRIES_MAX_LIMIT;
+use nous_durable::storage::sessions::{ENTRIES_MAX_LIMIT};
 use nous_sessions::turn::TurnRequest;
 use nous_wire::{Generation, RemoteEvent};
 use serde::Deserialize;
@@ -206,7 +206,14 @@ async fn extensions() -> Json<Value> {
 /// body 与 CLI `nous-app --triggers` **同一个函数、同一份序列化**（#58 判据 4）。
 async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let Some(runtime) = state.triggers() else {
-        return Ok(Json(crate::meta::triggers(Vec::new())));
+        // 没装配不等于没形状：scheduler 一样在场，只是诚实回空（#58 的顶层带调度健康）。
+        let mut report = crate::meta::triggers(Vec::new());
+        report["scheduler"] = json!({
+            "lastTickAt": Value::Null,
+            "lagMs": 0,
+            "tickMs": nous_store::SCHEDULER_TICK_MS,
+        });
+        return Ok(Json(report));
     };
     let store = runtime.store.lock().await;
     let report = crate::triggers::observation_report(
@@ -242,13 +249,12 @@ struct FiresQuery {
 
 impl FiresQuery {
     fn limit(&self) -> i64 {
-        self.limit.unwrap_or(DEFAULT_FIRE_HISTORY_LIMIT).clamp(1, MAX_FIRE_HISTORY_LIMIT)
+        self.limit.unwrap_or(DEFAULT_FIRE_HISTORY_LIMIT).clamp(1, ENTRIES_MAX_LIMIT as i64)
     }
 }
 
-/// `?limit=` 的默认值与上限（票面 50；上限与 entries 同一档）。
+/// `?limit=` 的默认值与上限（票面 50；上限与 entries 同一档：`ENTRIES_MAX_LIMIT`）。
 const DEFAULT_FIRE_HISTORY_LIMIT: i64 = 50;
-const MAX_FIRE_HISTORY_LIMIT: i64 = 1000;
 
 /// `POST /v1/triggers/:code/fire`：手动点火。actor 从 token 派生（#50），现为 system。
 async fn fire_trigger(

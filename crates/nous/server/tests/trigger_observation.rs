@@ -203,13 +203,17 @@ async fn cli_and_http_serialize_the_same_bytes() {
     let app = router(fixture.state.clone().with_triggers(runtime.clone()));
     let (_, http_body) = get_json(&app, "/v1/triggers").await;
 
-    // CLI 走同一个函数：真 store（同一份库文件）+ 同一份定义快照 + 同一个心跳。
+    // CLI 走同一个函数：真 store（同一份库文件）+ 同一份定义快照 + 同一个心跳（无）。
+    // 心跳与时钟都是 0/None：两边去掉运行时刻的漂移，剩下的字节必须完全相同 ——
+    // 包括 scheduler 段（判据 4 比的是整个 body，不是只有 triggers 数组）。
     let store = TriggerStore::open(&fixture.trigger_db).unwrap();
     let definitions = runtime.definitions();
-    let cli_body = nous_server::triggers::observation_report(&store, &definitions, runtime.last_tick_at(), 0).unwrap();
-
+    let cli_body = nous_server::triggers::observation_report(&store, &definitions, None, 0).unwrap();
+    let mut http_fixed = http_body.clone();
+    http_fixed["scheduler"]["lastTickAt"] = Value::Null;
+    http_fixed["scheduler"]["lagMs"] = json!(0);
     assert_eq!(
-        serde_json::to_string(&http_body).unwrap(),
+        serde_json::to_string(&http_fixed).unwrap(),
         serde_json::to_string(&cli_body).unwrap(),
         "HTTP 与 CLI 必须逐字节相同（#58 判据 4）"
     );

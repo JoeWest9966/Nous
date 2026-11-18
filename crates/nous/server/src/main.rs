@@ -36,6 +36,29 @@ use refusal::REFUSAL_REASONS;
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
 
+/// 触发器库路径（启动与 `--triggers` 共用这一份推导，不许两处漂移）：
+/// `NOUS_TRIGGER_DB` 显式给；缺省和 `NOUS_DB` 同目录（systemd 的 WorkingDirectory 是
+/// /srv/nous/work，落 cwd 会把数据写到工作目录而不是数据目录）。
+fn triggers_db_path(db: &str) -> String {
+    std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
+        Path::new(db)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join("nous-triggers.db")
+            .to_string_lossy()
+            .into_owned()
+    })
+}
+
+/// epoch 毫秒（fire 与观测的时钟入口；store 层零时钟，时间都由这里传入）。
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
+}
+
 /// 启动门槛的统一出口：一行 `refuse: <slug>` 到 stderr，退出码走理由表。
 /// #50 的 token 门槛、#51 的 faux 门槛、D12 的 cwd 门槛共用这一个函数。
 fn refuse_startup(code: &str, detail: Option<&str>) -> ! {
@@ -177,27 +200,14 @@ async fn run() -> Result<(), RunError> {
         }
         Some("--triggers") => {
             // #58：观测读口的 CLI 出口。与 `GET /v1/triggers` **同一个函数、同一份序列化**
-            // （判据 4：不许另写一份 SQL）。库路径与启动同一套规则：NOUS_TRIGGER_DB，
-            // 缺省和 NOUS_DB 同目录的 nous-triggers.db。
+            // （判据 4：不许另写一份 SQL）。库路径与启动同一套规则（同一个函数）。
             let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
-            let triggers_db = std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
-                Path::new(&db)
-                    .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
-                    .unwrap_or_else(|| Path::new("."))
-                    .join("nous-triggers.db")
-                    .to_string_lossy()
-                    .into_owned()
-            });
+            let triggers_db = triggers_db_path(&db);
             let store = nous_store::Store::open(&triggers_db)
                 .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
             let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store)?;
             // CLI 里没有调度循环在跑：lastTickAt = null，lag 由纯函数现算（也是 0）。
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_millis() as i64)
-                .unwrap_or_default();
-            let report = nous_server::triggers::observation_report(&store, &definitions, None, now_ms)?;
+            let report = nous_server::triggers::observation_report(&store, &definitions, None, now_ms())?;
             println!("{}", serde_json::to_string(&report).map_err(|e| e.to_string())?);
             return Ok(());
         }
@@ -280,17 +290,7 @@ async fn run() -> Result<(), RunError> {
     );
 
     // #57：触发器是自己的库（nous-triggers.db），点火走的是上面那条同一个 Session。
-    // 默认和 `NOUS_DB` 同目录，不落 cwd：systemd 的 WorkingDirectory 是 /srv/nous/work，
-    // 落 cwd 会把数据写到工作目录而不是数据目录。
-    let triggers_db = std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
-        Path::new(&db)
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."))
-            .join("nous-triggers.db")
-            .to_string_lossy()
-            .into_owned()
-    });
+    let triggers_db = triggers_db_path(&db);
     let trigger_store = nous_store::Store::open(&triggers_db)
         .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));

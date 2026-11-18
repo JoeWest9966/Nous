@@ -150,13 +150,15 @@ fn triggers_cli_prints_the_same_json_as_the_endpoint_reader() {
     assert!(output.status.success(), "stderr: {}", stderr(&output));
     let cli_json: Value = serde_json::from_str(stdout(&output).trim()).expect("CLI 输出必须是合法 JSON");
 
-    // 同一份库 + 同一个函数 + 同一个 lastTickAt（null）：字节必须相同。
+    // 同一份库 + 同一个函数：triggers 数组与端点读口**逐字节**相同（判据 4）。
+    // scheduler 段不比：CLI 用真时钟、HTTP 侧测试用固定 0 —— 计时字段本来就随时刻漂。
     let store = nous_store::Store::open(&trigger_db).unwrap();
     let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store).unwrap();
     let endpoint_reader =
         nous_server::triggers::observation_report(&store, &definitions, None, 0).unwrap();
-    assert_eq!(cli_json["scheduler"]["lastTickAt"], Value::Null, "CLI 没有心跳，诚实 null");
     assert_eq!(cli_json["triggers"], endpoint_reader["triggers"], "triggers 清单与端点读口相同");
+    assert_eq!(cli_json["root"], endpoint_reader["root"]);
+    assert_eq!(cli_json["scheduler"]["tickMs"], endpoint_reader["scheduler"]["tickMs"]);
     assert_eq!(cli_json["triggers"][0]["counts"]["done"], json!(1));
     assert_eq!(cli_json["triggers"][0]["counts"]["skipped"], json!(1));
     assert_eq!(cli_json["triggers"][0]["lastFire"]["state"], json!("skipped"));
