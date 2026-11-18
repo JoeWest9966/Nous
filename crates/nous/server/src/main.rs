@@ -175,6 +175,32 @@ async fn run() -> Result<(), RunError> {
             println!("{}", nous_durable::ops::active_tasks(&db)?);
             return Ok(());
         }
+        Some("--triggers") => {
+            // #58：观测读口的 CLI 出口。与 `GET /v1/triggers` **同一个函数、同一份序列化**
+            // （判据 4：不许另写一份 SQL）。库路径与启动同一套规则：NOUS_TRIGGER_DB，
+            // 缺省和 NOUS_DB 同目录的 nous-triggers.db。
+            let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
+            let triggers_db = std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
+                Path::new(&db)
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."))
+                    .join("nous-triggers.db")
+                    .to_string_lossy()
+                    .into_owned()
+            });
+            let store = nous_store::Store::open(&triggers_db)
+                .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
+            let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store)?;
+            // CLI 里没有调度循环在跑：lastTickAt = null，lag 由纯函数现算（也是 0）。
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis() as i64)
+                .unwrap_or_default();
+            let report = nous_server::triggers::observation_report(&store, &definitions, None, now_ms)?;
+            println!("{}", serde_json::to_string(&report).map_err(|e| e.to_string())?);
+            return Ok(());
+        }
         _ => {}
     }
 

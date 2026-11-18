@@ -45,6 +45,14 @@ use crate::models::ModelsResponse;
 use crate::records::CreateSessionRequest;
 use crate::source::SessionSource;
 
+/// epoch 毫秒（fire 与观测的时钟入口；store 层零时钟，时间都由这里传入）。
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
+}
+
 /// 装配路由。`state` 里的 `source` 决定数据从哪来，`commands` 决定写往哪去，
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
@@ -68,6 +76,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/extensions", get(extensions))
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
+        .route("/v1/triggers/{code}/fires", get(trigger_fires))
         .route("/v1/capabilities", get(capabilities));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
     crate::documents::attach(state, router)
@@ -191,27 +200,55 @@ async fn extensions() -> Json<Value> {
     Json(crate::meta::extensions())
 }
 
-/// `GET /v1/triggers`：装配了 store 就读真行；空库仍回 `{triggers:[],root:null}`。
+/// `GET /v1/triggers`：观测清单 + 调度健康（#58）。装配了 store 就读真行；
+/// 空库仍回 `{triggers:[],root:null}`（#49 空表契约保留）。
+///
+/// body 与 CLI `nous-app --triggers` **同一个函数、同一份序列化**（#58 判据 4）。
 async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let Some(runtime) = state.triggers() else {
         return Ok(Json(crate::meta::triggers(Vec::new())));
     };
-    let items: Vec<Value> = runtime
-        .definitions()
-        .iter()
-        .map(|definition| serde_json::json!({
-            "code": definition.code(),
-            "name": definition.name(),
-            "enabled": definition.enabled(),
-            "spec": {
-                "spec_version": definition.spec().spec_version,
-                "schedule": definition.spec().schedule,
-                "on": definition.spec().on,
-            },
-        }))
-        .collect();
-    Ok(Json(crate::meta::triggers(items)))
+    let store = runtime.store.lock().await;
+    let report = crate::triggers::observation_report(
+        &store,
+        &runtime.definitions(),
+        runtime.last_tick_at(),
+        now_ms(),
+    )?;
+    Ok(Json(report))
 }
+
+/// `GET /v1/triggers/:code/fires`：这个触发器最近的账，时间倒序（#58）。
+/// 不存在的触发器 → 404 + `{error}`（不许空 200），判据 6。
+async fn trigger_fires(
+    State(state): State<Arc<AppState>>,
+    Path(code): Path<String>,
+    Query(limit): Query<FiresQuery>,
+) -> Result<Json<Value>> {
+    let runtime = match state.triggers() {
+        Some(runtime) => runtime,
+        None => return Err(ServerError::Conflict("triggers not configured".to_string())),
+    };
+    let store = runtime.store.lock().await;
+    let history = crate::triggers::fire_history(&store, &runtime.definitions(), &code, limit.limit())?;
+    Ok(Json(history))
+}
+
+/// `?limit=` 的查询参数：默认 50（票面值），上限 1000（`ENTRIES_MAX_LIMIT` 同一档）。
+#[derive(Debug, Deserialize)]
+struct FiresQuery {
+    limit: Option<i64>,
+}
+
+impl FiresQuery {
+    fn limit(&self) -> i64 {
+        self.limit.unwrap_or(DEFAULT_FIRE_HISTORY_LIMIT).clamp(1, MAX_FIRE_HISTORY_LIMIT)
+    }
+}
+
+/// `?limit=` 的默认值与上限（票面 50；上限与 entries 同一档）。
+const DEFAULT_FIRE_HISTORY_LIMIT: i64 = 50;
+const MAX_FIRE_HISTORY_LIMIT: i64 = 1000;
 
 /// `POST /v1/triggers/:code/fire`：手动点火。actor 从 token 派生（#50），现为 system。
 async fn fire_trigger(
@@ -223,10 +260,7 @@ async fn fire_trigger(
         None => return Err(ServerError::Conflict("triggers not configured".to_string())),
     };
     let actor = nous_durable::actor::Actor::system("local");
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or_default();
+    let now_ms = now_ms();
     let outcome = runtime.fire(&code, &actor, now_ms).await?;
     Ok(Json(serde_json::to_value(&outcome).unwrap_or(Value::Null)))
 }

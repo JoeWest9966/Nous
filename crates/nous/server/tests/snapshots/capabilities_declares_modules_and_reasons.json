@@ -76,7 +76,8 @@
       "enabled": true,
       "endpoints": [
         "GET /v1/triggers",
-        "POST /v1/triggers/{code}/fire"
+        "POST /v1/triggers/{code}/fire",
+        "GET /v1/triggers/{code}/fires"
       ]
     },
     {

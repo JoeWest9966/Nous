@@ -22,6 +22,26 @@ use rusqlite::{params, Row};
 use crate::error::{Result, StoreError};
 use crate::Store;
 
+/// 调度循环的节拍（#58 的 `scheduler.tickMs`，毫秒）。
+///
+/// 为什么是 5 s：`fire_due` 按**分钟对齐**（`now.div_euclid(60_000) * 60_000`），
+/// 一分钟里只要响到那一拍就永不丢触发；tick 越长，`lagMs` 分母越大、
+/// 「循环卡死」的发现越晚。5 s 在两者之间。
+pub const SCHEDULER_TICK_MS: i64 = 5_000;
+
+/// 调度健康（#58）：`lagMs` 是循环「自报迟到量」。
+///
+/// 口径：`lag = max(0, now - lastTickAt - tickMs)` —— **下一拍该响而没响的毫秒数**。
+/// 不用票面草稿的那个「对齐余数」式（`lastTickAt - tickMs*floor(...)`）：那个值在
+/// 停摆时**不增长**（卡死的循环和健康循环算出来一样小），分不开「循环卡住」和
+/// 「没有触发器要点火」这两种长得一模一样的情况 —— 而区分它们正是引入 lag 的目的。
+pub fn scheduler_lag(now_ms: i64, last_tick_at: Option<i64>, tick_ms: i64) -> i64 {
+    let Some(last_tick_at) = last_tick_at else {
+        return 0; // 一拍都没响过（刚启动）：没有迟到可言，不是“无限迟到”
+    };
+    (now_ms - last_tick_at - tick_ms).max(0)
+}
+
 /// 宽限期：`pending` 超过它就认定那次提交**没成功**（崩了，或者写库常年失败）。
 ///
 /// 为什么是 2 分钟：② 是本地库的一次提交（毫秒级，`docs/bench-commit.md`）加上一次
@@ -81,6 +101,19 @@ pub struct Fire {
     /// `request_id(code, fire_at)` 的落盘副本（账本要能自己说清它对应哪条消息）。
     pub request_id: String,
     pub note: Option<String>,
+}
+
+/// 一个触发器的账面统计（#58）：`GROUP BY state` 的结果。
+///
+/// **库是唯一真相**：这个结构每次从 `fires` 表现算，没有第二份内存计数器 ——
+/// 「UI 显示 12 次」和「库里 12 行」因此不可能分叉（#58 判据 1）。四个键恒在，
+/// 没账就是 0，读的人不需要猜缺键是什么意思。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FireCounts {
+    pub done: i64,
+    pub skipped: i64,
+    pub orphaned: i64,
+    pub pending: i64,
 }
 
 /// 记账的结果。`AlreadyThere` **不是错误**：同一拍敲两次是正常的事。
@@ -188,6 +221,58 @@ impl Store {
     /// 全量账本，按 `fire_at` 升序（同刻按 `trigger_code`）。
     pub fn fires(&self) -> Result<Vec<Fire>> {
         self.query_fires(&format!("SELECT {COLUMNS} FROM fires ORDER BY fire_at, trigger_code"))
+    }
+
+    /// 一个触发器的账面统计（#58）：`GROUP BY state`，不是任何内存计数器。
+    /// 库里出现四种状态之外的值会被 CHECK 拦住，这里仍走 [`FireState::parse`] 不猜。
+    pub fn fire_counts(&self, code: &str) -> Result<FireCounts> {
+        let mut stmt = self.conn.prepare(
+            "SELECT state, count(*) FROM fires WHERE trigger_code = ?1 GROUP BY state",
+        )?;
+        let rows = stmt.query_map(params![code], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        let mut counts = FireCounts::default();
+        for row in rows {
+            let (state, count) = row?;
+            match FireState::parse(&state)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?
+            {
+                FireState::Done => counts.done = count,
+                FireState::Skipped => counts.skipped = count,
+                FireState::Orphaned => counts.orphaned = count,
+                FireState::Pending => counts.pending = count,
+            }
+        }
+        Ok(counts)
+    }
+
+    /// 最近一次**有结论**的点火（#58 的 `lastFire`）：`pending` 不算 —— 它还没成也没败，
+    /// 把它当「上次点火」是在替账本撒谎。一条账都没有 → `None`。
+    pub fn last_resolved_fire(&self, code: &str) -> Result<Option<Fire>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM fires
+              WHERE trigger_code = ?1 AND state != 'pending'
+              ORDER BY fire_at DESC LIMIT 1"
+        ))?;
+        let mut rows = stmt.query(params![code])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(row_to_fire(row)?),
+            None => None,
+        })
+    }
+
+    /// 一个触发器最近的账，时间倒序（#58 的 `GET /v1/triggers/:code/fires`）。
+    /// `limit <= 0` 回空 —— 「要 0 条」是个合法的问法，不是错误。
+    pub fn recent_fires(&self, code: &str, limit: i64) -> Result<Vec<Fire>> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM fires WHERE trigger_code = ?1 ORDER BY fire_at DESC LIMIT ?2"
+        ))?;
+        let rows = stmt.query_map(params![code, limit], row_to_fire)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// [`reclaim`] 的输入：**还没结论**的账（`pending` + `orphaned`），`done` 不进。
