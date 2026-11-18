@@ -45,3 +45,8 @@ nous.db-shm
 nous-triggers.db
 nous-triggers.db-wal
 nous-triggers.db-shm
+
+# store（Nous 自己的库）与 durable 的库：跑一次二进制就在 cwd 留一份，运行时产物不入库。
+nous-plugins.db
+nous-plugins.db-wal
+nous-plugins.db-shm
