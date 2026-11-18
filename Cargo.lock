@@ -1409,6 +1409,7 @@ dependencies = [
  "nous-telemetry",
  "nous-tools",
  "nous-wire",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",

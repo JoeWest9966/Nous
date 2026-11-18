@@ -49,13 +49,22 @@ manual_setup() {
 手工设置（在 asus 上跑完再重跑 deploy.sh）：
 ssh-keygen -t ed25519 -N ''
 ssh-copy-id deploy@j1900
-ssh j1900 "sudo useradd --system --home /srv/nous/deploy --shell /usr/sbin/nologin deploy 2>/dev/null; sudo install -d -m 0755 /etc/sudoers.d; echo 'deploy ALL=(root) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/nous-deploy >/dev/null; sudo chmod 0440 /etc/sudoers.d/nous-deploy"
+ssh j1900 "sudo useradd --system --home /srv/nous/deploy --shell /bin/bash deploy 2>/dev/null; sudo install -d -m 0755 /etc/sudoers.d; echo 'deploy ALL=(root) NOPASSWD: ALL' | sudo tee /etc/sudoers.d/nous-deploy >/dev/null; sudo chmod 0440 /etc/sudoers.d/nous-deploy"   # 注意 shell 必须是真 shell：nologin 会直接拒掉非交互 ssh
 EOF
 }
 
-rs() { ssh -o BatchMode=yes "$HOST" sudo -n -- "$@"; }
+# ssh 把**多个参数**用空格拼成一条命令串发过去，内层引号全丢：
+#   ssh host sudo -n -- sh -c 'set -e; echo hi'   →  远端跑的是 `sh -c set`（只 dump 环境）
+# 所以这里自己拼一条命令：每个参数单引号包住，内部单引号按 POSIX 的 '\'' 转义。远端是 sh。
+q_() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+remote() {
+	local cmd="" a
+	for a in "$@"; do cmd="$cmd$(q_ "$a") "; done
+	ssh -o BatchMode=yes "$HOST" "sudo -n -- $cmd"
+}
+rs() { remote "$@"; }
 # 远端 stdout 收集（rsync 是本地进程，单独走 ssh）。
-rs_out() { ssh -o BatchMode=yes "$HOST" sudo -n -- "$@"; }
+rs_out() { remote "$@"; }
 
 require_local() {
 	local c
@@ -82,14 +91,11 @@ unit_sha() { sha256sum "$UNIT_SRC" | awk '{print $1}'; }
 
 build_binary() {
 	info "编译 musl 静态产物（$TARGET）"
-	local want
-	want=$(python3 - <<'PY'
-import subprocess
-print(subprocess.check_output(['rustc', '-vV'], text=True).split(' (')[1].rstrip(')'))
-PY
-	)
-	if ! rustup target list --installed 2>/dev/null | grep -qx "$want"; then
-		die "本机缺 rust target $want：rustup target add $want"
+	# 要装的是 $TARGET 的 std，不是 `rustc -vV` 里那串 commit 哈希
+	# （原来从 `rustc -vV` split 出 `want`，拿到的是 "58cf8f9c3 2026-10-13)\nbinary: rustc…"，
+	#  于是每次部署都被自己的守卫挡死，一行都没跑出去）。
+	if ! rustup target list --installed 2>/dev/null | grep -qx "$TARGET"; then
+		die "本机缺 rust target $TARGET：rustup target add $TARGET"
 	fi
 	command -v musl-gcc >/dev/null 2>&1 || die "本机缺 musl-tools（musl-gcc）"
 	cargo build --release --target "$TARGET" -p nous-server --bin nous-app || die "编译失败"
@@ -136,6 +142,9 @@ ensure_dirs_and_token() {
 	# 首次：只建 /srv/nous/work、/var/lib/nous、/etc/nous 和 token；
 	# 不建 backups/、不提前建 nous.db（应用首次启动自己建）、不 chown/chgrp /opt/*。
 	out=$(rs sh -c 'set -e
+# 服务用户由部署脚本负责（unit 写死 User=nous）。缺了就在这里建，幂等。
+getent group nous >/dev/null || groupadd --system nous
+getent passwd nous >/dev/null || useradd --system --gid nous --home /srv/nous/work --shell /usr/sbin/nologin nous
 install -d -m 0750 -o nous -g nous /srv/nous/work
 install -d -m 0750 -o nous -g nous /var/lib/nous
 install -d -m 0755 /etc/nous
@@ -158,10 +167,10 @@ backup_and_manifest() {
 	out=$(rs sh -c "set -e; install -d -m 0750 -o nous -g nous '$base'" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "建备份目录失败：$out"
 
-	out=$(rs sh -c "'$bin' --backup '$backup' >/dev/null" 2>&1) || rc=$?
+	out=$(rs sh -c "NOUS_DB='$DATA_DIR/nous.db' '$bin' --backup '$backup' >/dev/null" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "备份失败：$out"
 
-	CHECK_TEXT=$(rs_out sh -c "'$bin' --check '$backup'" 2>&1) || rc=$?
+	CHECK_TEXT=$(rs_out sh -c "NOUS_DB='$DATA_DIR/nous.db' '$bin' --check '$backup'" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "--check 失败：$CHECK_TEXT"
 	parse_check "$CHECK_TEXT" || die "--check 输出不可解析（必须 quick_check=ok + schema=<n>）：$CHECK_TEXT"
 
@@ -213,7 +222,9 @@ health_check() {
 	local i code build text
 	for i in $(seq 1 "$HEALTH_TRIES"); do
 		sleep "$HEALTH_WAIT"
-		text=$(rs_out curl -fsS --max-time 4 http://127.0.0.1:4789/v1/device 2>&1 || true)
+		# `#50` 落地后 `/v1/*` 全在认证后面：不带 token 的健康检查是**必然假红**
+		# （curl -f 遇 401 直接失败，连 json 都拿不到，看起来像服务没起来）。
+		text=$(rs_out sh -c "tok=\$(cat '$TOKEN_PATH' 2>/dev/null || true); if [ -n \"\$tok\" ]; then curl -fsS --max-time 4 -H \"authorization: Bearer \$tok\" http://127.0.0.1:4789/v1/device; else curl -fsS --max-time 4 http://127.0.0.1:4789/v1/device; fi" 2>&1 || true)
 		if printf '%s' "$text" | grep -q 'refuse:'; then
 			printf '%s\n' "$text" >&2
 			return 1
@@ -236,7 +247,9 @@ health_check() {
 # 回退：current 指回上一版；有 manifest 就恢复快照与 unit；restart。
 rollback() {
 	local ts=$1 out rc=0 prev manifest
-	prev=$(rs_out sh -c "ls -1d $REMOTE_ROOT/nous-app-*/nous-app 2>/dev/null | sed 's#/nous-app\$##' | sort -r | sed -n '2p'" 2>/dev/null || true)
+	# 按**时间**倒序取上一版，不能按名字排序：版本名里是 sha8，字母序和部署顺序毫无关系
+	# （j1900 实测：回退把 current 指回了刚刚失败的那个版本，因为它的 sha8 恰好排第二）。
+	prev=$(rs_out sh -c "ls -1dt $REMOTE_ROOT/nous-app-*/ 2>/dev/null | sed 's#/\$##' | sed -n '2p'" 2>/dev/null || true)
 	if [ -z "$prev" ]; then
 		info "没有上一版可切，停在 failed"
 		rs systemctl stop nous-app >/dev/null 2>&1 || true
@@ -265,7 +278,7 @@ systemctl restart nous-app" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || { info "回退启动失败：$out"; return 1; }
 	# 回退后做一次轻量健康检查；失败就停在 failed，不回退第二层。
 	local j
-	j=$(rs_out curl -fsS --max-time 4 http://127.0.0.1:4789/v1/device 2>&1 || true)
+	j=$(rs_out sh -c "tok=\$(cat '$TOKEN_PATH' 2>/dev/null || true); if [ -n \"\$tok\" ]; then curl -fsS --max-time 4 -H \"authorization: Bearer \$tok\" http://127.0.0.1:4789/v1/device; else curl -fsS --max-time 4 http://127.0.0.1:4789/v1/device; fi" 2>&1 || true)
 	if ! printf '%s' "$j" | grep -q 'refuse:'; then
 		return 0
 	fi
@@ -278,6 +291,24 @@ failed_log() {
 	out=$(rs sh -c "install -d -m 0750 -o nous -g nous /var/lib/nous/backups; journalctl -u nous-app -n 200 --no-pager > /var/lib/nous/backups/failed-$ts.log 2>&1; chmod 0640 /var/lib/nous/backups/failed-$ts.log" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || info "写 failed 日志失败：$out"
 	info "journal 尾部已存 /var/lib/nous/backups/failed-$ts.log"
+}
+
+# 把产物与单元推上去（只落到版本目录，**不**切链、不启动）。
+# 之所以单独一步、且在「升级」之前：库在、current 不在（`--uninstall` 之后）
+# 时没有远端旧产物可用来做 `--active-tasks` / `--backup`，只能拿新产物跑这两件事。
+upload_artifacts() {
+	local stage
+	stage=$(mktemp -d)
+	cp "$BIN_LOCAL" "$stage/$BIN_NAME"
+	cp "$UNIT_SRC" "$stage/nous-app.service.new"
+	rsync -a -e "ssh -o BatchMode=yes" "$stage/$BIN_NAME" "$HOST:/tmp/$BIN_NAME" || die "rsync 产物失败"
+	rsync -a -e "ssh -o BatchMode=yes" "$stage/nous-app.service.new" "$HOST:/tmp/nous-app.service.new" || die "rsync unit 失败"
+	rm -rf "$stage"
+	# 版本是一**目录**（`nous-app-<sha8>-<target>/nous-app`），`current` 指向目录：
+	# unit 的 ExecStart 是 `/opt/nous-app/current/nous-app`，回退逻辑也是按
+	# `nous-app-*/nous-app` 找上一版。把产物落成裸文件，`current` 就成了指向文件的链接，
+	# 起服务必然 203/EXEC（Not a directory）。
+	rs sh -c "set -e; install -d -m 0755 '$REMOTE_ROOT'; install -d -m 0755 '$REMOTE_ROOT/$BIN_NAME'; install -m 0755 '/tmp/$BIN_NAME' '$REMOTE_ROOT/$BIN_NAME/nous-app'; rm -f '/tmp/$BIN_NAME'" || die "落产物失败"
 }
 
 do_deploy() {
@@ -293,14 +324,20 @@ do_deploy() {
 	fi
 	remote_state
 	ensure_dirs_and_token
+	upload_artifacts
 
 	if [ "$FIRST_RUN" -eq 0 ]; then
 		info "升级：stop → active-tasks → backup → check"
-		rs systemctl stop nous-app || die "stop 失败"
+		# `--uninstall` 之后 unit 不在（数据还在），这条命令必须容错：
+		# 否则「卸载 → 再部署」这个正常流程会死在 stop 上。
+		rs sh -c "systemctl stop nous-app 2>/dev/null || true" || die "stop 失败"
 		local bin_old tasks
 		bin_old=$(rs_out readlink -f /opt/nous-app/current/nous-app 2>/dev/null || true)
-		if [ -n "$bin_old" ]; then
-			tasks=$("$bin_old" --active-tasks 2>&1) || die "--active-tasks 失败：$tasks"
+		# 闸门要用**即将上场的那个库**跑：current 在 → 用它；current 不在（卸载过）→ 用新产物。
+		local probe=${bin_old:-$REMOTE_ROOT/$BIN_NAME/nous-app}
+		if [ -n "$probe" ]; then
+			# `NOUS_DB` 必须显式给：unit 里那是 `Environment=`，ssh 里没有，默认 `./nous.db` 会打不开。
+			tasks=$(rs_out sh -c "NOUS_DB='$DATA_DIR/nous.db' '$probe' --active-tasks" 2>&1) || die "--active-tasks 失败：$tasks"
 			if printf '%s' "$tasks" | grep -qE 'task|conversation'; then
 				printf '%s\n' "$tasks" >&2
 				rs systemctl start nous-app >/dev/null 2>&1 || true
@@ -313,19 +350,8 @@ do_deploy() {
 				die "有 $tasks 个活跃任务（status <> 'terminal'），拒绝升级"
 			fi
 		fi
-		backup_and_manifest "$TS" "${bin_old:-$BIN_LOCAL}"
+		backup_and_manifest "$TS" "${bin_old:-$REMOTE_ROOT/$BIN_NAME/nous-app}"
 	fi
-
-	# rsync 把单元和业务二进制分开推：单元进 /tmp，产物进版本目录。
-	# 每一步都用固定 tmp 名 + mv，不留半份 unit 让 systemd 读到。
-	local stage
-	stage=$(mktemp -d)
-	cp "$BIN_LOCAL" "$stage/$BIN_NAME"
-	cp "$UNIT_SRC" "$stage/nous-app.service.new"
-	rsync -a -e "ssh -o BatchMode=yes" "$stage/$BIN_NAME" "$HOST:/tmp/$BIN_NAME" || die "rsync 产物失败"
-	rsync -a -e "ssh -o BatchMode=yes" "$stage/nous-app.service.new" "$HOST:/tmp/nous-app.service.new" || die "rsync unit 失败"
-	rm -rf "$stage"
-	rs sh -c "set -e; install -d -m 0755 '$REMOTE_ROOT'; install -m 0755 '/tmp/$BIN_NAME' '$REMOTE_ROOT/$BIN_NAME'; rm -f '/tmp/$BIN_NAME'" || die "落产物失败"
 
 	install_unit_and_link "$TS"
 	if health_check; then

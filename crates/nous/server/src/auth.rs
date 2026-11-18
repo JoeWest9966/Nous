@@ -42,7 +42,41 @@ pub fn token_path() -> PathBuf {
 
 /// token 文件的权限是否为 0600（只判权限位，不判文件是否在）。
 pub fn has_secured_permissions(path: &std::path::Path) -> io::Result<bool> {
-    Ok(path.metadata()?.permissions().mode() & 0o777 == 0o600)
+    let mode = path.metadata()?.permissions().mode() & 0o777;
+    // 真正的不变量是「别人读不到」：世界位必须全 0，组位最多只读。
+    // `#52` D4 定的部署形状是 `/etc/nous/token` `0640 root:nous`（进程以 nous 身份读），
+    // 所以只认 0600 会把**合法的部署形状**报成警告 —— 那是判据和部署契约互相打架。
+    Ok(mode & 0o007 == 0 && mode & 0o030 == 0)
+}
+
+#[cfg(test)]
+mod perm_tests {
+    use super::has_secured_permissions;
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn file_with_mode(mode: u32) -> tempfile::NamedTempFile {
+        let mut f = tempfile::NamedTempFile::new().expect("tmpfile");
+        f.write_all(b"tok").expect("write");
+        f.as_file().set_permissions(std::fs::Permissions::from_mode(mode)).expect("chmod");
+        f
+    }
+
+    #[test]
+    fn accepts_the_two_deployed_shapes_and_rejects_anything_world_readable() {
+        for mode in [0o600, 0o400, 0o640, 0o440] {
+            assert!(
+                has_secured_permissions(file_with_mode(mode).path()).unwrap(),
+                "{mode:o} 应该算已保护（0640 root:nous 是部署契约）"
+            );
+        }
+        for mode in [0o644, 0o664, 0o604, 0o660, 0o666] {
+            assert!(
+                !has_secured_permissions(file_with_mode(mode).path()).unwrap(),
+                "{mode:o} 不该算已保护"
+            );
+        }
+    }
 }
 
 /// 启动时装载 token：有文件就读取（trim 掉尾部空白），没有就按 `generate` 决定是否创建。
