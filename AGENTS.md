@@ -1,199 +1,113 @@
 # Nous
 
-## 块和组的字段
+**内核**的仓库：一个 Rust workspace、一个产物（`nous-app`）、一个 systemd 单元。
+不是网页、不是面板、不是谁的子进程。客户端（NousDesk 桌面 / 手机端）只吃 `/v1/*`。
 
-**块（leaf）和组（section）是同一个类型 `Node`，没有类型字段。** 判据是 `children` 在不在：
-`isSection(n) = Array.isArray(n.children)`（`server/tree.ts:17`）。
+**架构一句话**：NOUS 不是代码，是一张清单（发行版 metapackage）。内核只剩三样 ——
+**契约**（`wire.md`）· **装载器 + 版本闸** · **调度**。其余全是插件，由 `docs/plugins.md`
+那张表组成；表管装什么，`crates/` 管怎么实现。
 
-### 存进 `tree.json` 的（就这四个）
+先看三份，按这个顺序，别跳：`wire.md`（对外契约，权威）→ `docs/plugins.md`（模块与四层的
+唯一真相）→ `docs/pitfalls.md`（踩过的坑，三行一条）。
 
-| 字段 | 类型 | 块 | 组 | 说明 |
-|---|---|---|---|---|
-| `id` | `string` | 必有 | 必有 | 唯一引用键。**6 位随机，如 `7kq2md`**：字母表 32 个（去掉 `i l o u`），`freshId()` 发，`newId()` 在整棵树里查重、撞了就重掷。**新建那一刻定型，改名、换爹、撤销都不动它**。这个字段搬过两次家（`id` → `tree` → `id`，值一次没变），老盘两个名字都认：早先前端的 `adoptIds()`（`store.ts`，已随前端删除）载入时接住，下一次落子按新名写回 |
-| `name` | `string` | 必有 | 必有 | 人看的那层皮。改名不动 `id`（`renameNode` 只改 `name`） |
-| `value` | `number?` | 必有 | **不许有** | 面积就是它。组的值由子节点相加得出，写进去就是两份事实源 |
-| `children` | `Node[]?` | **不许有** | 必有（可为空数组） | 唯一的结构字段，同时兼任「是不是组」的判据 |
-
-就是这么四个。没有 `type`、没有 `parent`、没有 `order`、没有 `x`/`y`/`w`/`h`、没有 `collapsed`、没有时间戳 —— 也没有 `tree`：**路径是算出来的,不存盘**(见下表)。
-
-### 派生、不存盘的三样
-
-| 东西 | 怎么算 | 在哪儿 |
-|---|---|---|
-| `valueOf(n)` | 块返回 `value`，组返回子节点之和 | 前端已删，服务端不用它，不存在了 |
-| `tree` | 名字路径（例如 `N/src/App.tsx` 只是路径形状的例子，不是现存的源文件），同级重名按遍历顺序加 `-2`。改名、搬爹它就变,每次从树现算，**不进 json** | `treeMap()` `server/tree.ts:26` |
-| `pathTo` / `childIds` | 钻到某节点的组路径（一串组 id）/ 某组底下的顺序 | 前端已删，服务端不用，不存在了 |
-
-布局（`layout()` + `grid()`、`MIN_CELL_W/H`、嵌套滚动）是面板前端的事，前端已删，这些规则不再存在。
-**不要照旧去 `src/` 找**：那棵 React 树连同它的布局、编辑函数已经整个删掉。
-
-### 盘上长什么样
+## 布局
 
 ```
-content/<board-id>/
-├── tree.json   { v, name, version, updatedAt, root }   ← 语义唯一真相，丢了就是真丢
-├── log.json    { v: 1, moves[] }                        ← 最近 200 手，丢了只是没历史
-│                                    move 里指节点的字段也叫 `tree`（老记录是 `id`，只当历史看）
-├── .nous/      ← 宿主的：locks.json（锁）、audit.log（谁想动锁着的块）
-└── map/
-    ├── README.md         ← 索引（id ↔ tree ↔ 名字），每次保存整份重写，纯派生
-    ├── .gone/<nodeId>/   ← 树里已经没有的节点，连文件夹挪到这儿，**不删**
-    └── <nodeId>/
-        ├── AGENTS.md     ← 入口，agent 进来时自动读的那份。**宿主不铺**：你写第一个字那天它才出现
-        ├── *.md          ← 这一块别的文档。文件夹就是清单，能建能删
-        ├── .trash/       ← 删掉的文档躺这儿，**不真删**
-        ├── package.json  ← **你自己建的**：有 `scripts.start` = 它是个 app
-        ├── server.js     ← 你自己建的：它的后端
-        ├── public/       ← 你自己建的：它的静态页面
-        └── data/         ← **你的代码自己建的**：数据放这儿，`cp -r` 走就带走了（宿主不预建）
+crates/<vendor>/<module>/   ← 插件边界就是 crate 边界；目录只表达所有权
+exts/                       ← 运行时外挂（按帧协议走 stdio，以 `exts/*` 编进 workspace）
+wire.md                     ← 对外契约（宪法）：只在这里改契约
+docs/                       ← 设计与判据（plugins / deploy / storage / triggers / permissions / decisions / pitfalls）
+scripts/                    ← 判据与部署，唯一的"做完了"来源
+deploy/nous-app.service     ← j1900 上的那个单元
 ```
 
-**这个文件叫 `AGENTS.md`，不叫 `agent.md`。** 一字之差决定 agent 会不会读它：
-所有 coding agent 进来先找 `AGENTS.md` / `CLAUDE.md`，小写的 `agent.md` 谁都不会自动打开。
-在这个文件夹里跑 `setup-matt-pocock-skills` 时，它编辑的也是这一份（它只就地更新 `## Agent skills`
-那一段，不覆盖周围的内容）。`content/` 整盘都在仓库版本控制里（树、会话日志、锁、块代码和数据），
-写坏了有 git 兜底 —— 整个仓库 clone 下来就是完整可跑的盘面。只排除嵌套 `.git`、`node_modules`、
-`dist` 和 `*.log`（都是可再生的，见 `.gitignore`）。
+`server/`、`templates/`、`package.json`、`vite.config.ts` 是**旧面板残留**：2026-11-18 面板
+下线、引擎换成 `nous-app`，这些只剩历史价值。不改、不复活、不往里加东西（要删另开一票）。
 
-**新建的节点（块和组都一样）只有一个空文件夹：没有 `AGENTS.md`，没有代码，什么都没有。**
-所以它的「打开」是一张白板 —— 那不是坏了，是「还没写」。
-文档页打开也是一片空：列表里不会多出一行假文件，点开也看不到一份没人写过的说明书。
-写第一份文档的那一刻，文件才落成磁盘上的；那份从此归你。
+## 常用命令
 
-这里曾经铺过一份脚手架（`package.json` + `server.js` + `public/index.html`，
-一个带 `/api/notes` 的示例 app），**已经拆掉了**：谁都没写过的块，一出生就端出一个像模像样的
-功能页，等于骗人说它有内容了。想让它动起来，写 `package.json` 的 `scripts.start` —— 就这一条。
-宿主**不建任何东西**：`data/` 也不建（它只把路径塞进 `NOUS_DATA`，要不要这个目录、什么时候建，
-块自己决定）。宿主写的文件只有一个：`map/README.md` —— 每盘一份的索引。其余全是你的。
-
-`map/` 的文件夹名是 **id**，不是名字：改名、换爹、撤销都不碰文件系统。对账在 `server/map.ts`，
-保存后跑一次，幂等。
-
-### 块自己的页面
-
-```
-/p/<board>/<nodeId>/                       ← 真实路径（不是 hash）。冷启动、粘贴、后退都认它
-/p/<board>/<nodeId>/__nous/doc             ← 文档页：map/<nodeId>/ 里那一堆 md
-
-GET    /api/boards/<b>/nodes/<n>/docs            → { files[], hasApp }   文件夹里有什么就是什么
-GET    /api/boards/<b>/nodes/<n>/docs?q=         → 同上，按名字 + 正文筛，命中带 snippet
-POST   /api/boards/<b>/nodes/<n>/docs { name }   → { name }             建一份
-GET    /api/boards/<b>/nodes/<n>/doc/<name>      → { text, etag } | 404
-PUT    /api/boards/<b>/nodes/<n>/doc/<name>      → { text, etag } → { etag } | 409
-DELETE /api/boards/<b>/nodes/<n>/doc/<name>      → { name }             挪进 .trash/
-POST   /api/boards/<b>/nodes/<n>/doc/<name>/restore → { name }          从 .trash/ 搬回来
+```bash
+cargo check                                     # 日常
+cargo test --workspace                          # 测试
+env -u CARGO_TARGET_DIR ./scripts/verify.sh     # 唯一的"做完了"定义（跑不通 = 没做完）
+./scripts/check-plugins.sh                      # 模块/层/版本 与 docs/plugins.md 逐行对齐
+./scripts/check-separation.sh                   # 两库分离（nous.db / nous-plugins.db）
+./scripts/judge.sh                              # 附录 A 的 case 执行器（SKIP 不是绿）
+./scripts/layer-paths.sh kernel                 # 取某一层的模块路径
+env -u CARGO_TARGET_DIR ./scripts/deploy.sh     # 编 musl → 送 j1900 → 装 unit → 重启
+ssh j1900 '…' scripts/deploy-check.sh --wait=20 # 部署后的真行为判据（在 j1900 上跑）
 ```
 
-六条不变的：
+`env -u CARGO_TARGET_DIR` 不是装饰：这台机器的全局值指向仓外，不摘掉产物就落在别处。
 
-- **正文不进 `tree.json`。** 每份文档有自己的文件、自己的 `etag`（内容哈希），**不参与 board 的 `version`** ——
-  写一篇文章不该把树顶成 409，落一手棋也不该让文档冲突。
-- **文件夹就是清单。** 不存 index、不往树里写「他有几份文档」。`touch ideas.md` 进去它就出现。
-- **`AGENTS.md` 只是名字特殊，不是宿主替你写好的。** 它存在时只能改、不能删 —— 它是 coding agent
-  进目录时自动找的文件名，删了整块就没人读得懂。UI 上删除入口根本不生成，服务端 `DELETE` 是 403，
-  大小写变体一起拦（macOS 上 `agents.md` 和 `AGENTS.md` 是同一个文件，Linux 上是两个 —— 别让一个
-  名字在两台机器上是两件事）。**新块的文件夹里没它**：想让 agent 进门读到东西，就自己建一份；
-  新建时名字大小写自动归一。删别的文档是**挪进 `map/<id>/.trash/`**，不真删，和节点的 `.gone/` 同一套逻辑。
-- **树里没有的节点不给看。** 文件夹可以躺在 `.gone/` 里，旧书签不能顺着 id 把它读活。
-- **文件不在就是不在。** `GET` 直接 404，列表里不会凭空多一行 —— 看一眼既不该长出一个文件，
-  也不该看到一份没人写过的说明书。
-- **页面盖在盘面上，不卸载盘面。** 卸载会丢掉树的展开状态、滚动位置和撤销栈；
-  被盖住的区域用 `inert`，键盘别穿透下去。
+## 硬形状（动代码之前先认这几条）
 
-文档名（`server/docname.ts`）：小写、空格转 `-`、只留字母数字中文和 `._-`、补 `.md`。
-`docname.ts` 与 `tree.ts` 是服务端独占，历史上有一份副本在 `src/` 与它漂过，前端已删，
-不许再出现第二份。判据：`grep -rn --include='*.ts' 'export const normalizeDocName\|export function treeMap' .` 只允许各 1 处。
+- **归位制**：新增任何东西（crate、扩展、数据目录、管理面），先在 `docs/plugins.md` 加一行，
+  再落代码。清单里没有的目录 = 红。
+- **`layer` 四值**：`kernel`（真相层，**零进程、零网络、零直接时钟**，要时间就注入 `Clock`）·
+  `platform`（能力层，允许 IO/进程，但必须有"无 IO 替身"）· `app`（唯一 spawn 处、唯一监听处）·
+  `dev`（夹具与探针，不进任何产品产物）。`kernel` 的依赖闭包里不许出现 `platform` / `app`。
+- **`plugin.toml` 是清单数据，API 章是生成物**：`name` / `layer` 逐字等于 `docs/plugins.md`；
+  `capabilities` 的 `enabled` = 清单 ∩ 代码，`reason.code` 四值封闭。`check-plugins.sh` 是判据。
+- **协议是哑的**：客户端只转发 `/v1/*`，不加业务字段、不在客户端算状态。未知字段用
+  `serde_json::Value` 收着原样透传 —— `deny_unknown_fields` 会让引擎每加一个字段这边就编译不过。
+  唯一例外：本地配置的 `Spec`（fail-fast）。
+- **存储分离**：`nous.db`（durable，会话与任务）与 `nous-plugins.db`（store，插件自己的表）
+  各有独立迁移链、单向依赖、跨库只有一处且顺序写死（先 durable 再 store，幂等 + 补偿）。
+  要加第二写者先签字，见 `docs/storage.md`。
+- **触发器**：`Trigger::new` 是唯一构造入口；`code` 是不可变 slug；一切规则是触发器自己的列；
+  模板是零件没有生命周期；一次点火只起一轮。见 `docs/triggers.md` §8。
+- **观测 = 每个插件对自己那一半的交代**，不是全局 telemetry 服务；`counts` 从 `fires` 表
+  `GROUP BY state` 算，不用内存计数器。
+- **调度不自己写循环**：定时/唤醒走 durable 的 `sleeping` 任务 + 注入的 `Clock`。
 
-### 一个块 = 一个独立进程（没有条件）
+## 判据的规矩
 
-`/p/<board>/<nodeId>/` 往下**永远是那个块自己的进程**，剥掉前缀反代过去，剩下的路径归它解释。
-没有「有代码才有进程」这回事 —— 那会让宿主有权替块当页面，铁律立刻变成特权。
+判据比代码重要 —— 空跑的绿比红更危险。
 
-| 文件夹里有什么 | 谁在这个进程里 |
-|---|---|
-| `package.json` 有 `scripts.start` | 它自己写的代码（宿主 `spawn …`，只给四个环境变量） |
-| 只有 `index.html` / 静态文件 | 宿主内置的空跑 server（`server/blank.mjs`），静态端出去 |
-| 什么都没有 | 同一个空跑 server，回一张**真正的空白页**（无标题、无文字、无链接） |
+- **SKIP 不是 PASS**：路径不存在、载体缺失，一律打印 `SKIP` 到 **stderr** 并算未完成。
+- **断言打命中行**：`… | tee` 输出，不用 `grep -c`（计数绿了，看不出命中的是哪一行）。
+- **不同源比**：版本号这类值必须三方给出（磁盘 sha8 / CLI 自哈希 / `/v1/device` 自报），
+  不是读同一个常量三次。
+- **负向哨兵**：故意弄脏一次（`lag` 恒 0、`counts` 不读库、CLI 换 pretty），必须变红；
+  不变红就是判据在空转 —— 先修判据，再修代码。
+- **排除项只许是目录或整块**（减层），单行豁免一律是 smell。
 
-壳只渲染两样东西：`/`（盘面）和 `/p/<board>/<id>/__nous/doc`（文档页，盖在盘面上）。
-**块的页面壳一概不管** —— 所以左列「打开」是**开一个新标签页**，不是盖一层、也不是在当前页跳走：
-跳走会把盘的展开状态、滚动位置、撤销栈全丢掉，而且两块没法对着看。
+## 部署与运行
 
-进程的契约，都是硬的：
-
-- **听 `PORT`。** 宿主给的空闲端口，不写进任何文件。
-- **数据写 `NOUS_DATA`**（= 它自己文件夹下的 `data/`）。不是宿主替你存 —— 是「`cp -r` 走了数据也走了」。
-- **`__nous/` 不许碰。** 前缀底下的别处全归你，只有这一段永远归宿主（文档页、`__nous/resolve`）。
-- **链接写相对路径。** 这是唯一能让 `cp -r map/<id> ~/<id> && npm start` 和宿主里打开
-  是同一页的写法。宿主不重写 HTML、不改你的绝对路径，`/style.css` 就是逃出前缀。
-
-宿主这边：崩了给墓碑（stderr 最后几行）+ 502，**只坏这一页**；有代码的块，文件夹里的代码一改
-就收掉进程（下次请求带着新代码起来，不自动重启 —— 崩得勤的块会把机器烧穿）；`scripts.start`
-改了同理；闲 10 分钟退出。`npm install` 不归宿主管：块要依赖就把 `node_modules` 放进去。
-
-给的四个环境变量，就这四个：`PORT`、`NOUS_DATA`、`NOUS_ORIGIN`（宿主地址）、
-`NOUS_SELF`（我在宿主里叫什么，`/p/<board>/<id>`）。
-
-### agent 运行时：`@earendil-works/*`
-
-`pi-durable`（agent loop + tools）、`chord`（持久化/sqlite）、`pi-ai`（模型供应商）钉在 **1.4.0**，
-三个一起升、一起锁死 —— `pi-durable` 自己就是精确钉 `1.4.0`，顶层写 `^` 迟早分叉出两份 `pi-ai`，
-症状是「同一个类却不相等」。
-
-- **只在 Node 里跑。** 如今只有 `server/*.ts`，没有 `src/`、没有客户端 bundle，也没有
-  「被拖进前端」这条失败模式了。包还在，是因为壳里的块调度与 content store 要用。
-  禁止再把它们塞进浏览器代码；`vite.config.ts` **不是构建配置，它就是面板壳本体** ——
-  `nous-panel.service` 跑 `vite preview`，`contentApi` / `blocksApi` / `nousApi` / `BoardStore`
-  都在里面当 middleware。所以 A 段不能删它，B/C 段判断「壳还在不在」时以这个为准。
-- **持久化状态写 `NOUS_DATA`。** chord 的 sqlite 也好、agent 的会话记录也好，落块的 `data/` 底下，
-  **不许落仓库根**。理由跟块一样：`cp -r map/<id> ~/<id>` 走了，状态也跟着走。
-- `node >= 22.19.0`（`engines` 已声明）。`node:sqlite` 在 20.x 上不存在，别指望它会以看得懂的方式报错。
-
-### 锁：块和组都能锁，锁住的只是它自己那一个
-
-```
-content/<board>/.nous/locks.json    {"v":1,"ids":["n41"]}     ← 锁住谁
-content/<board>/.nous/audit.log     什么时候谁想让它消失
-GET  /api/boards/:id/locks                       → { ids }
-PUT  /api/boards/:id/locks   { id, locked }      → { ids }
+```bash
+# unit 里这三行是一对：绑非回环就必须有 token，缺了进程 refuse 退出 78（EX_CONFIG）
+Environment=NOUS_LISTEN=0.0.0.0:4789
+Environment=NOUS_TOKEN_FILE=/etc/nous/token
+Environment=NOUS_DB=/var/lib/nous/nous.db
 ```
 
-- **锁是宿主的状态，不是块的内容。** 所以它不住在 `map/<id>/`（那是用户和 AI 的地盘，一个 `rm` 就没了），
-  也不进 `tree.json`（那会变成第二个真相）。
-- **锁只管它自己那一个节点，块和组都能锁。** 锁住一个组 = 这个组不许消失；组里的块**没有**跟着锁，
-  从里面删一块、往里加一块都照旧。想保护里面的块就自己按上去。
-  （早先的规则是「锁是子树」—— 结果是锁过的组里每新建一块都删不掉，必须先解锁再加锁。）
-  `locks.json` 里存的就是生效的全部，没有继承那一层，`lockMap()`（`server/locks.ts`）只是把
-  树里已经没了的 id 滤掉。
-- **强制在服务端。** 客户端发来的树里少了锁定的节点，`save()` 沿它**原来**的位置往上找最近的存活祖先，
-  把它接回来（整枝被删的话，连它当时的孩子一起还回来）。并把修正后的树返回给客户端
-  （客户端必须认这份，否则本地和盘上分叉）。
-  所以「删掉它所在的组 = 它上提一层」，不是「它跟着没了」。
-  这里有两个必须记住的坑，病都是「同一个 id 出现两次」：**先浅后深地接**（锁了组又锁了里面的块，
-  组先回家，块跟着回来），**每接一枝就重算「谁还活着」**（开头算一次用到尾，会 clone 出第二个它）。
-- **强制只在服务端。** 前端已删，没有 UI 那一层判断；「隐藏删除」这种防手滑的旧规则不再存在。
-- **绕过会留痕**：每次「锁定节点从树里消失」的尝试都写进 `audit.log`，带来源地址。
+- **退出码 78 = 拒绝启动**（库比代码新 / 没 token / workdir 不可写），配 `RestartPreventExitStatus=78`
+  让它停在 failed，而不是每 3 秒拉一次。崩溃仍是 2。
+- **只出 musl 静态产物**；j1900 **只跑产物**，不 clone、不编译、不装 `sqlite3` CLI
+  （运维走二进制自己的 `--backup` / `--check` / `--active-tasks` / `--triggers`）。
+- 数据全在 `/var/lib/nous/`（`nous.db`、`nous-plugins.db`、`backups/`）。那是**线上会话记录**，
+  只读、只经 CLI 动。
+- 部署幂等 = 产物 + unit 两样都比 sha：只看二进制，改 unit 会静默不生效。
+- 环境变量入口见 `grep -o 'NOUS_[A-Z_]*' -r crates/ | sort -u`；不要新增"只在一个分支里读过"的变量。
 
-做不到的也说清：能改宿主状态文件的人（root、或者将来的 AI）照样能解锁。
-这里给的是「没有顺手删掉这回事」，不是物理防线。
+## 分支与交付
 
-### 块之间怎么说话
+- **一票一 worktree**：`git worktree add /opt/nous-<主题> -b feat/<主题> origin/main`，
+  干完 `--no-ff` 并进 `main`，再 `git worktree remove`。`main` 只由合并进入。
+- **做完就停**：本地提交、跑完判据，把分支与验证方法交回用户；用户说「没问题」之后才合并、
+  打 tag、部署、关票。
+- **tag 是语义化版本**，默认 patch +1（升 minor/major 要用户明说），一处真相三处同步：
+  `Cargo.toml` 的 `[workspace.package] version`、每个 `plugin.toml`、tag 本身。
 
-```
-GET …/__nous/resolve/<id>[?path=/底下]           → { url }   ← 绝对地址
-```
+## 红线
 
-`resolve` 的 `url` 就是邻居的地址，拿到就能电话。**两条铁律：**
-
-- **只走 HTTP。** 不许 import 别人的代码，不许读别人的文件夹，不信任别人的 `data/`。
-  按路径自己拼 `/p/<board>/<id>` 也不许 —— 地址只有一个来源，就是 `resolve`。
-  理由不是洁癖：某块明天搬去自己的域名或容器，改的是宿主那张表，不是所有块。
-- **没有凭据。** 单用户、内网、块与块互信。这里没有 token、签名、scope。
-  要多人、要跑不可信代码那天，先上进程/容器边界，再谈身份 —— 顺序反了全是白工。
-  **一个例外（2026-11-09）：服务器私钥。** 它是**内容**不是身份 —— 从 
-  `vq0f03` 的 `/api/vps/<名>/secret` 转一手，而上游那条路由只在**回环面板**上注册
-  （远程门默认 404，见 Nous-Warehouse `routes.go`）。「块与块互信」没变，变的是
-  「同机任意进程都能取到编目里的私钥」—— 这条不靠协议挡，靠的是「谁能在这台机器上跑代码」。
+- **密钥只在内存**：不落盘、不进日志、不进会话记录、不进库。
+- `fixtures/agent.sqlite` 只读；`/var/lib/nous/` 只经 CLI 动。
+- 不为过判据开第二条写通道；协议加字段先改 `wire.md` 与类型，再让客户端跟。
+- 只做 Linux（开发机是 Debian 13 + Wayland）。Windows 的源码与打包配置原地冻结：不改、不删、不出包。
+- 踩一个坑就往 `docs/pitfalls.md` 追加一条（症状 / 根因 / 解，三行以内）；选了什么、为什么、
+  什么时候该反悔，写进 `docs/decisions.md`。两份都是追加式：冲突时**两边都留**，不许整份取一边。
 
 ## Agent skills
 
