@@ -203,6 +203,16 @@ async fn run() -> Result<(), RunError> {
             registry.clone(),
         )),
         Err(error) => {
+            // 「库比代码新」是**不想起**（78 + `refuse: schema-too-new`），不是崩了（2）。
+            // `StorageError::is_schema_too_new()` 早就写好了，但一直没人接上，于是
+            // SchemaTooNew 走下面那条泛化路径 → 退出码 2 → systemd 每 3 秒拉一次，
+            // 正是 unit 里 `RestartPreventExitStatus=78` 要挡的那件事（j1900 上实测抓到）。
+            if error.is_schema_too_new() {
+                return Err(RunError::Refused(
+                    "schema-too-new",
+                    format!("{db}: {error}"),
+                ));
+            }
             if is_upstream_v2(&db) {
                 return Err(format!(
                     "{db} is an upstream v2 library; the writer refuses it by design \
@@ -301,7 +311,10 @@ async fn run() -> Result<(), RunError> {
         state.with_origin(format!("http://{actual}"))
     };
     let app: Router = match token {
-        Some(token) => router(state).layer(axum::middleware::from_fn(move |req, next| {
+        // 用 `route_layer` 而不是 `layer`：认证只裹**匹配到的路由**。
+        // 用 `layer` 时未知路径也会先过认证，`/health` 这类探测点会回 401 而不是 404
+        // （判据 9 的「负空间」：没东西的地方就该是 404，不能因为有没有 token 而变成 401）。
+        Some(token) => router(state).route_layer(axum::middleware::from_fn(move |req, next| {
             auth::require_bearer(token.clone(), req, next)
         })),
         None => router(state),
