@@ -175,3 +175,14 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 `${CARGO_TARGET_DIR:-...}`。**同一个路径三处写法**，两处对一处错。
 **解**：三处统一 `${CARGO_TARGET_DIR:-./target}/release/$BIN`。找不到产物时的报错要能读出路径，
 别只说「没打出 listening 行」——那句会把「产物路径错」伪装成「服务起不来」。
+
+## 8 · 在 worktree 里跑 verify.sh 却共用主树的 `CARGO_TARGET_DIR` → 主树测试假红
+
+**症状**：worktree 里 `verify.sh` 56 ✓，回到主树同一份代码却红一两条，而且红得莫名其妙：
+`小样本 fixture 应在仓里：/opt/nous-docs/crates/nous/durable/../../../fixtures/agent.small.sqlite`
+—— 路径指向一个**已经被删掉的 worktree**。
+**根因**：`CARGO_MANIFEST_DIR` 是编译期写进二进制的。在 worktree 里编、但 `CARGO_TARGET_DIR` 指向主树，
+产物就带着 worktree 的路径留在主树的 target 里；worktree 一删，那些测试找什么都 NotFound。
+`cargo clean -p <那个 crate>` 不够 —— 只要有一条还指着，红的就换一条（本例先红 durable，clean 后红 store）。
+**解**：worktree 里跑判据一律用自己的 target（`CARGO_TARGET_DIR=./target` 或干脆不设）；
+串了就这么收拾：`cargo clean` 全量重编（`clean -p` 会留下别的）。判据红的时候先看**报错里的路径**是谁的。
