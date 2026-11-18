@@ -254,8 +254,17 @@ async fn run() -> Result<(), RunError> {
     );
 
     // #57：触发器是自己的库（nous-triggers.db），点火走的是上面那条同一个 Session。
-    let triggers_db = std::env::var("NOUS_TRIGGER_DB")
-        .unwrap_or_else(|_| "./nous-triggers.db".to_string());
+    // 默认和 `NOUS_DB` 同目录，不落 cwd：systemd 的 WorkingDirectory 是 /srv/nous/work，
+    // 落 cwd 会把数据写到工作目录而不是数据目录。
+    let triggers_db = std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
+        Path::new(&db)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join("nous-triggers.db")
+            .to_string_lossy()
+            .into_owned()
+    });
     let trigger_store = nous_store::Store::open(&triggers_db)
         .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
