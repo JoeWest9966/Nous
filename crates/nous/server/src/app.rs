@@ -121,6 +121,28 @@ impl AppState {
         self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
+    /// faux 轮次用的帧出口：把驱动器产出的状态帧送进**本进程唯一**的 Hub。
+    /// 会话 id 由调用点给出，不让事件自己猜路由。
+    pub fn turn_event_sink(
+        self: &Arc<Self>,
+        session: i64,
+    ) -> Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync> {
+        let state = self.clone();
+        Arc::new(move |event| state.publish_event(session, event.clone()))
+    }
+
+    /// faux 装配的 provider 种类（`"faux"` / `"real"`）。只读诊断，不参与轮次。
+    pub fn provider_kind(&self) -> &'static str {
+        self.runtime()
+            .map(|runtime| runtime.provider_kind)
+            .unwrap_or("real")
+    }
+
+    /// faux 装配的编目；没有装配时为空（诚实）。
+    pub fn assembled_models(&self) -> Option<crate::models::ModelsResponse> {
+        self.runtime().map(|runtime| runtime.models.clone())
+    }
+
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。
     ///
     /// 不是「整个 AppState 一个会话」：`Session` 不绑会话，一次提交里的 `Entry` / `Document`

@@ -32,6 +32,16 @@ use nous_server::{router, AppState, DurableCommands, SessionObserver};
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
 
+/// 启动门槛的唯一出口：收一组理由，打到 stderr，然后非 0 退出。
+/// #50 的 token 门槛与本票的 faux 门槛共用这一个函数（一个函数、多条理由）。
+fn refuse_startup(reasons: &[String]) -> ! {
+    assert!(!reasons.is_empty(), "refuse_startup 至少一条理由");
+    for reason in reasons {
+        eprintln!("nous-server: 拒绝启动：{reason}");
+    }
+    std::process::exit(2);
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     match run().await {
@@ -72,6 +82,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let commands = DurableCommands::with_session(session.clone(), registry);
+    let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+    // 启动门槛统一从这一个函数走：#50 的 token 理由、#51 的 faux 理由都在这里汇合。
+    let mut reasons: Vec<String> = Vec::new();
+    let faux = nous_server::runtime::provider_kind(&nous_server::runtime::ProcessEnvValues) == "faux";
+    if faux {
+        if let Ok(socket) = address.parse::<std::net::SocketAddr>() {
+            if !socket.ip().is_loopback() {
+                reasons.push(format!(
+                    "faux provider 只允许绑回环（127.0.0.1），当前监听 {address}"
+                ));
+            }
+        }
+    }
+    if !reasons.is_empty() {
+        refuse_startup(&reasons);
+    }
+
     let state = AppState::durable_with_commands(
         nous_server::ImportedSource::open(&db)?,
         commands.clone(),
@@ -96,7 +123,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let state = state.with_runtime(Arc::new(assembled));
 
-    let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let actual = listener.local_addr()?;
     // 脚本抓这一行：先写行、再 flush，之后的 serve 才可能阻塞。
