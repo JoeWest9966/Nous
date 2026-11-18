@@ -214,7 +214,6 @@ async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
 }
 
 /// `POST /v1/triggers/:code/fire`：手动点火。actor 从 token 派生（#50），现为 system。
-#[axum::debug_handler]
 async fn fire_trigger(
     State(state): State<Arc<AppState>>,
     Path(code): Path<String>,

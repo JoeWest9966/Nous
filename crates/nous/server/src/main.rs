@@ -254,7 +254,8 @@ async fn run() -> Result<(), RunError> {
     // #57：触发器是自己的库（nous-triggers.db），点火走的是上面那条同一个 Session。
     let triggers_db = std::env::var("NOUS_TRIGGER_DB")
         .unwrap_or_else(|_| "./nous-triggers.db".to_string());
-    let trigger_store = nous_store::Store::open(&triggers_db)?;
+    let trigger_store = nous_store::Store::open(&triggers_db)
+        .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
     let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
         let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
