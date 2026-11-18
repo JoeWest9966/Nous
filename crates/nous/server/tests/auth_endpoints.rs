@@ -113,6 +113,11 @@ async fn every_v1_route_is_protected_including_capabilities_and_sse() {
         status(&app, "/v1/sessions", Some(&format!("Bearer {TOKEN}"))).await,
         StatusCode::OK
     );
+    assert_eq!(
+        status(&app, "/v1/capabilities", Some(&format!("Bearer {TOKEN}"))).await,
+        StatusCode::OK,
+        "capabilities 也必须在 token 后面"
+    );
     let response = app
         .clone()
         .oneshot(
