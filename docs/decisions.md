@@ -341,3 +341,38 @@ durable 的迁移一改，触发器的数据跟着承担风险。两个文件把
 **反悔点**：第三个数据面入口出现时（比如审计自己的库），**先问它该不该是
 `sqlite-entry`**；如果三个以上入口让「数据面可数」失去意义，就把这条判据改成
 「每个入口一个 crate、每个 crate 一行 metadata」的清单体检，别再靠 `$K ∪ metadata` 的并集。
+
+---
+
+## 2026-11-18 · 收口：判据 4e 的契约图扩边 + `NOUS_TOKEN_FILE` 真的读
+
+**背景**：`#47`–`#56` 十张票全在 `integration/desk-connect` 上，`origin/main` 一条都没有。
+收口前先在 integration 上跑全量判据，抓出两件事：
+
+**① 判据 4e 那张 allow 表是旧的，而且 main 早就红着。** `origin/main` 上实测 4 条越界边
+（`nous-server → nous-ai / nous-runtime / nous-sessions / nous-tools`），integration 上 5 条
+（多一条 `nous-documents`，来自 `#48`）。也就是说 `#44/#49` 合进 main 那天起 4e 就在红，
+只是没人跑。这不是 #56 造成的（它的提交没碰 `nous-server/Cargo.toml`）。
+
+**决定：给 `nous-server` 扩边**，理由是它现在是**组装根**（拼 HTTP 面就必须摸到这些层）。
+要守的是「内核层不依赖应用层」（判据 2），那条没动。**判据段落只有人能改**，这次由用户签字。
+
+```rust
+'nous-server': {'nous-durable','nous-wire','nous-telemetry',
+                'nous-ai','nous-runtime','nous-sessions','nous-tools','nous-documents'}
+```
+
+**学到的**：判据红着没人看 = 判据不存在。`verify.sh` 的退出码必须在 CI 里，否则这类红会躺一个月。
+
+**② `deploy/nous-app.service` 说 token 在 `/etc/nous/token`，代码却读 `$HOME/.config/nous/token`。**
+`NOUS_TOKEN_FILE` 只写在 unit 里，`auth.rs` 从来没读过。真部署的后果：`deploy.sh --rotate-token`
+轮转的钥匙**根本没生效**，进程按"没有 token"回环放行 —— 认证静默失效。
+（这个洞是被 `#51` 的 faux 测试抓出来的：它在我这台机器上 401，因为 `/root/.config/nous/token` 存在。）
+
+**决定**：`auth::token_path()` = `NOUS_TOKEN_FILE` 优先，否则 `default_token_path()`。
+`scripts/deploy.sh` 生成钥匙、unit 指路、代码只读 —— **三处一个路径，不许各猜一个**。
+判据 `crates/nous/server/tests/token_path.rs`：`NOUS_TOKEN_FILE` 那把能用、`$HOME` 那把**不认**、
+不带 header 401。负向哨兵验过（把 `token_path()` 换回 `default_token_path()` → 红）。
+
+**反悔线**：如果哪天要做多把钥匙（按主体分权），先换 `auth.rs` 这一个文件，
+别在 unit 里堆 `NOUS_TOKEN_FILE_2`。

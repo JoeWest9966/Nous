@@ -507,7 +507,10 @@ allow={
  'nous-tools': {'nous-ai','nous-env'},
  'nous-runtime': {'nous-ai'},
  'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
- 'nous-server': {'nous-durable','nous-wire','nous-telemetry'},
+ # nous-server 是**组装根**：它必须摸到这些层才能把 HTTP 面拼起来（#44/#47/#48/#49/#51）。
+ # 这一节扩边不等于放宽「内核层不依赖应用层」——那条是判据 2，另有人在守。
+ 'nous-server': {'nous-durable','nous-wire','nous-telemetry',
+                 'nous-ai','nous-runtime','nous-sessions','nous-tools','nous-documents'},
  # #56：Nous 自己的库。**没有内部依赖**（尤其没有 nous-durable）—— 多一条边就是判据 1 破了。
  'nous-store': set(),
 }
