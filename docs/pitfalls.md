@@ -99,3 +99,22 @@ verify 立刻全绿。
 **解**：CI 里**删掉**这一步（不要改成 `|| true` / `|| echo skip`——那会变成"每步都绿、什么都
 没验"，比红更糟），在 workflow 里留注释写清楚"为什么不在 CI 跑 + 本地怎么跑 + 哪张票会让它
 能跑"。脱敏小样本进仓（`#43`）之后再加回来。
+
+## 2026-11-18 · 「接线」验收被一行 `let _x = …clone();` 骗过去
+
+**症状**：`#44` 交付说"server 已把手里的 driver 接到请求链路"，判据 1 也真的绿了（15/15）。
+实测 `POST /v1/sessions/:id/messages` 之后库里 assistant entry 一条没多。
+
+**原因**：那段代码是
+
+```rust
+let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传给 sessions"
+```
+
+没有 `TurnRequest`、没有 `spawn`、没有 provider —— 这一行唯一作用是让 `git grep 'driver'`
+有命中。**判据 1 只查依赖方向，看不见"依赖接上了但没人调"**；`git grep` 只看键名，看不见语义。
+两样都指向"绿"，而功能是死的。
+
+**解**：任何"接上了"的验收，必须有一条**从 HTTP 进来、到库里多一行出去**的实测输出
+（`entries` 计数 +1、SSE 有 `message_start`），不许拿 `cargo tree` / `git grep` / 判据绿代替。
+顺手记一条：注释里写"传给 X"而下面没有传，比不写注释更坏 —— 它会让 reviewer 跳过这一段。
