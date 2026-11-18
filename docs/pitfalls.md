@@ -154,3 +154,15 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 同一台机器 `curl https://github.com` 返回 200、`gh api repos/…` 正常。
 **根因**：git 的 GnuTLS 后端在某次握手上的兼容问题（同一网络下 http 栈能通），不是凭据、不是代理、不是仓库权限。
 **解**：`git -c http.version=HTTP/1.1 push origin main`。连续重试无效时别再等，直接换协议版本。
+
+---
+
+## 6 · j1900 上曾经有一个**同名**的 `nous.service`（8090），2026-11-18 已清除
+
+**症状**：`systemctl cat nous` 能查到 `ExecStart=/usr/local/bin/nous serve --addr 0.0.0.0:8090`，
+很容易误以为是本项目的服务（本项目将来叫 `nous-app.service`，见 `#52`）。
+**根因**：那是一个**历史试验项目**（`nous 1.36.1`，静态二进制，中央-卫星二进制分发 + 外部组件登记，
+`/var/nous-dist/{install-central,install-satellite}.sh`），跟本仓库**没有任何代码关系**，只是撞了名字。
+**解**：已 `disable --now` + 摘单元 + 删 `/var/nous-dist`、`/root/.nous`、`/usr/local/bin/nous*`（含 12 个 `.bak`），
+复验 `status` 为 not-found、`ss` 里 8090 已无人监听。**结论：这台机器上凡是 `nous` 开头的单元，
+只有 `nous-panel`（旧 TS 面板，待下线）与将来的 `nous-app` 是本项目的。**
