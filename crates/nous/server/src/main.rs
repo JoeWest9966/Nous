@@ -108,6 +108,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 脚本抓这一行：先写行、再 flush，之后的 serve 才可能阻塞。
     println!("listening on {actual}");
     std::io::stdout().flush()?;
+    // 端口给 0 时实际地址只有绑定后才知道；`NOUS_ORIGIN` 显式给出则优先。
+    let state = if std::env::var("NOUS_ORIGIN").is_ok_and(|value| !value.is_empty()) {
+        state
+    } else {
+        state.with_origin(format!("http://{actual}"))
+    };
     axum::serve(listener, router(state)).await?;
     Ok(())
 }

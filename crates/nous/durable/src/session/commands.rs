@@ -527,6 +527,126 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
 
 const NAMES_KIND: &str = "qrd3wh.sessions";
 const UNREAD_KIND: &str = "qrd3wh.unread";
+
+/// `POST /v1/sessions/:id/pin` 的入参。`request_id` 是必填的幂等锚。
+#[derive(Debug, Clone)]
+pub struct PinRequest {
+    pub conversation: Id,
+    pub pinned: bool,
+    pub request_id: String,
+}
+
+/// 置顶回执，同时也是存进 `pins.requests` 的锚值。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinOutcome {
+    pub id: Id,
+    pub pinned: bool,
+    pub changed: bool,
+    pub request_id: String,
+    pub version: i64,
+}
+
+/// 每个会话保留的最近锚数。按 version 淘汰旧的。
+const PIN_ANCHOR_LIMIT: usize = 50;
+
+/// 置顶/取消置顶：读 pins → 判幂等 → 算回执 → 一次提交 + 广播。
+///
+/// 状态住在 `qrd3wh.sessions` 的 `pins` 键里：`{ ids, requests }`。整份文档用 base
+/// 覆盖写（同 rename 的 `upsert_session_document`），`names` 必须原样保留。
+pub async fn set_pin(session: &Session, request: PinRequest) -> Result<PinOutcome, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let (writes, outcome) = {
+        let storage = storage_mut(&mut guard)?;
+        if storage.conversation(request.conversation)?.is_none() {
+            return Err(CommandError::NotFound(format!(
+                "session {} not found",
+                request.conversation
+            )));
+        }
+        let (existing_id, existing) = session_scope_document(storage, NAMES_KIND)?;
+        let mut value = existing.unwrap_or_else(|| json!({}));
+        if !value.is_object() {
+            value = json!({});
+        }
+        let mut pins = value.get("pins").cloned().unwrap_or_else(|| json!({}));
+        if !pins.is_object() {
+            pins = json!({});
+        }
+        let mut ids: Vec<String> = pins
+            .get("ids")
+            .and_then(Value::as_array)
+            .map(|ids| ids.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        let mut requests = pins
+            .get("requests")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+
+        // 幂等锚：重放第一次的回包，不落新提交、不涨版本。
+        if let Some(previous) = requests.get(&request.request_id) {
+            if let Ok(outcome) = serde_json::from_value::<PinOutcome>(previous.clone()) {
+                return Ok(outcome);
+            }
+        }
+
+        let version = requests
+            .values()
+            .filter_map(|value| value.get("version").and_then(Value::as_i64))
+            .max()
+            .unwrap_or_default()
+            + 1;
+        let key = request.conversation.to_string();
+        let present = ids.iter().any(|id| id == &key);
+        let changed = if request.pinned {
+            if present {
+                false
+            } else {
+                ids.insert(0, key);
+                true
+            }
+        } else if present {
+            ids.retain(|id| id != &key);
+            true
+        } else {
+            false
+        };
+        let outcome = PinOutcome {
+            id: request.conversation,
+            pinned: request.pinned,
+            changed,
+            request_id: request.request_id.clone(),
+            version,
+        };
+        let stored = serde_json::to_value(&outcome).map_err(|error| {
+            CommandError::Session(SessionError::Shape(error.to_string()))
+        })?;
+        requests.insert(request.request_id.clone(), stored);
+        while requests.len() > PIN_ANCHOR_LIMIT {
+            let oldest = requests
+                .iter()
+                .filter_map(|(id, value)| {
+                    value
+                        .get("version")
+                        .and_then(Value::as_i64)
+                        .map(|version| (version, id.clone()))
+                })
+                .min()
+                .map(|(_, id)| id);
+            let Some(oldest) = oldest else { break };
+            requests.remove(&oldest);
+        }
+        pins["ids"] = json!(ids);
+        pins["requests"] = Value::Object(requests);
+        value["pins"] = pins;
+        let writes = upsert_session_document(storage, NAMES_KIND, existing_id, value)?;
+        (writes, outcome)
+    };
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(outcome)
+}
 const NAME_MAX_LEN: usize = 120;
 
 /// `POST /v1/sessions/:id/rename` 的结果（回包就是生效值）。

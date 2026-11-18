@@ -96,6 +96,11 @@ pub fn extensions() -> Value {
     json!({ "items": [] })
 }
 
+/// `GET /v1/triggers`：触发器没实现，诚实回空清单（`root: null`）。
+pub fn triggers() -> Value {
+    json!({ "triggers": [], "root": Value::Null })
+}
+
 // ── 端点注册表：唯一真相（#47 拷问结果 §2/§4/§8 + #48 的 _routes）──────
 //
 // `router()` 从这里装配真路由；`capabilities()` 从这里生成 endpoints；
@@ -128,11 +133,15 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/abort", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/fork", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/rename", module: "sessions" },
+    // #49：置顶写穿走 sessions 模块；与 rename/read 一样经同一个 `Session` 写者。
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/pin", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "selection" },
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
+    // #49：物理上注册，但 triggers 在清单里关着 —— capabilities 不声明（同 ext 的处理）。
+    RegisteredRoute { method: "GET", path: "/v1/triggers", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
     // #48：documents 的 12 条端点（模板原文来自 nous_documents::DOCUMENT_ROUTES）。
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}", module: "documents" },
@@ -229,7 +238,7 @@ impl ReasonCode {
 ///
 /// 形状是前向兼容的：未来（#51）可能给 module 加可选的 `kind` 字段，那是**加法**，
 /// 不替换 `name` / `enabled` / `endpoints` / `reason` 的既有语义。
-pub fn capabilities() -> Value {
+pub fn capabilities(origin: &str) -> Value {
     let modules: Vec<Value> = MANIFEST
         .iter()
         .map(|(name, manifest_reason)| {
@@ -268,6 +277,11 @@ pub fn capabilities() -> Value {
                 "configured": false,
                 "message": "没有配置真实 provider 凭证，发消息会 503",
             }
-        }
+        },
+        // 一个地址 + 服务表：engine 是它自己，triggers 尚未实现。
+        "services": [
+            { "name": "engine", "base": origin },
+            { "name": "triggers", "enabled": false },
+        ],
     })
 }

@@ -61,9 +61,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/unread", get(unread))
         .route("/v1/read/{id}", post(mark_read))
         .route("/v1/sessions/{id}/rename", post(rename))
+        .route("/v1/sessions/{id}/pin", post(pin))
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
+        .route("/v1/triggers", get(triggers))
         .route("/v1/capabilities", get(capabilities));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
     crate::documents::attach(state, router)
@@ -130,6 +132,38 @@ async fn rename(
     Ok(Json(json!({ "id": result.id, "name": result.name })))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PinBody {
+    pinned: bool,
+    request_id: Option<String>,
+}
+
+/// `POST /v1/sessions/:id/pin`：置顶写穿。`requestId` 必填，重放回第一次的回执。
+async fn pin(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let body: PinBody = if body.is_empty() {
+        return Err(ServerError::BadRequest(
+            "pinned and requestId are required".to_string(),
+        ));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("pin body: {error}")))?
+    };
+    let request_id = body
+        .request_id
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ServerError::BadRequest("requestId is required".to_string()))?;
+    let result = state.commands().pin(id, body.pinned, request_id).await?;
+    Ok(Json(serde_json::to_value(result).map_err(|error| {
+        ServerError::Internal(format!("serialize pin receipt: {error}"))
+    })?))
+}
+
 /// `GET /v1/device`：进程/宿主配置，About 面板读它。
 async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(crate::meta::device(state.models()))
@@ -155,9 +189,14 @@ async fn extensions() -> Json<Value> {
     Json(crate::meta::extensions())
 }
 
+/// `GET /v1/triggers`：没实现，回空清单，不 404。
+async fn triggers() -> Json<Value> {
+    Json(crate::meta::triggers())
+}
+
 /// `GET /v1/capabilities`：desk 按 modules 显示/隐藏功能面。
-async fn capabilities() -> Json<Value> {
-    Json(crate::meta::capabilities())
+async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(crate::meta::capabilities(state.origin()))
 }
 
 /// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。

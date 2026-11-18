@@ -75,6 +75,7 @@ pub fn item(id: i64, name: &str) -> SessionItem {
         updated_at: None,
         last: None,
         archived: None,
+        pinned: false,
     }
 }
 
