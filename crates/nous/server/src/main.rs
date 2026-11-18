@@ -25,12 +25,25 @@ use std::sync::Arc;
 use std::path::Path;
 use std::process::ExitCode;
 
+use axum::Router;
 use nous_durable::storage::{adopt_legacy_copy, SqliteStore};
 use nous_durable::StorageError;
-use nous_server::{router, AppState, DurableCommands, SessionObserver};
+use nous_server::{auth, router, AppState, DurableCommands, SessionObserver};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
+
+/// 启动门槛的统一出口：收集所有「不许启动」的理由，一次写 stderr 后以非 0 退出。
+///
+/// 新增门槛（例如 #51 的 provider 配置检查）只需在 `reasons` 里再 push 一条，
+/// 不要另写一个独立的 if —— 否则日志口径和退出码会分叉。
+fn refuse_startup(reasons: &[String]) -> ! {
+    assert!(!reasons.is_empty(), "refuse_startup 至少要有 1 条理由");
+    for reason in reasons {
+        eprintln!("nous-server: 拒绝启动：{reason}");
+    }
+    std::process::exit(2)
+}
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -44,6 +57,17 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // `--print-token`：只打印 token 本身（给 `curl -H "Authorization: Bearer $(…)"` 直接用），
+    // 不启服务、不碰库。缺失时按首次启动生成。
+    let token_path = auth::default_token_path();
+    if std::env::args().any(|arg| arg == "--print-token") {
+        let Some((token, _)) = auth::load_or_generate(&token_path, true)? else {
+            return Err("generate=true 必有 token".into());
+        };
+        println!("{token}");
+        return Ok(());
+    }
+
     let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
     if std::env::var("NOUS_ADOPT_LEGACY").is_ok_and(|value| value == "1") && Path::new(&db).exists() {
         match adopt_legacy_copy(&db) {
@@ -103,6 +127,38 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+
+    // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
+    // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。
+    let loaded = auth::load_or_generate(&token_path, false)?;
+    let socket: std::net::SocketAddr = address.parse()?;
+    let loopback = socket.ip().is_loopback();
+
+    // 门槛理由集中在这里；#51 的 faux provider 检查在下面 push 即可共用 refuse_startup。
+    let mut reasons: Vec<String> = Vec::new();
+    if loaded.is_none() && !loopback {
+        reasons.push(format!(
+            "NOUS_LISTEN={address} 绑非回环但没有可用 token；请先用 `nous-app --print-token` 生成/抄取 token（文件：{}）",
+            token_path.display()
+        ));
+    }
+    if !reasons.is_empty() {
+        refuse_startup(&reasons);
+    }
+
+    let token = match loaded {
+        Some((token, _)) => {
+            if let Ok(false) = auth::has_secured_permissions(&token_path) {
+                eprintln!(
+                    "nous-server: warning: token 文件 {} 权限不是 0600（容器里常见，不拦启动）",
+                    token_path.display()
+                );
+            }
+            Some(token)
+        }
+        None => None, // 只有回环能走到这里
+    };
+
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let actual = listener.local_addr()?;
     // 脚本抓这一行：先写行、再 flush，之后的 serve 才可能阻塞。
@@ -114,7 +170,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         state.with_origin(format!("http://{actual}"))
     };
-    axum::serve(listener, router(state)).await?;
+    let app: Router = match token {
+        Some(token) => router(state).layer(axum::middleware::from_fn(move |req, next| {
+            auth::require_bearer(token.clone(), req, next)
+        })),
+        None => router(state),
+    };
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
