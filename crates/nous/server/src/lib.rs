@@ -17,11 +17,14 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod auth;
 pub mod coalesce;
 pub mod commands;
+pub mod documents;
 pub mod error;
 pub mod hub;
 pub mod machines;
+pub mod meta;
 pub mod models;
 pub mod records;
 pub mod observer;

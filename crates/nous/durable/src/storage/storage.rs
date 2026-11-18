@@ -481,6 +481,41 @@ impl Storage {
         super::scans::find_document(self.store.db(), self.schema(), address, at)
     }
 
+    /// 某个 revision 上的全文值（含 base + 到那个 seq 为止的 delta），只读。
+    ///
+    /// 与 [`materialize`](Self::materialize) 的 `At` 不同：这里允许 current-only 文档
+    /// 读已经落库的 revision，给上层 documents 的 history/diff 用。
+    pub fn revision_value(&self, id: i64, seq: Seq) -> Result<Option<StoredDocument>> {
+        self.ensure_open()?;
+        super::documents::revision_value(self.store.db(), self.schema(), id, seq)
+    }
+
+    /// 一份文档的修订序列：`(seq, revision_kind)`，seq 升序。
+    ///
+    /// 只读查询，给上层算历史 / 差异用；`kind` 只有 durable 自己的 `base` / `delta`，
+    /// 不认识产品词。看某个 seq 上的值仍走 [`materialize`](Self::materialize)。
+    pub fn revisions(&self, id: i64) -> Result<Vec<(Seq, String)>> {
+        self.ensure_open()?;
+        let rows = self.store.db().all(
+            &format!(
+                "SELECT seq, kind FROM {} WHERE document_id = ? ORDER BY seq ASC",
+                self.schema().table("document_revisions")
+            ),
+            &[Cell::Integer(id)],
+        )?;
+        rows.iter()
+            .map(|row| {
+                let seq = row.get("seq").and_then(Cell::as_i64).ok_or_else(|| {
+                    crate::StorageError::Shape("document_revisions.seq is not an integer".into())
+                })?;
+                let kind = row.get("kind").and_then(Cell::as_str).ok_or_else(|| {
+                    crate::StorageError::Shape("document_revisions.kind is not text".into())
+                })?;
+                Ok((seq, kind.to_string()))
+            })
+            .collect()
+    }
+
     /// 一份文档的记录（不重放内容）。
     pub fn document(&self, id: i64) -> Result<Option<Value>> {
         self.ensure_open()?;

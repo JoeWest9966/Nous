@@ -1,0 +1,14 @@
+{
+  "ok": false,
+  "errors": [
+    {
+      "path": "name",
+      "message": "document missing-name not found",
+      "level": "error"
+    }
+  ],
+  "warnings": [],
+  "resolved": {
+    "references": {}
+  }
+}

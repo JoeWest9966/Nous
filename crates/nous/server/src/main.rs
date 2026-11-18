@@ -25,21 +25,22 @@ use std::sync::Arc;
 use std::path::Path;
 use std::process::ExitCode;
 
+use axum::Router;
 use nous_durable::storage::{adopt_legacy_copy, SqliteStore};
 use nous_durable::StorageError;
-use nous_server::{router, AppState, DurableCommands, SessionObserver};
+use nous_server::{auth, router, AppState, DurableCommands, SessionObserver};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
 
-/// 启动门槛的唯一出口：收一组理由，打到 stderr，然后非 0 退出。
-/// #50 的 token 门槛与本票的 faux 门槛共用这一个函数（一个函数、多条理由）。
+/// 启动门槛的统一出口：收集所有「不许启动」的理由，一次写 stderr 后以非 0 退出。
+/// #50 的 token 门槛与 #51 的 faux 门槛共用这一个函数（一个函数、多条理由）。
 fn refuse_startup(reasons: &[String]) -> ! {
-    assert!(!reasons.is_empty(), "refuse_startup 至少一条理由");
+    assert!(!reasons.is_empty(), "refuse_startup 至少要有 1 条理由");
     for reason in reasons {
         eprintln!("nous-server: 拒绝启动：{reason}");
     }
-    std::process::exit(2);
+    std::process::exit(2)
 }
 
 #[tokio::main]
@@ -54,6 +55,17 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // `--print-token`：只打印 token 本身（给 `curl -H "Authorization: Bearer $(…)"` 直接用），
+    // 不启服务、不碰库。缺失时按首次启动生成。
+    let token_path = auth::default_token_path();
+    if std::env::args().any(|arg| arg == "--print-token") {
+        let Some((token, _)) = auth::load_or_generate(&token_path, true)? else {
+            return Err("generate=true 必有 token".into());
+        };
+        println!("{token}");
+        return Ok(());
+    }
+
     let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
     if std::env::var("NOUS_ADOPT_LEGACY").is_ok_and(|value| value == "1") && Path::new(&db).exists() {
         match adopt_legacy_copy(&db) {
@@ -122,13 +134,66 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         session,
     )?;
     let state = state.with_runtime(Arc::new(assembled));
+    // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
+    // 不另开第二个 Storage。
+    let state = state.with_documents_backend(
+        std::path::PathBuf::from(&db),
+        commands.session().clone(),
+    );
+
+    // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
+    // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。
+    let loaded = auth::load_or_generate(&token_path, false)?;
+    let socket: std::net::SocketAddr = address.parse()?;
+    let loopback = socket.ip().is_loopback();
+
+    // 门槛理由集中在这里；#51 的 faux 检查与 #50 的 token 检查共用 refuse_startup。
+    if faux && !loopback {
+        reasons.push(format!(
+            "faux provider 只允许绑回环（127.0.0.1），当前监听 {address}"
+        ));
+    }
+    if loaded.is_none() && !loopback {
+        reasons.push(format!(
+            "NOUS_LISTEN={address} 绑非回环但没有可用 token；请先用 `nous-app --print-token` 生成/抄取 token（文件：{}）",
+            token_path.display()
+        ));
+    }
+    if !reasons.is_empty() {
+        refuse_startup(&reasons);
+    }
+
+    let token = match loaded {
+        Some((token, _)) => {
+            if let Ok(false) = auth::has_secured_permissions(&token_path) {
+                eprintln!(
+                    "nous-server: warning: token 文件 {} 权限不是 0600（容器里常见，不拦启动）",
+                    token_path.display()
+                );
+            }
+            Some(token)
+        }
+        None => None, // 只有回环能走到这里
+    };
 
     let listener = tokio::net::TcpListener::bind(&address).await?;
     let actual = listener.local_addr()?;
     // 脚本抓这一行：先写行、再 flush，之后的 serve 才可能阻塞。
     println!("listening on {actual}");
     std::io::stdout().flush()?;
-    axum::serve(listener, router(state)).await?;
+    // 端口给 0 时实际地址只有绑定后才知道；`NOUS_ORIGIN` 显式给出则优先。
+    let state = if std::env::var("NOUS_ORIGIN").is_ok_and(|value| !value.is_empty()) {
+        state
+    } else {
+        state.with_origin(format!("http://{actual}"))
+    };
+    let app: Router = match token {
+        Some(token) => router(state).layer(axum::middleware::from_fn(move |req, next| {
+            auth::require_bearer(token.clone(), req, next)
+        })),
+        None => router(state),
+    };
+    axum::serve(listener, app).await?;
     Ok(())
 }
 

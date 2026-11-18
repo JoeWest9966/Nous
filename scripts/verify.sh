@@ -5,6 +5,7 @@
 #   ./scripts/verify.sh unit         # 只跑测试
 #   ./scripts/verify.sh fixture      # 只跑 agent.sqlite fixture
 #   ./scripts/verify.sh boundary     # 只跑 spec 第 1 章的边界判据（15 条）
+#   ./scripts/verify.sh auth         # 只跑 #50 的 /v1/* 认证判据（真起进程）
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -227,6 +228,127 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ]; then
 	fi
 fi
 
+# 3b. #50 认证判据（判据 1/3 进脚本：真起进程、真 curl、真拒绝启动）
+if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = auth ]; then
+	step "3b. #50 /v1/* Bearer 认证与启动门槛（判据 1/3）"
+	BIN=nous-app
+	AUTH_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	if [ ! -x "$AUTH_BIN" ]; then
+		bad "$AUTH_BIN 不存在 —— 先跑一次 boot 段构建"
+	else
+		AUTH_TMP=$(mktemp -d)
+		mkdir -p "$AUTH_TMP/home"
+
+		# 源码哨兵：删掉中间件挂载 / 删掉启动门槛，下面两行 grep 就红。
+		if grep -q 'require_bearer' crates/nous/server/src/main.rs \
+		   && grep -q -- '--print-token' crates/nous/server/src/main.rs; then
+			ok "源码哨兵：中间件挂载 + 启动门槛提示都在"
+		else
+			bad "源码哨兵丢了：中间件挂载或 --print-token 提示不在 main.rs"
+		fi
+
+		# 判据 6：`--print-token` 生成 0600 token 且输出可直接用于 curl。
+		TOKEN=$(HOME="$AUTH_TMP/home" "$AUTH_BIN" --print-token 2>"$AUTH_TMP/print.err")
+		TOKEN_FILE="$AUTH_TMP/home/.config/nous/token"
+		if [ ${#TOKEN} -eq 43 ] && [ "$(stat -c %a "$TOKEN_FILE" 2>/dev/null)" = 600 ]; then
+			ok "--print-token 生成 32B base64url token，文件 0600"
+		else
+			bad "--print-token 输出异常（len=${#TOKEN} mode=$(stat -c %a "$TOKEN_FILE" 2>/dev/null)）"
+		fi
+
+		# 起真进程（端口 0，从 stdout 抓实际地址）。
+		HOME="$AUTH_TMP/home" NOUS_DB="$AUTH_TMP/test.db" \
+			NOUS_LISTEN=127.0.0.1:0 "$AUTH_BIN" >"$AUTH_TMP/out" 2>"$AUTH_TMP/err" &
+		AUTH_PID=$!
+		for _ in $(seq 1 50); do grep -q 'listening on ' "$AUTH_TMP/out" && break; sleep 0.1; done
+		AUTH_ADDR=$(sed -n 's/^listening on //p' "$AUTH_TMP/out" | head -1)
+		if [ -z "$AUTH_ADDR" ]; then
+			bad "带 token 的进程起不来：$(head -3 "$AUTH_TMP/err")"
+		else
+			ok "带 token 进程启动并 bind（$AUTH_ADDR）"
+
+			# 判据 1：无 header / 错 token / 空 token → 401 + WWW-Authenticate，
+			# 且库里 entries 条数不变。
+			count_entries() {
+				python3 -c 'import sqlite3,sys
+try:
+ c=sqlite3.connect(sys.argv[1]); print(c.execute("select count(*) from entries").fetchone()[0])
+except Exception: print("ERR")' "$AUTH_TMP/test.db" 2>/dev/null || echo ERR
+			}
+			BEFORE=$(count_entries)
+			A1_OK=1
+			for HEADER in __NONE__ 'Authorization: Bearer wrong-token' 'Authorization: Bearer '; do
+				if [ "$HEADER" = __NONE__ ]; then
+					CODE=$(curl -s -D "$AUTH_TMP/h" -o /dev/null -w '%{http_code}' "http://$AUTH_ADDR/v1/sessions")
+				else
+					CODE=$(curl -s -D "$AUTH_TMP/h" -o /dev/null -w '%{http_code}' -H "$HEADER" "http://$AUTH_ADDR/v1/sessions")
+				fi
+				WWW=$(grep -i '^www-authenticate:' "$AUTH_TMP/h" | tr -d '\r' || true)
+				if [ "$CODE" != 401 ] || ! printf '%s' "$WWW" | grep -qi 'Bearer'; then
+					bad "缺/错/空 token 判据失效（header=$HEADER code=$CODE www=$WWW）"; A1_OK=0
+				fi
+			done
+			AFTER=$(count_entries)
+			if [ "$A1_OK" -eq 1 ] && [ "$BEFORE" = "$AFTER" ]; then
+				ok "无/错/空 token → 401 + WWW-Authenticate: Bearer，entries $BEFORE → $AFTER 不变"
+			fi
+
+			# 判据 2：对 token → 200（SSE 也在下面单独打一发）。
+			CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "http://$AUTH_ADDR/v1/sessions")
+			[ "$CODE" = 200 ] && ok "对 token → /v1/sessions 200" || bad "对 token → /v1/sessions 拿到 $CODE"
+
+			kill "$AUTH_PID" 2>/dev/null || true
+			wait "$AUTH_PID" 2>/dev/null || true
+		fi
+
+		# 判据 4：绑回环且无 token → 照常起、照常可用。
+		mkdir -p "$AUTH_TMP/loop-home"
+		HOME="$AUTH_TMP/loop-home" NOUS_DB="$AUTH_TMP/loop.db" \
+			NOUS_LISTEN=127.0.0.1:0 "$AUTH_BIN" >"$AUTH_TMP/loop.out" 2>"$AUTH_TMP/loop.err" &
+		LOOP_PID=$!
+		for _ in $(seq 1 50); do grep -q 'listening on ' "$AUTH_TMP/loop.out" && break; sleep 0.1; done
+		LOOP_ADDR=$(sed -n 's/^listening on //p' "$AUTH_TMP/loop.out" | head -1)
+		if [ -n "$LOOP_ADDR" ]; then
+			LOOP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://$LOOP_ADDR/v1/sessions")
+			[ "$LOOP_CODE" = 200 ] \
+				&& ok "绑 127.0.0.1 且无 token → 照常起、无 header 也能用（200）" \
+				|| bad "回环无 token 不该拦，却拿到 $LOOP_CODE"
+			kill "$LOOP_PID" 2>/dev/null || true
+			wait "$LOOP_PID" 2>/dev/null || true
+		else
+			bad "回环无 token 起不来：$(head -3 "$AUTH_TMP/loop.err")"
+		fi
+
+		# 判据 3：绑 0.0.0.0 且 token 文件不存在 → 拒绝启动，stderr 含 --print-token。
+		mkdir -p "$AUTH_TMP/empty-home"
+		HOME="$AUTH_TMP/empty-home" NOUS_DB="$AUTH_TMP/empty.db" \
+			timeout 5 env NOUS_LISTEN=0.0.0.0:4791 "$AUTH_BIN" >"$AUTH_TMP/refuse.out" 2>"$AUTH_TMP/refuse.err"
+		REFUSE_RC=$?
+		# 124 = timeout 杀掉 = 其实起来了一直跑，那就是门槛失效（负向哨兵靠这一条）。
+		if [ "$REFUSE_RC" -ne 0 ] && [ "$REFUSE_RC" -ne 124 ] \
+		   && grep -q -- '--print-token' "$AUTH_TMP/refuse.err" \
+		   && ! grep -q 'listening on ' "$AUTH_TMP/refuse.out"; then
+			ok "绑 0.0.0.0 且无 token → 拒绝启动（rc=$REFUSE_RC，stderr 指名 --print-token）"
+		else
+			bad "非回环无 token 没拒绝启动（rc=$REFUSE_RC，stderr=$(head -2 "$AUTH_TMP/refuse.err")）"
+		fi
+
+		# 判据 5：token 文件权限不对 → 警告但不拦。
+		mkdir -p "$AUTH_TMP/warn-home/.config/nous"
+		printf '%s' "$TOKEN" >"$AUTH_TMP/warn-home/.config/nous/token"
+		chmod 644 "$AUTH_TMP/warn-home/.config/nous/token"
+		HOME="$AUTH_TMP/warn-home" NOUS_DB="$AUTH_TMP/warn.db" \
+			NOUS_LISTEN=127.0.0.1:0 timeout 3 "$AUTH_BIN" >"$AUTH_TMP/warn.out" 2>"$AUTH_TMP/warn.err"
+		if grep -qi 'warning' "$AUTH_TMP/warn.err" && grep -q 'listening on ' "$AUTH_TMP/warn.out"; then
+			ok "token 文件权限 0644 → 警告且不拦启动"
+		else
+			bad "权限警告失效或误拦启动（stderr=$(head -2 "$AUTH_TMP/warn.err")）"
+		fi
+
+		rm -rf "$AUTH_TMP"
+	fi
+fi
+
 # 3c. #51 faux provider 启动闸门（判据 4：非回环拒绝启动）
 #     cargo test 里验不了「进程拒绝启动」，只能用真进程 + 真 stderr。
 if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = faux ]; then
@@ -237,7 +359,10 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = faux ]; then
 		bad "$FAUX_BIN 不存在 —— 先跑一次 boot 段构建"
 	else
 		FAUX_TMP=$(mktemp -d)
-		NOUS_DB="$FAUX_TMP/refuse.db" NOUS_LISTEN=0.0.0.0:4792 NOUS_PROVIDER=faux \
+		# 无 token（清空 HOME）才能单独验 faux 这条理由；否则先被 #50 拦下。
+		mkdir -p "$FAUX_TMP/home"
+		HOME="$FAUX_TMP/home" NOUS_DB="$FAUX_TMP/refuse.db" \
+			NOUS_LISTEN=0.0.0.0:4792 NOUS_PROVIDER=faux \
 			"$FAUX_BIN" >"$FAUX_TMP/out" 2>"$FAUX_TMP/err"
 		FAUX_RC=$?
 		if [ "$FAUX_RC" -ne 0 ] && grep -q '只允许绑回环' "$FAUX_TMP/err"; then

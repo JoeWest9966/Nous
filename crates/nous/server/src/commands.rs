@@ -12,11 +12,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use nous_durable::session::commands::{
-    abort, fork, scan_orphans, submit_message, CommandError, ForkRequest, SubmitRequest,
+    abort, fork, mark_read, rename_session, scan_orphans, set_pin, submit_message, unread_map,
+    CommandError, ForkRequest, PinOutcome, PinRequest, SubmitRequest,
 };
 use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::error::{Result, ServerError};
 use crate::records::{CreateSessionRequest, CreatedSession};
@@ -35,6 +36,24 @@ pub struct ForkResult {
     pub at: i64,
 }
 
+/// `POST /v1/read/:id` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadResult {
+    pub id: i64,
+    pub read_at: i64,
+    pub unread: u64,
+}
+
+/// `POST /v1/sessions/:id/rename` 的结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameResult {
+    pub id: i64,
+    pub name: String,
+}
+
+/// `POST /v1/sessions/:id/pin` 的回执。
+pub type PinResult = PinOutcome;
+
 #[async_trait]
 pub trait CommandSource: Send + Sync {
     /// 建会话：经 `Session::create_conversation`，和别的写共享一把锁并广播帧。
@@ -50,6 +69,18 @@ pub trait CommandSource: Send + Sync {
     async fn abort(&self, session: i64) -> Result<()>;
 
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
+
+    /// 全部会话的未读状态（平铺 map），只读。
+    async fn unread(&self) -> Result<Value>;
+
+    /// 标已读：走 `Session` 写者并广播。
+    async fn read(&self, session: i64) -> Result<ReadResult>;
+
+    /// 改名：走 `Session` 写者并广播。
+    async fn rename(&self, session: i64, name: String) -> Result<RenameResult>;
+
+    /// 置顶/取消置顶：走 `Session` 写者并广播。
+    async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult>;
 
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
@@ -80,6 +111,11 @@ impl DurableCommands {
             session: Arc::new(Session::with_observers(storage, registry.clone())),
             registry,
         }))
+    }
+
+    /// 同一条 `Session` 的只读句柄，给 #48 的 documents 写后端复用（不另开写者）。
+    pub fn session(&self) -> &Arc<Session> {
+        &self.session
     }
 
     /// 挂观察者。必须在开始接请求之前调用；挂上之后的每一次提交都会走到它。
@@ -146,6 +182,44 @@ impl CommandSource for DurableCommands {
             at: outcome.at,
         })
     }
+
+    async fn unread(&self) -> Result<Value> {
+        unread_map(&self.session).await.map_err(command_error)
+    }
+
+    async fn read(&self, session: i64) -> Result<ReadResult> {
+        let outcome = mark_read(&self.session, session)
+            .await
+            .map_err(command_error)?;
+        Ok(ReadResult {
+            id: outcome.id,
+            read_at: outcome.read_at,
+            unread: outcome.unread,
+        })
+    }
+
+    async fn rename(&self, session: i64, name: String) -> Result<RenameResult> {
+        let outcome = rename_session(&self.session, session, &name)
+            .await
+            .map_err(command_error)?;
+        Ok(RenameResult {
+            id: outcome.id,
+            name: outcome.name,
+        })
+    }
+
+    async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult> {
+        set_pin(
+            &self.session,
+            PinRequest {
+                conversation: session,
+                pinned,
+                request_id,
+            },
+        )
+        .await
+        .map_err(command_error)
+    }
 }
 
 /// 只读装配：写请求一律 409。
@@ -166,6 +240,22 @@ impl CommandSource for ReadOnlyCommands {
     }
 
     async fn fork(&self, _: i64, _: Option<i64>, _: Option<String>) -> Result<ForkResult> {
+        Err(read_only())
+    }
+
+    async fn unread(&self) -> Result<Value> {
+        Ok(json!({}))
+    }
+
+    async fn read(&self, _: i64) -> Result<ReadResult> {
+        Err(read_only())
+    }
+
+    async fn rename(&self, _: i64, _: String) -> Result<RenameResult> {
+        Err(read_only())
+    }
+
+    async fn pin(&self, _: i64, _: bool, _: String) -> Result<PinResult> {
         Err(read_only())
     }
 

@@ -10,7 +10,9 @@ use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCo
 use nous_wire::RemoteEvent;
 
 use crate::commands::{CommandSource, DurableCommands, ReadOnlyCommands};
+use crate::documents::{DurableDocumentBackend, EmptyBackend};
 use crate::runtime::AssembledRuntime;
+use nous_documents::service::DocumentService;
 use crate::error::Result;
 use crate::hub::Hub;
 use crate::observer::SessionObserver;
@@ -24,6 +26,9 @@ pub struct AppState {
     hub: Arc<Hub>,
     models: crate::models::ModelsResponse,
     runtime: std::sync::Mutex<Option<Arc<AssembledRuntime>>>,
+    documents: Option<DocumentService>,
+    /// `capabilities.services[engine].base` 的单一来源：环境变量优先，绑定后由 `main` 覆盖。
+    origin: String,
 }
 
 impl AppState {
@@ -38,6 +43,14 @@ impl AppState {
             hub,
             models: crate::models::ModelsResponse::default(),
             runtime: std::sync::Mutex::new(None),
+            documents: Some(DocumentService::new(
+                Arc::new(EmptyBackend),
+                Some(Arc::new(EmptyBackend)),
+            )),
+            origin: std::env::var("NOUS_ORIGIN")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
         })
     }
 
@@ -67,6 +80,11 @@ impl AppState {
             hub: Hub::new(),
             models: crate::models::ModelsResponse::default(),
             runtime: std::sync::Mutex::new(None),
+            documents: None,
+            origin: std::env::var("NOUS_ORIGIN")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -99,11 +117,40 @@ impl AppState {
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
+            documents: self.documents.as_ref().map(|_| DocumentService::new(
+                Arc::new(EmptyBackend),
+                Some(Arc::new(EmptyBackend)),
+            )),
+            origin: self.origin.clone(),
         })
     }
 
     pub fn models(&self) -> &crate::models::ModelsResponse {
         &self.models
+    }
+
+    /// `NOUS_ORIGIN` 优先；绑到实际端口后由 `main` 用真地址覆盖。
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    /// 绑定完成后把实际监听地址告诉 state；返回新的 `Arc` 供 router 使用。
+    pub fn with_origin(self: Arc<Self>, origin: impl Into<String>) -> Arc<Self> {
+        let origin = origin.into();
+        if origin == self.origin {
+            return self;
+        }
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            documents: self.documents.clone(),
+            origin,
+        })
     }
 
     /// 启动时补写孤儿终态：走**已经持有的那个写者**，不另开 `Session`。
@@ -141,6 +188,28 @@ impl AppState {
     /// faux 装配的编目；没有装配时为空（诚实）。
     pub fn assembled_models(&self) -> Option<crate::models::ModelsResponse> {
         self.runtime().map(|runtime| runtime.models.clone())
+    }
+
+    /// documents 端点的泛型服务。生产装配里它持有同一个 `Session` 的写者。
+    pub fn document_service(&self) -> Option<DocumentService> {
+        self.documents.clone()
+    }
+
+    /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
+    pub fn with_documents_backend(self: Arc<Self>, path: std::path::PathBuf, session: Arc<nous_durable::session::Session>) -> Arc<Self> {
+        let backend = DurableDocumentBackend::new(path, session);
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: Some(DocumentService::new(
+                Arc::new(backend.clone()) as Arc<dyn nous_documents::store::DocumentReader>,
+                Some(Arc::new(backend) as Arc<dyn nous_documents::service::DocumentWriter>),
+            )),
+            origin: self.origin.clone(),
+        })
     }
 
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。
