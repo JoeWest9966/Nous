@@ -21,12 +21,13 @@
 //! 已逐字相同，不动任何行。**只对副本用**：跑完那份文件在本库眼里就是 v1。
 
 use std::io::Write;
+use std::sync::Arc;
 use std::path::Path;
 use std::process::ExitCode;
 
 use nous_durable::storage::{adopt_legacy_copy, SqliteStore};
 use nous_durable::StorageError;
-use nous_server::{router, AppState};
+use nous_server::{router, AppState, DurableCommands, SessionObserver};
 
 const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
@@ -53,34 +54,38 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let state = match AppState::durable(&db) {
-        Ok(state) => state,
+    let registry = nous_durable::session::ObserverRegistry::new();
+    let session = match nous_durable::session::Session::open(&db) {
+        Ok(session) => Arc::new(session),
         Err(error) => {
             if is_upstream_v2(&db) {
-                return Err(format!(
-                    "{db} is an upstream v2 library; the writer refuses it by design \
-                     (docs/storage.md §12.3).\n\
-                     Work on a throwaway copy and adopt it explicitly:\n  \
-                     cp <legacy.sqlite> /var/tmp/nous-e2e.db\n  \
-                     NOUS_ADOPT_LEGACY=1 NOUS_DB=/var/tmp/nous-e2e.db nous-server"
-                )
-                .into());
+                return Err(format!("{db} is an upstream v2 library; see docs/storage.md §12.3").into());
             }
             return Err(error.to_string().into());
         }
     };
+    let commands = DurableCommands::with_session(session.clone(), registry);
+    let state = AppState::durable_with_commands(
+        nous_server::ImportedSource::open(&db)?,
+        commands.clone(),
+        &db,
+    );
 
-    // 整机崩 / 重启留下的孤儿：启动扫一次，补一条 `abandoned`。
+    // 整机崩 / 重启留下的孤儿：用与写命令同一个 Session 扫一次，补一条 `abandoned`。
     // 幂等（连重启三次只多一条），进程熔断不走这里（那是 `extension_crash`）。
-    // 只扫**本进程真正持有**的那份可写库；只读装配没有 Session，也就不补写。
-    // AppState::durable 建好的写后端已经 drop 了 Session 引用，这里用同一路径再开一次
-    // 临时 Session 完成扫描（幂等，且与路由里的写事务串行由 SQLite 写锁承担）。
-    {
-        let session = nous_durable::session::Session::open(&db)?;
-        nous_durable::session::commands::scan_orphans(&session)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
+    nous_durable::session::commands::scan_orphans(&session)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    // 组装根：这里构造 provider / tool 两张注册表，交给 sessions 的轮次驱动器。
+    // 只装配、不绑定监听；真轮次由命令层构造 TurnRequest 时调用 driver.run。
+    let assembled = nous_server::runtime::assemble(
+        std::env::current_dir()?,
+        &nous_server::runtime::ProcessEnvValues,
+        session,
+    )?;
+    let state = state.with_runtime(Arc::new(assembled));
+    commands.attach(SessionObserver::new(state.clone()));
 
     // spec §3.4：监听地址是本进程自己的配置，不是「服务器地址发现」。生产配置里
     // 不许出现 `NOUS_SERVER_ADDR`（spec ch1 判据 11：发现唯一，走 resolve），所以

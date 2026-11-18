@@ -10,6 +10,7 @@ use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCo
 use nous_wire::RemoteEvent;
 
 use crate::commands::{CommandSource, DurableCommands, ReadOnlyCommands};
+use crate::runtime::AssembledRuntime;
 use crate::error::Result;
 use crate::hub::Hub;
 use crate::observer::SessionObserver;
@@ -21,6 +22,9 @@ pub struct AppState {
     source: Arc<dyn SessionSource>,
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
+    db_path: Option<std::path::PathBuf>,
+    models: std::sync::Mutex<Option<crate::models::ModelsResponse>>,
+    runtime: std::sync::Mutex<Option<Arc<AssembledRuntime>>>,
 }
 
 impl AppState {
@@ -33,6 +37,9 @@ impl AppState {
             source,
             commands,
             hub,
+            db_path: None,
+            models: std::sync::Mutex::new(None),
+            runtime: std::sync::Mutex::new(None),
         })
     }
 
@@ -43,6 +50,21 @@ impl AppState {
 
     /// 读 + 写都接在**同一份库**上。写走 `Session`，`CommitObserver` 挂到同一个 hub ——
     /// 提交落库后帧立刻进 SSE，端点不用自己补发。
+    pub fn durable_with_commands(
+        source: Arc<dyn SessionSource>,
+        commands: Arc<dyn CommandSource>,
+        path: impl AsRef<std::path::Path>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            source,
+            commands,
+            hub: Hub::new(),
+            db_path: Some(path.as_ref().to_path_buf()),
+            models: std::sync::Mutex::new(None),
+            runtime: std::sync::Mutex::new(None),
+        })
+    }
+
     pub fn durable(path: impl AsRef<std::path::Path>) -> Result<Arc<Self>> {
         let path = path.as_ref();
         // 先开写后端：空路径由它的迁移建表（`ImportedSource::open` 会立刻读一次，
@@ -53,6 +75,9 @@ impl AppState {
             source,
             commands: commands.clone(),
             hub: Hub::new(),
+            db_path: Some(path.to_path_buf()),
+            models: std::sync::Mutex::new(None),
+            runtime: std::sync::Mutex::new(None),
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -73,6 +98,28 @@ impl AppState {
 
     pub fn hub(&self) -> &Arc<Hub> {
         &self.hub
+    }
+
+    pub fn db_path(&self) -> Option<&std::path::Path> {
+        self.db_path.as_deref()
+    }
+
+    pub fn with_runtime(self: Arc<Self>, runtime: Arc<AssembledRuntime>) -> Arc<Self> {
+        *self.runtime.lock().unwrap_or_else(|p| p.into_inner()) = Some(runtime);
+        self
+    }
+
+    pub fn runtime(&self) -> Option<Arc<AssembledRuntime>> {
+        self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    pub fn with_models(self: Arc<Self>, models: crate::models::ModelsResponse) -> Arc<Self> {
+        *self.models.lock().unwrap_or_else(|p| p.into_inner()) = Some(models);
+        self
+    }
+
+    pub fn models(&self) -> Option<crate::models::ModelsResponse> {
+        self.models.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。

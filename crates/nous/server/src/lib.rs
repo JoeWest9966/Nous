@@ -22,9 +22,12 @@ pub mod commands;
 pub mod error;
 pub mod hub;
 pub mod machines;
+pub mod models;
+pub mod records;
 pub mod observer;
 pub mod project;
 pub mod routes;
+pub mod runtime;
 pub mod source;
 
 pub use app::AppState;

@@ -267,7 +267,7 @@ async fn harness_stream_commits_partials_at_most_every_interval() {
         .and_then(|generation| generation.message.as_ref())
         .and_then(|message| message.get("content"))
         .and_then(|content| content.get(0))
-        .and_then(|block| block.get("text"))
+        .and_then(|part| part.get("text"))
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();

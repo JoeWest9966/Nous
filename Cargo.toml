@@ -59,4 +59,5 @@ nous-runtime = { path = "crates/nous/runtime", version = "0.1.0" }
 nous-ext = { path = "crates/nous/ext", version = "0.1.0" }
 nous-ext-probe = { path = "crates/nous/ext-probe", version = "0.1.0" }
 nous-server = { path = "crates/nous/server", version = "0.1.0" }
+nous-sessions = { path = "crates/nous/sessions", version = "0.1.0" }
 nous-fixture = { path = "crates/nous/fixture", version = "0.1.0" }

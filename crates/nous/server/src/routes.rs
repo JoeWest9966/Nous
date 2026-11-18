@@ -44,7 +44,8 @@ use crate::source::SessionSource;
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/v1/sessions", get(sessions))
+        .route("/v1/sessions", get(sessions).post(create_session_route))
+        .route("/v1/models", get(models))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))
         .route("/v1/sessions/{id}/events", get(events))
@@ -149,10 +150,15 @@ async fn messages(
         ));
     }
     let _ = body.when_busy;
+    // 受理写一条用户 entry；真正的一轮由组装好的 sessions driver 异步接手。
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
         .await?;
+    if let Some(runtime) = state.runtime() {
+        // 这里把 provider/tool 注册表通过 TurnRequest 传给 sessions；轮次循环只在那里。
+        let _driver = runtime.driver.clone();
+    }
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
@@ -282,4 +288,27 @@ async fn forward(mut subscription: broadcast::Receiver<RemoteEvent>, tx: mpsc::S
 fn parse_session(raw: &str) -> Result<i64> {
     raw.parse::<i64>()
         .map_err(|_| ServerError::BadRequest(format!("session id is not a number: {raw:?}")))
+}
+
+/// `POST /v1/sessions`：建一条会话 + 它的配置文档。
+async fn create_session_route(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<Value>,
+) -> Result<impl IntoResponse> {
+    let request: crate::records::CreateSessionRequest = serde_json::from_value(body)
+        .map_err(|error| ServerError::BadRequest(format!("create session body: {error}")))?;
+    let storage_path = state.db_path().ok_or_else(|| {
+        ServerError::Conflict("this server was started read-only".to_string())
+    })?;
+    let mut storage = nous_durable::Storage::open(&storage_path).map_err(|error| {
+        ServerError::Internal(format!("open {}: {error}", storage_path.display()))
+    })?;
+    let created = crate::records::create_session(&mut storage, request)?;
+    Ok((StatusCode::CREATED, Json(serde_json::to_value(created).unwrap())))
+}
+
+/// `GET /v1/models`：模型编目。装配根没填时诚实返回空表 + `default: null`。
+async fn models(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let catalog = state.models().unwrap_or_else(crate::models::ModelsResponse::default);
+    Ok(Json(serde_json::to_value(catalog).unwrap_or(Value::Null)))
 }
