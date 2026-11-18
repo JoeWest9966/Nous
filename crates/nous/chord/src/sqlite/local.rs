@@ -62,6 +62,15 @@ impl LocalDatabase {
         Ok(())
     }
 
+    /// 用 rusqlite 的 backup API 把当前库整份写到 `path`（WAL 会正确 checkpoint）。
+    /// `src` 必须读写打开 —— backup API 的要求；**不许**改成 `VACUUM INTO`。
+    pub fn backup_to(&self, path: impl AsRef<Path>) -> Result<(), SqliteError> {
+        let mut destination = Connection::open(path)?;
+        let backup = rusqlite::backup::Backup::new(self.connection()?, &mut destination)?;
+        backup.run_to_completion(100, std::time::Duration::from_millis(0), None)?;
+        Ok(())
+    }
+
     /// 打开的是什么模式（诊断 / 判据用）。
     pub fn is_read_only(&self) -> Result<bool, SqliteError> {
         let value: i64 = self

@@ -14,6 +14,7 @@
 pub mod actor;
 pub mod error;
 pub mod harness;
+pub mod ops;
 pub mod session;
 pub mod storage;
 pub mod types;
