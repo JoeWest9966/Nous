@@ -202,16 +202,16 @@ fi
 
 step '判据 5 / 14：卸载边界（人工哨兵：会停服务，不在自检里自动跑）'
 # 判据 12：首次路径跑完 /var/lib/nous 只多出**清单内**的库文件，不多出别的。
-# 清单现在是两个库：durable 的 `nous.db` 与存储分离后 `#56/#57` 的 `nous-triggers.db`
+# 清单现在是两个库：durable 的 `nous.db` 与存储分离后 `#56/#57` 的 `nous-plugins.db`
 # （两个库各有自己的迁移链，见 docs/decisions.md「存储分离 = 两个文件」）。
 # 这是**白名单**不是放宽：清单外的任何文件仍然红 —— 数据目录里冒出来的东西必须有人认领。
 # 命名理顺（decisions 里记的 durable.db / nous.db）之后，这份清单要跟着改成两个名字。
-ALLOWED='nous.db nous.db-wal nous.db-shm nous-triggers.db nous-triggers.db-wal nous-triggers.db-shm'
+ALLOWED='nous.db nous.db-wal nous.db-shm nous-plugins.db nous-plugins.db-wal nous-plugins.db-shm'
 FIND_ARGS=""
 for _n in $ALLOWED; do FIND_ARGS="$FIND_ARGS ! -name '$_n'"; done
 EXTRA=$(eval "find \"\$DATA_DIR\" -maxdepth 1 -type f $FIND_ARGS" 2>/dev/null || true)
-if [ -e "$DATA_DIR/nous.db" ] && [ -e "$DATA_DIR/nous-triggers.db" ] && [ -z "$EXTRA" ]; then
-	ok '首次路径：/var/lib/nous 只有我们认领的两个库（nous.db + nous-triggers.db，各带 -wal/-shm）'
+if [ -e "$DATA_DIR/nous.db" ] && [ -e "$DATA_DIR/nous-plugins.db" ] && [ -z "$EXTRA" ]; then
+	ok '首次路径：/var/lib/nous 只有我们认领的两个库（nous.db + nous-plugins.db，各带 -wal/-shm）'
 elif [ -e "$DATA_DIR/nous.db" ]; then
 	bad "判据 12：/var/lib/nous 多出文件：$(printf '%s\n' "$EXTRA" | tr '\n' ' ')"
 else
