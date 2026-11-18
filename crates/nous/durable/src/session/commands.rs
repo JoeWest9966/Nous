@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use crate::harness::generation::LIVE_KIND;
 use crate::storage::writes::StorageWrite;
 use crate::types::{DocumentScope, EntryRecord, TerminalReason};
-use crate::{DocumentContent, Id, Storage, StorageError};
+use crate::{DocumentContent, DocumentPoint, Id, Storage, StorageError};
 
 use super::{publication_of, CommitPublication, Session, SessionEnd, SessionError};
 
@@ -560,6 +560,80 @@ async fn commit_and_publish(
         .map_err(|error| CommandError::Session(SessionError::Shape(error.to_string())))?;
     session.observers.publish(&publication, &Context::new());
     Ok(publication)
+}
+
+/// 一次通用的文档写入。应用层（#48 的 `documents`）用它写任何 kind 的文档：
+/// durable 只认 `StorageWrite`，不认识 preset / prompt 这些产品词。
+///
+/// [`DocumentMutation::Create`] 的 id 由**同一把写锁下**的分配器铸出，和写一起落库；
+/// 调用方不需要（也不许）自己猜一个 id —— 那是第二条写者才需要的做法。
+///
+/// 和 [`submit_message`](super::commands::submit_message) / [`fork`](super::commands::fork)
+/// 走**同一条** `commit_and_publish`：同一把写锁、同一个事务、同一个 `ObserverRegistry`。
+#[derive(Debug, Clone)]
+pub enum DocumentMutation {
+    /// 新建一份文档。`kind` 是 opaque 字符串（例如 `"presets.Session-Template"`）。
+    Create { kind: String, key: String, value: Value },
+    /// 改一份已有文档的内容。`base_version` 是当前 base 的版本（乐观锁），
+    /// `value` 是新的整份值；durable 自己 diff 出 delta，历史因此逐次累积。
+    Change { id: Id, base_version: i64, value: Value },
+    /// 追加一批 delta 操作（中性 op 数组，durable 不解释内容）。
+    Delta { id: Id, version: i64, ops: Value },
+    /// 退役一份文档（名字改动 = 旧名退役 + 新名创建，同一批里）。
+    Retire { id: Id },
+}
+
+impl DocumentMutation {
+    /// 聚成一批 `StorageWrite`。只有 `Create` 需要 id 分配器。
+    fn into_write(self, storage: &mut Storage) -> Result<StorageWrite, CommandError> {
+        Ok(match self {
+            DocumentMutation::Create { kind, key, value } => {
+                let id = storage.mint_id()?;
+                StorageWrite::DocumentCreate {
+                    id,
+                    record: json!({
+                        "id": id, "kind": kind, "key": key,
+                        "scope": { "kind": "session" },
+                    }),
+                    content: DocumentContent::Base { version: 1, value },
+                }
+            }
+            DocumentMutation::Change { id, base_version, value } => {
+                let before = storage.materialize(id, DocumentPoint::Current)?
+                    .ok_or_else(|| CommandError::NotFound(format!("document {id} not found")))?;
+                if before.version != base_version {
+                    return Err(CommandError::Conflict(format!(
+                        "document {id} version changed: expected {base_version}, found {}", before.version
+                    )));
+                }
+                let trusted = nous_chord::delta::diff::diff_revisions(&before.value, &value);
+                let ops = Value::Array(nous_chord::delta::codec::Encoder::new().encode(trusted.as_ops()));
+                StorageWrite::DocumentChange {
+                    id,
+                    content: DocumentContent::Delta { version: before.version, ops },
+                }
+            }
+            DocumentMutation::Delta { id, version, ops } => StorageWrite::DocumentChange {
+                id,
+                content: DocumentContent::Delta { version, ops },
+            },
+            DocumentMutation::Retire { id } => StorageWrite::DocumentRetire { id },
+        })
+    }
+}
+
+pub async fn write_document(
+    session: &Session,
+    mutations: Vec<DocumentMutation>,
+) -> Result<CommitPublication, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let writes = {
+        let storage = storage_mut(&mut guard)?;
+        mutations.into_iter()
+            .map(|mutation| mutation.into_write(storage))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    commit_and_publish(session, &mut guard, writes).await
 }
 
 /// 会话已经关了（或在排队期间关的）→ 409。

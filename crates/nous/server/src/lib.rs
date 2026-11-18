@@ -19,6 +19,7 @@
 pub mod app;
 pub mod coalesce;
 pub mod commands;
+pub mod documents;
 pub mod error;
 pub mod hub;
 pub mod machines;

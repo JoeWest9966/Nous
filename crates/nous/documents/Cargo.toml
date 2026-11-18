@@ -1,0 +1,16 @@
+[package]
+name = "nous-documents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "应用层 documents 模块：一个 DocumentKind 实现生成 N 份文档端点（#48）"
+
+[dependencies]
+nous-durable = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

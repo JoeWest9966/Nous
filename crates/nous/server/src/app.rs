@@ -10,7 +10,9 @@ use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCo
 use nous_wire::RemoteEvent;
 
 use crate::commands::{CommandSource, DurableCommands, ReadOnlyCommands};
+use crate::documents::{DurableDocumentBackend, EmptyBackend};
 use crate::runtime::AssembledRuntime;
+use nous_documents::service::DocumentService;
 use crate::error::Result;
 use crate::hub::Hub;
 use crate::observer::SessionObserver;
@@ -24,6 +26,7 @@ pub struct AppState {
     hub: Arc<Hub>,
     models: crate::models::ModelsResponse,
     runtime: std::sync::Mutex<Option<Arc<AssembledRuntime>>>,
+    documents: Option<DocumentService>,
 }
 
 impl AppState {
@@ -38,6 +41,10 @@ impl AppState {
             hub,
             models: crate::models::ModelsResponse::default(),
             runtime: std::sync::Mutex::new(None),
+            documents: Some(DocumentService::new(
+                Arc::new(EmptyBackend),
+                Some(Arc::new(EmptyBackend)),
+            )),
         })
     }
 
@@ -67,6 +74,7 @@ impl AppState {
             hub: Hub::new(),
             models: crate::models::ModelsResponse::default(),
             runtime: std::sync::Mutex::new(None),
+            documents: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -99,6 +107,10 @@ impl AppState {
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
+            documents: self.documents.as_ref().map(|_| DocumentService::new(
+                Arc::new(EmptyBackend),
+                Some(Arc::new(EmptyBackend)),
+            )),
         })
     }
 
@@ -119,6 +131,27 @@ impl AppState {
 
     pub fn runtime(&self) -> Option<Arc<AssembledRuntime>> {
         self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// documents 端点的泛型服务。生产装配里它持有同一个 `Session` 的写者。
+    pub fn document_service(&self) -> Option<DocumentService> {
+        self.documents.clone()
+    }
+
+    /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
+    pub fn with_documents_backend(self: Arc<Self>, path: std::path::PathBuf, session: Arc<nous_durable::session::Session>) -> Arc<Self> {
+        let backend = DurableDocumentBackend::new(path, session);
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: Some(DocumentService::new(
+                Arc::new(backend.clone()) as Arc<dyn nous_documents::store::DocumentReader>,
+                Some(Arc::new(backend) as Arc<dyn nous_documents::service::DocumentWriter>),
+            )),
+        })
     }
 
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。
