@@ -242,7 +242,9 @@ async fn run() -> Result<(), RunError> {
         &nous_server::runtime::ProcessEnvValues,
         session,
     )?;
-    let trigger_driver = assembled.driver.clone();
+    // 只有 faux 装配才在点火后自动跑一轮（和 `POST /messages` 同一条规矩：真 provider
+    // 的轮次由各自的生成路径负责，这里拿 faux Model 硬跑一轮会产出一条假回复）。
+    let trigger_driver = if faux { Some(assembled.driver.clone()) } else { None };
     let state = state.with_runtime(Arc::new(assembled));
     // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
     // 不另开第二个 Storage。
@@ -280,7 +282,7 @@ async fn run() -> Result<(), RunError> {
         trigger_store,
         commands.session().clone(),
         lookup,
-        Some(trigger_driver),
+        trigger_driver,
         None,
         std::path::PathBuf::from(&db),
     )?;

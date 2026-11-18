@@ -27,7 +27,12 @@ pub enum FireOutcome {
     /// ③ 上一轮还在跑：账本记 `skipped`，没有新 entry。
     Skipped,
     /// ④–⑥ 成功：账本 `done`，durable 里两个 entry（user + assistant）。
-    Fired { session: i64, submission: i64 },
+    Fired {
+        session: i64,
+        submission: i64,
+        /// `submit_message` 同批铸的 user entry id（assistant 从它 +2 起）。
+        entry: i64,
+    },
     /// 模板缺失：账本 `orphaned` + note，没有 entry。
     TemplateMissingOrphaned,
 }
@@ -127,7 +132,11 @@ pub async fn fire(
         let store = store.lock().await;
         store.mark_done(code, now_ms).map_err(internal)?;
     }
-    Ok(FireOutcome::Fired { session: conversation, submission: outcome.submission_id })
+    Ok(FireOutcome::Fired {
+        session: conversation,
+        submission: outcome.submission_id,
+        entry: outcome.entry_id,
+    })
 }
 
 /// 该会话里有没有非终态 task（只读，走 durable 的只读句柄）。
@@ -220,8 +229,8 @@ impl TriggerRuntime {
     pub async fn fire(&self, code: &str, fired_by: &Actor, now_ms: i64) -> Result<FireOutcome> {
         // 每一步单独取/放锁：rusqlite 的 Connection 不是 Sync，MutexGuard 不许跨 await。
         let outcome = fire(&self.store, &self.durable, &self.lookup, &self.definitions, &self.durable_db, code, fired_by, now_ms).await?;
-        if let FireOutcome::Fired { session, submission } = &outcome {
-            let submitted = submission_to_turn(&self.durable_db, *session, *submission).await?;
+        if let FireOutcome::Fired { session, submission, entry } = &outcome {
+            let submitted = submission_to_turn(&self.durable_db, *session, *submission, *entry).await?;
             let trigger_actor = Actor::system(format!("trigger:{code}"));
             let driver = self
                 .driver_with_actor
@@ -243,6 +252,7 @@ async fn submission_to_turn(
     path: &std::path::Path,
     conversation: i64,
     submission: i64,
+    entry_id: i64,
 ) -> Result<nous_sessions::turn::TurnRequest> {
     let storage = nous_durable::Storage::open_read_only(path)
         .map_err(|error| ServerError::Internal(format!("read durable: {error}")))?;
@@ -252,9 +262,8 @@ async fn submission_to_turn(
         .into_iter()
         .find(|item| item.get("id").and_then(Value::as_i64) == Some(submission))
         .ok_or_else(|| ServerError::Internal("submission not found".to_string()))?;
-    // `submit_message` 同批铸两个连续 id：entry_id、submission_id（见 commands.rs 的约定）。
-    // queued 形状的 submission 里没有 `entry` 字段，所以从 submission id 反推。
-    let entry_id = submission - 1;
+    // `submit_message` 同批铸 entry_id、submission_id 两个 id；assistant/live 从 entry_id+2 起
+    // （与 `DurableCommands::submit` 的派生同一条规矩，别从 submission id 反推 —— 中间可能夹别的写）。
     Ok(nous_sessions::turn::TurnRequest {
         conversation,
         submission,

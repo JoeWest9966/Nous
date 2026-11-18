@@ -61,7 +61,6 @@ pub struct Spec {
     pub on: Option<String>,
 }
 
-/// 从完整定义 JSON 里读 spec 时只取这三个键（`Definition` 的外层键不能进 Spec）。
 /// 点火许可里的一类人（Actor 的最小投影：durable 的三值语义不进本 crate）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FireActor {
