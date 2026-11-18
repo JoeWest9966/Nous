@@ -156,6 +156,16 @@ async fn prompts_response_pins_client_shape() {
     snapshot("prompts_response_pins_client_shape", &body);
 }
 
+/// GET /v1/triggers —— 清单关着也诚实返回空表，不是 404。
+#[tokio::test]
+async fn triggers_response_is_an_empty_list_even_though_the_module_is_disabled() {
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (status, body) = get_json(&app, "/v1/triggers").await;
+    assert_eq!(status, StatusCode::OK, "GET /v1/triggers 应 200，不是 404");
+    fields(&body, "triggers", &[("triggers", is_array), ("root", |v| v.is_null())]);
+    assert!(body["triggers"].as_array().unwrap().is_empty());
+}
+
 /// GET /v1/extensions —— ext 冻结，返回空清单。
 #[tokio::test]
 async fn extensions_response_pins_empty_items() {
@@ -181,8 +191,22 @@ async fn capabilities_declares_modules_and_reasons() {
             ("server", |v| v.is_object()),
             ("modules", is_array),
             ("runtime", |v| v.is_object()),
+            ("services", is_array),
         ],
     );
+    let services = body["services"].as_array().unwrap();
+    let engine = services
+        .iter()
+        .find(|service| service["name"] == json!("engine"))
+        .expect("services 必须声明 engine");
+    fields(engine, "services[engine]", &[("name", is_string), ("base", is_string)]);
+    assert_eq!(engine["base"], json!("http://127.0.0.1:4789"));
+    let triggers = services
+        .iter()
+        .find(|service| service["name"] == json!("triggers"))
+        .expect("services 必须声明 triggers");
+    fields(triggers, "services[triggers]", &[("name", is_string), ("enabled", is_bool)]);
+    assert_eq!(triggers["enabled"], json!(false));
     assert_eq!(body["contract"], json!(1));
     fields(
         &body["server"],

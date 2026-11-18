@@ -60,6 +60,8 @@ pub struct SessionItem {
     pub updated_at: Option<i64>,
     pub last: Option<SessionLast>,
     pub archived: Option<SessionArchived>,
+    /// 置顶投影：从 `qrd3wh.sessions` 的 `pins.ids` 合并，不另存一份状态。
+    pub pinned: bool,
 }
 
 /// `parent: {id, at}`：fork 来源与会话内的父 entry。
@@ -95,7 +97,7 @@ pub struct SessionArchived {
 
 /// 把全部会话渲染成会话树，**新的在前**（`wire.md`）。
 pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
-    let names = legacy_names(store)?;
+    let (names, pins) = legacy_names_and_pins(store)?;
     let mut items = Vec::with_capacity(store.conversations.len());
     for row in &store.conversations {
         let id = integer(row, "id")?;
@@ -129,10 +131,17 @@ pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
             last: last_entry(store, id)?,
             // 归档墓碑由 12b 落地；fixture 里 `documents.retired_at` 全为 NULL。
             archived: None,
+            pinned: pins.iter().any(|pin| pin.parse::<i64>() == Ok(id)),
         });
     }
     // 新的在前。
     items.sort_by(|left, right| right.id.cmp(&left.id));
+    // 置顶按 `pins.ids` 的先后顺序；未置顶保持原顺序（新的在前）。
+    items.sort_by_key(|item| {
+        pins.iter()
+            .position(|pin| pin.parse::<i64>() == Ok(item.id))
+            .unwrap_or(pins.len())
+    });
     Ok(items)
 }
 
@@ -236,9 +245,10 @@ pub fn render_live_message(store: &ImportedStore, conversation_id: i64) -> Resul
     Ok(None)
 }
 
-/// 旧引擎的 `names` 表：会话 id → 名字。
-fn legacy_names(store: &ImportedStore) -> Result<BTreeMap<i64, String>> {
+/// 旧引擎的 `names` 表：会话 id → 名字，外加同一份文档里的置顶 id 顺序。
+fn legacy_names_and_pins(store: &ImportedStore) -> Result<(BTreeMap<i64, String>, Vec<String>)> {
     let mut names = BTreeMap::new();
+    let mut pins = Vec::new();
     for row in &store.documents {
         let kind = decode_indexed_string(text(row, "kind")?)?;
         if kind != LEGACY_NAMES_DOCUMENT_KIND {
@@ -247,16 +257,22 @@ fn legacy_names(store: &ImportedStore) -> Result<BTreeMap<i64, String>> {
         let Some(content) = latest_base_content(store, integer(row, "id")?)? else {
             continue;
         };
-        let Some(map) = content.get("names").and_then(Value::as_object) else {
-            continue;
-        };
-        for (key, value) in map {
-            if let (Ok(id), Some(name)) = (key.parse::<i64>(), value.as_str()) {
-                names.insert(id, name.to_string());
+        if let Some(map) = content.get("names").and_then(Value::as_object) {
+            for (key, value) in map {
+                if let (Ok(id), Some(name)) = (key.parse::<i64>(), value.as_str()) {
+                    names.insert(id, name.to_string());
+                }
             }
         }
+        if let Some(ids) = content
+            .get("pins")
+            .and_then(|pins| pins.get("ids"))
+            .and_then(Value::as_array)
+        {
+            pins.extend(ids.iter().filter_map(Value::as_str).map(str::to_string));
+        }
     }
-    Ok(names)
+    Ok((names, pins))
 }
 
 /// 一份会话的 `pi.agent` 快照：模型与思考档位。
@@ -478,6 +494,35 @@ mod tests {
         assert!(item.thinking_levels.is_empty() && item.skills.is_empty());
         assert_eq!(item.template, None);
         assert!(!item.read_only);
+    }
+
+    #[test]
+    fn pins_are_merged_into_session_items_and_reordered_first() {
+        let mut store = store_with_one_delta();
+        // 同一份 `qrd3wh.sessions` 文档同时带 names 与 pins；新的 base 取代那条 delta。
+        store.documents[0].insert("kind".into(), Cell::Text("\"qrd3wh.sessions\"".into()));
+        store.document_revisions = vec![row(vec![
+            ("document_id", Cell::Integer(3)),
+            ("seq", Cell::Integer(3)),
+            ("kind", Cell::Text("base".into())),
+            ("version", Cell::Integer(1)),
+            ("content", Cell::Text(
+                r#"{"names":{"2":"named"},"pins":{"ids":["2"],"requests":{}}}"#.into()
+            )),
+        ])];
+        store.conversations.insert(0, row(vec![
+            ("id", Cell::Integer(1)),
+            ("owner_conversation_id", Cell::Integer(0)),
+            ("owner_task_id", Cell::Integer(0)),
+            ("record", Cell::Text("{\"id\":1}".into())),
+        ]));
+        let items = render_sessions(&store).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].id, 2, "置顶的会话排最前");
+        assert!(items[0].pinned, "置顶项 pinned=true");
+        assert_eq!(items[0].name, "named", "同一份文档里的 names 不能被 pins 覆盖");
+        assert_eq!(items[1].id, 1);
+        assert!(!items[1].pinned, "没置顶的 pinned=false");
     }
 
     #[test]

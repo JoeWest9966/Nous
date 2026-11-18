@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use nous_ai::tool::AgentTool;
+use nous_ai::{Api, Model};
 use nous_durable::actor::Actor;
 use nous_runtime::{ProviderRegistry, ValueSource};
 use nous_sessions::turn::{AbortWatcher, HarnessTurnDriver, TurnDriver, TurnRuntime};
@@ -15,6 +16,50 @@ use nous_tools::tools::tool_context::ExecutionToolContext as ToolsExecutionToolC
 use nous_tools::OsExecutionEnv;
 
 use crate::error::Result;
+use crate::models::{ModelItem, ModelRef, ModelsResponse};
+
+/// #51 钉死的假回复。测试与生产共用同一个常量，避免两边各写一份然后漂移。
+pub const FAUX_MODEL_ID: &str = "echo";
+pub const FAUX_REPLY: &str = "provider=faux model=echo（假回复，别当真）";
+
+/// `NOUS_PROVIDER` 的取值。除 `faux` 外一律走真装配。
+pub fn provider_kind(values: &dyn ValueSource) -> &'static str {
+    match values.env("NOUS_PROVIDER").as_deref() {
+        Some("faux") => "faux",
+        _ => "real",
+    }
+}
+
+/// 只给 faux 用的编目：一个 `faux/echo` 模型，没有凭证要求。
+fn faux_catalog() -> ModelsResponse {
+    ModelsResponse {
+        default: Some(ModelRef {
+            provider: "faux".into(),
+            model_id: FAUX_MODEL_ID.into(),
+        }),
+        items: vec![ModelItem {
+            provider: "faux".into(),
+            model_id: FAUX_MODEL_ID.into(),
+            name: "Faux Echo".into(),
+            thinking_levels: Vec::new(),
+            context_window: Some(128_000),
+            max_tokens: Some(16_384),
+        }],
+    }
+}
+
+/// faux 的 provider 实例：固定文本 + 无节流的多帧流，终态 stop。
+fn faux_provider() -> Arc<dyn nous_ai::Provider> {
+    use nous_ai::providers::faux::{FauxProvider, FauxScript};
+    let model = Model::new(
+        FAUX_MODEL_ID,
+        "Faux Echo",
+        Api::Faux,
+        "faux",
+        "http://localhost:0",
+    );
+    FauxProvider::with_models(FauxScript::new().with_text(FAUX_REPLY), vec![model])
+}
 
 /// server 构造好的轮次驱动器，备给路由/命令层使用。
 pub struct AssembledRuntime {
@@ -22,9 +67,13 @@ pub struct AssembledRuntime {
     /// 默认 `system("nous-app")`；将来认证落地只在这里换成 principal 派生的值。
     pub actor: Actor,
     pub driver: Arc<dyn TurnDriver>,
+    pub driver_with_sink: Arc<dyn Fn(Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>) -> Arc<dyn TurnDriver> + Send + Sync>,
     pub provider_registry: ProviderRegistry,
     pub watcher: Arc<AbortWatcher>,
     pub tool_names: Vec<String>,
+    /// #51：只影响 `/v1/models` 与 capabilities，不参与轮次语义。
+    pub models: ModelsResponse,
+    pub provider_kind: &'static str,
 }
 
 /// 从宿主配置和环境变量构造注册表。
@@ -39,12 +88,40 @@ pub fn assemble(
 ) -> Result<AssembledRuntime> {
     // 构造点：模型注册表从宿主配置解析，工具注册表从本地执行环境装箱。
     // 轮次运行时拿走这两张表，server 保留句柄供编目/诊断使用。
-    let registry: ProviderRegistry = nous_runtime::ProviderRegistry::default();
+    let mut registry: ProviderRegistry = nous_runtime::ProviderRegistry::default();
     let config = nous_runtime::RuntimeConfig::default();
-    let (_models, diagnostics) = config.catalog(&registry, values);
+    let kind = provider_kind(values);
+    let (models, diagnostics) = if kind == "faux" {
+        // 显式入口：不看凭证、不解析真供应商；只挂一个 faux/echo。
+        let model = Model::new(
+            FAUX_MODEL_ID,
+            "Faux Echo",
+            Api::Faux,
+            "faux",
+            "http://localhost:0",
+        );
+        registry.declare(nous_runtime::ProviderDeclaration {
+            id: "faux".into(),
+            models: vec![model],
+            api_key_env: None,
+            requires_auth: false,
+        });
+        eprintln!("nous-server: {FAUX_REPLY}");
+        (Vec::<Model>::new(), Vec::<String>::new())
+    } else {
+        config.catalog(&registry, values)
+    };
     for note in diagnostics {
         eprintln!("nous-server: model catalog: {note}");
     }
+    let catalog = if kind == "faux" {
+        let _ = models;
+        faux_catalog()
+    } else {
+        // 真装配沿用原来的空编目：本票不替 #47/#42 决定真模型清单。
+        let _ = models;
+        ModelsResponse::default()
+    };
     let env = Arc::new(OsExecutionEnv::with_cwd(cwd.as_ref().to_path_buf()));
     let tool_ctx = ToolsExecutionToolContext::new(
         env.clone(),
@@ -72,15 +149,33 @@ pub fn assemble(
         nous_tools::tools::create_ls_tool(&tool_ctx, None),
     );
     let actor = Actor::system("nous-app");
+    let tool_names: Vec<String> = tools.keys().cloned().collect();
+    let driver_session = session.clone();
+    let driver_tools = Arc::new(tools);
+    let driver_actor = actor.clone();
+    let make_driver = Arc::new(move |sink: Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>| {
+        Arc::new(HarnessTurnDriver::new(
+            driver_session.clone(),
+            TurnRuntime {
+                providers: if kind == "faux" {
+                    faux_provider()
+                } else {
+                    crate::runtime::unconfigured_provider()
+                },
+                tools: driver_tools.clone(),
+            },
+        ).with_actor(driver_actor.clone()).with_event_sink(sink)) as Arc<dyn TurnDriver>
+    }) as Arc<dyn Fn(Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>) -> Arc<dyn TurnDriver> + Send + Sync>;
+    let driver = make_driver(Arc::new(|_| {}));
     Ok(AssembledRuntime {
-        actor: actor.clone(),
-        driver: Arc::new(HarnessTurnDriver::new(session.clone(), TurnRuntime {
-            providers: crate::runtime::offline_provider(),
-            tools: Arc::new(tools.clone()),
-        }).with_actor(actor)),
+        actor,
+        driver,
+        driver_with_sink: make_driver,
         provider_registry: registry,
         watcher: Arc::new(AbortWatcher::new(nous_sessions::turn::abort_token(&session))),
-        tool_names: tools.keys().cloned().collect(),
+        tool_names,
+        models: catalog,
+        provider_kind: kind,
     })
 }
 
@@ -96,10 +191,17 @@ pub fn assemble_with_provider(
     let watcher = Arc::new(AbortWatcher::new(nous_sessions::turn::abort_token(&session)));
     AssembledRuntime {
         actor: Actor::system("nous-app"),
-        driver: Arc::new(HarnessTurnDriver::new(session, runtime)),
+        driver: Arc::new(HarnessTurnDriver::new(session.clone(), runtime.clone()).with_actor(Actor::system("nous-app"))),
+        driver_with_sink: Arc::new(move |sink| {
+            Arc::new(HarnessTurnDriver::new(session.clone(), runtime.clone())
+                .with_actor(Actor::system("nous-app"))
+                .with_event_sink(sink)) as Arc<dyn TurnDriver>
+        }),
         provider_registry: registry,
         watcher,
         tool_names,
+        models: faux_catalog(),
+        provider_kind: "faux",
     }
 }
 
@@ -109,6 +211,12 @@ impl ValueSource for ProcessEnvValues {
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
     }
+}
+
+/// 真装配的占位 provider：没有凭证时**不产生回复**，由路由层先拦下 503。
+/// 它绝不能返回文本，否则「没配 key 也能答」会把 #44 的语义搅坏。
+pub fn unconfigured_provider() -> Arc<dyn nous_ai::Provider> {
+    crate::runtime::offline_provider()
 }
 
 /// 离线/测试用的 provider。生产走 RuntimeConfig::resolve 绑定真实供应商。
