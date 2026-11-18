@@ -997,5 +997,60 @@ for p in m['packages']:
 		"$TOTAL" "$B_GREEN" "$B_RED" "$B_SKIP"
 fi
 
+# ════════════════════════════════════════════════════════════════════════════
+# 6. #52 部署资产（追加段：不改上面任何判据的口径与顺序）
+#    2a 单元文本断言 + systemd-analyze verify（可用时）
+#    15 脚本零凭据（git grep 命中数 == 0）
+# ════════════════════════════════════════════════════════════════════════════
+if [ "$WHAT" = all ] || [ "$WHAT" = deploy ]; then
+	step "6. #52 部署资产（判据 2a / 15）"
+	UNIT=deploy/nous-app.service
+	if [ ! -f "$UNIT" ]; then
+		bad "$UNIT 不存在 —— 单元文件是判据的载体"
+	else
+		MISSING=""
+		for LINE in 'User=nous' 'WorkingDirectory=' 'Environment=HOME=' \
+		            'Restart=on-failure' 'RestartPreventExitStatus=78'; do
+			grep -qxF "$LINE" "$UNIT" || grep -q "^$LINE" "$UNIT" || MISSING="$MISSING $LINE"
+		done
+		if [ -z "$MISSING" ]; then
+			ok "单元五条文本断言都在（User/WorkingDirectory/HOME/Restart/RestartPreventExitStatus=78）"
+		else
+			bad "单元缺：$MISSING"
+		fi
+		# 回环哨兵（判据 9b 的静态那一半）：#50 落地前不许把 env 改成 0.0.0.0。
+		if grep -qxF 'Environment=NOUS_LISTEN=127.0.0.1:4789' "$UNIT"; then
+			ok "单元静态哨兵：NOUS_LISTEN=127.0.0.1:4789（#50 前不许 0.0.0.0）"
+		else
+			bad "单元监听不是回环（判据 9b）"
+		fi
+		if command -v systemd-analyze >/dev/null 2>&1; then
+			if SYSTEMD_OUT=$(systemd-analyze verify "$UNIT" 2>&1); then
+				ok "systemd-analyze verify $UNIT 通过"
+			else
+				# 本机没有 /opt/nous-app/current/nous-app 时 systemd-analyze 只报
+				# "ExecStart not executable"；那不是单元自身的问题，先剥掉再看。
+				REAL=$(printf '%s\n' "$SYSTEMD_OUT" | grep -v 'is not executable' || true)
+				if [ -z "$REAL" ]; then
+					skip "systemd-analyze verify 仅因 ExecStart 产物不在本机未过（单元语法本身无错）"
+				else
+					bad "systemd-analyze verify 失败：$(printf '%s' "$REAL" | head -3 | tr '\n' ' ')"
+				fi
+			fi
+		else
+			skip "systemd-analyze 不可用（本机不做单元语义校验）"
+		fi
+	fi
+
+	# 检查者自己那一行 pattern 不算命中（与 c10 排除 verify.sh 同一手法）。
+	CRED=$(git grep -inE 'ssh(PASS)|pass(word)|se(cret)|crab(port)' -- scripts/ | grep -v '零凭据（' || true)
+	if [ -z "$CRED" ]; then
+		ok "脚本零凭据（git grep -inE 'sshpass|password|secret|crabport' scripts/ == 0）"
+	else
+		bad "脚本里出现凭据字样："
+		printf '%s\n' "$CRED" | sed 's/^/       /'
+	fi
+fi
+
 printf '\n'
 if [ $FAIL -eq 0 ]; then printf '\033[32m通过\033[0m\n'; exit 0; else printf '\033[31m未通过\033[0m\n'; exit 1; fi
