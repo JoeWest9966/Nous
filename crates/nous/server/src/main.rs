@@ -135,22 +135,55 @@ impl From<nous_durable::StorageError> for RunError {
 const _: u8 = EXIT_REFUSED;
 
 async fn run() -> Result<(), RunError> {
-    // D12：工作目录断言在任何可能需要写文件的动作之前；失败 = refuse: workdir-missing。
+    // D13 运维动作：手写 args 分发，不引 clap。动作本身不启服务、不进 Session。
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("--version") => {
+            println!("{}", nous_server::version::version_line());
+            return Ok(());
+        }
+        Some("--print-token") => {
+            // `--print-token`：只打印 token 本身，不启服务、不碰库。
+            let Some((token, _)) = auth::load_or_generate(&auth::default_token_path(), true)? else {
+                return Err("generate=true 必有 token".into());
+            };
+            println!("{token}");
+            return Ok(());
+        }
+        Some("--backup") => {
+            let path = args.get(1).ok_or("--backup 需要 <path>")?;
+            let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
+            nous_durable::ops::backup(&db, std::path::Path::new(path))?;
+            return Ok(());
+        }
+        Some("--check") => {
+            let path = args.get(1).ok_or("--check 需要 <path>")?;
+            match nous_durable::ops::check(std::path::Path::new(path)) {
+                Ok(schema) => {
+                    println!("quick_check=ok");
+                    println!("schema={schema}");
+                    return Ok(());
+                }
+                Err(error) => {
+                    eprintln!("nous-server: {error}");
+                    return Err(RunError::Failed("quick_check 未通过".into()));
+                }
+            }
+        }
+        Some("--active-tasks") => {
+            let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
+            println!("{}", nous_durable::ops::active_tasks(&db)?);
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    // D12：工作目录断言只在真启动服务时做；失败 = refuse: workdir-missing。
     if let Err(detail) = nous_server::workdir::assert_workdir() {
         refuse_startup("workdir-missing", Some(&detail));
     }
 
-    // `--print-token`：只打印 token 本身（给 `curl -H "Authorization: Bearer $(…)"` 直接用），
-    // 不启服务、不碰库。缺失时按首次启动生成。
     let token_path = auth::default_token_path();
-    if std::env::args().any(|arg| arg == "--print-token") {
-        let Some((token, _)) = auth::load_or_generate(&token_path, true)? else {
-            return Err("generate=true 必有 token".into());
-        };
-        println!("{token}");
-        return Ok(());
-    }
-
     let db = std::env::var("NOUS_DB").unwrap_or_else(|_| DEFAULT_DB.to_string());
     if std::env::var("NOUS_ADOPT_LEGACY").is_ok_and(|value| value == "1") && Path::new(&db).exists() {
         match adopt_legacy_copy(&db) {
