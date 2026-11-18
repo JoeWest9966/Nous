@@ -1,7 +1,9 @@
 # 部署 nous-app（issue #52）
 
 一句版：在 asus 上 `scripts/deploy.sh`，一条命令装好；j1900 上 `scripts/deploy-check.sh --wait=300` 验收。
-首版只绑 `127.0.0.1:4789`。旧面板 `nous-panel`（4790）已于 2026-11-18 停用并 disable，`content/` 已归档到 j1900 的 `/var/backups/nous-panel/` 并从仓里移除。
+绑 `0.0.0.0:4789` + `NOUS_TOKEN_FILE`（成对；缺 token 进程拒绝启动、退出 78）。
+旧面板 `nous-panel`（4790）已于 2026-11-18 停用并 disable，`content/` 已归档到 j1900 的
+`/var/backups/nous-panel/` 并从仓里移除。
 
 ## 0 · 一次性准备（人做，脚本不代劳）
 
@@ -49,11 +51,12 @@ rsync 到版本目录 → 写 manifest → `ln -sfn current` → unit 快照 + �
 ```sh
 scripts/deploy-check.sh --wait=300   # j1900
 nous-app --version
-ssh j1900 sudo -n curl -s http://127.0.0.1:4789/v1/device | jq '{version,build,target}'
+ssh j1900 sudo -n curl -s -H "authorization: Bearer $(sudo cat /etc/nous/token)" \
+  http://127.0.0.1:4789/v1/device | jq '{version,build,target}'
 ```
 
 `--wait=300` 是判据 2c 的真等待：改坏库版本后服务必须 `failed`/`exit-code`，300 秒后
-`NRestarts` 不涨。首版绑回环，curl 不带 token；#50 落地后再把 header 加回来。
+`NRestarts` 不涨。回读 `/v1/device` **必须带 token**：无/错 token 都是 401（`/health` 不存在，别拿它当探针）。
 
 ## 2 · 升级 / 幂等
 
@@ -81,12 +84,12 @@ ssh j1900 sudo -n ls -1t /var/lib/nous/backups/*.json
 # 按上一版目录改 current 软链，按 nous-<ts>.json 的 predecessor 恢复对应 nous-<ts>.db 与 unit，再 restart
 ```
 
-## 3 · 显式切到 `0.0.0.0:4789`（**只在 #50 + Desk #8 都落地后**）
+## 3 · 已完成的切换：`127.0.0.1` → `0.0.0.0:4789`（2026-11-18 做完，留作记录）
 
 首版绑回环是因为 #50 的认证与 NousDesk `#8` 的 header 注入当时都还没实现：
 `0.0.0.0` + 一个带 bash 工具、零认证的服务 = 局域网内任意设备可执行命令。
-判据 9b 守着这条：`ss -ltn 'sport = :4789'` 只能有 `127.0.0.1:4789`；从 asus 打
-`192.168.1.7:4789` 必须连不上。
+**判据 9b 的口径也跟着换了**：不再要求「只听回环」，而是「绑了非回环就必须有钥匙」——
+从局域网打 `192.168.1.7:4789`，未认证必须 401、token 文件必须在；只听回环时跳过裸奔检查。
 
 **前置**：#50 合入（非回环无 token → `refuse: no-token-on-non-loopback` / 78），
 且 NousDesk `#8` 已合入（`desktop.toml` 有 token、`client.rs` 统一注入 header）。

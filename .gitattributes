@@ -1,16 +1,8 @@
 # GitHub 的语言统计按**字节**算，不算「哪部分是产品代码」。
 #
-# `content/` 是**旧面板（TS 时代）的运行时块内容**：`content/new1/map/qrd3wh/` 是当时
-# 引擎跑的那份代码，一直靠 git 跟着走。它不是 Nous（Rust）这个项目的源代码，但它今天
-# **还在 j1900 上跑**，所以还不能删 —— 删它属于「旧面板下线 ①–⑤」的第 ⑤ 步（见 decisions）。
-#
-# 结果就是：不标的话 GitHub 上这个 Rust 仓显示 Rust 71% / JS 18% / HTML 5% / CSS 2%，
-# 看起来像个 JS 项目。这里按 linguist 的既有语义把它标成 vendored：
-# **别人家/上一代的东西，不算本项目的语言构成**。等第 ⑤ 步真把它删掉，这一行跟着删。
-content/** linguist-vendored
-
-# `demo/` 是「碰外观先出 HTML demo」那条规矩的产物（静态原型，不进构建）。
-demo/** linguist-documentation
+# 旧面板时代的 `content/**`（TS 引擎的运行时块内容）和 `demo/**`（静态原型）都在
+# 2026-11-18 前后退场了，对应的 linguist 标注跟着删 —— 文件都不在了还留着「不算语言构成」
+# 的声明，是自欺（`content/**` 那条当初就是这么删的）。
 
 # 文档与 fixture 不是产品代码：前者 prose，后者数据。
 docs/** linguist-documentation
