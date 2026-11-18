@@ -32,6 +32,7 @@ use crate::storage::writes::StorageWrite;
 use crate::types::{DocumentScope, EntryRecord, TerminalReason};
 use crate::{DocumentContent, DocumentPoint, Id, Storage, StorageError};
 
+use super::session_document::{merge_session_document, session_scope_document, upsert_session_document};
 use super::{publication_of, CommitPublication, Session, SessionEnd, SessionError};
 
 /// 命令失败。`Session` 是「会话已经不能用了」，另外三条是调用方要看到的语义错误。
@@ -59,6 +60,12 @@ impl std::error::Error for CommandError {}
 impl From<StorageError> for CommandError {
     fn from(error: StorageError) -> Self {
         CommandError::Session(SessionError::Storage(error))
+    }
+}
+
+impl From<SessionError> for CommandError {
+    fn from(error: SessionError) -> Self {
+        CommandError::Session(error)
     }
 }
 
@@ -687,13 +694,10 @@ pub async fn rename_session(
     if storage.conversation(id)?.is_none() {
         return Err(CommandError::NotFound(format!("session {id} not found")));
     }
-    let (existing_id, existing) = session_scope_document(storage, NAMES_KIND)?;
-    let mut names = existing
-        .as_ref()
-        .and_then(|value| value.get("names").cloned())
-        .unwrap_or_else(|| json!({}));
-    names[id.to_string()] = json!(name);
-    let writes = upsert_session_document(storage, NAMES_KIND, existing_id, json!({ "names": names }))?;
+    // 只替换 names 的一个键，整份值（pins / archived / 旧键）原样写回。
+    let writes = merge_session_document(storage, NAMES_KIND, "names", |names| {
+        names[id.to_string()] = json!(name);
+    })?;
     drop(guard);
     commit_and_publish_with_new_guard(session, writes).await?;
     Ok(RenamedOutcome { id, name })
@@ -795,54 +799,6 @@ pub async fn mark_read(
         id,
         read_at: effective_read_at,
         unread: 0,
-    })
-}
-
-/// session 作用域的单例文档：`(化身 id, 当前值)`；没建过给 `(None, None)`。
-fn session_scope_document(
-    storage: &Storage,
-    kind: &str,
-) -> Result<(Option<Id>, Option<Value>), CommandError> {
-    let record = storage
-        .find_document(
-            &json!({ "kind": kind, "scope": { "kind": "session" } }),
-            crate::DocumentPoint::Current,
-        )
-        .map_err(CommandError::from)?;
-    let Some(record) = record else {
-        return Ok((None, None));
-    };
-    let id = id_of(&record)?;
-    Ok((
-        Some(id),
-        storage
-            .materialize(id, crate::DocumentPoint::Current)?
-            .map(|document| document.value),
-    ))
-}
-
-/// 同地址已有一份在世文档就整份 base 覆盖它；否则新建一份。
-fn upsert_session_document(
-    storage: &mut Storage,
-    kind: &str,
-    existing: Option<Id>,
-    value: Value,
-) -> Result<Vec<StorageWrite>, CommandError> {
-    let content = DocumentContent::Base { version: 1, value };
-    Ok(match existing {
-        Some(id) => vec![StorageWrite::DocumentChange { id, content }],
-        None => {
-            let id = storage.mint_id()?;
-            vec![StorageWrite::DocumentCreate {
-                id,
-                record: json!({
-                    "id": id,
-                    "kind": kind,
-                    "scope": DocumentScope::Session,
-                }),
-                content,
-            }]
-        }
     })
 }
 

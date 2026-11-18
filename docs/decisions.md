@@ -261,3 +261,24 @@ durable-until-acked），把这条 pragma 去掉，同时重跑 `commit_throughp
 **反悔点**：如果 `create_conversation` 哪天退化成只写一条元数据、和 entry/task 提交
 不共享同一个写者与观察者（即建会话不再需要广播帧），就把它从 `Session` 挪出去，
 并把公开面判据改回 5 条 —— 同样要在这里签字、同时改票面，不许再偷偷开第二条通道。
+
+---
+
+## 验收修复 · `qrd3wh.sessions` 是 session 作用域单例：建会话合并、不新建
+
+**决定**：session 作用域的 `{kind:"qrd3wh.sessions", scope:{kind:"session"}}` 地址只允许一份
+在世化身。`create_conversation` / `rename_session` / `set_pin` 共用 `session::session_document`
+的 `session_scope_document` + `upsert_session_document`（`find_document` → `materialize` → 一次
+`DocumentChange`；只有一份都没有才 `DocumentCreate`）。每次只改自己管的那个键（`names` 的
+一条 / `pins` / `marks`），整份旧值写回；rename 不再用 `{"names": ...}` 覆盖掉 pins/archived。
+
+配置字段：`create_conversation` 不再写顶层 `config` —— 全仓 grep 没有读者，写进单例文档只会
+给第二份会话制造覆盖与歧义（既没有 `configs` 的消费方，就不假装有）。端点层 201 回包仍原样
+带出 `config` 的生效值；`GET /v1/sessions` 仍只读 `names` / `pins`，旧 fixture 兼容不受影响。
+
+**理由**：storage 按地址保证当前化身唯一，第二次 `DocumentCreate` 直接 500
+（`Document address already has a current incarnation`）。名字表本来就是整个 session 一份，
+不是「每条会话一份」；若以后真有人读配置，按 id 建 `configs` map 并合并写，别回到顶层单键。
+
+**反悔点**：若将来 12c 给会话配置正式落文档契约（例如新的 kind 或 conversation 作用域），
+这里只保留 names/pins 的兼容读取，新配置写新文档；不要在 `qrd3wh.sessions` 里复活 `config`。
