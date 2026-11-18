@@ -17,6 +17,11 @@
 | **配方**（`Template` + 运行参数） | 点火之后跑的那一轮该怎么起：用哪个模板、哪个模型、在哪个工作目录 | 不是"提示词随便塞一段" |
 | **点火许可**（`fires_allowed_by`） | 谁可以点它：`cron` / `ext:<扩展 code>` / `agent:<agent>` / `human` | 不是"谁能改它"（那是权限系统的事） |
 | **点火事件**（`Fire`） | 一次具体的启动：`(trigger_code, fire_at, fired_by)` | 不是"一个定时任务" |
+| **落点**（`target`） | 这一轮写进哪个会话：新开一个 / 写回指定的那个 | 不是全局策略，**每个触发器自己定** |
+| **策略**（`policy`） | 上一轮还没完时再点火怎么办：跳过并记账 / 排队 | 同上，**每个触发器自己定** |
+
+**每个触发器都是一个独立的商品**：自己的 `code`、自己的规则、自己的模板、自己的落点和策略。
+所以你才能"了解它们各自的工作情况"——一个触发了多少次、跳过几次、失败几次，账都在它自己名下。
 
 ## 2 它不是什么
 
@@ -27,6 +32,10 @@
 - **不是 workflow / DAG 引擎。** 一次点火只起**一轮**。要"跑完 A 再跑 B"，用子任务
   （`status = waiting` + `JoinPolicy`），那是另一个机制，不许塞进触发器。
 - **不是新表。** Nous 侧只要两张：`triggers`（配方 + 许可）、`fires`（每次点火的账）。
+- **不是全局策略。** 落点、并发、重试、宽限期全部写在**触发器自己身上**。没有"Nous 全局默认点火行为"
+  这种东西——有默认值，但没有一处全局开关能改掉所有触发器。
+- **模板不能自己点火。** 模板是零件，触发器是成品。**"终极模板"不是触发器之外的东西，它就是触发器本身**
+  （模板 + 规则 + id）。所以模板上永远不该出现 `enabled` / `next_fire_at` 这类字段。
 
 ## 3 一个真实场景
 
@@ -68,6 +77,11 @@ fires.mark_done(...)?;
    加新触发源 = 加一个会点火的调用者，触发器本身一行不改。
 5. **不做编排。** 一次点火只起一轮。"跑完再跑"、"等三个都完"是子任务（`waiting`/`completing`）的活。
    把编排塞进触发器，就是给自己造第二套工作流引擎。
+6. **一切规则写在自己身上。** 点火源（`fires_allowed_by`）、落点（`target`）、策略（`policy`）、
+   模板（`template_ref`）全是触发器自己的列。这样"复制一个触发器 = 复制一件商品"，
+   导出成一份文件、导入即建，不用再去别处找它的隐藏配置。
+7. **零件不点火，成品才点火。** 模板可以被很多触发器引用，但它自身没有生命周期：
+   没有 `enabled`、没有 `next_fire_at`、不进 `fires` 表。想让它"跑起来"，得有一个触发器指向它。
 
 ## 5 失败模式（先想清楚，别上线再发现）
 
@@ -95,12 +109,18 @@ fires.mark_done(...)?;
 | `permissions` | `fires_allowed_by` 是它的第一个用例；完整 ACL 后做 |
 | `NousDesk` | 触发器在 Desk 上是什么样（列表？灰入口？）**待定**：先只做后端，UI 等落点定了再说 |
 
-**仍待定（不定就不实现）**：
+**已定**（2026-11-18）：
 
-1. **点火落在哪个会话**：(a) 新会话（"张三的去处"，Desk 列表要能区分系统发起）/
-   (b) 写回固定会话 / (c) 只落库不通知。**倾向 (a)**。
-2. **`serial` 之外的策略**：要不要 `queue`（排队）？**倾向：不做**，排队等于自己造队列。
-3. **模板引用到哪**：preset / document / skill 三种都支持，还是先只支持 preset？**倾向：先 preset**。
+1. **落点**：**不是全局策略，是触发器自己的 `target` 列** —— `{kind:"new"}` 新开一个会话，
+   或 `{kind:"conversation", id}` 写回指定的那个。默认 `new`（商品卖出去是独立订单，
+   不塞进已有订单）。
+2. **并发策略**：**同样是触发器自己的 `policy` 列** —— 默认 `serial`（上一轮没完就跳过本次并记
+   `skipped`）；要排队就自己声明。Nous 不提供"全局排队队列"。
+3. **模板引用**：第一版**只支持 preset**（`{kind:"preset", ref}`）。document / skill 等 `#48` 的
+   `documents` 定稿再加，否则引用路径会跟着改。
+
+**仍待定**：Desk 上触发器长什么样（列表？灰入口？"系统发起"的会话怎么显示）—— 那是外观，
+按规矩要先出 HTML demo，不在这里定。
 
 ## 8 反悔点
 
@@ -109,6 +129,9 @@ fires.mark_done(...)?;
 - 如果发现 `triggers` 表开始长 `last_status` / `failure_count` / `retry_at` 这类列，**停**：
   那些是 `fires` 的账，不是配方的属性。
 - 如果发现有人在触发器里写"跑完调另一个触发器"，**停**：那是编排，去子任务。
+- 如果发现 `triggers` 之外还冒出一份"全局点火配置"（默认落点/默认并发/默认宽限期），**停**：
+  那会让"复制一个触发器"不再等于"复制一件商品"。
+- 如果发现模板上长了 `enabled` / `next_fire_at` / `last_fired_at`，**停**：模板是零件，没有生命周期。
 
 ---
 
@@ -132,6 +155,10 @@ fires.mark_done(...)?;
   concern (`waiting` + `JoinPolicy`).
 - **Not a new table set.** Two tables on the Nous side: `triggers` (recipe + permit) and
   `fires` (the ledger of firings).
+- **Not a global policy.** Placement (`target`), concurrency (`policy`), retries and grace periods
+  live on the trigger row itself. Defaults exist; no global switch overrides all triggers.
+- **Templates cannot fire.** A template is a part, a trigger is the product. The "ultimate template"
+  *is* the trigger (template + rules + id) — so a template must never grow `enabled` / `next_fire_at`.
 
 ### 3 A real scenario
 
@@ -163,6 +190,10 @@ with a stable slug (`fire-denied: <code> by <actor>`), same discipline as `refus
 3. **Templates are referenced, never inlined** — one template edit must not require editing N triggers.
 4. **Scheduling is one implementation of a condition** — new firing sources add callers, not trigger code.
 5. **No orchestration** — one firing, one turn. Composition belongs to subtasks.
+6. **Every rule lives on the trigger itself** — firing sources, `target`, `policy`, `template_ref`.
+   Copying a trigger must copy a whole product, exportable as one file.
+7. **Parts do not fire, products do** — a template may be referenced by many triggers but owns no
+   lifecycle: no `enabled`, no `next_fire_at`, never a row in `fires`.
 
 ### 5 Failure modes
 
@@ -174,8 +205,19 @@ with a stable slug (`fire-denied: <code> by <actor>`), same discipline as `refus
 | Template deleted | dangling reference | `orphaned` + `note='template-missing'`, never silent |
 | Too many firings | no throttle | per-trigger `serial`: skip this firing if the previous turn is still running, record `skipped` |
 
+### 5b Decided (2026-11-18)
+
+1. **Placement** is a per-trigger `target`: `{kind:"new"}` or `{kind:"conversation", id}`; default `new`.
+2. **Concurrency** is a per-trigger `policy`: default `serial` (skip this firing while the previous
+   turn runs, record `skipped`). No global queue.
+3. **Template references** are `preset` only in v1; document/skill wait for `#48`.
+   Still open: how triggers look in NousDesk (that is appearance → needs an HTML demo first).
+
 ### 6 Reversal points
 
 - Adding a condition *expression syntax* to triggers → stop; that belongs to an extension.
 - `triggers` growing `last_status` / `failure_count` / `retry_at` → stop; those are `fires` facts.
 - A trigger whose body calls another trigger → stop; that is orchestration.
+- A "global firing config" appearing next to `triggers` → stop; copying a trigger would stop
+  meaning copying a product.
+- `enabled` / `next_fire_at` / `last_fired_at` on a template → stop; templates have no lifecycle.
