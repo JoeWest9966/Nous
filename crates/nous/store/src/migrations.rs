@@ -61,7 +61,7 @@ END;
 CREATE TABLE fires (
   trigger_code TEXT NOT NULL,
   fire_at      INTEGER NOT NULL,
-  state        TEXT NOT NULL CHECK (state IN ('pending','done','orphaned')),
+  state        TEXT NOT NULL CHECK (state IN ('pending','done','orphaned','skipped')),
   request_id   TEXT NOT NULL,             -- trigger:<code>:<fire_at>
   note         TEXT,
   PRIMARY KEY (trigger_code, fire_at)      -- 幂等的物理保证：同一次触发只记一行

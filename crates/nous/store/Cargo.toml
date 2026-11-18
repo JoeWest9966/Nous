@@ -8,10 +8,13 @@ description = "Nous 自己的库（nous.db）：triggers / fires + 一条独立�
 readme = "README.md"
 
 # 判据（`scripts/check-separation.sh` 判据 1）：这一节里**没有** `nous-durable`，而且一行都不许加。
+# serde/serde_json 只是定义 JSON 的编解码（#57 的封闭 spec），不带 IO、不带时钟。
 # 触发器是 Nous 的实体，pi 的语义层（session / entry / document / submission / task）里
 # 不该存在这个概念 —— Magento 的「商品」不会出现在 PHP 运行时的类型表里。
 [dependencies]
 rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # 每条判据一个临时目录里的**真库文件**：`:memory:` 验不了 WAL、也验不了 `VACUUM INTO` 备份。

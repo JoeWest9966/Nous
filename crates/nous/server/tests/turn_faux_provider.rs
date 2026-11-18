@@ -57,7 +57,10 @@ impl Server {
         let out = dir.join("stdout.log");
         let err = dir.join("stderr.log");
         let mut cmd = Command::new(bin());
+        // #50：HOME 下的 token 文件会让 /v1/* 全量 401。测试用自己的 HOME，
+        // 不借用开发机上的凭据（否则并行测试/开发机状态决定红灯）。
         cmd.current_dir(&dir)
+            .env("HOME", &dir)
             .env("NOUS_DB", &db)
             // 测试不许继承开发机上的真 token（`~/.config/nous/token`）：那个文件一存在，
             // `/v1/*` 就全量 401，这条判据会在别人的机器上莫名其妙地红。

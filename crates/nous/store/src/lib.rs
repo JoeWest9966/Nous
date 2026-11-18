@@ -33,6 +33,7 @@
 mod error;
 pub mod fires;
 mod migrations;
+pub mod trigger;
 pub mod triggers;
 
 use std::path::Path;
@@ -42,7 +43,11 @@ use rusqlite::Connection;
 pub use error::{Result, StoreError};
 pub use fires::{reclaim, request_id, Action, Fire, FireState, Inserted, GRACE_MS};
 pub use migrations::{CURRENT_VERSION, VERSION_TABLE};
-pub use triggers::{NewTrigger, Trigger};
+pub use trigger::{
+    ensure_code_immutable, fire_due, parse_five_field_cron, DueFire, FireActor, NewTrigger as NewTriggerDefinition,
+    Policy, Spec, Target, TemplateRef, Trigger, TriggerError,
+};
+pub use triggers::NewTrigger;
 
 /// 一份 `nous.db`。**单写者**：跟 durable 一样是 WAL + `busy_timeout`，两库互不相干。
 pub struct Store {

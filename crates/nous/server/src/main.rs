@@ -242,6 +242,7 @@ async fn run() -> Result<(), RunError> {
         &nous_server::runtime::ProcessEnvValues,
         session,
     )?;
+    let trigger_driver = assembled.driver.clone();
     let state = state.with_runtime(Arc::new(assembled));
     // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
     // 不另开第二个 Storage。
@@ -249,6 +250,41 @@ async fn run() -> Result<(), RunError> {
         std::path::PathBuf::from(&db),
         commands.session().clone(),
     );
+
+    // #57：触发器是自己的库（nous-triggers.db），点火走的是上面那条同一个 Session。
+    let triggers_db = std::env::var("NOUS_TRIGGER_DB")
+        .unwrap_or_else(|_| "./nous-triggers.db".to_string());
+    let trigger_store = nous_store::Store::open(&triggers_db)
+        .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
+    let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
+    let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
+        let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
+        let address = serde_json::json!({
+            "kind": "presets.Session-Template",
+            "scope": { "kind": "session" },
+            "key": name,
+        });
+        let Ok(Some(record)) = readonly
+            .find_document(&address, nous_durable::DocumentPoint::Current)
+        else {
+            return None;
+        };
+        let id = record.get("id").and_then(serde_json::Value::as_i64)?;
+        readonly
+            .materialize(id, nous_durable::DocumentPoint::Current)
+            .ok()
+            .flatten()
+            .and_then(|doc| doc.value.get("body").and_then(serde_json::Value::as_str).map(str::to_string))
+    });
+    let trigger_runtime = nous_server::triggers::TriggerRuntime::new(
+        trigger_store,
+        commands.session().clone(),
+        lookup,
+        Some(trigger_driver),
+        None,
+        std::path::PathBuf::from(&db),
+    )?;
+    let state = state.with_triggers(trigger_runtime);
 
     // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
     // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。
