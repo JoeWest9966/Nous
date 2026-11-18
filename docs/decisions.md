@@ -523,3 +523,25 @@ integration 用 `chrono_millis` 直接取时间。也就意味着 `nous-sessions
 
 **反悔点**：如果哪天发现 integration 那份 #44 缺了 main 那份的某个能力（例如历史重放 `load_history`），
 用 `git show 63f476a:crates/nous/sessions/src/turn.rs` 取回来当参照 —— 两份都还在 git 里，没有真丢。
+
+---
+
+## 2026-11-18 · 两个库的文件名定稿：`nous.db`（durable）+ `nous-plugins.db`（store）
+
+`#56` 那条「存储分离」留了一句**文件名还没定死**，今天定掉，理由如下：
+
+- **durable 的库继续叫 `nous.db`**：真机上已经在跑，而且 `deploy.sh` / 备份 manifest / `--check` /
+  `--active-tasks` / 升级闸门全都引用这个名字。改名 = 数据迁移 + 备份链断一次，换不到任何好处。
+- **store 的库改叫 `nous-plugins.db`**（原来是 `nous-triggers.db`）：这张库的所有者是
+  `nous-store`（插件侧），触发只是它**第一个住户**；往后审计、别的插件数据还进这张库。
+  **名字跟所有者走，不跟第一个用户走** —— 叫 `triggers` 的话第二个住户落地就得再改一次名，
+  而改数据文件名是迁移，不是重命名。
+- **环境变量与文件名同字**：`NOUS_PLUGINS_DB` / `nous-plugins.db`（原来 `NOUS_TRIGGER_DB`）。
+  一条规则，少一次「变量叫 A、文件叫 B」的对照。
+
+**落地面**：`crates/nous/server/src/main.rs` 的默认路径与变量名、`scripts/deploy-check.sh`
+判据 12 的白名单（两个库都认，清单外任何文件仍然红）。
+
+**反悔点**：如果哪天要「一个插件一个库」（真隔离），那是把 `nous-plugins.db` 拆成
+`plugins/<module>.db`，判据 12 的白名单改成扫目录；别一个个加白名单条目 —— 那会变成
+「数据目录里有什么都不奇怪」。

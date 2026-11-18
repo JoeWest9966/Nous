@@ -263,20 +263,24 @@ async fn run() -> Result<(), RunError> {
         commands.session().clone(),
     );
 
-    // #57：触发器是自己的库（nous-triggers.db），点火走的是上面那条同一个 Session。
+    // #57：Nous 自己的库（`nous-plugins.db`：triggers/fires，往后是审计与别的插件数据），
+    // 点火走的是上面那条同一个 Session。
+    // **名字跟所有者走，不跟第一个用户走**：这张库归 `nous-store`（插件侧），触发只是它第一个
+    // 住户；叫 `nous-triggers.db` 的话，第二个用户落地就得再改一次名（改数据文件名 = 迁移）。
+    // 环境变量与文件名同字：`NOUS_PLUGINS_DB` / `nous-plugins.db`，一条规则。
     // 默认和 `NOUS_DB` 同目录，不落 cwd：systemd 的 WorkingDirectory 是 /srv/nous/work，
     // 落 cwd 会把数据写到工作目录而不是数据目录。
-    let triggers_db = std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
+    let plugins_db = std::env::var("NOUS_PLUGINS_DB").unwrap_or_else(|_| {
         Path::new(&db)
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."))
-            .join("nous-triggers.db")
+            .join("nous-plugins.db")
             .to_string_lossy()
             .into_owned()
     });
-    let trigger_store = nous_store::Store::open(&triggers_db)
-        .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
+    let trigger_store = nous_store::Store::open(&plugins_db)
+        .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
     let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
         let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
