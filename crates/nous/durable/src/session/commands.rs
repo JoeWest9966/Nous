@@ -519,8 +519,222 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
 }
 
 // ---------------------------------------------------------------------------
+// #47：rename / read / unread
+//
+// 三种写都走 `commit_and_publish`（同一把锁、同一个事务、同一份广播）；读走同一 Session
+// 的存储引用（只读扫描），不另开第二条 Storage。名字/水位住在本库自己的文档里，键是会话 id。
+// ---------------------------------------------------------------------------
+
+const NAMES_KIND: &str = "qrd3wh.sessions";
+const UNREAD_KIND: &str = "qrd3wh.unread";
+const NAME_MAX_LEN: usize = 120;
+
+/// `POST /v1/sessions/:id/rename` 的结果（回包就是生效值）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenamedOutcome {
+    pub id: Id,
+    pub name: String,
+}
+
+/// `POST /v1/read/:id` 的回执。`read_at` 是 epoch 毫秒；水位只进不退。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkReadOutcome {
+    pub id: Id,
+    pub read_at: i64,
+    pub unread: u64,
+}
+
+/// 会话改名：trim、空串拒绝、最长 120（旧引擎语义）。
+///
+/// 名字住在 `qrd3wh.sessions` 的 `names` 表里 —— `render_sessions` 合并所有这种文档的
+/// names。session 作用域的同地址文档只有一份在世化身，内容用整份 base 覆盖。
+pub async fn rename_session(
+    session: &Session,
+    id: Id,
+    raw_name: &str,
+) -> Result<RenamedOutcome, CommandError> {
+    let name = raw_name.trim();
+    if name.is_empty() {
+        return Err(CommandError::BadRequest("name 是空的".to_string()));
+    }
+    let name = name.chars().take(NAME_MAX_LEN).collect::<String>();
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    let (existing_id, existing) = session_scope_document(storage, NAMES_KIND)?;
+    let mut names = existing
+        .as_ref()
+        .and_then(|value| value.get("names").cloned())
+        .unwrap_or_else(|| json!({}));
+    names[id.to_string()] = json!(name);
+    let writes = upsert_session_document(storage, NAMES_KIND, existing_id, json!({ "names": names }))?;
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(RenamedOutcome { id, name })
+}
+
+/// 全部会话的未读状态：`{"id": {"unread": N, "readAt": ms|null}}`。
+///
+/// `unread` = 「水位 entry id 之后还有几条 entry」；水位文档缺席给 `{0, null}`。
+pub async fn unread_map(session: &Session) -> Result<Value, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let conversations = storage
+        .scan_conversations(
+            &crate::ConversationQuery {
+                owner_conversation_id: None,
+                owner_task_id: None,
+                order: None,
+            },
+            10_000,
+            None,
+        )?
+        .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+    let marks = session_scope_document(storage, UNREAD_KIND)?
+        .1
+        .and_then(|value| value.get("marks").cloned())
+        .unwrap_or_else(|| json!({}));
+    let mut result = serde_json::Map::new();
+    for conversation in conversations.items {
+        let id = id_of(&conversation)?;
+        let mark = marks.get(id.to_string());
+        let watermark = mark
+            .and_then(|entry| entry.get("entryId"))
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
+        // 没有水位 = 引擎种的 0（wire.md：没标过已读也给 0，不是把全部 history 算成未读）。
+        let unread = if mark.is_none() {
+            0
+        } else {
+            let entries = storage.scan_entries(
+                &crate::storage::storage::EntryQuery {
+                    conversation_id: id,
+                    min_entry_id: Some(watermark.saturating_add(1)),
+                    max_entry_id: None,
+                    order: None,
+                },
+                10_000,
+                None,
+            )?
+            .map_err(|refusal| CommandError::BadRequest(refusal.to_string()))?;
+            entries.items.len() as u64
+        };
+        result.insert(
+            id.to_string(),
+            json!({
+                "unread": unread,
+                "readAt": mark.and_then(|entry| entry.get("readAt")).cloned().unwrap_or(Value::Null),
+            }),
+        );
+    }
+    Ok(Value::Object(result))
+}
+
+/// 标已读：水位推到该会话当前最新 entry id（只进不退），并广播。
+pub async fn mark_read(
+    session: &Session,
+    id: Id,
+) -> Result<MarkReadOutcome, CommandError> {
+    let read_at = now_ms();
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    let latest = storage.latest_entry_id(id)?.unwrap_or_default();
+    let (existing_id, existing) = session_scope_document(storage, UNREAD_KIND)?;
+    let mut marks = existing
+        .as_ref()
+        .and_then(|value| value.get("marks").cloned())
+        .unwrap_or_else(|| json!({}));
+    let previous = marks
+        .get(id.to_string())
+        .and_then(|entry| entry.get("entryId"))
+        .and_then(Value::as_i64)
+        .unwrap_or(i64::MIN);
+    let effective_watermark = previous.max(latest);
+    let effective_read_at = marks
+        .get(id.to_string())
+        .and_then(|entry| entry.get("readAt"))
+        .and_then(Value::as_i64)
+        .unwrap_or(read_at)
+        .max(read_at);
+    marks[id.to_string()] =
+        json!({ "entryId": effective_watermark, "readAt": effective_read_at });
+
+    let writes = upsert_session_document(storage, UNREAD_KIND, existing_id, json!({ "marks": marks }))?;
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(MarkReadOutcome {
+        id,
+        read_at: effective_read_at,
+        unread: 0,
+    })
+}
+
+/// session 作用域的单例文档：`(化身 id, 当前值)`；没建过给 `(None, None)`。
+fn session_scope_document(
+    storage: &Storage,
+    kind: &str,
+) -> Result<(Option<Id>, Option<Value>), CommandError> {
+    let record = storage
+        .find_document(
+            &json!({ "kind": kind, "scope": { "kind": "session" } }),
+            crate::DocumentPoint::Current,
+        )
+        .map_err(CommandError::from)?;
+    let Some(record) = record else {
+        return Ok((None, None));
+    };
+    let id = id_of(&record)?;
+    Ok((
+        Some(id),
+        storage
+            .materialize(id, crate::DocumentPoint::Current)?
+            .map(|document| document.value),
+    ))
+}
+
+/// 同地址已有一份在世文档就整份 base 覆盖它；否则新建一份。
+fn upsert_session_document(
+    storage: &mut Storage,
+    kind: &str,
+    existing: Option<Id>,
+    value: Value,
+) -> Result<Vec<StorageWrite>, CommandError> {
+    let content = DocumentContent::Base { version: 1, value };
+    Ok(match existing {
+        Some(id) => vec![StorageWrite::DocumentChange { id, content }],
+        None => {
+            let id = storage.mint_id()?;
+            vec![StorageWrite::DocumentCreate {
+                id,
+                record: json!({
+                    "id": id,
+                    "kind": kind,
+                    "scope": DocumentScope::Session,
+                }),
+                content,
+            }]
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
 // 提交：与 `Session::commit` 同一条路径（同一把锁、同一个事务、同一份 publication）
 // ---------------------------------------------------------------------------
+
+/// 与 [`commit_and_publish`] 同一条提交/广播路径，只是自己拿锁。
+/// 用在「先只读扫描 + mint_id，再放开锁提交」的命令里（rename / read）。
+async fn commit_and_publish_with_new_guard(
+    session: &Session,
+    batch: Vec<StorageWrite>,
+) -> Result<CommitPublication, CommandError> {
+    let mut guard = session.storage.lock().await;
+    commit_and_publish(session, &mut guard, batch).await
+}
 
 async fn commit_and_publish(
     session: &Session,
