@@ -41,3 +41,7 @@ vendor/**/target/
 nous.db
 nous.db-wal
 nous.db-shm
+# #56/#57 的触发器库（测试/本地运行产物）
+nous-triggers.db
+nous-triggers.db-wal
+nous-triggers.db-shm
