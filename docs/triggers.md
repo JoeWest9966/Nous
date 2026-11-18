@@ -20,6 +20,10 @@
 | **落点**（`target`） | 这一轮写进哪个会话：新开一个 / 写回指定的那个 | 不是全局策略，**每个触发器自己定** |
 | **策略**（`policy`） | 上一轮还没完时再点火怎么办：跳过并记账 / 排队 | 同上，**每个触发器自己定** |
 
+**规则用数据表达，不用代码表达。** `spec` 是一段有封闭键集合的 JSON（`schedule` / `on` / …），
+**解释它的是点火者**（时钟、扩展、agent）。触发器里不许嵌可执行脚本 —— 那是 `ext` 的活，
+两个机制都"能跑用户代码"等于两套沙箱、两套版本闸。
+
 **每个触发器都是一个独立的商品**：自己的 `code`、自己的规则、自己的模板、自己的落点和策略。
 所以你才能"了解它们各自的工作情况"——一个触发了多少次、跳过几次、失败几次，账都在它自己名下。
 
@@ -122,7 +126,47 @@ fires.mark_done(...)?;
 **仍待定**：Desk 上触发器长什么样（列表？灰入口？"系统发起"的会话怎么显示）—— 那是外观，
 按规矩要先出 HTML demo，不在这里定。
 
-## 8 反悔点
+## 8 开发准则（**由代码强制，不是靠文档**）
+
+这一章是「写触发器的人必须遵守的东西」，也就是 Magento 2 那种「开发插件的准则」。
+**准则不写在文档里靠自觉，它写在一个校验函数里**，创建时就拒绝，跑不进去。
+
+```rust
+Trigger::new(NewTrigger) -> Result<Trigger, TriggerError>   // 唯一入口，绕过它拿不到 Trigger
+```
+
+| # | 准则 | 违反时的错误 slug |
+|---|---|---|
+| 1 | `code` 匹配 `^[a-z][a-z0-9_]{2,63}$`，全局唯一 | `code-shape` / `code-taken` |
+| 2 | `code` 创建后不可变；删除留墓碑，code 永不复用 | `code-immutable` / `code-tombstoned` |
+| 3 | 必须有 `template_ref`，且指向存在的模板 | `template-missing` |
+| 4 | `fires_allowed_by` **不得为空**（空 = 谁都不能点 = 死触发器） | `no-firing-source` |
+| 5 | `target` / `policy` **落库时写实**，不许留 `null` 让读者猜默认值 | `explicit-policy-required` |
+| 6 | `spec` 的键集合是**封闭**的：未知键**拒绝**（见下） | `unknown-spec-key` |
+| 7 | `spec` 必须带 `spec_version`，将来迁移靠它 | `spec-version-missing` |
+| 8 | `spec` 里不许出现"调另一个触发器"（编排禁止） | `orchestration-not-a-trigger` |
+| 9 | 触发器行上不许有 `last_status` / `retry_at` / `failure_count`（那是 `fires` 的账） | `ledger-on-definition` |
+
+**第 6 条要单独说，因为它看起来违反项目规矩。** 我们的规矩是「未知字段用 `Value` 收着原样透传、
+不许 `deny_unknown_fields`」—— 那条针对的是**协议**（上游加字段我们不能编译不过）。
+而 `spec` 是**我们自己的本地配置**，没有上游、没有前向兼容压力，未知键只可能是打错字
+（`schedul` vs `schedule`）。本地配置必须 fail-fast，否则打错的键会被静默忽略，
+表现成"触发器不工作但也不报错"。**判据要能红**：故意写 `scheduel` → 必须拒绝。
+
+**准则怎么被钉死**（三条一起才算强制）：
+
+1. `Trigger::new` 是唯一构造入口 —— 绕过它就构造不出 `Trigger`（类型层面封住）。
+2. `crates/nous/store/tests/trigger_conformance.rs` 是一张**接受/拒绝表**：每条准则至少一条拒绝用例
+   （跟上游 `storage-conformance.ts`、我们的 `ext-probe/cases_*.rs` 同一路子）。
+3. 错误 slug 是**封闭集合**、唯一、且有单测覆盖 —— Desk 只许按 slug 分支、不许解析人话文案。
+
+## 9 将来（不在第一版）
+
+- **导出 / 导入**：触发器能导出成一份文件、导入即建。"商品"是可复制的；复制必须只靠这一份文件，
+  这就反向要求 §4 的「一切规则写在自己身上」。
+- 触发器类型清单（cron / event / agent-fired 各要什么字段）按第一条真实需求再加，不预先设计。
+
+## 10 反悔点
 
 - 如果发现开始给触发器加"条件语法"（`when: …` 表达式解析器），**停**：那是把调度器写进本体，
   应该由一个扩展去做判断。
@@ -159,6 +203,12 @@ fires.mark_done(...)?;
   live on the trigger row itself. Defaults exist; no global switch overrides all triggers.
 - **Templates cannot fire.** A template is a part, a trigger is the product. The "ultimate template"
   *is* the trigger (template + rules + id) — so a template must never grow `enabled` / `next_fire_at`.
+
+### 2b Rules are data, not code
+
+`spec` is a JSON object with a closed key set (`schedule` / `on` / …). **The firing source interprets it**
+(clock, extension, agent). A trigger must never embed executable code — that is what `ext` is for;
+two mechanisms that both "run user code" means two sandboxes and two version gates.
 
 ### 3 A real scenario
 
@@ -213,7 +263,39 @@ with a stable slug (`fire-denied: <code> by <actor>`), same discipline as `refus
 3. **Template references** are `preset` only in v1; document/skill wait for `#48`.
    Still open: how triggers look in NousDesk (that is appearance → needs an HTML demo first).
 
-### 6 Reversal points
+### 6 Authoring contract — enforced by code, not by prose
+
+```rust
+Trigger::new(NewTrigger) -> Result<Trigger, TriggerError>   // the only constructor
+```
+
+| # | Rule | Error slug |
+|---|---|---|
+| 1 | `code` matches `^[a-z][a-z0-9_]{2,63}$`, globally unique | `code-shape` / `code-taken` |
+| 2 | `code` immutable; deletes leave a tombstone, codes are never reused | `code-immutable` / `code-tombstoned` |
+| 3 | `template_ref` required and resolvable | `template-missing` |
+| 4 | `fires_allowed_by` must not be empty (empty = dead trigger) | `no-firing-source` |
+| 5 | `target` / `policy` stored explicitly, never `null` | `explicit-policy-required` |
+| 6 | `spec` keys are **closed**; unknown keys are rejected | `unknown-spec-key` |
+| 7 | `spec_version` required | `spec-version-missing` |
+| 8 | no "call another trigger" inside `spec` | `orchestration-not-a-trigger` |
+| 9 | no `last_status` / `retry_at` / `failure_count` on the definition row | `ledger-on-definition` |
+
+Rule 6 is a deliberate exception to "never `deny_unknown_fields`": that rule protects **protocol**
+compatibility with the engine; `spec` is **our own local config**, where an unknown key can only be a
+typo (`scheduel`) and must fail fast instead of being silently ignored.
+
+Enforcement = three things: (1) `Trigger::new` is the only constructor; (2) a conformance table in
+`tests/trigger_conformance.rs` with at least one rejection case per rule; (3) error slugs are a closed
+set, unique, unit-tested — clients branch on slugs, never on prose.
+
+### 7 Future (not v1)
+
+Export/import: a trigger must be exportable as a single file and importable as-is — copying a product
+must rely on that file alone. Firing-source types (cron / event / agent-fired) are added per first
+real need, not designed upfront.
+
+### 8 Reversal points
 
 - Adding a condition *expression syntax* to triggers → stop; that belongs to an extension.
 - `triggers` growing `last_status` / `failure_count` / `retry_at` → stop; those are `fires` facts.
