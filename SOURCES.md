@@ -158,3 +158,9 @@ pi-rust: crates/{rpi-harness, rpi-cli, rpi-tui, rpi-extensions, rpi-plugin-sdk}
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
 | `crates/nous-server/**` | 自写 | — | 自写：`wire.md` 的 HTTP + SSE 传输层。`#22` 落地六条：`GET /v1/sessions`、`GET /v1/sessions/:id/entries`（不透明游标、上限 1000）、`POST /v1/sessions/:id/messages`（`requestId` 幂等、202）、`GET /v1/sessions/:id/events`（先 `snapshot`，再合帧增量）、`POST /v1/sessions/:id/abort`、`POST /v1/sessions/:id/fork`；16 ms 合帧在连接侧，`message_update` 之外的帧先冲缓冲再原样发（工具启动不许等工具结束）。形状参考 `wire.md` 与 `docs/harness.md` §2 的投影表，**不抄上游结构**（上游把传输和语义混在一个包里，本库按 §二 契约图分家）；`axum` 版本只写根 `[workspace.dependencies]` | 自写 |
+
+## 八、#56 自写记录（追加，不改上文任何一行）
+
+| 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
+|---|---|---|---|---|
+| `crates/nous/store/**` | 自写 | — | 自写：Nous 自己的库（`nous.db`）。语义出自票面 #56（表形状逐字照抄）+ `docs/decisions.md` 2026-11-18（存储分离 = 两个文件）。两张表 `triggers` / `fires`、一条自己的迁移链（`schema_version`，`CURRENT_VERSION = 1`）、`reclaim` 纯函数 + `backup_to` / `schema_version` 两个薄接口。**没有上游**：触发器的概念在 pi 里不存在，所以不上台账的提货口径 —— 判据在 `crates/nous/store/tests/` 与 `scripts/check-separation.sh` | 自写 |

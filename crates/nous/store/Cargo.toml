@@ -1,0 +1,23 @@
+[package]
+name = "nous-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Nous 自己的库（nous.db）：triggers / fires + 一条独立迁移链（#56）"
+readme = "README.md"
+
+# 判据（`scripts/check-separation.sh` 判据 1）：这一节里**没有** `nous-durable`，而且一行都不许加。
+# 触发器是 Nous 的实体，pi 的语义层（session / entry / document / submission / task）里
+# 不该存在这个概念 —— Magento 的「商品」不会出现在 PHP 运行时的类型表里。
+[dependencies]
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+# 每条判据一个临时目录里的**真库文件**：`:memory:` 验不了 WAL、也验不了 `VACUUM INTO` 备份。
+tempfile = { workspace = true }
+
+# 数据面入口（`verify.sh` 判据 5 的第二个哨兵）：本 crate 自己 `Connection::open` 一个库。
+# 只有「这个库的所有者」才写这一行；别人想读 nous.db，走本 crate 的 API，不许再开连接。
+[package.metadata.nous]
+sqlite-entry = true
