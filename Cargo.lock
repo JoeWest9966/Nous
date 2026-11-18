@@ -1308,6 +1308,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1387,13 +1388,33 @@ dependencies = [
  "async-trait",
  "axum",
  "futures",
+ "nous-ai",
  "nous-durable",
+ "nous-runtime",
+ "nous-sessions",
  "nous-telemetry",
+ "nous-tools",
  "nous-wire",
  "serde",
  "serde_json",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "nous-sessions"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nous-ai",
+ "nous-durable",
+ "nous-runtime",
+ "nous-tools",
+ "nous-wire",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

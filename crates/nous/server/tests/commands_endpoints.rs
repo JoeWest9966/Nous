@@ -27,7 +27,29 @@ fn temp_db(tag: &str) -> PathBuf {
 
 async fn seed(path: &Path, task: Option<Value>) {
     let session = Session::open(path).unwrap();
-    let mut writes = vec![StorageWrite::Conversation(json!({ "id": 1 }))];
+    let mut writes = vec![
+        StorageWrite::Conversation(json!({ "id": 1 })),
+        // `/messages` 从 `pi.agent` 文档读模型；没有它就在受理前 503（`#44` 的语义）。
+        StorageWrite::DocumentCreate {
+            id: 9,
+            record: json!({
+                "id": 9,
+                "kind": "pi.agent",
+                "scope": { "kind": "conversation", "conversationId": 1 },
+                "history": "rewindable",
+                "fork": "asOf",
+            }),
+            content: nous_durable::DocumentContent::Base {
+                version: 1,
+                value: json!({
+                    "cwd": ".",
+                    "extensions": { "add": [], "remove": [] },
+                    "model": { "provider": "faux", "modelId": "faux-model" },
+                    "thinkingLevel": "off",
+                }),
+            },
+        },
+    ];
     if let Some(task) = task {
         writes.push(StorageWrite::Task(task));
     }
@@ -66,6 +88,7 @@ async fn the_same_request_id_returns_the_same_submission_and_stores_one_row() {
     let path = temp_db("idempotent");
     seed(&path, None).await;
     let app = AppState::durable(&path).unwrap();
+    let app = common::attach_faux_turns(app);
     let routes = router(app.clone());
 
     let first = call(
@@ -105,6 +128,7 @@ async fn the_first_frame_after_posting_is_message_start_not_message_update() {
     let path = temp_db("message-start");
     seed(&path, None).await;
     let app = AppState::durable(&path).unwrap();
+    let app = common::attach_faux_turns(app);
     let routes = router(app.clone());
 
     // 先连上 SSE（拿 snapshot），再发消息 —— 判据看的是「响应发出后」。
@@ -165,6 +189,7 @@ async fn abort_is_200_when_running_and_409_when_idle() {
     )
     .await;
     let app = AppState::durable(&path).unwrap();
+    let app = common::attach_faux_turns(app);
     let routes = router(app.clone());
 
     let (status, body) = call(&routes, "POST", "/v1/sessions/1/abort", None).await;
@@ -200,6 +225,7 @@ async fn fork_returns_201_and_only_names_when_a_name_was_given() {
     let path = temp_db("fork");
     seed(&path, None).await;
     let app = AppState::durable(&path).unwrap();
+    let app = common::attach_faux_turns(app);
     let routes = router(app.clone());
 
     let (status, anonymous) = call(&routes, "POST", "/v1/sessions/1/fork", None).await;
@@ -256,6 +282,7 @@ async fn fork_while_busy_is_409_and_wait_ms_is_400() {
     )
     .await;
     let app = AppState::durable(&path).unwrap();
+    let app = common::attach_faux_turns(app);
     let routes = router(app.clone());
 
     let (status, body) = call(&routes, "POST", "/v1/sessions/1/fork", None).await;
@@ -310,6 +337,7 @@ async fn abort_twice_is_byte_identical_and_adds_one_entry() {
     )
     .await;
     let app = AppState::durable(&path).unwrap();
+    let app = common::attach_faux_turns(app);
     let routes = router(app.clone());
 
     let request = Request::builder()

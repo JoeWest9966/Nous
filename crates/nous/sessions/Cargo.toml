@@ -1,0 +1,22 @@
+[package]
+name = "nous-sessions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "最小轮次（pi 本体）：一轮 = 流 → 工具 → 唯一写者 {result, mutations} → 一条提交"
+
+[dependencies]
+nous-durable = { workspace = true }
+nous-wire = { workspace = true }
+nous-ai = { workspace = true, features = ["providers"] }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+nous-runtime = { workspace = true }
+nous-tools = { workspace = true }
+nous-ai = { workspace = true, features = ["providers"] }

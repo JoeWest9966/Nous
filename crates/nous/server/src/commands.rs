@@ -51,6 +51,11 @@ pub trait CommandSource: Send + Sync {
 
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
 
+    /// 组装根要的那个 `Arc<Session>`（起轮次用它，取消 token 才同源）。
+    ///
+    /// 只读装配返回 `None`：那套装配没有写者，也就不该能起轮次。
+    fn session(&self) -> Option<Arc<Session>>;
+
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
     /// 放在这条 trait 上是为了让**同一个 `Session` 写者**做这件事：另开一个 `Session`
@@ -121,6 +126,10 @@ impl CommandSource for DurableCommands {
         Ok(())
     }
 
+    fn session(&self) -> Option<Arc<Session>> {
+        Some(Arc::clone(&self.session))
+    }
+
     async fn reclaim_orphans(&self) -> Result<usize> {
         scan_orphans(&self.session).await.map_err(command_error)
     }
@@ -162,6 +171,10 @@ impl CommandSource for ReadOnlyCommands {
 
     async fn fork(&self, _: i64, _: Option<i64>, _: Option<String>) -> Result<ForkResult> {
         Err(read_only())
+    }
+
+    fn session(&self) -> Option<Arc<Session>> {
+        None
     }
 
     /// 只读装配没有写者，也就没有孤儿要补：明确返回 0，不报错。

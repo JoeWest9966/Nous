@@ -261,3 +261,48 @@ durable-until-acked），把这条 pragma 去掉，同时重跑 `commit_throughp
 **反悔点**：如果 `create_conversation` 哪天退化成只写一条元数据、和 entry/task 提交
 不共享同一个写者与观察者（即建会话不再需要广播帧），就把它从 `Session` 挪出去，
 并把公开面判据改回 5 条 —— 同样要在这里签字、同时改票面，不许再偷偷开第二条通道。
+
+## 2026-11-18 · `Session` 公开面 6 → 8：`mint_id` / `entries`（轮次要的两个原语）
+
+**决定**：`Session` 加两个方法 —— `mint_id()`（取一个 entry/文档 id，随下一次 `commit` 落盘）和
+`entries(conversation, limit)`（按 fork 链 + `head` 标记读历史，最老的在前）。
+`tests/session.rs` 的 `A3_METHODS` 从 6 条改 8 条，签字在此。
+
+**为什么**：轮次要两样东西，别处都拿不到 ——
+
+- **id**：终态 assistant entry、`pi.live` 文档、每条 `pi.tool-result` 都有自己的 id，而这套 id
+  必须由**同一个写者**发（`storage.mint_id` 在 `Session` 的锁里）。绕过去的唯一办法是应用层自己
+  编号，那就是第二条写通道。
+- **历史**：喂给模型的上下文必须包含 fork 祖先链上的 entry。按 id 硬扫
+  （`for id in 1..100_000 { get_entry(id) }`，上一版交付就是这么写的）有两个后果：每轮最多
+  10 万次加锁查询，且总条目超过 10 万之后**静默丢历史**。`Storage::scan_entries` 早就有正确实现，
+  只是没从 `Session` 出去。
+
+两条都是**读 / 取号**，不是写：写仍然只走 `commit`。
+
+**反悔点**：如果哪天 `entries` 被用来做"窗口裁剪"（按 token 数截断），它就不再是薄封装 ——
+那时该把裁剪放进单独的模块（`head` / 压缩），而不是让 `entries` 悄悄少返回几条。
+
+## 2026-11-18 · 组装根的语义：解析不出 provider 就 503，不许"先受理再假装"
+
+**决定**：`/v1/sessions/:id/messages` 的顺序是 **先解析 provider → 再受理 → 再 spawn 轮次**。
+解析不出来（没配凭证、会话没有 `model`）返回 **503**，**不写 `pi.user` entry**。
+
+**理由**：上一版交付把 `offline_provider()`（空脚本 faux）当生产 provider，`/messages` 里只有
+`let _driver = runtime.driver.clone();` 一行 —— 受理照给 202，回复永远不会来。用户看到的是
+"发出去了、没反应"，比直接报错难查一个量级。三种诚实做法里最容易做对的是**受理前就失败**：
+
+- 409 不行：那不是状态冲突；
+- 500 不行：我们没写错，是宿主没配；
+- 503 = "现在起不来"，客户端该把入口灰掉，而不是重试到天黑。
+
+配套的两条：
+
+- `nous_sessions::turn::TurnHandle::faux` 是**离线一等公民**（生产装配走 `TurnHandle::new`），
+  端到端判据靠它不联网地跑完整条链；
+- `nous-server` 的库不依赖 `nous-ai`：句柄由 sessions 给，测试通过 `TurnFactory` 接缝注入 faux。
+  `scripts/verify.sh` 4e 的依赖表**只算 normal/build 边**（dev 边不进产物），否则"给端点写一条
+  端到端判据"和"依赖方向判据"会互相打死。
+
+**反悔点**：如果哪天需要"离线/回放模式"给用户选（比如没有凭证时用 faux 演示），那就得**显式**
+打开一个开关并在 `/v1/capabilities` 里声明 `provider: "offline"` —— 绝不能是默认行为。

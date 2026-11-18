@@ -10,8 +10,9 @@ description = "wire.md 的端点层：/v1/* 的 HTTP + SSE 传输（AGENTS.md §
 # - `nous-durable` 出语义（存储 / 会话 / harness 投影），本层只搬运；
 # - `nous-wire` 出事件类型（`wire.md` 的 Rust 投影），本层只序列化；
 # - `nous-telemetry` 出 span/event 契约。
-# **不许**依赖 `nous-ai`：生成走 `nous_durable::session::Session`，本层不碰 provider，
-# 也不许在本 crate 的测试里出现 `FauxProvider`（判据在 issue #22 评论）。
+# **库不许依赖 `nous-ai`**：库这一层不碰 provider 类型（句柄由 `nous-sessions` 给）。
+# `#44` 起本 crate 是**组装根**，装的是 `nous-sessions` / `nous-tools` / `nous-runtime` 三家；
+# 端到端判据通过 `TurnFactory` 接缝注入 faux（那是 dev-dependency，不进产物）。
 #
 # 传输绑在这里、且只在这里：`nous-durable` 永久禁 HTTP（`scripts/verify.sh` 4e）。
 # spec §1：一个产物 —— 进 systemd 的 bin 叫 `nous-app`（S4：bin target 恰好 1 个）。
@@ -24,6 +25,13 @@ path = "src/main.rs"
 nous-durable = { workspace = true }
 nous-wire = { workspace = true }
 nous-telemetry = { workspace = true }
+# 组装根（`#44`）：这一刻 server 要**装**东西，所以这三条边是实的，不是为过判据挂的。
+# - `nous-sessions`：轮次本体（一轮一条提交）；
+# - `nous-tools`：工具表（`nous_tools::builtin_tools` 是唯一构造点）；
+# - `nous-runtime`：provider 注册表 + 凭证/模型解析。
+nous-sessions = { workspace = true }
+nous-tools = { workspace = true }
+nous-runtime = { workspace = true }
 axum = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
@@ -39,3 +47,6 @@ futures = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 # `start_paused` 虚拟时钟：合帧判据必须能精确说「窗口差 1 ms 时还没发」。
 tokio = { workspace = true, features = ["test-util"] }
+# 端到端判据要注入一个不联网的 provider（`nous_sessions::turn::TurnHandle::faux` 的脚本）。
+# 只在测试里用：库本身仍然不依赖 `nous-ai`（判据 4e 的 allow 表按 normal+build 计）。
+nous-ai = { workspace = true, features = ["providers"] }

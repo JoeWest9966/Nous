@@ -22,6 +22,11 @@ pub struct AppState {
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
     models: crate::models::ModelsResponse,
+    /// 组装根装好的运行时（provider 注册表 + 工具表 + 同一个 `Session`）。
+    ///
+    /// `None` = 只读装配 / 测试装配：`/messages` 照常受理，但没有轮次被起 ——
+    /// 这种状态下端点**不许**假装跑过一轮（见 `docs/pitfalls.md` 2026-11-18 那条）。
+    runtime: std::sync::Mutex<Option<Arc<dyn crate::runtime::TurnFactory>>>,
 }
 
 impl AppState {
@@ -35,6 +40,7 @@ impl AppState {
             commands,
             hub,
             models: crate::models::ModelsResponse::default(),
+            runtime: std::sync::Mutex::new(None),
         })
     }
 
@@ -56,6 +62,7 @@ impl AppState {
             commands: commands.clone(),
             hub: Hub::new(),
             models: crate::models::ModelsResponse::default(),
+            runtime: std::sync::Mutex::new(None),
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -78,6 +85,26 @@ impl AppState {
         &self.hub
     }
 
+    /// 挂上组装根装好的运行时。**必须在开监听之前**调（之后挂等于有请求没 provider）。
+    pub fn with_runtime(self: Arc<Self>, runtime: crate::runtime::AssembledRuntime) -> Arc<Self> {
+        self.with_turn_factory(Arc::new(runtime))
+    }
+
+    /// 挂一个任意的轮次工厂（端到端判据注入 faux 用）。
+    pub fn with_turn_factory(self: Arc<Self>, factory: Arc<dyn crate::runtime::TurnFactory>) -> Arc<Self> {
+        let mut slot = self.runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+        *slot = Some(factory);
+        drop(slot);
+        self
+    }
+
+    pub fn runtime(&self) -> Option<Arc<dyn crate::runtime::TurnFactory>> {
+        self.runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+    }
+
     /// 换入真编目：默认 catalog 是空的，宿主填进来才有内容。
     pub fn with_models(self: Arc<Self>, models: crate::models::ModelsResponse) -> Arc<Self> {
         Arc::new(Self {
@@ -85,6 +112,8 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models,
+            // 编目与运行时是两件事，换编目不该把运行时丢掉。
+            runtime: std::sync::Mutex::new(self.runtime()),
         })
     }
 
