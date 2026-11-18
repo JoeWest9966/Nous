@@ -17,6 +17,7 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+pub mod auth;
 pub mod coalesce;
 pub mod commands;
 pub mod error;

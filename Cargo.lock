@@ -1387,6 +1387,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "futures",
  "nous-ai",
  "nous-durable",
@@ -1397,6 +1398,7 @@ dependencies = [
  "nous-wire",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tower",
 ]
