@@ -99,3 +99,79 @@ verify 立刻全绿。
 **解**：CI 里**删掉**这一步（不要改成 `|| true` / `|| echo skip`——那会变成"每步都绿、什么都
 没验"，比红更糟），在 workflow 里留注释写清楚"为什么不在 CI 跑 + 本地怎么跑 + 哪张票会让它
 能跑"。脱敏小样本进仓（`#43`）之后再加回来。
+
+## 2026-11-18 · 「接线」验收被一行 `let _x = …clone();` 骗过去
+
+**症状**：`#44` 交付说"server 已把手里的 driver 接到请求链路"，判据 1 也真的绿了（15/15）。
+实测 `POST /v1/sessions/:id/messages` 之后库里 assistant entry 一条没多。
+
+**原因**：那段代码是
+
+```rust
+let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传给 sessions"
+```
+
+没有 `TurnRequest`、没有 `spawn`、没有 provider —— 这一行唯一作用是让 `git grep 'driver'`
+有命中。**判据 1 只查依赖方向，看不见"依赖接上了但没人调"**；`git grep` 只看键名，看不见语义。
+两样都指向"绿"，而功能是死的。
+
+**解**：任何"接上了"的验收，必须有一条**从 HTTP 进来、到库里多一行出去**的实测输出
+（`entries` 计数 +1、SSE 有 `message_start`），不许拿 `cargo tree` / `git grep` / 判据绿代替。
+顺手记一条：注释里写"传给 X"而下面没有传，比不写注释更坏 —— 它会让 reviewer 跳过这一段。
+
+## 2026-11-18 · `interval_ms: u64::MAX` 撞上真时钟 → `attempt to add with overflow`
+
+**症状**：轮次的集成测试从虚拟时钟（`ManualClock::new(0)`，`now_ms()` 恒为 0）切到真时钟后，
+一跑就 panic：`attempt to add with overflow`，栈落在 `generation.rs` 的
+`deadline = Some(clock.now_ms() + interval)`。
+
+**原因**：为了"这一轮只提交终态、不中途 flush"，应用层把 `interval_ms` 设成 `u64::MAX`。
+虚拟时钟下 `0 + u64::MAX` 不溢出，所以测试一直是绿的；真时钟下 `now_ms() > 0` 立刻溢出。
+
+**解**：`generation.rs` 改成 `saturating_add`。规矩：**凡是用"极大值"关掉某个定时器的地方，
+都要假设它会被加到真实时间上** —— 虚拟时钟不会替你发现这类问题。
+
+## 2026-11-18 · 第二个会话永远建不出来：`DocumentCreate` 撞同一份地址
+
+**症状**：`POST /v1/sessions` 第一次 201，第二次 500 ——
+`create refused: Document address already has a current incarnation: ["qrd3wh.sessions","session",0,0,""]`。
+单测全绿（每个测试只建一个会话），真机上第二个人建会话就炸。
+
+**原因**：会话名字存在**一份共享**的 `qrd3wh.sessions` 文档里（`names: {会话id: 名字}`，上游就是这个
+形状）。建会话代码写成了「每个会话 `DocumentCreate` 一份」，而这份文档的地址没有区分键
+（`kind` + `scope=session`，没有 `key`），第二个会话就撞上同一个地址。
+
+**解**：先 `find_document` 看有没有这份文档：没有就 `DocumentCreate`（`{names:{id:名字}}`），
+有就 `DocumentChange` 追加一个名字（`version + 1`）。判据：`creating_two_conversations_keeps_both_names`
+（负向哨兵验过 —— 退回「每次都 Create」立刻红）。
+**通用规矩**：`DocumentCreate` 之前先问「这个地址会不会已经有主」，尤其当地址里没有 `key`。
+
+---
+
+## 5 · `git push` 报 `GnuTLS, handshake failed`，但 `curl` / `gh api` 全都正常
+
+**症状**：`git push origin main` → `致命错误：无法访问 'https://github.com/…'：GnuTLS, handshake failed`；
+同一台机器 `curl https://github.com` 返回 200、`gh api repos/…` 正常。
+**根因**：git 的 GnuTLS 后端在某次握手上的兼容问题（同一网络下 http 栈能通），不是凭据、不是代理、不是仓库权限。
+**解**：`git -c http.version=HTTP/1.1 push origin main`。连续重试无效时别再等，直接换协议版本。
+
+---
+
+## 6 · j1900 上曾经有一个**同名**的 `nous.service`（8090），2026-11-18 已清除
+
+**症状**：`systemctl cat nous` 能查到 `ExecStart=/usr/local/bin/nous serve --addr 0.0.0.0:8090`，
+很容易误以为是本项目的服务（本项目将来叫 `nous-app.service`，见 `#52`）。
+**根因**：那是一个**历史试验项目**（`nous 1.36.1`，静态二进制，中央-卫星二进制分发 + 外部组件登记，
+`/var/nous-dist/{install-central,install-satellite}.sh`），跟本仓库**没有任何代码关系**，只是撞了名字。
+**解**：已 `disable --now` + 摘单元 + 删 `/var/nous-dist`、`/root/.nous`、`/usr/local/bin/nous*`（含 12 个 `.bak`），
+复验 `status` 为 not-found、`ss` 里 8090 已无人监听。**结论：这台机器上凡是 `nous` 开头的单元，
+只有 `nous-panel`（旧 TS 面板，待下线）与将来的 `nous-app` 是本项目的。**
+
+## 7 · `verify.sh` 冷启动段把产物路径写死成 `./target/release`，设了 `CARGO_TARGET_DIR` 就假红
+
+**症状**：`CARGO_TARGET_DIR=/xxx ./scripts/verify.sh` 前 50 多条全绿，最后一条红：
+`没打出 listening 行 —— env: './target/release/nous-app': 没有那个文件或目录`。
+**根因**：冷启动那段写死 `./target/release/$BIN`，而同一个脚本另两处（`AUTH_BIN` / `FAUX_BIN`）用的是
+`${CARGO_TARGET_DIR:-...}`。**同一个路径三处写法**，两处对一处错。
+**解**：三处统一 `${CARGO_TARGET_DIR:-./target}/release/$BIN`。找不到产物时的报错要能读出路径，
+别只说「没打出 listening 行」——那句会把「产物路径错」伪装成「服务起不来」。

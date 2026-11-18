@@ -376,3 +376,150 @@ durable 的迁移一改，触发器的数据跟着承担风险。两个文件把
 
 **反悔线**：如果哪天要做多把钥匙（按主体分权），先换 `auth.rs` 这一个文件，
 别在 unit 里堆 `NOUS_TOKEN_FILE_2`。
+## 2026-11-18 · `Session` 公开面 6 → 8：`mint_id` / `entries`（轮次要的两个原语）
+
+**决定**：`Session` 加两个方法 —— `mint_id()`（取一个 entry/文档 id，随下一次 `commit` 落盘）和
+`entries(conversation, limit)`（按 fork 链 + `head` 标记读历史，最老的在前）。
+`tests/session.rs` 的 `A3_METHODS` 从 6 条改 8 条，签字在此。
+
+**为什么**：轮次要两样东西，别处都拿不到 ——
+
+- **id**：终态 assistant entry、`pi.live` 文档、每条 `pi.tool-result` 都有自己的 id，而这套 id
+  必须由**同一个写者**发（`storage.mint_id` 在 `Session` 的锁里）。绕过去的唯一办法是应用层自己
+  编号，那就是第二条写通道。
+- **历史**：喂给模型的上下文必须包含 fork 祖先链上的 entry。按 id 硬扫
+  （`for id in 1..100_000 { get_entry(id) }`，上一版交付就是这么写的）有两个后果：每轮最多
+  10 万次加锁查询，且总条目超过 10 万之后**静默丢历史**。`Storage::scan_entries` 早就有正确实现，
+  只是没从 `Session` 出去。
+
+两条都是**读 / 取号**，不是写：写仍然只走 `commit`。
+
+**反悔点**：如果哪天 `entries` 被用来做"窗口裁剪"（按 token 数截断），它就不再是薄封装 ——
+那时该把裁剪放进单独的模块（`head` / 压缩），而不是让 `entries` 悄悄少返回几条。
+
+## 2026-11-18 · 组装根的语义：解析不出 provider 就 503，不许"先受理再假装"
+
+**决定**：`/v1/sessions/:id/messages` 的顺序是 **先解析 provider → 再受理 → 再 spawn 轮次**。
+解析不出来（没配凭证、会话没有 `model`）返回 **503**，**不写 `pi.user` entry**。
+
+**理由**：上一版交付把 `offline_provider()`（空脚本 faux）当生产 provider，`/messages` 里只有
+`let _driver = runtime.driver.clone();` 一行 —— 受理照给 202，回复永远不会来。用户看到的是
+"发出去了、没反应"，比直接报错难查一个量级。三种诚实做法里最容易做对的是**受理前就失败**：
+
+- 409 不行：那不是状态冲突；
+- 500 不行：我们没写错，是宿主没配；
+- 503 = "现在起不来"，客户端该把入口灰掉，而不是重试到天黑。
+
+配套的两条：
+
+- `nous_sessions::turn::TurnHandle::faux` 是**离线一等公民**（生产装配走 `TurnHandle::new`），
+  端到端判据靠它不联网地跑完整条链；
+- `nous-server` 的库不依赖 `nous-ai`：句柄由 sessions 给，测试通过 `TurnFactory` 接缝注入 faux。
+  `scripts/verify.sh` 4e 的依赖表**只算 normal/build 边**（dev 边不进产物），否则"给端点写一条
+  端到端判据"和"依赖方向判据"会互相打死。
+
+**反悔点**：如果哪天需要"离线/回放模式"给用户选（比如没有凭证时用 faux 演示），那就得**显式**
+打开一个开关并在 `/v1/capabilities` 里声明 `provider: "offline"` —— 绝不能是默认行为。
+
+## 2026-11-18 · capabilities 的 `name` 强制等于清单的 `module` 列
+
+**决定**：`GET /v1/capabilities` 的 `modules[].name` **逐字**用 `docs/plugins.md` 的 `module` 列
+（`ext` 就是 `ext`，不是 `extensions`）。`enabled` = **清单 ∩ 代码**：清单关掉 → `disabled_by_manifest`、
+清单开但没实现 → `not_implemented`、冻结 → `frozen`、两者都有 → `enabled:true` + `endpoints`。
+`reason` 是 `{code, message}`，`code` 四值封闭，**客户端只许按 `code` 分支**。
+
+**为什么**：`AGENTS.md` 说"NOUS 不是代码，是一张清单"。表管**装什么**、注册表管**有哪些端点**，
+capabilities 是交集 —— 这正是"一个发行版 = 一张清单"能被客户端看见的那一面。名字一旦各起一套
+（表里 `ext`、协议里 `extensions`），两边迟早各按自己的叫法写分支，那就是两套真相的起点。
+代价是：**新增功能面必须先加表行，再写端点**（不许先出端点后补行 —— `#46` 就是对着记忆里的
+端点表开的票，票面数字本身是错的）。
+
+**落地**：`#47` 的 11 个 `name` 已在 `docs/plugins.md` 补齐 8 行（`documents` `presets` `skills`
+`archive` `combos` `triggers` `device` `selection`）。UI 文案（"扩展"）不算名字。
+
+**反悔点**：如果哪天同一个端点族要按租户/发行版给不同名字，那就说明 `name` 被当成显示名用了 ——
+那时该在响应里加 `label` 字段，不是让 `name` 变。
+
+## 2026-11-18 · 文档双语 = **单文件两段**；API 章节是**生成物**
+
+**决定**：每个插件（= 一个 crate）带 `plugin.toml`（清单）与一份 md；md **同一个文件里**中文在上、
+英文在下，顶部两个锚点 `[中文](#zh) · [English](#en)`。`## 3 清单` 与 `## 4 API` 两章由
+`scripts/gen-plugin-docs.sh` 从注册表（`/v1/_routes`）+ `plugin.toml` **生成**，其余章节手写。
+
+**为什么不拆成两个文件**：`README.md` / `README.zh.md` 那种写法，**必然只更新一份** —— 这不是洁癖，
+是稳赔：改代码的人只改一半，半年后两份文档说的是两套东西。单文件两段至少让"改一处"是默认行为。
+
+**为什么 API 表必须生成**：「文档里有这个端点、实际没有」**比没有文档更坏** —— 读文档的人（尤其 agent）
+会照着做，然后撞一个不存在的接口。这跟 `#47`/`#48` 里「capabilities 的 endpoints 由注册表生成、
+不许手抄字面量」是同一条规矩，只是延伸到文档。
+
+**为什么新格式双语起步、旧文档按需迁移**：`docs/` 几十份全是中文。一次性全译，译完代码一动就开始过期，
+而"过期译文"比"没有译文"更容易骗人（读的人以为权威）。
+
+**落地**：`#55`（`plugin.toml` × 15 + 校验脚本 + 模板）；`## 4 API` 的生成器在 `#48` 的 `_routes`
+落地之后单独接（在那之前第 4 章只写一行「待生成」，**禁止手写占位表格**）。
+
+**反悔点**：如果哪天要给文档做站（点一下切语言），源文件**仍然是这一份**；生成 HTML 时再拆。
+一旦发现有人开了第二个语言文件，就地合并回单文件，别两边并行。
+
+## 2026-11-18 · 存储分离：**两个 SQLite 文件**，Nous 的东西不进 pi 的库
+
+**决定**：两个文件、两个域，各自一条迁移链。
+
+```
+/var/lib/nous/
+  durable.db   ← pi 的地盘：session / entry / document / submission / task（语义照抄上游，不加我们的概念）
+  nous.db      ← Nous 的地盘：triggers / fires / plugin 清单快照 / 审计
+  logs/*.jsonl ← 观测日志：只追加、按天轮转（不进任何库）
+```
+
+**为什么**（原话保留）：触发器是**我们自己开发的插件**造出来的东西，跟 pi 无关。就像 Magento 2 里
+「商品」是 Magento 的实体、存在 Magento 的库 —— 触发器是 Nous 的实体，存在 Nous 的库。
+pi durable 眼里**不该存在**触发器这个概念。分清楚域，才好维护、好扩展；将来 Nous 侧真要换 MySQL，
+只换那一半，pi 那半边一动不动。
+
+**为什么不 MySQL**：不是因为占资源（用户明确说不在乎），是因为**对当前形态没有收益**、且会把
+`#52` 的整套"一个文件"设计（备份 / 回退 / schema 闸门）拆成两套运维动作。
+日志也不是 MySQL 的活（行存 + 二级索引写放大）。
+
+**技术硬事实（决定实现方式）**：SQLite 的 `ATTACH` 跨库事务原子**仅在非 WAL 时成立**，而我们是 WAL
+（`storage/mod.rs:59`）。所以「一个事务同时写两个库」**这条路不存在**。跨库只能靠**幂等 + 补偿**。
+
+**四条铁律**：
+1. **独立迁移链**：`nous.db` 自己的 `CURRENT_VERSION`，与 durable 的 `2` 各走各的。
+2. **单向依赖**：Nous 侧可以调 pi 的提交接口；**pi 侧永远不知道 Nous 侧存在**（不 import、不反向 ATTACH、不跨库 JOIN）。
+3. **跨库只有一处，顺序写死**：先写 `nous.db` 的 `fires(trigger_code, fire_at)`（唯一键，天然去重），
+   再调 `submit_message(requestId = trigger:<code>:<fireAt>)`；第二步失败留 `orphaned`，补偿扫描重放（幂等，安全）。
+   **反过来写不安全**：会留下"durable 有条 entry、Nous 不知道谁触发的"。
+4. **第二个写者要签字**：Nous 侧有自己的连接、自己的 `Storage` 语义，这是**明确允许**的第二写通道
+   （跟 `#38`/`#42` 的处理方式一致：签字而不是绕），但它**只写 `nous.db`**，一个字节不碰 `durable.db`。
+
+**命名**：`#52` 原来的 `nous.db`（实指 durable）改叫 `durable.db`，Nous 自己的才叫 `nous.db`。
+「`nous.db` 里放的是 Nous 自己的东西」一眼就懂，省掉以后每一次误读。
+
+**反悔点**（任一触发就重开）：① 出现第二个**进程**写库；② 单个库 > 10 GB 或写事务 p99 > 50ms（实测）；
+③ 要跨多台机器**共享写**（不是多点读）。到那天**先换 Nous 侧那一个库**，durable 最后才动。
+
+---
+
+## 2026-11-18 · 收口合并：`#44` 存在**两份实现**，取 integration 那份
+
+**事实**：`crates/nous/sessions` / `server` 在两条线上各被写了一遍 —— `main` 上的 `63f476a`
+与 `integration/desk-connect` 上的 `f7e1ed5`。同一个目录、同一个目的、不同实现（`turn.rs` 各自
+300+ 行），所以两边合并时每一处都是「添加/添加」冲突，`git` 没法替我们选。
+
+**决定：整个 `crates/` 取 integration 那份**。理由不是谁写得好，而是 integration 是**十张票
+一起跑绿**的那条线（`verify.sh` 55 条全绿、`cargo test --workspace` 1134 条全绿）；
+main 那份只被 #44 一张票验过，合并进十票的实现里没人验过。
+
+**代价（写清，别装作没有）**：main 那份的**时钟注入**（`sessions/src/clock.rs` + `with_clock`）没保留，
+integration 用 `chrono_millis` 直接取时间。也就意味着 `nous-sessions` 那一层暂时无法用假时钟穷举测。
+**这条列成待办**：把时钟注入补回 sessions（一个 `Clock` trait + 一处注入 + 一条判据），
+不做就会在某次"时间相关 bug"上付出比现在更贵的代价。
+
+**同时删掉的两个文件**：`crates/nous/server/tests/turn_end_to_end.rs`、`crates/nous/sessions/src/clock.rs`
+—— 它们测/提供的是**已经不存在的 API**（`TurnHandle` / `TurnFactory`），留着会编译不过。
+端到端覆盖没丢：integration 自己那份 `sessions/tests/turn_end_to_end.rs` 还在。
+
+**反悔点**：如果哪天发现 integration 那份 #44 缺了 main 那份的某个能力（例如历史重放 `load_history`），
+用 `git show 63f476a:crates/nous/sessions/src/turn.rs` 取回来当参照 —— 两份都还在 git 里，没有真丢。
