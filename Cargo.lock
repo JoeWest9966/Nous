@@ -1432,6 +1432,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-store"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "tempfile",
+]
+
+[[package]]
 name = "nous-telemetry"
 version = "0.1.0"
 dependencies = [

@@ -508,6 +508,8 @@ allow={
  'nous-runtime': {'nous-ai'},
  'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
  'nous-server': {'nous-durable','nous-wire','nous-telemetry'},
+ # #56：Nous 自己的库。**没有内部依赖**（尤其没有 nous-durable）—— 多一条边就是判据 1 破了。
+ 'nous-store': set(),
 }
 meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
                                capture_output=True,text=True).stdout)
@@ -752,18 +754,44 @@ PY
 
 	# 5. 数据面唯一入口：$K 之外不许出现 rusqlite / Connection::open / .sqlite / PRAGMA / BEGIN IMMEDIATE。
 	#    "之外"只算代码（crates/ 下的 .rs）；tests/ 与 *_test(s).rs 里的临时库名是夹具，不是第二入口。
+	# #56 起这条从「恰好一个入口」改成「**可数的**入口」：数据面入口 = $K ∪ `sqlite-entry` 的 crate。
+	# 第二个库（`nous.db`，`crates/nous/store`）自己开连接是正当的 —— 它就是这个库的所有者。
+	# 名单从 `cargo metadata` 的 `[package.metadata.nous] sqlite-entry = true` 读，**不点名目录**；
+	# 每一条入口都必须在「排掉了 N 行」里出现过，否则豁免是死的。
+	sqlite_entry_paths() {
+		cargo metadata --no-deps --format-version 1 2>/dev/null | python3 -c '
+import json, os, sys
+meta = json.load(sys.stdin)
+for pkg in meta["packages"]:
+    ns = (pkg.get("metadata") or {}).get("nous") or {}
+    if ns.get("sqlite-entry"):
+        print(os.path.relpath(os.path.dirname(pkg["manifest_path"])))
+'
+	}
 	c5() {
-		local ex=() p RAW KEPT DROPPED
+		local ex=() p RAW KEPT DROPPED ENTRY
+		ENTRY=$(sqlite_entry_paths)
+		# 哨兵：豁免名单不许是空的（空名单 = 第二个数据面入口不见了，或 metadata 写错了名）。
+		[ -n "$ENTRY" ] || { echo "数据面入口名单是空的（cargo metadata 里没有 sqlite-entry 的包）"; return 1; }
 		for p in $K; do ex+=(":(exclude)$p"); done
 		RAW=$(git grep -nE 'rusqlite|Connection::open|\.sqlite|PRAGMA|BEGIN IMMEDIATE' -- crates "${ex[@]}" || true)
 		# 只算**生产**路径：.rs 代码行、去掉注释、去掉 tests/，再**减 `dev` 层**
-		# （测试夹具与探针；spec 判据 11 的「只许测试用」同样对待它们）。
+		# （测试夹具与探针；spec 判据 11 的「只许测试用」同样对待它们），最后减数据面入口
+		# （`$ENTRY`：豁免一样要**可观测** —— 排掉了属于它们的哪几行）。
 		KEPT=$(printf '%s\n' "$RAW" | grep '\.rs:' | grep -v '/tests/' | grep -vE '_tests?\.rs:' \
 			| grep -vE ':[0-9]+:\s*(//|///|//!)' \
 			| grep -v 'DEFAULT_FIXTURE' | grep -v 'fixtures/agent.sqlite' | grep -v '<legacy.sqlite>' \
 			| dev_reject || true)   # 排掉的是 `dev` 层（探针/夹具），名单来自清单
+		for p in $ENTRY; do
+			KEPT=$(printf '%s\n' "$KEPT" | grep -v "^${p}/" || true)
+		done
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
 		report_dropped "5." "$DROPPED" || return 1
+		for p in $ENTRY; do
+			printf '%s\n' "$DROPPED" | grep -q "^${p}/" \
+				|| { echo "哨兵丢了：数据面入口 $p 一行都没命中（豁免规则失效）"; return 1; }
+		done
+		echo "       数据面入口：$(printf '%s' "$K $ENTRY" | tr ' ' '\n' | sed '/^$/d' | tr '\n' ' ')"
 		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
 
@@ -980,7 +1008,7 @@ for p in m['packages']:
 	judge "2. 反向依赖（内核层 --depth 1 不依赖应用层）" c2
 	judge "3. 词表基线（S8：只减不增）" c3
 	judge "4. 路由归属（内核层无 .route(/axum::/tower::）" c4
-	judge "5. 数据面唯一入口（内核层之外无 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE）" c5
+	judge "5. 数据面入口可数（$K ∪ sqlite-entry 的 crate 之外无 rusqlite/Connection::open/.sqlite/PRAGMA/BEGIN IMMEDIATE）" c5
 	judge "6. 进程归应用层（内核层零进程 + spawn 文件集合 == baseline）" c6
 	judge "6b. 依赖方向（nous-durable --depth 2 无 providers）" c6b
 	judge "7. 端点索引唯一（^### GET /v1/ 恰好 wire.md）" c7
@@ -998,10 +1026,10 @@ for p in m['packages']:
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
-# 6. #52 判据 2b / 16（不动第 5 段的 15 条边界判据口径）
+# 6a. #52 判据 2b / 16（不动第 5 段的 15 条边界判据口径）
 # ════════════════════════════════════════════════════════════════════════════
 if [ "$WHAT" = all ] || [ "$WHAT" = issue52 ]; then
-	step "6. #52：拒绝启动常量与理由表"
+	step "6a. #52：拒绝启动常量与理由表"
 
 	EXIT_REFUSED_SRC=$(grep -oE 'EXIT_REFUSED: u8 = [0-9]+' crates/nous/server/src/refusal.rs | sed -E 's/.*= ([0-9]+)/\1/' || true)
 	if [ "$EXIT_REFUSED_SRC" = 78 ]; then
@@ -1027,6 +1055,64 @@ if [ "$WHAT" = all ] || [ "$WHAT" = issue52 ]; then
 		bad "16. refusal 单测未通过（slug 唯一性 / decide_refusal 全覆盖）"
 	fi
 fi
+
+# 6. #52 部署资产（追加段：不改上面任何判据的口径与顺序）
+#    2a 单元文本断言 + systemd-analyze verify（可用时）
+#    15 脚本零凭据（git grep 命中数 == 0）
+# ════════════════════════════════════════════════════════════════════════════
+if [ "$WHAT" = all ] || [ "$WHAT" = deploy ]; then
+	step "6. #52 部署资产（判据 2a / 15）"
+	UNIT=deploy/nous-app.service
+	if [ ! -f "$UNIT" ]; then
+		bad "$UNIT 不存在 —— 单元文件是判据的载体"
+	else
+		MISSING=""
+		for LINE in 'User=nous' 'WorkingDirectory=' 'Environment=HOME=' \
+		            'Restart=on-failure' 'RestartPreventExitStatus=78'; do
+			grep -qxF "$LINE" "$UNIT" || grep -q "^$LINE" "$UNIT" || MISSING="$MISSING $LINE"
+		done
+		if [ -z "$MISSING" ]; then
+			ok "单元五条文本断言都在（User/WorkingDirectory/HOME/Restart/RestartPreventExitStatus=78）"
+		else
+			bad "单元缺：$MISSING"
+		fi
+		# 回环哨兵（判据 9b 的静态那一半）：#50 落地前不许把 env 改成 0.0.0.0。
+		if grep -qxF 'Environment=NOUS_LISTEN=127.0.0.1:4789' "$UNIT"; then
+			ok "单元静态哨兵：NOUS_LISTEN=127.0.0.1:4789（#50 前不许 0.0.0.0）"
+		else
+			bad "单元监听不是回环（判据 9b）"
+		fi
+		if command -v systemd-analyze >/dev/null 2>&1; then
+			if SYSTEMD_OUT=$(systemd-analyze verify "$UNIT" 2>&1); then
+				ok "systemd-analyze verify $UNIT 通过"
+			else
+				# 本机没有 /opt/nous-app/current/nous-app 时 systemd-analyze 只报
+				# "ExecStart not executable"；那不是单元自身的问题，先剥掉再看。
+				REAL=$(printf '%s\n' "$SYSTEMD_OUT" | grep -v 'is not executable' || true)
+				if [ -z "$REAL" ]; then
+					skip "systemd-analyze verify 仅因 ExecStart 产物不在本机未过（单元语法本身无错）"
+				else
+					bad "systemd-analyze verify 失败：$(printf '%s' "$REAL" | head -3 | tr '\n' ' ')"
+				fi
+			fi
+		else
+			skip "systemd-analyze 不可用（本机不做单元语义校验）"
+		fi
+	fi
+
+	# 检查者自己那一行 pattern 不算命中（与 c10 排除 verify.sh 同一手法）。
+	CRED=$(git grep -inE 'ssh(PASS)|pass(word)|se(cret)|crab(port)' -- scripts/ | grep -v '零凭据（' || true)
+	if [ -z "$CRED" ]; then
+		ok "脚本零凭据（git grep -inE 'sshpass|password|secret|crabport' scripts/ == 0）"
+	else
+		bad "脚本里出现凭据字样："
+		printf '%s\n' "$CRED" | sed 's/^/       /'
+	fi
+fi
+
+# 7. #56 判据 1/6/7：存储分离（Nous 自己的库 nous.db ↔ pi 的语义层 durable.db，互不相干）
+step "7. 存储分离判据（scripts/check-separation.sh）"
+if ./scripts/check-separation.sh; then ok "存储分离：判据 1/6/7 全绿"; else bad "存储分离判据未过（详见上方 checked/mismatched 汇总）"; fi
 
 printf '\n'
 if [ $FAIL -eq 0 ]; then printf '\033[32m通过\033[0m\n'; exit 0; else printf '\033[31m未通过\033[0m\n'; exit 1; fi
