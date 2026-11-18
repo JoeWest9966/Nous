@@ -545,3 +545,27 @@ integration 用 `chrono_millis` 直接取时间。也就意味着 `nous-sessions
 **反悔点**：如果哪天要「一个插件一个库」（真隔离），那是把 `nous-plugins.db` 拆成
 `plugins/<module>.db`，判据 12 的白名单改成扫目录；别一个个加白名单条目 —— 那会变成
 「数据目录里有什么都不奇怪」。
+
+---
+
+## 2026-11-18 · 旧面板下线完成（①–⑤），`content/` 从仓库移除
+
+当初那条 ①–⑤ 的第 ⑤ 步写的是「只删壳、**保留 `content/`**」，前提是**引擎当时就住在
+`content/new1/map/qrd3wh/`**（Node 版）。今天这个前提没了：引擎换成 `nous-app`（Rust，
+`/opt/nous-app/current/nous-app`，数据 `/var/lib/nous/nous.db`），`content/` 只剩旧面板自己读。
+
+所以按 ①–⑤ 做完最后两步：
+
+1. **归档**：`/var/backups/nous-panel/content-20261118T094929Z.tar.gz`（6.2 MB，含
+   `qrd3wh/data/agent.sqlite` 等旧引擎数据）。
+2. **停用**：`systemctl stop + disable nous-panel`（unit 文件**保留**在原地，随时可回）；
+   4790 不再监听，`nous-app` 全程 active 未受影响。
+3. **移出仓库**：`content/`（8.1 MB、316 个文件）从版本控制里删除。**不是抹掉历史** ——
+   任何一个 RFC 之前的提交里都还在。
+
+**顺带**：GitHub 的语言占比此前是 Rust 71% / JS 18% / HTML 5%，因为按字节算 `content/` 比
+Rust 还大。删掉之后这个仓就是它实际的样子（Rust 为主）。`.gitattributes` 里那条
+`content/** linguist-vendored` 一起删了 —— 不删文件只把它标成「不算」是自欺。
+
+**反悔点**：旧引擎的历史会话如果要迁进 `nous.db`，从那个 tar 里取 `agent.sqlite`
+（`fixtures/agent.small.sqlite` 就是它的抽样）。别从 git 历史里翻 `content/` —— 那只是同一份。

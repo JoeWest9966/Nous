@@ -1,7 +1,7 @@
 # 部署 nous-app（issue #52）
 
 一句版：在 asus 上 `scripts/deploy.sh`，一条命令装好；j1900 上 `scripts/deploy-check.sh --wait=300` 验收。
-首版只绑 `127.0.0.1:4789`、旁挂 `nous-panel`（4790）与 `content/`，一个字节都不碰。
+首版只绑 `127.0.0.1:4789`。旧面板 `nous-panel`（4790）已于 2026-11-18 停用并 disable，`content/` 已归档到 j1900 的 `/var/backups/nous-panel/` 并从仓里移除。
 
 ## 0 · 一次性准备（人做，脚本不代劳）
 
@@ -128,7 +128,8 @@ inode 与 sha256（判据 7）。
 
 ## 6 · 三条硬边界
 
-- 不碰 4790 / `nous-panel.service` / `content/` 下任何块目录（判据 14：部署前后
+- 不碰 4790 / `nous-panel.service` / `content/` 下任何块目录 —— 旧面板已下线（2026-11-18），
+  这几条现在只剩历史意义；判据 14 仍在守「部署不碰别人的东西」（判据 14：部署前后
   `systemctl is-active nous-panel` 与 `git -C /opt/Nous status --porcelain` 都不变）。
 - 不 `chown`/`chgrp` 任何 `/opt/*`。
 - 脚本里没有任何凭据：`git grep -inE 'sshpass|password|secret|crabport' scripts/` 必须 0 命中
