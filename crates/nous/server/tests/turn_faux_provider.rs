@@ -57,7 +57,10 @@ impl Server {
         let out = dir.join("stdout.log");
         let err = dir.join("stderr.log");
         let mut cmd = Command::new(bin());
+        // #50：HOME 下的 token 文件会让 /v1/* 全量 401。测试用自己的 HOME，
+        // 不借用开发机上的凭据（否则并行测试/开发机状态决定红灯）。
         cmd.current_dir(&dir)
+            .env("HOME", &dir)
             .env("NOUS_DB", &db)
             .env("NOUS_LISTEN", "127.0.0.1:0")
             .stdout(Stdio::from(std::fs::File::create(&out).unwrap()))

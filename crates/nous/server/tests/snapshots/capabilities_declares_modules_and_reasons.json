@@ -73,11 +73,11 @@
     },
     {
       "name": "triggers",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "triggers 模块尚未落地"
-      }
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/triggers",
+        "POST /v1/triggers/{code}/fire"
+      ]
     },
     {
       "name": "device",
@@ -127,7 +127,8 @@
     },
     {
       "name": "triggers",
-      "enabled": false
+      "base": "http://127.0.0.1:4789",
+      "enabled": true
     }
   ]
 }

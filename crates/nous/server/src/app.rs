@@ -29,6 +29,8 @@ pub struct AppState {
     documents: Option<DocumentService>,
     /// `capabilities.services[engine].base` 的单一来源：环境变量优先，绑定后由 `main` 覆盖。
     origin: String,
+    /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
+    triggers: Option<crate::triggers::TriggerRuntime>,
 }
 
 impl AppState {
@@ -51,6 +53,7 @@ impl AppState {
                 .ok()
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
+            triggers: None,
         })
     }
 
@@ -85,6 +88,7 @@ impl AppState {
                 .ok()
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
+            triggers: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -122,6 +126,7 @@ impl AppState {
                 Some(Arc::new(EmptyBackend)),
             )),
             origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
         })
     }
 
@@ -150,6 +155,7 @@ impl AppState {
             ),
             documents: self.documents.clone(),
             origin,
+            triggers: self.triggers.clone(),
         })
     }
 
@@ -195,6 +201,24 @@ impl AppState {
         self.documents.clone()
     }
 
+    /// #57 的点火装配（只有 main 注入一次）。
+    pub fn with_triggers(self: Arc<Self>, triggers: crate::triggers::TriggerRuntime) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: Some(triggers),
+        })
+    }
+
+    pub fn triggers(&self) -> Option<&crate::triggers::TriggerRuntime> {
+        self.triggers.as_ref()
+    }
+
     /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
     pub fn with_documents_backend(self: Arc<Self>, path: std::path::PathBuf, session: Arc<nous_durable::session::Session>) -> Arc<Self> {
         let backend = DurableDocumentBackend::new(path, session);
@@ -209,6 +233,7 @@ impl AppState {
                 Some(Arc::new(backend) as Arc<dyn nous_documents::service::DocumentWriter>),
             )),
             origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
         })
     }
 

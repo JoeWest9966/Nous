@@ -67,6 +67,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
         .route("/v1/triggers", get(triggers))
+        .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/capabilities", get(capabilities));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
     crate::documents::attach(state, router)
@@ -190,9 +191,45 @@ async fn extensions() -> Json<Value> {
     Json(crate::meta::extensions())
 }
 
-/// `GET /v1/triggers`：没实现，回空清单，不 404。
-async fn triggers() -> Json<Value> {
-    Json(crate::meta::triggers())
+/// `GET /v1/triggers`：装配了 store 就读真行；空库仍回 `{triggers:[],root:null}`。
+async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let Some(runtime) = state.triggers() else {
+        return Ok(Json(crate::meta::triggers(Vec::new())));
+    };
+    let items: Vec<Value> = runtime
+        .definitions()
+        .iter()
+        .map(|definition| serde_json::json!({
+            "code": definition.code(),
+            "name": definition.name(),
+            "enabled": definition.enabled(),
+            "spec": {
+                "spec_version": definition.spec().spec_version,
+                "schedule": definition.spec().schedule,
+                "on": definition.spec().on,
+            },
+        }))
+        .collect();
+    Ok(Json(crate::meta::triggers(items)))
+}
+
+/// `POST /v1/triggers/:code/fire`：手动点火。actor 从 token 派生（#50），现为 system。
+#[axum::debug_handler]
+async fn fire_trigger(
+    State(state): State<Arc<AppState>>,
+    Path(code): Path<String>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let runtime = match state.triggers() {
+        Some(runtime) => runtime,
+        None => return Err(ServerError::Conflict("triggers not configured".to_string())),
+    };
+    let actor = nous_durable::actor::Actor::system("local");
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default();
+    let outcome = runtime.fire(&code, &actor, now_ms).await?;
+    Ok(Json(serde_json::to_value(&outcome).unwrap_or(Value::Null)))
 }
 
 /// `GET /v1/capabilities`：desk 按 modules 显示/隐藏功能面。

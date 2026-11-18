@@ -156,9 +156,9 @@ async fn prompts_response_pins_client_shape() {
     snapshot("prompts_response_pins_client_shape", &body);
 }
 
-/// GET /v1/triggers —— 清单关着也诚实返回空表，不是 404。
+/// GET /v1/triggers —— 没有装配的测试路由也诚实返回空表，不是 404（#49 空表契约保留）。
 #[tokio::test]
-async fn triggers_response_is_an_empty_list_even_though_the_module_is_disabled() {
+async fn triggers_response_is_an_empty_list_even_without_a_store() {
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
     let (status, body) = get_json(&app, "/v1/triggers").await;
     assert_eq!(status, StatusCode::OK, "GET /v1/triggers 应 200，不是 404");
@@ -206,7 +206,7 @@ async fn capabilities_declares_modules_and_reasons() {
         .find(|service| service["name"] == json!("triggers"))
         .expect("services 必须声明 triggers");
     fields(triggers, "services[triggers]", &[("name", is_string), ("enabled", is_bool)]);
-    assert_eq!(triggers["enabled"], json!(false));
+    assert_eq!(triggers["enabled"], json!(true), "#57 后 triggers 已可用");
     assert_eq!(body["contract"], json!(1));
     fields(
         &body["server"],

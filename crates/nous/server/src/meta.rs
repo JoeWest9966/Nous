@@ -96,9 +96,9 @@ pub fn extensions() -> Value {
     json!({ "items": [] })
 }
 
-/// `GET /v1/triggers`：触发器没实现，诚实回空清单（`root: null`）。
-pub fn triggers() -> Value {
-    json!({ "triggers": [], "root": Value::Null })
+/// `GET /v1/triggers` 的投影（真行由路由从 store 读；无装配时回空表）。
+pub fn triggers(items: Vec<Value>) -> Value {
+    json!({ "triggers": items, "root": Value::Null })
 }
 
 // ── 端点注册表：唯一真相（#47 拷问结果 §2/§4/§8 + #48 的 _routes）──────
@@ -140,8 +140,9 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
-    // #49：物理上注册，但 triggers 在清单里关着 —— capabilities 不声明（同 ext 的处理）。
+    // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
     RegisteredRoute { method: "GET", path: "/v1/triggers", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/fire", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
     // #48：documents 的 12 条端点（模板原文来自 nous_documents::DOCUMENT_ROUTES）。
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}", module: "documents" },
@@ -198,7 +199,7 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("skills", None),
     ("archive", Some(ReasonCode::NotImplemented)),
     ("combos", Some(ReasonCode::NotImplemented)),
-    ("triggers", Some(ReasonCode::NotImplemented)),
+    ("triggers", None),
     ("device", None),
     ("selection", None),
     ("prompts", None),
@@ -281,7 +282,7 @@ pub fn capabilities(origin: &str) -> Value {
         // 一个地址 + 服务表：engine 是它自己，triggers 尚未实现。
         "services": [
             { "name": "engine", "base": origin },
-            { "name": "triggers", "enabled": false },
+            { "name": "triggers", "base": origin, "enabled": true },
         ],
     })
 }
