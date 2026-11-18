@@ -27,6 +27,11 @@ use crate::records::{CreateSessionRequest, CreatedSession};
 pub struct SubmitResult {
     pub submission_id: i64,
     pub status: String,
+    /// durable 的 `submit_message` 同批分配的 id：user entry、submission。
+    /// 轮次需要的辅助 id 由这两个推出来（submit 同批铸两个 id，下一个从 entry_id+2 起）。
+    pub entry_id: i64,
+    pub assistant_entry_id: i64,
+    pub live_id: i64,
 }
 
 /// fork 结果（`POST /fork` 的 201 体）。
@@ -154,6 +159,10 @@ impl CommandSource for DurableCommands {
         Ok(SubmitResult {
             submission_id: outcome.submission_id,
             status: outcome.status,
+            entry_id: outcome.entry_id,
+            // submit 同批铸了 entry_id、submission_id 两个 id；下一个可用 id 从 entry_id+2 起。
+            assistant_entry_id: outcome.entry_id + 2,
+            live_id: outcome.entry_id + 3,
         })
     }
 
