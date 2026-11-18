@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use nous_durable::actor::Actor;
 use nous_durable::session::commands::{
     abort, fork, mark_read, rename_session, scan_orphans, set_pin, submit_message, unread_map,
     CommandError, ForkRequest, PinOutcome, PinRequest, SubmitRequest,
@@ -98,12 +99,23 @@ pub trait CommandSource: Send + Sync {
 pub struct DurableCommands {
     session: Arc<Session>,
     registry: Arc<ObserverRegistry>,
+    /// 写 entry / submission 时显式传下去的 actor；将来认证在这里换成 principal。
+    actor: Actor,
 }
 
 impl DurableCommands {
     /// 用一条现成的 `Session` 装配写命令；与 sessions 的轮次共享同一个取消 token。
     pub fn with_session(session: Arc<Session>, registry: Arc<ObserverRegistry>) -> Arc<Self> {
-        Arc::new(Self { session, registry })
+        Arc::new(Self { session, registry, actor: Actor::system("nous-app") })
+    }
+
+    /// 换掉写命令用的 actor（认证落地时由 principal 派生；现在只有显式调用）。
+    pub fn with_actor(&self, actor: Actor) -> Arc<Self> {
+        Arc::new(Self {
+            session: self.session.clone(),
+            registry: self.registry.clone(),
+            actor,
+        })
     }
 
     /// 打开**本库自己**的库（上游 v2 库在写模式下会明确失败，见 `storage/mod.rs`）。
@@ -115,6 +127,7 @@ impl DurableCommands {
         Ok(Arc::new(Self {
             session: Arc::new(Session::with_observers(storage, registry.clone())),
             registry,
+            actor: Actor::system("nous-app"),
         }))
     }
 
@@ -153,6 +166,7 @@ impl CommandSource for DurableCommands {
                 content,
                 request_id,
             },
+            &self.actor,
         )
         .await
         .map_err(command_error)?;

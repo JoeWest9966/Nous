@@ -12,6 +12,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use nous_durable::actor::Actor;
 use nous_durable::harness::clock::{Clock, ManualClock};
 
 use nous_ai::{
@@ -156,6 +157,7 @@ fn classify_request(entry_id: i64) -> ClassifyRequest {
         retryable: false,
         overflow: None,
         reason: TerminalReason::Done,
+        actor: Actor::system("nous-app"),
     }
 }
 

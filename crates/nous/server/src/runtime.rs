@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use nous_ai::tool::AgentTool;
 use nous_ai::{Api, Model};
+use nous_durable::actor::Actor;
 use nous_runtime::{ProviderRegistry, ValueSource};
 use nous_sessions::turn::{AbortWatcher, HarnessTurnDriver, TurnDriver, TurnRuntime};
 use nous_tools::tools::tool_context::ExecutionToolContext as ToolsExecutionToolContext;
@@ -69,6 +70,9 @@ fn faux_provider() -> Arc<dyn nous_ai::Provider> {
 
 /// server 构造好的轮次驱动器，备给路由/命令层使用。
 pub struct AssembledRuntime {
+    /// 这一台组装根写进 entry / submission 的 actor。
+    /// 默认 `system("nous-app")`；将来认证落地只在这里换成 principal 派生的值。
+    pub actor: Actor,
     pub driver: Arc<dyn TurnDriver>,
     pub driver_with_sink: Arc<dyn Fn(Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>) -> Arc<dyn TurnDriver> + Send + Sync>,
     pub provider_registry: ProviderRegistry,
@@ -153,6 +157,7 @@ pub fn assemble(
         "ls".into(),
         nous_tools::tools::create_ls_tool(&tool_ctx, None),
     );
+    let actor = Actor::system("nous-app");
     let tool_names: Vec<String> = tools.keys().cloned().collect();
     let driver_session = session.clone();
     let driver_tools = Arc::new(tools);
@@ -161,20 +166,29 @@ pub fn assemble(
     } else {
         crate::runtime::offline_provider()
     };
+    // #54：actor 从组装根显式传进每一条 driver（包括带 SSE sink 的那条），
+    // 不经全局/线程局部。#51 的 provider 工厂语义原样保留：factory 每次现造脚本，
+    // 连发多条消息都是同一句固定回复，不是一次性队列。
+    let driver_actor = actor.clone();
     let make_driver = Arc::new({
         let providers = faux_or_offline.clone();
         move |sink: Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>| {
-            Arc::new(HarnessTurnDriver::new(
-                driver_session.clone(),
-                TurnRuntime {
-                    providers: providers.clone(),
-                    tools: driver_tools.clone(),
-                },
-            ).with_event_sink(sink)) as Arc<dyn TurnDriver>
+            Arc::new(
+                HarnessTurnDriver::new(
+                    driver_session.clone(),
+                    TurnRuntime {
+                        providers: providers.clone(),
+                        tools: driver_tools.clone(),
+                    },
+                )
+                .with_actor(driver_actor.clone())
+                .with_event_sink(sink),
+            ) as Arc<dyn TurnDriver>
         }
     }) as Arc<dyn Fn(Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>) -> Arc<dyn TurnDriver> + Send + Sync>;
     let driver = make_driver(Arc::new(|_| {}));
     Ok(AssembledRuntime {
+        actor,
         driver,
         driver_with_sink: make_driver,
         provider_registry: registry,
@@ -196,9 +210,12 @@ pub fn assemble_with_provider(
     let tool_names = runtime.tools.keys().cloned().collect();
     let watcher = Arc::new(AbortWatcher::new(nous_sessions::turn::abort_token(&session)));
     AssembledRuntime {
-        driver: Arc::new(HarnessTurnDriver::new(session.clone(), runtime.clone())),
+        actor: Actor::system("nous-app"),
+        driver: Arc::new(HarnessTurnDriver::new(session.clone(), runtime.clone()).with_actor(Actor::system("nous-app"))),
         driver_with_sink: Arc::new(move |sink| {
-            Arc::new(HarnessTurnDriver::new(session.clone(), runtime.clone()).with_event_sink(sink)) as Arc<dyn TurnDriver>
+            Arc::new(HarnessTurnDriver::new(session.clone(), runtime.clone())
+                .with_actor(Actor::system("nous-app"))
+                .with_event_sink(sink)) as Arc<dyn TurnDriver>
         }),
         provider_registry: registry,
         watcher,

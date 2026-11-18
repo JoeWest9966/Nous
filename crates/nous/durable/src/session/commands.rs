@@ -26,6 +26,7 @@ use nous_chord::context::Context;
 use nous_chord::watch::WatchEnd;
 use serde_json::{json, Value};
 
+use crate::actor::Actor;
 use crate::harness::generation::LIVE_KIND;
 use crate::storage::writes::StorageWrite;
 use crate::types::{DocumentScope, EntryRecord, TerminalReason};
@@ -81,6 +82,7 @@ pub struct SubmitOutcome {
 pub async fn submit_message(
     session: &Session,
     request: SubmitRequest,
+    actor: &Actor,
 ) -> Result<SubmitOutcome, CommandError> {
     if !valid_content(&request.content) {
         return Err(CommandError::BadRequest(
@@ -131,6 +133,7 @@ pub async fn submit_message(
             "content": request.content,
             "timestamp": now_ms(),
         }],
+        "actor": actor,
     });
     // `input/queued` 的合法形状里**没有** `entry`（`types::SubmissionFields::validate` 的
     // 矩阵：entry 要等 `placed` 才出现）。这里写 `entry` 会被提交拒绝 —— 那不是类型啰嗦，
@@ -140,6 +143,7 @@ pub async fn submit_message(
         "conversationId": request.conversation,
         "type": "input",
         "status": "queued",
+        "actor": actor,
     });
     if let Some(request_id) = request.request_id {
         submission["requestId"] = Value::String(request_id);

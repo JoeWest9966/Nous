@@ -535,6 +535,13 @@ PY
 		[ "$TODO" -eq 0 ] && ok "没有 todo!()/unimplemented!() 占位桩" || bad "有 $TODO 行 todo!()/unimplemented!() —— 占位桩不算实现"
 		ok "注释里的 占位/stub/FIXME：$NOTES 行（只报数，逐条看）"
 	fi
+
+	# 4f. #54 判据 6：actor 不许走全局 / 线程局部，只许显式传参。
+	# 排除检查者自己（下面这行 pattern 本身会命中自己）。
+	ACTOR_GLOBAL=$(git grep -nE 'thread_local|static ACTOR' -- ':!scripts/verify.sh' || true)
+	[ -z "$ACTOR_GLOBAL" ] \
+		&& ok "actor 零全局/线程局部（git grep thread_local|static ACTOR == 0）" \
+		|| { bad "actor 走了全局/线程局部："; printf '%s\n' "$ACTOR_GLOBAL" | sed 's/^/       /'; }
 fi
 # ════════════════════════════════════════════════════════════════════════════
 # 5. spec 第 1 章「边界与仲裁」的 15 条判据（Q18 / S1 / S2 / S4 / S8 / S12）
