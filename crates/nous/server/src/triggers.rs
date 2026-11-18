@@ -287,7 +287,9 @@ impl TriggerRuntime {
             driver,
             driver_with_actor,
             durable_db,
-            last_tick_at: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            // `i64::MIN` = 「一拍都没响过」。用 0 当哨兵的话，「1970-01-01 的那一拍」
+            // 会被读成 null —— 哨兵值不许和合法取值重叠。
+            last_tick_at: Arc::new(std::sync::atomic::AtomicI64::new(Self::NO_TICK)),
         })
     }
 
@@ -331,10 +333,13 @@ impl TriggerRuntime {
             .store(now_ms, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// 最近一拍心跳（0 = 还没响过）。`record_tick` 的读侧，配对用。
+    /// 「还没响过」的哨兵值。和合法时间戳不可能重叠（epoch 毫秒不会是 `i64::MIN`）。
+    const NO_TICK: i64 = i64::MIN;
+
+    /// 最近一拍心跳（`None` = 还没响过）。`record_tick` 的读侧，配对用。
     pub fn last_tick_at(&self) -> Option<i64> {
         match self.last_tick_at.load(std::sync::atomic::Ordering::Relaxed) {
-            0 => None,
+            Self::NO_TICK => None,
             value => Some(value),
         }
     }

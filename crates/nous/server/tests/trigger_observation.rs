@@ -186,10 +186,13 @@ fn clone_runtime(fixture: &Fixture) -> TriggerRuntime {
     .unwrap()
 }
 
-// ── 判据 4：CLI 与 HTTP 逐字节相同 ─────────────────────────────────────────
+// ── 判据 4（前半）：同一条读口两次装配必须逐字节相同 ──────────────────────
 
+/// **这条不跑 CLI**（真进程那条在 `cli_actions::triggers_cli_prints_the_same_json_as_the_endpoint_reader`
+/// 和 `verify.sh` 3d）—— 它守的是「HTTP 侧与直接调用同一个 `observation_report` 不会分叉」：
+/// 比如 HTTP handler 自己又拼了一份 JSON，这里就红。别把它当成「CLI 逐字节」的判据。
 #[tokio::test]
-async fn cli_and_http_serialize_the_same_bytes() {
+async fn http_handler_and_reader_function_serialize_the_same_bytes() {
     let fixture = fixture("cli-bytes");
     create(&fixture, definition("nightly_digest", "nightly")).await;
     fixture.runtime.fire("nightly_digest", &actor(), 7_000).await.unwrap();

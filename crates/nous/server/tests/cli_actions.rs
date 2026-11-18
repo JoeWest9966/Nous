@@ -159,9 +159,17 @@ fn triggers_cli_prints_the_same_json_as_the_endpoint_reader() {
     let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store).unwrap();
     let endpoint_reader =
         nous_server::triggers::observation_report(&store, &definitions, None, 0).unwrap();
-    assert_eq!(cli_json["triggers"], endpoint_reader["triggers"], "triggers 清单与端点读口相同");
-    assert_eq!(cli_json["root"], endpoint_reader["root"]);
-    assert_eq!(cli_json["scheduler"]["tickMs"], endpoint_reader["scheduler"]["tickMs"]);
+    // **逐字节**：比 stdout 原文，不是比解析后的 Value —— 比 Value 的话，CLI 换成
+    // `to_string_pretty` 也照样绿（实测：故意弄脏成 pretty，这条判据不红），
+    // 而票面要的正是「同一份序列化」。字段顺序、键名、缩进任何一处漂都要红。
+    // CLI 侧没有调度循环：lastTickAt=null、lagMs=0，两个时刻下的 body 因此完全相同，
+    // 可以直接比整段 —— 不用挖掉 scheduler 段。
+    let expected = serde_json::to_string(&endpoint_reader).unwrap();
+    assert_eq!(
+        stdout(&output).trim_end_matches('\n'),
+        expected,
+        "CLI 与端点读口必须逐字节相同（#58 判据 4）"
+    );
     assert_eq!(cli_json["triggers"][0]["counts"]["done"], json!(1));
     assert_eq!(cli_json["triggers"][0]["counts"]["skipped"], json!(1));
     assert_eq!(cli_json["triggers"][0]["lastFire"]["state"], json!("skipped"));
