@@ -72,7 +72,11 @@ test -n "$K"                   || { echo "SKIP: K 为空（清单里没有 layer
 
 1. 正向依赖：`cargo tree -p nous-app --depth 1 -e normal` 含内核层的 `durable` / `wire` / `tools` / `runtime`，不含 `chord` / `rusqlite`。
 2. 反向依赖：内核层任一 crate `--depth 1` 都不依赖应用层。
-3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K` 与**代码仓的** `docs/boundary-baseline.txt` 逐行比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
+3. 词表基线：`git grep -nE '\b(skill|preset|prompt|template|board|block|resolve)\b' -- $K` 与**代码仓的** `docs/boundary-baseline.txt` 比对，**新增一行即红**；基线每行带一句"为什么留着"；改基线单独一张票；被绕过两次换整文件哈希。**该文件首行写死「本文件只减不增」**（S8）。
+
+   **比对键是「路径 + 该行原文」，不含行号**（判定口径变更 2026-11-18，`#45`）：基线里存行号等于存了个缓存，谁在内核层任何文件的上方插一行，下面所有条目就集体漂移成"新增"，判据假红。**误红比漏红贵** —— 红久了就有人重排基线把红变绿，S8 的防线就是这样磨掉的。比对是**多重集**：同一路径同一文本出现两次要算两次，否则等于给了一个白名单。命中与基线条数都必须 `> 0`（空集不许绿）；报错时仍打印带行号的原始命中行，定位用。
+
+   反向的教训对照见判据「排除必须可观测」（排除量要打印）：这次是它的镜像 —— **命中量要稳定**。
 4. 路由归属：`git grep -nE '\.route\(|axum::|tower::' -- $K` 为空。
 5. 数据面唯一入口：`$K` 之外不许出现 `rusqlite` / `Connection::open` / `.sqlite` / `PRAGMA` / `BEGIN IMMEDIATE`。
 6. 进程归应用层：`$K` 里 `std::process|tokio::process|Command::new|Child` **逐行输出必须为空**（不是计数），排除 `ExitCode` 与 `tests/`；命中即红、把行贴出来。**内核不认识"进程"。**
