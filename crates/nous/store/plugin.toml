@@ -1,0 +1,10 @@
+name = "store"
+vendor = "nous"
+version = "0.1.0"          # 必须 == Cargo.toml 的 version
+layer = "platform"          # 必须 == docs/plugins.md 的 layer 列
+crate = "nous-store"
+
+[requires]                 # cargo metadata 里的内部 workspace 依赖
+
+[provides]
+endpoints  = []         # 本票一律留空；端点由 #48 的注册表生成

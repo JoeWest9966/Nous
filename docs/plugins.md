@@ -39,6 +39,7 @@
 | `tools` | nous | `nous-tools` | platform | 编译期 | read / write / edit / bash / grep / find / ls | 否 | 第一方工具，唯一进程创建面 |
 | `runtime` | nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
 | `telemetry` | nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
+| `store` | nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
 | `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
 | `documents` | nous | `nous-documents` | app | 编译期 | `DocumentKind` + 泛型文档端点 + 路由注册表 | 是 | #48：一个实现生成 presets / prompts 两套端点 |
 | `prompts` | nous | (待建) `nous-prompts` | app | 编译期 | `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
@@ -88,9 +89,9 @@
 
 ## 注：与 `ls -d crates/*/*/` 的一一对应
 
-今天 `crates/nous/` 下 15 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 15 行：
-`wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
-`ext` `ext-probe` `ext-sdk` `sessions` `server` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
+今天 `crates/nous/` 下 17 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 17 行：
+`wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry` `documents`
+`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用
 `cargo tree -p nous-durable --depth 2 | grep providers`，路径里带 `providers` 会让它永远假红。
