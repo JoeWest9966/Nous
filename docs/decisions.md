@@ -616,3 +616,25 @@ header 之后的**显式动作**」。今天两个前置都到位了：
 
 **反悔点**：回到只绑回环，就是改这一行 + 把判据 9b 的口径改回来；如果要做「只允许指定网段」，
 别在应用层加白名单（那会变成第二套认证），交给 nftables/防火墙。
+
+---
+
+## 2026-11-18 · tag 版本步长：默认 **+0.0.1**（patch 加一），除非用户另行说明
+
+**规则**：每次打 tag，版本号默认 **patch +1**（`0.1.0` → `0.1.1` → `0.1.2` …），
+不自动升 minor/major —— **升 minor/major 必须用户明确说**。
+
+**一处真相，三处同步**（缺一处就红，`check-plugins.sh` 会拦）：
+
+1. 根 `Cargo.toml` 的 `[workspace.package] version`
+2. 17 个 `crates/*/*/plugin.toml` 的 `version`（构建期校验：必须等于第 1 项）
+3. `git tag v<版本>` —— tag 只打在这一个数上
+
+**顺带修掉一处两处真相**：`crates/nous/ext-sdk/Cargo.toml` 是唯一一个把版本写成字面量的 crate
+（其他都是 `version.workspace = true`）。升版本时它不会跟着动，`check-plugins.sh` 立刻报
+`ext-sdk: version='0.1.1'（Cargo.toml 是 '0.1.0'）`。改成 workspace 继承 —— 外部消费者要的
+是**一个能验的版本号**，不是「每个 crate 自己记一份」。
+
+**反悔点**：如果 ext-sdk 真要独立发布（crates.io），它就得有自己的版本线；那时候
+`check-plugins.sh` 的这条校验要改成「允许 `[package] publish = true` 的 crate 自持版本」，
+而不是现在的一律相等。

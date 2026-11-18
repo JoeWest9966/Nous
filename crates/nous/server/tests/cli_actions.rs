@@ -27,9 +27,12 @@ fn version_line_uses_the_running_binary_hash() {
     let output = app().arg("--version").output().unwrap();
     assert!(output.status.success(), "{}", stderr(&output));
     let line = stdout(&output);
+    // 版本号从 crate 自身读，不写死：写死的话每升一次版本就要改一次测试
+    // （两处真相 -> 迟早有一条红得莫名其妙）。
+    let expected_prefix = concat!("nous-app ", env!("CARGO_PKG_VERSION"), " (build ");
     assert!(
-        line.starts_with("nous-app 0.1.0 (build ") && line.ends_with(")\n"),
-        "unexpected version line: {line}"
+        line.starts_with(expected_prefix) && line.ends_with(")\n"),
+        "unexpected version line: {line}（期望以 {expected_prefix} 开头）"
     );
     let build = line
         .split("build ")
