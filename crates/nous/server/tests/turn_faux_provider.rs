@@ -40,14 +40,8 @@ fn workdir(tag: &str) -> PathBuf {
 }
 
 fn bin() -> PathBuf {
-    // 和 verify.sh 一样认 CARGO_TARGET_DIR；测试自己把产物当被测对象，路径只有一个来源。
-    let target = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target")
-            .to_string_lossy()
-            .into_owned()
-    });
-    Path::new(&target).join("debug/nous-app")
+    // `CARGO_BIN_EXE_<name>` 由 cargo 为集成测试注入；不用手拼 target 路径（拼错一层就静默 NotFound）。
+    PathBuf::from(env!("CARGO_BIN_EXE_nous-app"))
 }
 
 impl Server {
