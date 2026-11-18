@@ -10,10 +10,6 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 
-FAIL=0
-ok()   { printf '  ✓ %s\n' "$*"; }
-bad()  { printf '  ✗ %s\n' "$*"; FAIL=1; }
-
 if ! python3 -c 'import tomllib' 2>/dev/null; then
 	printf 'RED: python3 没有 tomllib（需要 3.11+）\n' >&2
 	exit 2

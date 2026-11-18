@@ -34,9 +34,7 @@ const DEFAULT_ADDR: &str = "127.0.0.1:4789";
 const DEFAULT_DB: &str = "./nous.db";
 
 /// 启动门槛的统一出口：收集所有「不许启动」的理由，一次写 stderr 后以非 0 退出。
-///
-/// 新增门槛（例如 #51 的 provider 配置检查）只需在 `reasons` 里再 push 一条，
-/// 不要另写一个独立的 if —— 否则日志口径和退出码会分叉。
+/// #50 的 token 门槛与 #51 的 faux 门槛共用这一个函数（一个函数、多条理由）。
 fn refuse_startup(reasons: &[String]) -> ! {
     assert!(!reasons.is_empty(), "refuse_startup 至少要有 1 条理由");
     for reason in reasons {
@@ -96,6 +94,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     let commands = DurableCommands::with_session(session.clone(), registry);
+    let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
+    // 启动门槛统一从这一个函数走：#50 的 token 理由、#51 的 faux 理由都在这里汇合。
+    let mut reasons: Vec<String> = Vec::new();
+    let faux = nous_server::runtime::provider_kind(&nous_server::runtime::ProcessEnvValues) == "faux";
+    if faux {
+        if let Ok(socket) = address.parse::<std::net::SocketAddr>() {
+            if !socket.ip().is_loopback() {
+                reasons.push(format!(
+                    "faux provider 只允许绑回环（127.0.0.1），当前监听 {address}"
+                ));
+            }
+        }
+    }
+    if !reasons.is_empty() {
+        refuse_startup(&reasons);
+    }
+
     let state = AppState::durable_with_commands(
         nous_server::ImportedSource::open(&db)?,
         commands.clone(),
@@ -126,16 +141,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         commands.session().clone(),
     );
 
-    let address = std::env::var("NOUS_LISTEN").unwrap_or_else(|_| DEFAULT_ADDR.to_string());
-
     // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
     // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。
     let loaded = auth::load_or_generate(&token_path, false)?;
     let socket: std::net::SocketAddr = address.parse()?;
     let loopback = socket.ip().is_loopback();
 
-    // 门槛理由集中在这里；#51 的 faux provider 检查在下面 push 即可共用 refuse_startup。
-    let mut reasons: Vec<String> = Vec::new();
+    // 门槛理由集中在这里；#51 的 faux 检查与 #50 的 token 检查共用 refuse_startup。
+    if faux && !loopback {
+        reasons.push(format!(
+            "faux provider 只允许绑回环（127.0.0.1），当前监听 {address}"
+        ));
+    }
     if loaded.is_none() && !loopback {
         reasons.push(format!(
             "NOUS_LISTEN={address} 绑非回环但没有可用 token；请先用 `nous-app --print-token` 生成/抄取 token（文件：{}）",
