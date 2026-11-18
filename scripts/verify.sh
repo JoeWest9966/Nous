@@ -349,6 +349,31 @@ except Exception: print("ERR")' "$AUTH_TMP/test.db" 2>/dev/null || echo ERR
 	fi
 fi
 
+# 3c. #51 faux provider 启动闸门（判据 4：非回环拒绝启动）
+#     cargo test 里验不了「进程拒绝启动」，只能用真进程 + 真 stderr。
+if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = faux ]; then
+	step "3c. #51 faux 只允许绑回环"
+	BIN=nous-app
+	FAUX_BIN="${CARGO_TARGET_DIR:-/opt/Nous/target}/release/$BIN"
+	if [ ! -x "$FAUX_BIN" ]; then
+		bad "$FAUX_BIN 不存在 —— 先跑一次 boot 段构建"
+	else
+		FAUX_TMP=$(mktemp -d)
+		# 无 token（清空 HOME）才能单独验 faux 这条理由；否则先被 #50 拦下。
+		mkdir -p "$FAUX_TMP/home"
+		HOME="$FAUX_TMP/home" NOUS_DB="$FAUX_TMP/refuse.db" \
+			NOUS_LISTEN=0.0.0.0:4792 NOUS_PROVIDER=faux \
+			"$FAUX_BIN" >"$FAUX_TMP/out" 2>"$FAUX_TMP/err"
+		FAUX_RC=$?
+		if [ "$FAUX_RC" -ne 0 ] && grep -q '只允许绑回环' "$FAUX_TMP/err"; then
+			ok "faux + 非回环 → 拒绝启动（rc=$FAUX_RC，stderr 含「只允许绑回环」）"
+		else
+			bad "faux + 非回环没拒绝（rc=$FAUX_RC，stderr=$(head -2 "$FAUX_TMP/err")）"
+		fi
+		rm -rf "$FAUX_TMP"
+	fi
+fi
+
 # 4. 台账体检：四件事机器判，不靠自觉
 #   4a 「待提货」的行不许已经有代码
 #   4b 每一行的上游路径都要能用 git cat-file 在 pin 的那个 tag 上对上

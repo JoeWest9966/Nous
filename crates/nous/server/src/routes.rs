@@ -32,6 +32,7 @@ use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
 use nous_durable::storage::sessions::ENTRIES_MAX_LIMIT;
+use nous_sessions::turn::TurnRequest;
 use nous_wire::{Generation, RemoteEvent};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -195,15 +196,29 @@ async fn triggers() -> Json<Value> {
 }
 
 /// `GET /v1/capabilities`：desk 按 modules 显示/隐藏功能面。
+/// #51 只改 `runtime.provider` 一段：kind 由装配决定，不另造一张能力表。
 async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(crate::meta::capabilities(state.origin()))
+    let kind = state.provider_kind();
+    let configured = kind == "faux";
+    let message = if configured {
+        "假 provider，回复固定"
+    } else {
+        "没有配置真实 provider 凭证，发消息会 503"
+    };
+    let mut body = crate::meta::capabilities(state.origin());
+    body["runtime"]["provider"] = json!({
+        "configured": configured,
+        "kind": kind,
+        "message": message,
+    });
+    Json(body)
 }
 
 /// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。
 ///
 /// 本层不认识 provider，空目录是诚实的「不知道」；宿主可换入带 catalog 的 `AppState`。
 async fn models(State(state): State<Arc<AppState>>) -> Json<ModelsResponse> {
-    Json(state.models().clone())
+    Json(state.assembled_models().unwrap_or_else(|| state.models().clone()))
 }
 
 #[derive(Debug, Deserialize)]
@@ -296,10 +311,61 @@ async fn messages(
         ));
     }
     let _ = body.when_busy;
+    let faux = state.provider_kind() == "faux";
+    let submitted_content = body.content.clone();
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
         .await?;
+
+    // #51：只有显式 faux 装配才在受理后跑一轮。真 provider 的解析/503 语义不在本票改；
+    // 没有装配时保持原行为（只受理）。driver 持有的是同一个 `Session`，写仍走单一写者。
+    if faux {
+        if let (Some(runtime), Some(model)) =
+            (state.runtime(), state.assembled_models().and_then(|m| m.default))
+        {
+            let model = nous_ai::Model::new(
+                model.model_id,
+                "Faux Echo",
+                nous_ai::Api::Faux,
+                model.provider,
+                "http://localhost:0",
+            );
+            let driver = (runtime.driver_with_sink)(state.turn_event_sink(session));
+            // faux 的验收客户端靠 message_start 开气泡：库里提交的用户 entry
+            // 由 CommitObserver 广播 message_end/entry_appended，这里补一条契约帧。
+            state.publish_event(
+                session,
+                nous_wire::RemoteEvent::MessageStart {
+                    message: submitted_content.clone(),
+                    message_id: Some(result.submission_id.to_string()),
+                },
+            );
+            state.publish_event(
+                session,
+                nous_wire::RemoteEvent::EntryAppended {
+                    entry: json!({ "id": result.submission_id, "kind": "pi.user" }),
+                },
+            );
+            let submission = result.submission_id;
+            let entry = submission.wrapping_add(1);
+            let live = submission.wrapping_add(2);
+            tokio::spawn(async move {
+                let _ = driver
+                    .run(TurnRequest {
+                        conversation: session,
+                        submission,
+                        entry_id: entry,
+                        live,
+                        model,
+                        context: nous_ai::Context::new(Vec::new()),
+                        attempt: 1,
+                    })
+                    .await;
+            });
+        }
+    }
+
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({

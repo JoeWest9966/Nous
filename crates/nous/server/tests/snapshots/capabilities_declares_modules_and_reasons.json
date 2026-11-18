@@ -116,6 +116,7 @@
   "runtime": {
     "provider": {
       "configured": false,
+      "kind": "real",
       "message": "没有配置真实 provider 凭证，发消息会 503"
     }
   },
