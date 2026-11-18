@@ -30,6 +30,9 @@
 
 ## 3 一个真实场景
 
+> **一句话示例**：一个 pi 风格的**子代理扩展**，在它自己的规则命中时（某版里写死的那个开关），
+> 点燃 `nightly_digest` 触发器；触发器带着自己指定的模板起一轮，结果落成一次独立的会话。
+
 > 我以后写一个扩展（类似 pi 的子代理扩展）：这个扩展基于某种规则，直接点燃我的某个触发器。
 > 那个触发器本身已经指定了模板，而且它只能被某种情况触发 —— 也就是某版里写死的那个开关。
 
@@ -131,6 +134,10 @@ fires.mark_done(...)?;
   `fires` (the ledger of firings).
 
 ### 3 A real scenario
+
+> **In one sentence**: a pi-style *sub-agent extension* fires `nightly_digest` when its own rule
+> hits (the switch committed in a specific version); the trigger starts one turn using the template
+> it already carries, and the result lands as a standalone conversation.
 
 An extension (a pi-style sub-agent extension) decides some condition holds and fires a trigger.
 The trigger already carries a template, and it may only be fired by certain sources — a switch
