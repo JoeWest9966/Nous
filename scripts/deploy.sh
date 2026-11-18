@@ -19,7 +19,7 @@ TOKEN_MODE=0640
 UNIT_SRC=deploy/nous-app.service
 UNIT_DST=/etc/systemd/system/nous-app.service
 UNIT_NAME=nous-app
-LISTEN_ADDR=127.0.0.1:4789
+LISTEN_ADDR=0.0.0.0:4789
 TARGET=x86_64-unknown-linux-musl
 OLD_COUNT=2
 HEALTH_TRIES=6
@@ -124,7 +124,15 @@ remote_state() {
 local_checks() {
 	bash -n scripts/deploy.sh || die "deploy.sh 语法错"
 	bash -n scripts/deploy-check.sh || die "deploy-check.sh 语法错"
-	grep -q '^Environment=NOUS_LISTEN=127\.0\.0\.1:4789$' "$UNIT_SRC" || die "unit 不是回环监听（判据 9b）"
+	# 判据 9b 的新口径（#50 落地后）：绑非回环是**允许**的，但必须成对出现
+	# ——`NOUS_LISTEN` 非回环 + `NOUS_TOKEN_FILE` 指向 token；缺一个就拒绝部署，
+	# 别等到进程起来 `refuse: no-token-on-non-loopback` 才发现。
+	grep -qxF "Environment=NOUS_LISTEN=$LISTEN_ADDR" "$UNIT_SRC" || die "unit 的 NOUS_LISTEN 不是 $LISTEN_ADDR（判据 9b）"
+	case "$LISTEN_ADDR" in
+	127.0.0.1:*|localhost:*) : ;;
+	*) grep -qxF 'Environment=NOUS_TOKEN_FILE=/etc/nous/token' "$UNIT_SRC" \
+		|| die "unit 绑了非回环却没有 NOUS_TOKEN_FILE（判据 9b：裸奔不许部署）" ;;
+	esac
 }
 
 # 票面契约：--check 固定两行 quick_check=ok / schema=<n>。
@@ -316,10 +324,15 @@ do_deploy() {
 	preflight_remote
 	build_binary
 	# 幂等：同 sha 且 current 已指过去 → 零副作用（数据/产物树都不动）。
-	local cur
+	local cur unit_remote
 	cur=$(rs_out readlink /opt/nous-app/current 2>/dev/null || true)
-	if [ "${cur##*/}" = "$BIN_NAME" ]; then
-		info "同 sha（$BIN_SHA）已部署，current 不变（幂等）"
+	# 幂等判据是「产物 + 单元」两样都一样，**不是只看产物**：
+	# 只改 unit（例如把监听从回环改成 0.0.0.0、把 RestartPreventExitStatus 加上）时，
+	# 二进制 sha 不变，只看二进制就会静默什么都不做 —— 实测踩到：改了 unit 跑 deploy，
+	# 它说「同 sha 已部署」然后退出，远端还是老 unit。
+	unit_remote=$(rs_out sha256sum "$UNIT_DST" 2>/dev/null | awk '{print $1}' || true)
+	if [ "${cur##*/}" = "$BIN_NAME" ] && [ "$unit_remote" = "$(unit_sha)" ]; then
+		info "同 sha（$BIN_SHA）且 unit 未变，current 不变（幂等）"
 		exit 0
 	fi
 	remote_state

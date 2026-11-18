@@ -1,5 +1,5 @@
 [Unit]
-Description=Nous kernel (nous-app) — /v1/* on 127.0.0.1:4789
+Description=Nous kernel (nous-app) — /v1/* on 0.0.0.0:4789（token 必需）
 Documentation=https://github.com/JoeWest9966/Nous
 After=network-online.target
 Wants=network-online.target
@@ -10,7 +10,10 @@ User=nous
 Group=nous
 WorkingDirectory=/srv/nous/work
 Environment=HOME=/var/lib/nous
-Environment=NOUS_LISTEN=127.0.0.1:4789
+# 绑非回环：NousDesk 永远不和 Nous 同机，只监听回环的话客户端连不上。
+# 代价是「局域网可达」——所以这一行和下一行是**一对**：没有 token 文件，
+# 进程会 `refuse: no-token-on-non-loopback` 退出 78（不是裸奔启动）。
+Environment=NOUS_LISTEN=0.0.0.0:4789
 Environment=NOUS_DB=/var/lib/nous/nous.db
 Environment=NOUS_TOKEN_FILE=/etc/nous/token
 ExecStart=/opt/nous-app/current/nous-app

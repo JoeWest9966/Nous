@@ -1083,8 +1083,11 @@ if [ "$WHAT" = all ] || [ "$WHAT" = deploy ]; then
 			bad "单元缺：$MISSING"
 		fi
 		# 回环哨兵（判据 9b 的静态那一半）：#50 落地前不许把 env 改成 0.0.0.0。
-		if grep -qxF 'Environment=NOUS_LISTEN=127.0.0.1:4789' "$UNIT"; then
-			ok "单元静态哨兵：NOUS_LISTEN=127.0.0.1:4789（#50 前不许 0.0.0.0）"
+		# 判据 9b（#50 落地后的口径）：绑非回环**允许**，但必须成对出现 ——
+		# 非回环监听 + token 文件。只把监听改成 0.0.0.0 而没 token，就是裸奔。
+		if grep -qxF 'Environment=NOUS_LISTEN=0.0.0.0:4789' "$UNIT" \
+		   && grep -qxF 'Environment=NOUS_TOKEN_FILE=/etc/nous/token' "$UNIT"; then
+			ok "单元静态哨兵：绑 0.0.0.0:4789 且带 NOUS_TOKEN_FILE（非回环 ⇒ 必须有 token）"
 		else
 			bad "单元监听不是回环（判据 9b）"
 		fi
