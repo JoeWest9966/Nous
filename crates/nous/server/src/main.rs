@@ -203,6 +203,16 @@ async fn run() -> Result<(), RunError> {
             registry.clone(),
         )),
         Err(error) => {
+            // 「库比代码新」是**不想起**（78 + `refuse: schema-too-new`），不是崩了（2）。
+            // `StorageError::is_schema_too_new()` 早就写好了，但一直没人接上，于是
+            // SchemaTooNew 走下面那条泛化路径 → 退出码 2 → systemd 每 3 秒拉一次，
+            // 正是 unit 里 `RestartPreventExitStatus=78` 要挡的那件事（j1900 上实测抓到）。
+            if error.is_schema_too_new() {
+                return Err(RunError::Refused(
+                    "schema-too-new",
+                    format!("{db}: {error}"),
+                ));
+            }
             if is_upstream_v2(&db) {
                 return Err(format!(
                     "{db} is an upstream v2 library; the writer refuses it by design \
@@ -242,6 +252,9 @@ async fn run() -> Result<(), RunError> {
         &nous_server::runtime::ProcessEnvValues,
         session,
     )?;
+    // 只有 faux 装配才在点火后自动跑一轮（和 `POST /messages` 同一条规矩：真 provider
+    // 的轮次由各自的生成路径负责，这里拿 faux Model 硬跑一轮会产出一条假回复）。
+    let trigger_driver = if faux { Some(assembled.driver.clone()) } else { None };
     let state = state.with_runtime(Arc::new(assembled));
     // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
     // 不另开第二个 Storage。
@@ -249,6 +262,50 @@ async fn run() -> Result<(), RunError> {
         std::path::PathBuf::from(&db),
         commands.session().clone(),
     );
+
+    // #57：触发器是自己的库（nous-triggers.db），点火走的是上面那条同一个 Session。
+    // 默认和 `NOUS_DB` 同目录，不落 cwd：systemd 的 WorkingDirectory 是 /srv/nous/work，
+    // 落 cwd 会把数据写到工作目录而不是数据目录。
+    let triggers_db = std::env::var("NOUS_TRIGGER_DB").unwrap_or_else(|_| {
+        Path::new(&db)
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .join("nous-triggers.db")
+            .to_string_lossy()
+            .into_owned()
+    });
+    let trigger_store = nous_store::Store::open(&triggers_db)
+        .map_err(|error| RunError::Failed(format!("open {triggers_db}: {error}").into()))?;
+    let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
+    let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
+        let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
+        let address = serde_json::json!({
+            "kind": "presets.Session-Template",
+            "scope": { "kind": "session" },
+            "key": name,
+        });
+        let Ok(Some(record)) = readonly
+            .find_document(&address, nous_durable::DocumentPoint::Current)
+        else {
+            return None;
+        };
+        let id = record.get("id").and_then(serde_json::Value::as_i64)?;
+        readonly
+            .materialize(id, nous_durable::DocumentPoint::Current)
+            .ok()
+            .flatten()
+            .and_then(|doc| doc.value.get("body").and_then(serde_json::Value::as_str).map(str::to_string))
+    });
+    let trigger_runtime = nous_server::triggers::TriggerRuntime::new(
+        trigger_store,
+        commands.session().clone(),
+        lookup,
+        trigger_driver,
+        None,
+        std::path::PathBuf::from(&db),
+    )?;
+    let state = state.with_triggers(trigger_runtime);
 
     // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
     // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。
@@ -301,7 +358,10 @@ async fn run() -> Result<(), RunError> {
         state.with_origin(format!("http://{actual}"))
     };
     let app: Router = match token {
-        Some(token) => router(state).layer(axum::middleware::from_fn(move |req, next| {
+        // 用 `route_layer` 而不是 `layer`：认证只裹**匹配到的路由**。
+        // 用 `layer` 时未知路径也会先过认证，`/health` 这类探测点会回 401 而不是 404
+        // （判据 9 的「负空间」：没东西的地方就该是 404，不能因为有没有 token 而变成 401）。
+        Some(token) => router(state).route_layer(axum::middleware::from_fn(move |req, next| {
             auth::require_bearer(token.clone(), req, next)
         })),
         None => router(state),

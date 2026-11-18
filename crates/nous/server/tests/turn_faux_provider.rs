@@ -40,14 +40,8 @@ fn workdir(tag: &str) -> PathBuf {
 }
 
 fn bin() -> PathBuf {
-    // 和 verify.sh 一样认 CARGO_TARGET_DIR；测试自己把产物当被测对象，路径只有一个来源。
-    let target = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target")
-            .to_string_lossy()
-            .into_owned()
-    });
-    Path::new(&target).join("debug/nous-app")
+    // `CARGO_BIN_EXE_<name>` 由 cargo 为集成测试注入；不用手拼 target 路径（拼错一层就静默 NotFound）。
+    PathBuf::from(env!("CARGO_BIN_EXE_nous-app"))
 }
 
 impl Server {
@@ -57,7 +51,10 @@ impl Server {
         let out = dir.join("stdout.log");
         let err = dir.join("stderr.log");
         let mut cmd = Command::new(bin());
+        // #50：HOME 下的 token 文件会让 /v1/* 全量 401。测试用自己的 HOME，
+        // 不借用开发机上的凭据（否则并行测试/开发机状态决定红灯）。
         cmd.current_dir(&dir)
+            .env("HOME", &dir)
             .env("NOUS_DB", &db)
             // 测试不许继承开发机上的真 token（`~/.config/nous/token`）：那个文件一存在，
             // `/v1/*` 就全量 401，这条判据会在别人的机器上莫名其妙地红。

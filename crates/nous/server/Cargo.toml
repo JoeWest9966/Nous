@@ -27,6 +27,7 @@ nous-sessions = { workspace = true }
 nous-runtime = { workspace = true }
 nous-tools = { workspace = true }
 nous-ai = { workspace = true }
+nous-store = { workspace = true }
 async-trait = { workspace = true }
 nous-wire = { workspace = true }
 nous-telemetry = { workspace = true }
@@ -43,6 +44,8 @@ base64 = { workspace = true }
 # 也就没有端口冲突和防火墙那类假红。`tower` 只进测试。
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+# 判据 `refusal_schema_too_new`：把库的版本推到「代码看不懂」那一版（真 SQL，不调我们的迁移）。
+rusqlite = { workspace = true }
 # 判据 1/3 的进程级哨兵：临时 HOME 下的 token 文件权限与读取。
 tempfile = { workspace = true }
 # `start_paused` 虚拟时钟：合帧判据必须能精确说「窗口差 1 ms 时还没发」。

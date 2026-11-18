@@ -1405,9 +1405,11 @@ dependencies = [
  "nous-durable",
  "nous-runtime",
  "nous-sessions",
+ "nous-store",
  "nous-telemetry",
  "nous-tools",
  "nous-wire",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
@@ -1436,6 +1438,8 @@ name = "nous-store"
 version = "0.1.0"
 dependencies = [
  "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 

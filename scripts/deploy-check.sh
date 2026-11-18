@@ -139,8 +139,15 @@ fi
 
 step '判据 2c：拒绝启动停在 failed，300 秒不拉起（--wait）'
 if [ -x "$CURRENT" ]; then
-	TMPDB=$(mktemp -d)/nous.db
+	# 坏库必须**服务用户读得到**：`mktemp -d` 建的是 0700 root 的目录，服务以 nous 身份跑，
+	# 连接不上 → 退出码 2（不是 78），于是看起来像「拒绝启动没落 78」，实际是判据自己造错了现场。
+	TMPDIR_=$(mktemp -d "$DATA_DIR/.check-XXXXXX") || TMPDIR_=""
+	[ -n "$TMPDIR_" ] || { bad 'mktemp 失败'; TMPDIR_=/tmp; }
+	chown nous:nous "$TMPDIR_" 2>/dev/null || true
+	chmod 0750 "$TMPDIR_" 2>/dev/null || true
+	TMPDB=$TMPDIR_/nous.db
 	cp "$DATA_DIR/nous.db" "$TMPDB" 2>/dev/null || true
+	chown nous:nous "$TMPDB" 2>/dev/null || true
 	python3 - "$TMPDB" <<'PY'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
@@ -171,6 +178,7 @@ PY
 		fi
 		rm -f "$OVERRIDE"
 		rmdir "$(dirname "$OVERRIDE")" 2>/dev/null || true
+		rm -rf "$TMPDIR_" 2>/dev/null || true
 		systemctl daemon-reload
 		systemctl restart nous-app || true
 	else

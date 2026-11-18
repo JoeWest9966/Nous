@@ -13,13 +13,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn bin() -> PathBuf {
-    let target = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target")
-            .to_string_lossy()
-            .into_owned()
-    });
-    Path::new(&target).join("debug/nous-app")
+    // `CARGO_BIN_EXE_<name>` 由 cargo 为集成测试注入；不用手拼 target 路径（拼错一层就静默 NotFound）。
+    PathBuf::from(env!("CARGO_BIN_EXE_nous-app"))
 }
 
 fn curl(args: &[&str]) -> String {

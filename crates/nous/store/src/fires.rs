@@ -46,6 +46,8 @@ pub enum FireState {
     Done,
     /// 超过宽限期还是 `pending`：那次提交大概失败了。可以重放。
     Orphaned,
+    /// 串行策略下上一轮还在跑，本次没有提交（不是失败，不重放）。
+    Skipped,
 }
 
 impl FireState {
@@ -54,6 +56,7 @@ impl FireState {
             Self::Pending => "pending",
             Self::Done => "done",
             Self::Orphaned => "orphaned",
+            Self::Skipped => "skipped",
         }
     }
 
@@ -63,6 +66,7 @@ impl FireState {
             "pending" => Ok(Self::Pending),
             "done" => Ok(Self::Done),
             "orphaned" => Ok(Self::Orphaned),
+            "skipped" => Ok(Self::Skipped),
             other => Err(StoreError::StateUnknown { state: other.to_string() }),
         }
     }
@@ -119,6 +123,7 @@ pub fn reclaim(rows: &[Fire], now_ms: i64) -> Vec<Action> {
                 actions.push(replay(fire));
             }
             FireState::Orphaned => actions.push(replay(fire)),
+            FireState::Skipped => continue,
         }
     }
     actions
@@ -212,6 +217,26 @@ impl Store {
             code,
             fire_at,
         )
+    }
+
+    /// 串行策略命中：`pending` → `skipped`（不进 reclaim，不重放）。
+    pub fn mark_skipped(&self, code: &str, fire_at: i64) -> Result<()> {
+        self.transition(
+            "UPDATE fires SET state = 'skipped' WHERE trigger_code = ?1 AND fire_at = ?2 AND state = 'pending'",
+            code,
+            fire_at,
+        )
+    }
+
+    /// 落账时已知模板缺失：直接写成 `orphaned` + note（没有 entry，不该被重放成空轮）。
+    pub fn mark_orphaned_with_note(&self, code: &str, fire_at: i64, note: &str) -> Result<()> {
+        self.record_fire(code, fire_at, Some(note))?;
+        self.conn.execute(
+            "UPDATE fires SET state = 'orphaned', note = ?3
+              WHERE trigger_code = ?1 AND fire_at = ?2",
+            params![code, fire_at, note],
+        )?;
+        Ok(())
     }
 
     /// 状态迁移的公共尾巴：改到 0 行要么是「已经是那个状态」（幂等，OK），要么是「没这笔账」。
