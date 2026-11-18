@@ -62,6 +62,10 @@ impl Server {
         cmd.current_dir(&dir)
             .env("HOME", &dir)
             .env("NOUS_DB", &db)
+            // 测试不许继承开发机上的真 token（`~/.config/nous/token`）：那个文件一存在，
+            // `/v1/*` 就全量 401，这条判据会在别人的机器上莫名其妙地红。
+            .env("HOME", &dir)
+            .env("NOUS_TOKEN_FILE", dir.join("no-token"))
             .env("NOUS_LISTEN", "127.0.0.1:0")
             .stdout(Stdio::from(std::fs::File::create(&out).unwrap()))
             .stderr(Stdio::from(std::fs::File::create(&err).unwrap()));

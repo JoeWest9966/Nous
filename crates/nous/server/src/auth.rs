@@ -27,6 +27,19 @@ pub fn default_token_path() -> PathBuf {
     home.join(".config/nous/token")
 }
 
+/// 启动时**实际**读的那个 token 文件：`NOUS_TOKEN_FILE` 优先，否则 `~/.config/nous/token`。
+///
+/// 为什么要这个开关：`deploy/nous-app.service` 里 token 在 `/etc/nous/token`
+/// （`deploy.sh` 生成、`root:nous` `0640`，钥匙住在数据目录之外），而默认路径按 `$HOME` 算。
+/// **两边不许各猜一个路径** —— 猜错的后果是「运维轮转了 token，进程读的却是另一个文件」，
+/// 表现成「认证没生效」或者「怎么都起不来」。
+pub fn token_path() -> PathBuf {
+    match std::env::var("NOUS_TOKEN_FILE") {
+        Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
+        _ => default_token_path(),
+    }
+}
+
 /// token 文件的权限是否为 0600（只判权限位，不判文件是否在）。
 pub fn has_secured_permissions(path: &std::path::Path) -> io::Result<bool> {
     Ok(path.metadata()?.permissions().mode() & 0o777 == 0o600)

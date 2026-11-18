@@ -25,6 +25,8 @@ pub fn device(models: &ModelsResponse) -> Value {
         "origin": std::env::var("NOUS_ORIGIN").ok(),
         "node": env!("CARGO_PKG_VERSION"),
         "version": env!("CARGO_PKG_VERSION"),
+        "build": crate::version::build_id(),
+        "target": crate::version::target_triple(),
         "startedAt": started_at(),
         "model": default,
         "faux": false,

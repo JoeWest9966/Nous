@@ -507,7 +507,10 @@ allow={
  'nous-tools': {'nous-ai','nous-env'},
  'nous-runtime': {'nous-ai'},
  'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
- 'nous-server': {'nous-durable','nous-wire','nous-telemetry'},
+ # nous-server 是**组装根**：它必须摸到这些层才能把 HTTP 面拼起来（#44/#47/#48/#49/#51）。
+ # 这一节扩边不等于放宽「内核层不依赖应用层」——那条是判据 2，另有人在守。
+ 'nous-server': {'nous-durable','nous-wire','nous-telemetry',
+                 'nous-ai','nous-runtime','nous-sessions','nous-tools','nous-documents'},
  # #56：Nous 自己的库。**没有内部依赖**（尤其没有 nous-durable）—— 多一条边就是判据 1 破了。
  'nous-store': set(),
 }
@@ -1026,6 +1029,36 @@ for p in m['packages']:
 fi
 
 # ════════════════════════════════════════════════════════════════════════════
+# 6a. #52 判据 2b / 16（不动第 5 段的 15 条边界判据口径）
+# ════════════════════════════════════════════════════════════════════════════
+if [ "$WHAT" = all ] || [ "$WHAT" = issue52 ]; then
+	step "6a. #52：拒绝启动常量与理由表"
+
+	EXIT_REFUSED_SRC=$(grep -oE 'EXIT_REFUSED: u8 = [0-9]+' crates/nous/server/src/refusal.rs | sed -E 's/.*= ([0-9]+)/\1/' || true)
+	if [ "$EXIT_REFUSED_SRC" = 78 ]; then
+		ok "2b. 源码 EXIT_REFUSED == 78"
+	else
+		bad "2b. 源码 EXIT_REFUSED 找不到或不等于 78：'$EXIT_REFUSED_SRC'"
+	fi
+	# 52b 才写 unit；unit 不在时只守常量，不假绿也不假红。
+	if [ -f deploy/nous-app.service ]; then
+		UNIT_EXIT=$(grep -oE 'RestartPreventExitStatus=[0-9]+' deploy/nous-app.service | sed -E 's/.*=([0-9]+)/\1/' || true)
+		if [ -n "$EXIT_REFUSED_SRC" ] && [ "$UNIT_EXIT" = "$EXIT_REFUSED_SRC" ]; then
+			ok "2b. unit RestartPreventExitStatus == 源码 EXIT_REFUSED ($UNIT_EXIT)"
+		else
+			bad "2b. unit RestartPreventExitStatus='$UNIT_EXIT' 与源码 EXIT_REFUSED='$EXIT_REFUSED_SRC' 不同值"
+		fi
+	else
+		skip "2b. deploy/nous-app.service 不存在（52b 负责），只核对源码常量"
+	fi
+
+	if cargo test -p nous-server --lib refusal:: 2>/dev/null | grep -q 'test result: ok'; then
+		ok "16. 拒绝理由表 slug 唯一 + decide_refusal 覆盖每条（cargo test）"
+	else
+		bad "16. refusal 单测未通过（slug 唯一性 / decide_refusal 全覆盖）"
+	fi
+fi
+
 # 6. #52 部署资产（追加段：不改上面任何判据的口径与顺序）
 #    2a 单元文本断言 + systemd-analyze verify（可用时）
 #    15 脚本零凭据（git grep 命中数 == 0）

@@ -34,8 +34,8 @@ schemars = { version = "0.8", features = ["preserve_order"] }
 # `cargo tree -p nous-durable` 里会冒出 hyper/tower-http —— 语义层就"绑上传输"了。
 jsonschema = { version = "0.18", default-features = false }
 indexmap = { version = "2", features = ["serde"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
-axum = { version = "0.8", features = ["macros"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
+axum = "0.8"
 thiserror = "1"
 tracing = "0.1"
 uuid = { version = "1", features = ["v4", "v7"] }
