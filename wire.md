@@ -529,7 +529,7 @@ history / diff / validate / pending）语义不变。一个 `section` = 一个�
 - 节点形状是 `{id, title, kind, parent, children, order, trashedAt}`，字段含义由测试指针固定；
   这里只写约束：`kind` 只能是 `folder` 或 `doc`；`parent` 是父节点 id 或空；`children` 按
   `order` 升序；`trashedAt` 是回收墓碑（毫秒或空），空 = 在世。
-- 移动/重排必须原子：一次 PUT 同时改源父的 `children`、目标父的 `children`、节点自身的
+- 移动/重排必须原子：一次 `move` 写同时改源父的 `children`、目标父的 `children`、节点自身的
   `parent/order`；库里不存在「孩子搬走了但旧父还挂着」的中间态。
 - 环和自引用写不进库：目标等于自身或自己的后代时回 400 或 409，`{ error }` 点出命中节点；
   旧树原样留在库里。找不到父/节点回 404。
