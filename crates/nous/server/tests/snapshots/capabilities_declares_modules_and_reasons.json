@@ -50,7 +50,12 @@
         "GET /v1/documents/{kind}/{section}/{name}/history",
         "GET /v1/documents/{kind}/{section}/{name}/history/diff",
         "GET /v1/documents/{kind}/{section}/{name}/pending",
-        "GET /v1/documents/{kind}/{section}/{name}/pending/diff"
+        "GET /v1/documents/{kind}/{section}/{name}/pending/diff",
+        "POST /v1/documents/tree/{section}/{name}/move",
+        "POST /v1/documents/tree/{section}/{name}/trash",
+        "POST /v1/documents/tree/{section}/{name}/restore",
+        "POST /v1/documents/tree/{section}/{name}/purge",
+        "POST /v1/documents/tree/{section}/{name}/import"
       ]
     },
     {
