@@ -6,5 +6,5 @@
 pub mod catalog;
 pub mod render;
 
-pub use catalog::{read_catalog, Catalog, PromptEntry, Template};
+pub use catalog::{catalog_value, read_catalog, read_template, Catalog, PromptEntry, Template};
 pub use render::render;

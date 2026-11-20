@@ -1388,6 +1388,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-prompts"
+version = "0.1.3"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "nous-runtime"
 version = "0.1.3"
 dependencies = [
