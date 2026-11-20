@@ -1343,6 +1343,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-env-ssh"
+version = "0.1.3"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "nous-env",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "nous-ext"
 version = "0.1.3"
 dependencies = [
@@ -1415,6 +1428,7 @@ dependencies = [
  "nous-documents",
  "nous-durable",
  "nous-env",
+ "nous-env-ssh",
  "nous-runtime",
  "nous-sessions",
  "nous-store",

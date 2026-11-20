@@ -108,19 +108,47 @@ const FS_DIRS_LIMIT: usize = 500;
 
 /// `GET /v1/fs/dirs`：只读列子目录。
 ///
-/// 路径规则与本机判定都在 `nous_env::dirs`（env 插件读唯一一次环境变量）；
-/// 远端 `machine` 明确 501，不静默退回本机。
+/// 路径规则与本机判定都在 `nous_env::dirs`；显式远端 `machine` 走 env-ssh，
+/// 编目里没有 → 404，连不上 → 502，绝不静默退回本机。
 async fn fs_dirs(Query(query): Query<FsDirsQuery>) -> Result<Json<Value>> {
-    if !nous_env::is_local_machine(query.machine.as_deref()) {
-        return Err(ServerError::NotImplemented("ssh 未实现".to_string()));
+    let hidden = query.hidden.as_deref() == Some("1");
+    if let Some(machine) = query.machine.as_deref().filter(|name| !name.is_empty()) {
+        if !nous_env::is_local_machine(Some(machine)) {
+            let result = nous_env_ssh::remote_subdirs(
+                machine,
+                query.path.as_deref().unwrap_or(""),
+                hidden,
+                FS_DIRS_LIMIT,
+            )
+            .await
+            .map_err(fs_remote_error)?;
+            return Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)));
+        }
     }
     let result = nous_env::list_subdirs(
         query.path.as_deref().unwrap_or(""),
-        query.hidden.as_deref() == Some("1"),
+        hidden,
         FS_DIRS_LIMIT,
     )
     .map_err(fs_dirs_error)?;
     Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
+}
+
+fn fs_remote_error(error: nous_env_ssh::RemoteDirsError) -> ServerError {
+    use nous_env_ssh::RemoteDirsError;
+    match error {
+        RemoteDirsError::MachineNotFound => ServerError::NotFound("机器不在编目里".to_string()),
+        RemoteDirsError::Unreachable(message) => ServerError::BadGateway(message),
+        RemoteDirsError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        RemoteDirsError::NotFound => ServerError::NotFound("远端目录不存在".to_string()),
+        RemoteDirsError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个远端目录".to_string())
+        }
+        RemoteDirsError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        RemoteDirsError::Other => ServerError::Internal("远端目录读不出来".to_string()),
+    }
 }
 
 fn fs_dirs_error(error: nous_env::BrowseError) -> ServerError {
