@@ -20,7 +20,8 @@
         "POST /v1/sessions/:id/abort",
         "POST /v1/sessions/:id/fork",
         "POST /v1/sessions/:id/rename",
-        "POST /v1/sessions/:id/pin"
+        "POST /v1/sessions/:id/pin",
+        "GET /v1/search"
       ]
     },
     {
@@ -100,12 +101,22 @@
       ]
     },
     {
+      "name": "stats",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/stats/usage",
+        "GET /v1/stats/tasks",
+        "GET /v1/stats/db"
+      ]
+    },
+    {
       "name": "device",
       "enabled": true,
       "endpoints": [
         "GET /v1/machines",
         "GET /v1/models",
         "PUT /v1/default",
+        "POST /v1/catalog/refresh",
         "GET /v1/device",
         "GET /v1/capabilities",
         "GET /v1/openapi.json",

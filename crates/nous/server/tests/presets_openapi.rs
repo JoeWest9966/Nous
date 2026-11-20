@@ -60,6 +60,7 @@ async fn openapi_presets_paths_match_the_contract_exactly() {
     let mut generated = BTreeSet::new();
     let paths = body["paths"].as_object().unwrap_or_else(|| panic!("OpenAPI 缺 paths：{body}"));
     for (path, item) in paths {
+        if !path.starts_with("/v1/presets") { continue; }
         for method in ["get", "put", "post", "patch", "delete"] {
             if item.get(method).is_some() {
                 generated.insert(format!("{} {path}", method.to_uppercase()));
