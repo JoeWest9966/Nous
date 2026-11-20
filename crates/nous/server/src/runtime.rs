@@ -49,6 +49,8 @@ pub fn faux_catalog() -> ModelsResponse {
             state: "ok",
             source: None,
             path: PathBuf::from(nous_device::DEFAULT_MODELS_FILE),
+            fetched_at: None,
+            error: None,
         },
     }
 }

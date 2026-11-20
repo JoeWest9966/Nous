@@ -25,6 +25,8 @@ pub struct AppState {
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
     models: nous_device::ModelsResponse,
+    /// #79：最近一次远端刷新的编目（成功时才写，失败保留旧表）。
+    refreshed: std::sync::Mutex<Option<nous_device::ModelsResponse>>,
     /// #65：模型编目的来源快照（`NOUS_MODELS` / `NOUS_MODELS_FILE`），由入口读一次。
     catalog_env: nous_device::CatalogEnvironment,
     /// 显式注入的编目（faux 验收 / 测试快照）优先于文件来源。
@@ -48,6 +50,7 @@ impl AppState {
             commands,
             hub,
             models: nous_device::ModelsResponse::default(),
+            refreshed: std::sync::Mutex::new(None),
             catalog_env: nous_device::CatalogEnvironment::from_env(),
             injected_models: false,
             runtime: std::sync::Mutex::new(None),
@@ -88,6 +91,7 @@ impl AppState {
             commands: commands.clone(),
             hub: Hub::new(),
             models: nous_device::ModelsResponse::default(),
+            refreshed: std::sync::Mutex::new(None),
             catalog_env: nous_device::CatalogEnvironment::from_env(),
             injected_models: false,
             runtime: std::sync::Mutex::new(None),
@@ -132,6 +136,7 @@ impl AppState {
             hub: self.hub.clone(),
             models,
             catalog_env: self.catalog_env.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             injected_models: true,
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
@@ -145,8 +150,23 @@ impl AppState {
         })
     }
 
-    pub fn models(&self) -> &nous_device::ModelsResponse {
-        &self.models
+    /// 最近一次远端刷新的编目优先；没有就回静态来源的那份。
+    pub fn models(&self) -> nous_device::ModelsResponse {
+        self.refreshed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .unwrap_or_else(|| self.models.clone())
+    }
+
+    /// 只看远端刷新那一份（没有就是 None），给路由判断要不要读文件来源。
+    pub fn refreshed_models(&self) -> Option<nous_device::ModelsResponse> {
+        self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// 远端刷新成功后换入新编目；失败不调用，旧表原样保留。
+    pub fn set_models(&self, models: nous_device::ModelsResponse) {
+        *self.refreshed.lock().unwrap_or_else(|p| p.into_inner()) = Some(models);
     }
 
     pub fn injected_models(&self) -> bool {
@@ -160,6 +180,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env,
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(
@@ -194,6 +215,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(
@@ -254,6 +276,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
@@ -275,6 +298,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),

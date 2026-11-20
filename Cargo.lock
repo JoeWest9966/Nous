@@ -1300,6 +1300,7 @@ dependencies = [
 name = "nous-device"
 version = "0.1.3"
 dependencies = [
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",

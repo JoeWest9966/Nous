@@ -7,6 +7,7 @@ license.workspace = true
 description = "device 插件：机器编目、模型编目与默认模型（app 层）"
 
 [dependencies]
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

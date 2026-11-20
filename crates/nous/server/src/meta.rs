@@ -146,6 +146,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
+    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/sessions/:id/entries", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },

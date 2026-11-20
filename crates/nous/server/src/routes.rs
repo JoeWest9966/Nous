@@ -68,6 +68,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/fs/dirs", get(fs_dirs))
         .route("/v1/models", get(models))
         .route("/v1/default", put(put_default))
+        .route("/v1/catalog/refresh", post(catalog_refresh))
         .route("/v1/device", get(device))
         .route("/v1/selection", get(selection))
         .route("/v1/unread", get(unread))
@@ -247,7 +248,8 @@ async fn pin(
 
 /// `GET /v1/device`：进程/宿主配置，About 面板读它。
 async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(crate::meta::device(state.models()))
+    let models = state.models();
+    Json(crate::meta::device(&models))
 }
 
 /// `GET /v1/selection`：当前选中的会话（配置里没有就 null）。
@@ -360,17 +362,47 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(body)
 }
 
+/// `POST /v1/catalog/refresh`：拉一次远端编目，成功写缓存并换入内存；失败留旧表带 error。
+/// 响应形状 `{default, items, fetchedAt, error?}`：token 只经内存请求头，不进响应/日志。
+async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    match nous_device::refresh_remote_catalog(state.catalog_env()).await {
+        Ok(models) => {
+            state.set_models(models.clone());
+            let mut body = serde_json::to_value(&models).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = models.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            Ok(Json(body))
+        }
+        Err(error) => {
+            // 失败保留旧编目：内存里最近一次刷新的那份优先；否则从本地缓存/文件读回。
+            let mut old = state.refreshed_models().unwrap_or_else(|| {
+                nous_device::load_models(state.catalog_env()).unwrap_or_default()
+            });
+            old.catalog.error = Some(error);
+            state.set_models(old.clone());
+            let top_error = old.catalog.error.clone().unwrap_or_default();
+            let mut body = serde_json::to_value(&old).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = old.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            body["error"] = Value::String(top_error);
+            Ok(Json(body))
+        }
+    }
+}
+
 /// `GET /v1/models`：默认模型 + 列表 + 来源诊断块。
 ///
 /// 编目来源由 `nous-device` 收口：内联（`NOUS_MODELS`）> 文件 > 诚实空表；
 /// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
+/// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
 async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
     // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
     if state.injected_models() {
         if let Some(catalog) = state.assembled_models() {
             return Ok(Json(catalog));
         }
-        return Ok(Json(state.models().clone()));
+        return Ok(Json(state.models()));
+    }
+    if let Some(refreshed) = state.refreshed_models() {
+        return Ok(Json(refreshed));
     }
     let response = nous_device::load_models(state.catalog_env())
         .map_err(ServerError::Internal)?;
