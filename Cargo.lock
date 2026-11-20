@@ -1405,6 +1405,7 @@ dependencies = [
  "nous-durable",
  "nous-runtime",
  "nous-sessions",
+ "nous-stats",
  "nous-store",
  "nous-telemetry",
  "nous-tools",
@@ -1431,6 +1432,20 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "nous-stats"
+version = "0.1.3"
+dependencies = [
+ "nous-chord",
+ "nous-durable",
+ "nous-store",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

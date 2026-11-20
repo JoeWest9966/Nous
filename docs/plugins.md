@@ -53,6 +53,7 @@
 | `dispatcher` | nous | (待建) `nous-dispatcher` | app | 编译期 | 调度节拍（trigger → 会话） | 否 | 内核算核心三件之一，见下注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
 | `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口） | 否 | #57 落地；调度循环不在本票 |
+| `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | nous | — | app | 声明式 | 模板 / 终极模板名册 | 否 | Rust 版是否保留待判 |
 | `skills` | nous | — | app | 声明式 | skill 目录（提供） | 否 | 数据；管理面见下一行 |
@@ -89,9 +90,9 @@
 
 ## 注：与 `ls -d crates/*/*/` 的一一对应
 
-今天 `crates/nous/` 下 17 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 17 行：
+今天 `crates/nous/` 下 18 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 18 行：
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry` `documents`
-`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
+`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `stats` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用
 `cargo tree -p nous-durable --depth 2 | grep providers`，路径里带 `providers` 会让它永远假红。

@@ -77,7 +77,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/triggers/{code}/fires", get(trigger_fires))
-        .route("/v1/capabilities", get(capabilities));
+        .route("/v1/capabilities", get(capabilities))
+        .route("/v1/stats/usage", get(crate::stats::usage))
+        .route("/v1/stats/tasks", get(crate::stats::tasks))
+        .route("/v1/stats/db", get(crate::stats::db))
+        .route("/v1/openapi.json", get(crate::stats::openapi));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
     crate::documents::attach(state, router)
 }

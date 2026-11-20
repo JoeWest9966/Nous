@@ -81,6 +81,15 @@
       ]
     },
     {
+      "name": "stats",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/stats/usage",
+        "GET /v1/stats/tasks",
+        "GET /v1/stats/db"
+      ]
+    },
+    {
       "name": "device",
       "enabled": true,
       "endpoints": [
@@ -88,6 +97,7 @@
         "GET /v1/models",
         "GET /v1/device",
         "GET /v1/capabilities",
+        "GET /v1/openapi.json",
         "GET /v1/_routes"
       ]
     },
