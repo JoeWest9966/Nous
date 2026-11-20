@@ -162,6 +162,43 @@ async fn endpoint_deduplicates_categories_and_leaves_tracked_null() {
     }
 }
 
+/// 判据 6：跑完真扫描后整个目录的 sha256 不变（独立入口 `sha256sum`，不看产品代码）。
+#[tokio::test]
+async fn endpoint_never_writes_to_the_private_repo() {
+    let repo = Repo::fixture();
+    let before = repo_fingerprint(&repo.root);
+
+    let _ = get_skills(&repo.root).await;
+
+    let after = repo_fingerprint(&repo.root);
+    assert_eq!(after, before, "GET /v1/skills 改了私库里的文件");
+}
+
+fn repo_fingerprint(root: &std::path::Path) -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                walk(&path, out);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    walk(root, &mut files);
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let output = std::process::Command::new("sha256sum").arg(&path).output().unwrap();
+            assert!(output.status.success(), "sha256sum 失败");
+            let sha = String::from_utf8(output.stdout).unwrap();
+            (path.display().to_string(), sha.split_whitespace().next().unwrap().to_string())
+        })
+        .collect()
+}
+
 /// 判据 6：repo 块只给 root + present（#63 形状），没有 git 状态字段。
 #[tokio::test]
 async fn endpoint_repo_block_has_only_root_and_present() {
