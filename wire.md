@@ -393,6 +393,27 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - **只列 `load.state == "ok" && !hidden`**。`hidden` 是 `disable-model-invocation`，
   勾上也不会动；`state != ok` 的加载不出来。
 - `categories` 只是词表，和技能身上挂的 `category` 取并集才是栏里该有的那些。
+- `?usage=1`（#85）：反查模式，回 `{ <技能名>: [<会话 id>, ...] }` —— 谁在用这个技能。
+  没人用就回 `{}`（空映射，**不是 404**）。不带该参数仍是上面的技能目录形状。
+
+### GET /v1/extensions
+
+正常回清单形状（今天冻结为 `{ items: [] }`）。`?usage=1`（#85）回
+`{ <扩展名>: [<会话 id>, ...] }` —— 扫会话记录里的 `extensions` 字段；没人用回 `{}`，
+不因为一个可选参数把端点判死。
+
+### GET /v1/search
+
+`GET /v1/search?q=&kind=&limit=`（#85）：服务端一次扫描完成，**客户端不许逐会话拉正文**。
+
+- `kind=sessions` 搜会话名 + entry 正文；`kind=documents` 搜文档名（`kind/section/name`）
+  与正文；`kind=all`（默认）两者合并，新的在前。
+- 回 `{ items: [{kind, id, title, snippet, at}], total, truncated }`。`kind` 是
+  `"sessions" | "documents"`；`id` 是会话 id 的字符串 / 文档地址 `kind/name`；
+  `snippet` 带命中上下文（前后各 40 字符），`at` 是 epoch 毫秒，来源不明给 `null`。
+- `total` 是**命中总数**（不受 `limit` 影响）；`truncated = total > items.len()`。
+- `limit` 默认 20、上限 100、最小 1（越界夹到边界）。大小写不敏感；`q` 先 `trim`，
+  少于两个字符回 `400 {error}`（不许全表扫）。
 
 #71 把「盘上真相」补上（只解析 `SKILL.md` 的 frontmatter，不碰 git）：
 

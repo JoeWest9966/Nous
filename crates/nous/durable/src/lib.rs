@@ -26,6 +26,7 @@ pub use storage::commit::{
 };
 pub use storage::cursor::{Cursor, Page, ScanOrder};
 pub use storage::scans::{DocumentQuery, SubmissionQuery, TaskQuery};
+pub use storage::search::{search_documents, search_sessions, usage, SearchItem};
 pub use storage::storage::{EntryQuery, Storage};
 pub use storage::documents::{DocumentPoint, StoredDocument};
 pub use storage::writes::{

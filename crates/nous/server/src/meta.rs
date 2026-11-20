@@ -167,6 +167,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
+    // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
+    RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
     RegisteredRoute { method: "GET", path: "/v1/triggers", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/fire", module: "triggers" },

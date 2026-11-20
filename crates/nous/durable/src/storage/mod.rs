@@ -19,6 +19,7 @@ pub mod documents;
 pub mod cursor;
 pub mod import;
 pub mod scans;
+pub mod search;
 pub mod sessions;
 pub mod storage;
 pub mod writes;

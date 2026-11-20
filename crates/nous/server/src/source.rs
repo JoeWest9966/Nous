@@ -20,7 +20,8 @@ use nous_durable::storage::import::ImportedStore;
 use nous_durable::storage::sessions::{
     render_entries_page, render_live_message, render_sessions, SessionItem,
 };
-use serde_json::Value;
+pub use nous_durable::SearchItem;
+use serde_json::{json, Value};
 
 use crate::error::{Result, ServerError};
 
@@ -66,6 +67,18 @@ pub trait SessionSource: Send + Sync {
     /// 会话在不在。不存在时端点返回 404，而不是空快照。
     fn exists(&self, session: i64) -> Result<bool> {
         Ok(self.sessions()?.iter().any(|item| item.id == session))
+    }
+
+    /// #85：一次性搜索投影。服务端扫一次库，不让客户端逐会话拉历史。
+    fn search(&self, query: &str, kind: &str) -> Result<Vec<SearchItem>> {
+        let _ = (query, kind);
+        Err(ServerError::Conflict("search not configured".into()))
+    }
+
+    /// #85：谁在用某个扩展 / 技能。读会话记录的对应字段。
+    fn usage(&self, field: &str) -> Result<Value> {
+        let _ = field;
+        Ok(json!({}))
     }
 }
 
@@ -114,5 +127,39 @@ impl SessionSource for ImportedSource {
     fn live_message(&self, session: i64) -> Result<Option<Value>> {
         render_live_message(&self.store()?, session)
             .map_err(|error| ServerError::Internal(format!("render live message: {error}")))
+    }
+
+    fn search(&self, query: &str, kind: &str) -> Result<Vec<SearchItem>> {
+        let store = self.store()?;
+        let map_err = |error| ServerError::Internal(format!("search {kind}: {error}"));
+        let mut items = match kind {
+            "sessions" => nous_durable::search_sessions(&store, query).map_err(map_err)?,
+            "documents" => nous_durable::search_documents(&store, query).map_err(map_err)?,
+            _ => {
+                let mut items = nous_durable::search_sessions(&store, query).map_err(map_err)?;
+                items.extend(nous_durable::search_documents(&store, query).map_err(map_err)?);
+                items
+            }
+        };
+        // `all` 是两类命中的合并：会话 id 是数字（新的在前），文档地址是字符串，
+        // 两者没有同一条时间轴。按 kind 分组 + 组内降序，顺序稳定可断言。
+        items.sort_by(|a, b| {
+            b.kind
+                .cmp(&a.kind)
+                .then_with(|| match (a.kind, b.kind) {
+                    ("sessions", "sessions") => {
+                        let left = a.id.parse::<i64>().unwrap_or(0);
+                        let right = b.id.parse::<i64>().unwrap_or(0);
+                        right.cmp(&left)
+                    }
+                    _ => b.id.cmp(&a.id),
+                })
+        });
+        Ok(items)
+    }
+
+    fn usage(&self, field: &str) -> Result<Value> {
+        nous_durable::usage(&self.store()?, field)
+            .map_err(|error| ServerError::Internal(format!("usage {field}: {error}")))
     }
 }
