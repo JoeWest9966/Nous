@@ -712,3 +712,23 @@ j1900 上其实还留着 940K 的技能副本。插件机制在跑，内容进�
 
 **反悔点**：只有在确认有部署真的设了旧变量名时才加兼容层 —— 那时候必须让两个
 变量同时可读、且有一处判据断言"两者同时给出时谁赢"，不许默默 fallback。
+
+## 2026-11-20 · 远端编目刷新失败留旧表，密钥只在内存（#79）
+
+**症状**：TS 版靠 `NW_BASE/NW_TOKEN` 自动拉编目，Rust 侧 `/v1/models` 靠手填文件；
+模型表要么空、要么是人肉维护的过期副本。`POST /v1/catalog/refresh` 缺失意味着密钥轮换后
+只能重启进程。
+
+**决定**：`NOUS_CATALOG_BASE` + `NOUS_CATALOG_TOKEN` 拉 `{base}/models.json`，成功原子写
+`NOUS_MODELS_FILE`（无该变量则默认路径），回 `{default, items, fetchedAt}`；失败回 200 +
+`error`，items 保持上一份（内存优先、否则从文件读回），不清空。token 只以 Bearer 头在内存里
+过一手，不进缓存文件、不进日志、不进 HTTP 响应。诊断块从 `catalog: null` 变成 device 自己
+交代的 `{state, source, path, fetchedAt, error}`。
+
+**为什么**：失败时清空表等于把「这次没拉到」误报成「上游一个模型都没有」——客户端会据此
+把模型选择整个抹掉，比旧表过期更坏。token 落盘一次就再也不能靠「别看那个文件」收回。
+
+**反悔点**：若远端返回的是 TS 版 `/api/model?models=full` 的 envelope（`{ok, data.models}`），
+在 `refresh_with_client` 里加一层展开即可；当前票面写的是 `models.json` 一类结构，不在这里
+猜方言。若将来要支持多远端源，`source` 要从 `Option<&'static str>` 换成枚举/字符串，
+判据要跟着加一条并列来源优先级。
