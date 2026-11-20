@@ -471,6 +471,32 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
 - 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
 
+### documents 的盘面树（kind `tree`，#87）
+
+沿用 `documents` 的 12 条端点族（不新增写通道）：`GET /v1/documents/tree` 列段，
+`GET`/`PUT /v1/documents/tree/{section}/board` 读写一棵盘面树，其余端点（create / rename /
+history / diff / validate / pending）语义不变。一个 `section` = 一个盘面；每一盘面在库里
+只有一份 `tree.board` 文档，整棵树是它的字段。建节点、挂到父下、移动/重排、回收、恢复、
+清除都是对这一份文档的一次写（一次 durable 提交），没有 `tree.json` / `map/<node>/*.md`
+文件形态，也没有 `.trash/`。
+
+字段形状以 `crates/nous/server/tests/documents_tree.rs::tree_lifecycle_has_http_and_db_rows_on_every_step`
+为准（本文件只索引端点与约束）。
+
+- 节点形状是 `{id, title, kind, parent, children, order, trashedAt}`，字段含义由测试指针固定；
+  这里只写约束：`kind` 只能是 `folder` 或 `doc`；`parent` 是父节点 id 或空；`children` 按
+  `order` 升序；`trashedAt` 是回收墓碑（毫秒或空），空 = 在世。
+- 移动/重排必须原子：一次 PUT 同时改源父的 `children`、目标父的 `children`、节点自身的
+  `parent/order`；库里不存在「孩子搬走了但旧父还挂着」的中间态。
+- 环和自引用写不进库：目标等于自身或自己的后代时回 400 或 409，`{ error }` 点出命中节点；
+  旧树原样留在库里。找不到父/节点回 404。
+- 回收站是同一份树文档里的墓碑，不是另一张表也不是目录：`trashedAt` 非空即从正常树隐藏；
+  `restore` 回空；`purge` 是显式动作，清除节点及其后代，不可撤销。
+- 乐观锁：写请求带 `etag`（从 GET 拿到），与当前文档 etag 不一致回 409 —— 单用户边界
+  由修订版本承担，不靠锁文件。
+- 迁移从 2026-11-18 归档 tar 的旧 `tree.json` + `map/` 只读解析，导入成一盘面文档；
+  目标库仍只有 `nous.db` / `nous-plugins.db`，跨库顺序不变。
+
 ### GET /v1/prompts
 
 `{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
