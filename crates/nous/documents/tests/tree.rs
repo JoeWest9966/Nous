@@ -94,3 +94,13 @@ fn archived_tree_json_maps_groups_docs_and_gone_dirs_to_tombstones() {
     assert_eq!(tree.nodes["root"].title, "根目录");
     tree.check_integrity().unwrap();
 }
+
+#[test]
+fn malformed_cycle_in_stored_tree_is_rejected_not_looped_forever() {
+    let mut tree = BoardTree::default();
+    tree.create(node("a", None, 0)).unwrap();
+    tree.create(node("b", Some("a"), 0)).unwrap();
+    // 手工造一个坏环（正常 API 不会写出这种树）。
+    tree.nodes.get_mut("a").unwrap().parent = Some("b".into());
+    assert!(tree.move_to("a", Some("b".into()), 0).is_err(), "有坏环必须报错而不是转圈");
+}

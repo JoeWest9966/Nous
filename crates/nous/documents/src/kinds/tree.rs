@@ -100,7 +100,12 @@ impl BoardTree {
             return Err(TreeError::Cycle(id.into()));
         }
         let mut cursor = parent.clone();
+        let mut hops = 0;
         while let Some(ancestor) = cursor {
+            hops += 1;
+            if hops > self.nodes.len() {
+                return Err(TreeError::Cycle(id.into()));
+            }
             if ancestor == id {
                 return Err(TreeError::Cycle(id.into()));
             }
