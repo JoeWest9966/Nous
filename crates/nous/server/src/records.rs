@@ -7,7 +7,7 @@
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::models::ModelRef;
+use nous_device::ModelRef;
 
 /// `POST /v1/sessions` 的请求体。字段全 camelCase；snake_case 不报错但静默不生效，
 /// 所以这里显式写 `rename_all`，让字段表成为唯一权威。

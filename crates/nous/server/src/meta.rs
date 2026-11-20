@@ -7,38 +7,37 @@
 //! `ROUTES` 是 `/v1/*` 端点的唯一真相：`router()` 从这里装配真路由（documents 那一族由
 //! `documents::DOCUMENT_ROUTES` 生成，逐条登记在这里）、`capabilities()` 从这里生成
 //! `endpoints`、`_routes` 从这里吐调试视图。三处同源，才撑得住「声明不许说谎」。
+//!
+//! #65：device 段（机器 / 模型 / 默认模型）已经搬到 `nous-device` 插件，这里只留转发。
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::models::ModelsResponse;
-
 /// `GET /v1/device`。`node` 是引擎版本标识（About 面板显示），`startedAt` 是 epoch 毫秒。
-pub fn device(models: &ModelsResponse) -> Value {
-    let default = models.default.as_ref().map(|model| {
-        json!({ "provider": model.provider, "modelId": model.model_id })
-    });
+/// 数据装配归 `nous-device`；build / target 来自 server 的产物身份（它才知道自己是什么二进制）。
+pub fn device(models: &nous_device::ModelsResponse) -> Value {
+    let body = nous_device::device(models);
+    let default = body["model"].clone();
+    // 字段顺序按 wire.md 的既有快照钉住（serde_json 开了 preserve_order）。
     json!({
-        "self": std::env::var("NOUS_SELF").ok(),
-        "origin": std::env::var("NOUS_ORIGIN").ok(),
+        "self": body["self"],
+        "origin": body["origin"],
         "node": env!("CARGO_PKG_VERSION"),
         "version": env!("CARGO_PKG_VERSION"),
         "build": crate::version::build_id(),
         "target": crate::version::target_triple(),
-        "startedAt": started_at(),
+        "startedAt": body["startedAt"],
         "model": default,
-        "faux": false,
-        "data": std::env::var("NOUS_DATA").ok(),
-        "catalog": Value::Null,
-        "available": models.items.iter().map(|item| {
-            format!("{}/{}", item.provider, item.model_id)
-        }).collect::<Vec<_>>(),
+        "faux": body["faux"],
+        "data": body["data"],
+        "catalog": body["catalog"],
+        "available": body["available"],
     })
 }
 
-fn started_at() -> i64 {
+fn _started_at() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as i64)
@@ -128,6 +127,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/read/:id", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
+    RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/sessions/:id/entries", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },

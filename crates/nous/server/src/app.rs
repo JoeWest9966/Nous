@@ -24,7 +24,9 @@ pub struct AppState {
     source: Arc<dyn SessionSource>,
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
-    models: crate::models::ModelsResponse,
+    models: nous_device::ModelsResponse,
+    /// #65：模型编目的来源快照（`NOUS_MODELS` / `NOUS_MODELS_FILE`），由入口读一次。
+    catalog_env: nous_device::CatalogEnvironment,
     runtime: std::sync::Mutex<Option<Arc<AssembledRuntime>>>,
     documents: Option<DocumentService>,
     /// `capabilities.services[engine].base` 的单一来源：环境变量优先，绑定后由 `main` 覆盖。
@@ -43,7 +45,8 @@ impl AppState {
             source,
             commands,
             hub,
-            models: crate::models::ModelsResponse::default(),
+            models: nous_device::ModelsResponse::default(),
+            catalog_env: nous_device::CatalogEnvironment::from_env(),
             runtime: std::sync::Mutex::new(None),
             documents: Some(DocumentService::new(
                 Arc::new(EmptyBackend),
@@ -81,7 +84,8 @@ impl AppState {
             source,
             commands: commands.clone(),
             hub: Hub::new(),
-            models: crate::models::ModelsResponse::default(),
+            models: nous_device::ModelsResponse::default(),
+            catalog_env: nous_device::CatalogEnvironment::from_env(),
             runtime: std::sync::Mutex::new(None),
             documents: None,
             origin: std::env::var("NOUS_ORIGIN")
@@ -112,12 +116,13 @@ impl AppState {
     }
 
     /// 换入真编目：默认 catalog 是空的，宿主填进来才有内容。
-    pub fn with_models(self: Arc<Self>, models: crate::models::ModelsResponse) -> Arc<Self> {
+    pub fn with_models(self: Arc<Self>, models: nous_device::ModelsResponse) -> Arc<Self> {
         Arc::new(Self {
             source: self.source.clone(),
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models,
+            catalog_env: self.catalog_env.clone(),
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
@@ -130,8 +135,32 @@ impl AppState {
         })
     }
 
-    pub fn models(&self) -> &crate::models::ModelsResponse {
+    pub fn models(&self) -> &nous_device::ModelsResponse {
         &self.models
+    }
+
+    /// 换入编目来源快照（测试/入口一次性注入；运行时不读全局环境）。
+    pub fn with_catalog_env(self: Arc<Self>, catalog_env: nous_device::CatalogEnvironment) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            catalog_env,
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            documents: self.documents.as_ref().map(|_| DocumentService::new(
+                Arc::new(EmptyBackend),
+                Some(Arc::new(EmptyBackend)),
+            )),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+        })
+    }
+
+    pub fn catalog_env(&self) -> &nous_device::CatalogEnvironment {
+        &self.catalog_env
     }
 
     /// `NOUS_ORIGIN` 优先；绑到实际端口后由 `main` 用真地址覆盖。
@@ -150,6 +179,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            catalog_env: self.catalog_env.clone(),
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
@@ -192,7 +222,7 @@ impl AppState {
     }
 
     /// faux 装配的编目；没有装配时为空（诚实）。
-    pub fn assembled_models(&self) -> Option<crate::models::ModelsResponse> {
+    pub fn assembled_models(&self) -> Option<nous_device::ModelsResponse> {
         self.runtime().map(|runtime| runtime.models.clone())
     }
 
@@ -208,6 +238,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            catalog_env: self.catalog_env.clone(),
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(),
             origin: self.origin.clone(),
@@ -227,6 +258,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            catalog_env: self.catalog_env.clone(),
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: Some(DocumentService::new(
                 Arc::new(backend.clone()) as Arc<dyn nous_documents::store::DocumentReader>,

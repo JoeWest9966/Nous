@@ -322,6 +322,17 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - `thinkingLevels` 从少想到多（`off` … `max`），**每个模型不一样**。换模型必须按新模型的表
   重新夹档位（`off` 一定要在表里，没有就退成 `off`）。
 - 242 个模型是常态 —— 模型那一列必须能滚，别想着一次画完。
+- #65：多一个 `catalog: { state: "missing"|"ok", source: "env"|"file"|null, path }` 诊断块。
+  `missing` + `items: []` 是**诚实空表**（没有编目来源），客户端别把它当成「加载中」无限重试；
+  `ok` 时 `source` 指明是内联（`NOUS_MODELS`）还是文件（`NOUS_MODELS_FILE`），`path` 是看哪份文件。
+
+### PUT /v1/default
+
+body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `{ default, wrote: true }`。
+
+- 模型不在 `items` 里 → 400（`{ error: string }`），不许写一个不存在的模型。
+- 写是原子的（临时文件 + rename）：写入过程中断，旧文件与 mtime 不变。
+- 内联编目（`NOUS_MODELS`）没有文件路径可写 → 400，改用 `NOUS_MODELS_FILE`。
 
 ### GET /v1/skills
 
@@ -347,6 +358,8 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 ### GET /v1/machines
 
 `{ at, machines: [{ name, user, port, ips: [{addr,label}], addr, note, tags }] }`。
+
+- #65：机器编目优先读 `NOUS_MACHINES_FILE` 给的 JSON；没有就用内置两台（形状不变）。
 
 - 没有 `machine` 字段 = **本机**。名字要和创建请求里的 `machine` 对得上。
 

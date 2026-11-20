@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 /// 默认编目路径（`NOUS_MODELS_FILE` 未给时），也是诊断块里那条可诊断的路径。
 pub const DEFAULT_MODELS_FILE: &str = "/var/lib/nous/models.json";
@@ -210,4 +211,32 @@ fn builtin_machines() -> serde_json::Value {
             }
         ]
     })
+}
+
+/// `GET /v1/device` 的 device 自己那一半（版本 / 构建身份由 server 填）。
+pub fn device(models: &ModelsResponse) -> Value {
+    let default = models.default.as_ref().map(|model| {
+        json!({ "provider": model.provider, "modelId": model.model_id })
+    });
+    json!({
+        "self": std::env::var("NOUS_SELF").ok(),
+        "origin": std::env::var("NOUS_ORIGIN").ok(),
+        "node": env!("CARGO_PKG_VERSION"),
+        "version": env!("CARGO_PKG_VERSION"),
+        "startedAt": started_at(),
+        "model": default,
+        "faux": false,
+        "data": std::env::var("NOUS_DATA").ok(),
+        "catalog": Value::Null,
+        "available": models.items.iter().map(|item| {
+            format!("{}/{}", item.provider, item.model_id)
+        }).collect::<Vec<_>>(),
+    })
+}
+
+fn started_at() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
 }

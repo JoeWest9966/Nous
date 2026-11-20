@@ -86,6 +86,7 @@
       "endpoints": [
         "GET /v1/machines",
         "GET /v1/models",
+        "PUT /v1/default",
         "GET /v1/device",
         "GET /v1/capabilities",
         "GET /v1/_routes"
