@@ -1,0 +1,11 @@
+name = "device"
+vendor = "nous"
+version = "0.1.3"
+layer = "app"
+crate = "nous-device"
+
+[requires]
+
+[provides]
+capability = "device"
+endpoints  = []

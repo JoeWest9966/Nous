@@ -21,6 +21,21 @@
 
 ## 通用
 
+### 配置：四条私库路径（#63）
+
+服务端按 TS 版 `server.js:77-83` 解析下面四个变量，变量名与默认值**只有这一份真相**
+（代码落在 `crates/nous/env/src/content.rs`，别在各端点里自己 `std::env::var`）：
+
+| 变量 | 默认值 | 指向 |
+|---|---|---|
+| `NOUS_SKILLS` | `/opt/Nous-skills` | 技能条目 |
+| `NOUS_PROMPTS` | `/opt/Nous-prompts` | 提示词条目 |
+| `NOUS_PRESETS` | `/opt/Nous-Template` | 模板条目（#60 的数据根；不得写死别的目录） |
+| `NOUS_EXTEND` | `/opt/Nous-extend` | 自研扩展源码（`ext` 仍 `frozen`，只登记路径） |
+
+**部署时 unit 里不写这四个变量**：默认值就够，写了就成了两份真相。旧的
+移植期的旧变量名已删除，不做双名兼容。
+
 - 会话 id 是 **数字**（不是字符串）。`GET /v1/sessions/:id/...` 里的 `:id` 是数字。
 - 列表里 `busy` 是 `"queued" | "running" | <task state kind> | null`，不是布尔。
 - 错误形状统一 `{ error: string }`，状态码跟着语义走（400 / 404 / 409 / 500…）。
@@ -322,10 +337,24 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - `thinkingLevels` 从少想到多（`off` … `max`），**每个模型不一样**。换模型必须按新模型的表
   重新夹档位（`off` 一定要在表里，没有就退成 `off`）。
 - 242 个模型是常态 —— 模型那一列必须能滚，别想着一次画完。
+- #65：多一个 `catalog: { state: "missing"|"ok", source: "env"|"file"|null, path }` 诊断块。
+  `missing` + `items: []` 是**诚实空表**（没有编目来源），客户端别把它当成「加载中」无限重试；
+  `ok` 时 `source` 指明是内联（`NOUS_MODELS`）还是文件（`NOUS_MODELS_FILE`），`path` 是看哪份文件。
+
+### PUT /v1/default
+
+body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `{ default, wrote: true }`。
+
+- 模型不在 `items` 里 → 400（`{ error: string }`），不许写一个不存在的模型。
+- 写是原子的（临时文件 + rename）：写入过程中断，旧文件与 mtime 不变。
+- 内联编目（`NOUS_MODELS`）没有文件路径可写 → 400，改用 `NOUS_MODELS_FILE`。
 
 ### GET /v1/skills
 
-`{ root, categories: string[], repo, skills: [...] }`。技能那条：
+`{ root: string, present: boolean, missing: string | null, categories: string[], repo, skills: [...] }`。
+`root` 永远是解析后的路径（未显式要求「不要数据根」时不会是 `null`）；目录不存在时
+`present=false` 且 `missing` 给一句人话，`skills=[]`。服务端只读，不建目录、不写私库。
+技能那条：
 
 ```
 { name, path, description, dir, file, hidden, category: string[], tracked, load: { state } }
@@ -337,7 +366,9 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ### GET /v1/prompts
 
-`{ default: string | null, categories: string[], prompts: [...] }`。模板那条至少有
+`{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
+`root` / `present` / `missing` 与 skills 同义：有路径但没目录是正常状态，不是 `null`。
+模板那条至少有
 `{ name, description?, category?, load: { state } }`。
 
 - 和技能不是一回事：**模板是单值**（每轮都带的那份规则），技能是集合。所以列表里
@@ -348,13 +379,24 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 `{ at, machines: [{ name, user, port, ips: [{addr,label}], addr, note, tags }] }`。
 
+- #65：机器编目优先读 `NOUS_MACHINES_FILE` 给的 JSON；没有就用内置两台（形状不变）。
+
 - 没有 `machine` 字段 = **本机**。名字要和创建请求里的 `machine` 对得上。
 
-### GET /v1/fs/dirs?path=
+### GET /v1/fs/dirs?path=&machine=&hidden=
 
-`{ path, dirs: [{ name, path }] }`。**列的是 qrd3wh 那台机器上的目录。**
+`{ path, dirs: [{ name, path, hidden }], truncated }`。**列的是引擎那台机器上的目录。**
 
-- 不带 `path` = 引擎给的起点（board 的 map 根）；`path: ""` 是起点，不是「没有路径」。
+- 不带 `path` = 引擎给的起点：`NOUS_START_DIRS` 的第一条（冒号分隔）或进程 cwd；
+  `path: ""` 是起点，不是「没有路径」。**不做 home 展开**：`~` 由客户端展开，
+  引擎只认绝对路径。
+- 只列子目录（符号链接不算目录），按名字稳定排序；点开头的目录默认跳过，
+  `?hidden=1` 时收录并标 `hidden: true`。最多 500 条，超出时 `truncated: true`。
+- `machine` 省略 / 空 = 本机。远端机器（`machine` 不等于本机主机名）回 **501**
+  `{ "error": "ssh 未实现" }`，**不许静默退回本机目录**（SSH 远端由 env-ssh 另票）。
+- 错误：相对路径 / `~` 开头 **400**，绝对路径不存在 **404**，权限不足 **403**，
+  路径指向文件 **400**，其余读失败 500；错误体统一 `{ error: string }`。
+- 只读：这个端点不改目标目录（mtime 与内容都不变）。
 - 浏览发生在引擎进程里：引擎以后跑在远程机器上，这一页一行都不用改。
 
 ### POST /v1/sessions —— 建会话
