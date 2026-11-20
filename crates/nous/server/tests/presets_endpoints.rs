@@ -316,6 +316,13 @@ async fn dry_run_validates_without_writing_but_real_put_rejects_the_same_file() 
     let (status, body, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/bad", Some(bad), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "真 PUT 必须同样 400：{body}");
     assert!(!fixture.file("Session-Template", "bad").exists());
+
+    // 合法的 dry_run 也不许写盘 —— 否则「dry_run 照写盘」的哨兵打不红这条判据。
+    let good = preset_body("dry-ok", "不该落盘");
+    let (status, body, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/dry-ok?dry_run=1", Some(good), None).await;
+    assert_eq!(status, StatusCode::OK, "合法的 dry_run 应 200：{body}");
+    assert!(!fixture.file("Session-Template", "dry-ok").exists(), "dry_run=1 不许建目录/写文件");
+    assert!(revision_rows(&fixture.db, "Session-Template", "dry-ok").is_empty(), "dry_run 不许多一条修订");
 }
 
 #[tokio::test]
