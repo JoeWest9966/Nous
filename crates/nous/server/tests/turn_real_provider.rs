@@ -14,10 +14,11 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use nous_durable::session::{CommitOptions, Session};
+use futures::StreamExt;
+use nous_durable::session::{CommitOptions, ObserverRegistry, Session};
 use nous_durable::{DocumentContent, StorageWrite};
 use nous_server::runtime::AssembledRuntime;
-use nous_server::{router, AppState};
+use nous_server::{router, AppState, DurableCommands, SessionObserver};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -315,4 +316,79 @@ async fn abort_settles_the_submission_with_user_cancel_and_an_aborted_entry() {
         .find(|entry| entry["kind"] == json!("pi.assistant") && entry["reason"] == json!("user_cancel"))
         .expect("abort 应落一条 user_cancel 的 assistant entry");
     assert_eq!(terminal["model"][0]["stopReason"], json!("aborted"));
+}
+
+#[tokio::test]
+async fn a_real_turn_emits_message_start_message_end_and_entry_appended_on_sse() {
+    let path = temp_db("sse-frames");
+    seed(&path, Some("catalog/sse-model")).await;
+    // 生产里 driver 与 commands 共用同一个 Session（唯一写者 + 同一个 ObserverRegistry）。
+    let registry = ObserverRegistry::new();
+    let session = Arc::new(Session::with_observers(
+        nous_durable::Storage::open(&path).unwrap(),
+        registry.clone(),
+    ));
+    let commands = DurableCommands::with_session(session.clone(), registry.clone());
+    let mut assembled = nous_server::runtime::assemble_with_provider(
+        echo_model_provider(),
+        Arc::new(BTreeMap::new()),
+        session,
+    );
+    assembled.provider_kind = "real";
+    let state = AppState::durable_with_commands(
+        nous_server::ImportedSource::open(&path).unwrap(),
+        commands.clone(),
+    );
+    commands.attach(SessionObserver::new(state.clone()));
+    let state = state
+        .with_runtime(Arc::new(assembled))
+        .with_models(catalog_with_default("catalog", "sse-model"));
+    let app = router(state);
+
+    // 先订阅再发消息：snapshot 必须先到，之后的三帧都在同一条连接上。
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/sessions/1/events")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body().into_data_stream();
+
+    let first = tokio::time::timeout(Duration::from_secs(2), stream.next())
+        .await
+        .expect("snapshot 2 秒内到")
+        .expect("流不该先关")
+        .expect("块可读");
+    let text = String::from_utf8(first.to_vec()).unwrap();
+    assert!(text.contains("\"snapshot\""), "第一帧必须是 snapshot：{text}");
+
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping"}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "实测 {body}");
+
+    let mut types = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while types.iter().filter(|t| *t == "message_end").count() < 1 && tokio::time::Instant::now() < deadline {
+        let chunk = tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await
+            .expect("帧 3 秒内到")
+            .expect("流不该先关")
+            .expect("块可读");
+        for line in String::from_utf8(chunk.to_vec()).unwrap().lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(frame) = serde_json::from_str::<Value>(data) {
+                    if let Some(kind) = frame["type"].as_str() {
+                        types.push(kind.to_string());
+                    }
+                }
+            }
+        }
+    }
+    for expected in ["message_start", "message_end", "entry_appended"] {
+        assert!(types.iter().any(|seen| seen == expected), "缺 {expected}：{types:?}");
+    }
 }
