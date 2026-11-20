@@ -204,6 +204,20 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history/diff", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending/diff", module: "documents" },
+    // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
+    RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/model", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}", module: "presets" },
+    RegisteredRoute { method: "PUT", path: "/v1/presets/{section}/order", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/categories", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "PUT", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "PATCH", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "DELETE", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/{name}/copy", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions/{n}", module: "presets" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/{name}/rollback", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
 
@@ -316,7 +330,8 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "env", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-env`", description: "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`" },
     // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
     ManifestEntry { name: "documents", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-documents`", description: "#48：一个实现生成 presets / prompts 两套端点" },
-    ManifestEntry { name: "presets", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
+    // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。
+    ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
     ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行" },
     ManifestEntry { name: "archive", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
     ManifestEntry { name: "combos", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "—", description: "旧面板概念，Rust 版尚未落地" },

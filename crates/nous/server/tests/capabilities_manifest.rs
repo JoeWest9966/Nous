@@ -6,15 +6,18 @@
 
 use std::path::Path;
 
-/// docs/plugins.md 主表：`module -> 原始行`。只读 `| \`name\` |` 开头的行。
-fn doc_cells(module: &str) -> Vec<String> {
+/// docs/plugins.md 主表：`module -> 所有同名行`。同名多行（数据 + 扫描 crate）是清单现状，
+/// 只要有一行六列全对就算对齐；`——` 的第二份事实源绝不允许存在。
+fn doc_cells(module: &str) -> Vec<Vec<String>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let doc = std::fs::read_to_string(root.join("../../../docs/plugins.md")).unwrap();
-    let row = doc
+    let rows: Vec<Vec<String>> = doc
         .lines()
-        .find(|line| line.starts_with(&format!("| `{module}` |")))
-        .unwrap_or_else(|| panic!("docs/plugins.md 缺 `{module}` 行"));
-    row.split('|').map(|cell| cell.trim().to_string()).collect()
+        .filter(|line| line.starts_with(&format!("| `{module}` |")))
+        .map(|row| row.split('|').map(|cell| cell.trim().to_string()).collect())
+        .collect();
+    assert!(!rows.is_empty(), "docs/plugins.md 缺 `{module}` 行");
+    rows
 }
 
 #[test]
@@ -24,13 +27,20 @@ fn manifest_metadata_matches_the_plugins_table_cell_by_cell() {
     for entry in manifest {
         // 表头：`| module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |`
         // split('|') → ["", module, vendor, crate, layer, 形态, API, 必需, 备注, ""]
-        let cells = doc_cells(entry.name);
-        assert_eq!(cells.len(), 10, "{} 的表行列数不对：{cells:?}", entry.name);
-        assert_eq!(cells[4], entry.layer.as_str(), "{} 的 layer 与清单不一致", entry.name);
-        assert_eq!(cells[5], entry.kind.as_str(), "{} 的 kind 与清单不一致", entry.name);
-        assert_eq!(cells[7], entry.required_text(), "{} 的 required 与清单不一致", entry.name);
-        assert_eq!(cells[3], entry.crate_name, "{} 的 crate 与清单不一致", entry.name);
-        assert_eq!(cells[8], entry.description, "{} 的 description 与清单不一致", entry.name);
+        let rows = doc_cells(entry.name);
+        let matches = rows.iter().any(|cells| {
+            cells.len() == 10
+                && cells[4] == entry.layer.as_str()
+                && cells[5] == entry.kind.as_str()
+                && cells[7] == entry.required_text()
+                && cells[3] == entry.crate_name
+                && cells[8] == entry.description
+        });
+        assert!(
+            matches,
+            "{} 的六列在 docs/plugins.md 里一行都对不上：{rows:?}",
+            entry.name
+        );
     }
 }
 
