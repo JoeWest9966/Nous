@@ -104,15 +104,15 @@ fn pending_groups_by_unit_and_ahead_commits_counts_unpushed_commits() {
     let unit = pending.iter().find(|u| u.name == "unit-a").unwrap();
     assert_eq!(unit.ahead_commits, 1, "已 commit 未 push 的单元 aheadCommits=1：{pending:?}");
 
-    // git push 后 pending 清空。
+    // sync 后 pending 清空。
     git(&f.root, &["remote", "set-url", "origin", f.remote.to_str().unwrap()]);
-    git(&f.root, &["push", "-q", "origin", "main"]);
+    assert_eq!(repo.sync().unwrap(), Pushed::Yes, "sync 要真把提交推上去");
     let pending = repo.pending().unwrap();
     assert!(pending.iter().all(|u| u.ahead_commits == 0), "sync 后 ahead 归零：{pending:?}");
     // unit-b 仍未跟踪；提交了它才真正清空。
     let w = repo.read_file("unit-b/y.md").unwrap();
     repo.commit(&[w.path], "rest", None).unwrap();
-    git(&f.root, &["push", "-q", "origin", "main"]);
+    assert_eq!(repo.sync().unwrap(), Pushed::Yes);
     assert!(repo.pending().unwrap().is_empty(), "全部发布后 pending 为空");
 }
 

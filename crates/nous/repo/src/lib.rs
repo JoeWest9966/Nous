@@ -79,6 +79,12 @@ impl Repo {
         publish::commit(&self.root, paths, message, request_id)
     }
 
+    /// 把已 commit 未 push 的提交推上去（``sync``）。无远端返回 `Pushed::Unknown`。
+    pub fn sync(&self) -> Result<Pushed> {
+        let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
+        git::git_push(&self.root)
+    }
+
     pub fn status(&self) -> Result<RepoStatus> {
         views::status(&self.root)
     }
