@@ -21,7 +21,10 @@ impl CommitObserver for Counter {
 }
 
 fn temp_db() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("nous-documents-e2e-{}.sqlite", std::process::id()));
+    // 三个测试同进程并行跑：路径只带 pid 会共享同一个 WAL，互相删 -wal/-shm 后
+    // Storage::open 偶发 "readonly database" / "disk I/O error"（docs/pitfalls.md 的 WAL 坑）。
+    let thread = std::thread::current().name().unwrap_or("doc").replace(':', "_");
+    let path = std::env::temp_dir().join(format!("nous-documents-e2e-{}-{thread}.sqlite", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
