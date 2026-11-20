@@ -15,7 +15,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use nous_durable::session::{CommitOptions, Session};
-use nous_durable::StorageWrite;
+use nous_durable::{DocumentContent, StorageWrite};
 use nous_server::runtime::AssembledRuntime;
 use nous_server::{router, AppState};
 use serde_json::{json, Value};
@@ -36,14 +36,27 @@ fn temp_db(tag: &str) -> PathBuf {
 /// 建会话 1、会话 2（会话 2 带 model），给 abort 判据用。
 async fn seed(path: &PathBuf, model: Option<&str>) {
     let session = Session::open(path).unwrap();
-    let mut conversation = json!({ "id": 1 });
+    let mut writes = vec![StorageWrite::Conversation(json!({ "id": 1 }))];
     if let Some(model) = model {
-        conversation["model"] = json!(model);
+        // 会话的 model 存在 pi.agent 文档里（/v1/sessions 的投影也从这里读），
+        // 不是 conversation record 上的字段。
+        let (provider, id) = model.split_once('/').expect("seed model 是 provider/id");
+        writes.push(StorageWrite::DocumentCreate {
+            id: 10,
+            record: json!({
+                "id": 10,
+                "kind": "pi.agent",
+                "scope": { "kind": "conversation", "conversationId": 1 },
+                "history": "latest",
+                "fork": "current",
+            }),
+            content: DocumentContent::Base {
+                version: 0,
+                value: json!({ "model": { "provider": provider, "modelId": id } }),
+            },
+        });
     }
-    session
-        .commit(vec![StorageWrite::Conversation(conversation)], CommitOptions::default())
-        .await
-        .unwrap();
+    session.commit(writes, CommitOptions::default()).await.unwrap();
     session.close().await.unwrap();
 }
 
@@ -119,7 +132,9 @@ async fn a_real_provider_answer_is_persisted_and_finishes_the_submission() {
         })]);
         script
     });
-    let state = state.with_runtime(runtime(provider, session));
+    let state = state
+        .with_runtime(runtime(provider, session))
+        .with_models(catalog_with_default("catalog", "model-x"));
     let app = router(state);
 
     let (status, body) = call(
@@ -158,7 +173,6 @@ fn echo_model_provider() -> Arc<dyn nous_ai::Provider> {
 /// 建一套没有模型来源的运行时（真 provider），返回 app。
 fn app_for_model_resolution(
     path: &PathBuf,
-    model: Option<&str>,
     catalog: Option<nous_device::ModelsResponse>,
 ) -> Router {
     let session = Arc::new(Session::open(path).unwrap());
@@ -210,7 +224,7 @@ async fn answer_model(app: &Router, path: &PathBuf, body: Value) -> String {
 async fn a_model_in_the_request_body_wins_over_session_and_catalog() {
     let path = temp_db("model-body");
     seed(&path, Some("session/session-model")).await;
-    let app = app_for_model_resolution(&path, None, Some(catalog_with_default("catalog", "default-model")));
+    let app = app_for_model_resolution(&path, Some(catalog_with_default("catalog", "default-model")));
     let used = answer_model(
         &app,
         &path,
@@ -224,7 +238,7 @@ async fn a_model_in_the_request_body_wins_over_session_and_catalog() {
 async fn a_session_model_is_used_when_the_request_has_none() {
     let path = temp_db("model-session");
     seed(&path, Some("session/session-model")).await;
-    let app = app_for_model_resolution(&path, None, Some(catalog_with_default("catalog", "default-model")));
+    let app = app_for_model_resolution(&path, Some(catalog_with_default("catalog", "default-model")));
     let used = answer_model(&app, &path, json!({"content": "ping"})).await;
     assert_eq!(used, "session-model");
 }
@@ -233,7 +247,7 @@ async fn a_session_model_is_used_when_the_request_has_none() {
 async fn the_catalog_default_is_used_when_nobody_specified_a_model() {
     let path = temp_db("model-catalog");
     seed(&path, None).await;
-    let app = app_for_model_resolution(&path, None, Some(catalog_with_default("catalog", "default-model")));
+    let app = app_for_model_resolution(&path, Some(catalog_with_default("catalog", "default-model")));
     let used = answer_model(&app, &path, json!({"content": "ping"})).await;
     assert_eq!(used, "default-model");
 }
@@ -242,7 +256,7 @@ async fn the_catalog_default_is_used_when_nobody_specified_a_model() {
 async fn with_no_model_anywhere_the_request_is_503_not_202() {
     let path = temp_db("model-none");
     seed(&path, None).await;
-    let app = app_for_model_resolution(&path, None, Some(nous_device::ModelsResponse::default()));
+    let app = app_for_model_resolution(&path, Some(nous_device::ModelsResponse::default()));
     let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping"}))).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "全都没有模型必须 503：{body}");
     assert_eq!(body["error"], json!("没有可用模型"));

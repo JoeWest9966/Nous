@@ -521,6 +521,9 @@ struct SubmitBody {
     content: Value,
     #[serde(default)]
     request_id: Option<String>,
+    /// #70：请求体显式指定的模型（优先级最高）。
+    #[serde(default)]
+    model: Option<nous_device::ModelRef>,
     /// 只要出现就拒绝：本库只实现「立即 202 + 靠 SSE 收内容」这条路径。
     #[serde(default)]
     wait_ms: Option<Value>,
@@ -546,6 +549,24 @@ async fn messages(
     }
     let _ = body.when_busy;
     let faux = state.provider_kind() == "faux";
+    // #70：模型解析在**受理之前**。没有来源就 503，不许先 202 再沉默。
+    let catalog = if state.injected_models() {
+        state.models().clone()
+    } else {
+        nous_device::load_models(state.catalog_env()).map_err(ServerError::ServiceUnavailable)?
+    };
+    let session_model = state
+        .source()
+        .sessions()?
+        .into_iter()
+        .find(|item| item.id == session)
+        .and_then(|item| item.model);
+    let reference = crate::runtime::resolve_model_ref(
+        body.model.as_ref(),
+        session_model.as_deref(),
+        &catalog,
+    )
+    .ok_or_else(|| ServerError::ServiceUnavailable("没有可用模型".to_string()))?;
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
@@ -558,7 +579,8 @@ async fn messages(
     if let Some(runtime) = state.runtime() {
         let submitted = result.clone();
         let driver = runtime.driver.clone();
-        let model = if faux {
+        let model = if faux && body.model.is_none() {
+            // #51 的 faux 验收模式没有显式指定模型时，仍用固定 echo 模型。
             nous_ai::Model::new(
                 crate::runtime::FAUX_MODEL_ID,
                 "Faux Echo",
@@ -567,13 +589,7 @@ async fn messages(
                 "http://localhost:0",
             )
         } else {
-            nous_ai::Model::new(
-                "catalog/model-x",
-                "catalog/model-x",
-                nous_ai::Api::OpenaiCompletions,
-                "catalog",
-                "http://localhost:1",
-            )
+            crate::runtime::model_from_ref(&reference)
         };
         tokio::spawn(async move {
             let _ = driver

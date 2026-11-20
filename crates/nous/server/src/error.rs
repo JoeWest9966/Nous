@@ -21,6 +21,8 @@ pub enum ServerError {
     /// 状态冲突：会话已关闭、正在跑、没有可中止的任务。**不许降级成 400** ——
     /// 400 是「参数这么写不行」，409 是「现在不行」。
     Conflict(String),
+    /// 没有任何可用资源（#70：一个模型来源都没有），503。
+    ServiceUnavailable(String),
     Internal(String),
 }
 
@@ -32,6 +34,7 @@ impl ServerError {
             ServerError::Forbidden(_) => StatusCode::FORBIDDEN,
             ServerError::NotFound(_) => StatusCode::NOT_FOUND,
             ServerError::Conflict(_) => StatusCode::CONFLICT,
+            ServerError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ServerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -43,6 +46,7 @@ impl ServerError {
             | ServerError::Forbidden(message)
             | ServerError::NotFound(message)
             | ServerError::Conflict(message)
+            | ServerError::ServiceUnavailable(message)
             | ServerError::Internal(message) => message,
         }
     }

@@ -30,6 +30,52 @@ pub fn provider_kind(values: &dyn ValueSource) -> &'static str {
     }
 }
 
+/// #70：模型解析的**唯一顺序**：请求体 → 会话 → 编目 default → 503。
+///
+/// 会话里的 model 是 wire 的字符串（`<provider>/<modelId>`，第一个 `/` 切开）；
+/// 请求体与编目 default 是 `{provider, modelId}`。解析结果只描述「是谁」，
+/// 真正的 provider 绑定由组装根持有（这里是 `assemble_with_provider` 注入的那一个）。
+pub fn resolve_model_ref(
+    body: Option<&nous_device::ModelRef>,
+    session: Option<&str>,
+    catalog: &ModelsResponse,
+) -> Option<nous_device::ModelRef> {
+    if let Some(model) = body {
+        if !model.provider.is_empty() && !model.model_id.is_empty() {
+            return Some(model.clone());
+        }
+    }
+    if let Some(text) = session {
+        if let Some((provider, id)) = text.split_once('/') {
+            if !provider.is_empty() && !id.is_empty() {
+                return Some(nous_device::ModelRef {
+                    provider: provider.to_string(),
+                    model_id: id.to_string(),
+                });
+            }
+        }
+    }
+    catalog.default.clone()
+}
+
+/// 把 wire 的模型引用变成轮次用的 `nous_ai::Model`。
+/// faux 用 `Api::Faux`，真 provider 用 `Api::OpenaiCompletions` 作为协议占位：
+/// 本票只决定「用哪个模型」，凭证/端点绑定由组装根的 provider 完成。
+pub fn model_from_ref(reference: &nous_device::ModelRef) -> nous_ai::Model {
+    let (api, base_url) = if reference.provider == "faux" {
+        (nous_ai::Api::Faux, "http://localhost:0")
+    } else {
+        (nous_ai::Api::OpenaiCompletions, "http://localhost:1")
+    };
+    nous_ai::Model::new(
+        &reference.model_id,
+        &reference.model_id,
+        api,
+        &reference.provider,
+        base_url,
+    )
+}
+
 /// 只给 faux 用的编目：一个 `faux/echo` 模型，没有凭证要求。
 pub fn faux_catalog() -> ModelsResponse {
     ModelsResponse {
