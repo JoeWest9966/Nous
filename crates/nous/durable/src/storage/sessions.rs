@@ -97,7 +97,7 @@ pub struct SessionArchived {
 
 /// 把全部会话渲染成会话树，**新的在前**（`wire.md`）。
 pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
-    let (names, pins) = legacy_names_and_pins(store)?;
+    let (names, pins, templates) = legacy_names_and_pins(store)?;
     let mut items = Vec::with_capacity(store.conversations.len());
     for row in &store.conversations {
         let id = integer(row, "id")?;
@@ -123,7 +123,7 @@ pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
             // 旧库没有这三样；`wire.md` 允许空。
             thinking_levels: Vec::new(),
             skills: Vec::new(),
-            template: None,
+            template: templates.get(&id).cloned(),
             read_only: false,
             busy: busy(store, id)?,
             // 旧库不记「最后一次落库的时刻」，不拿 entry 的 timestamp 冒充。
@@ -246,9 +246,10 @@ pub fn render_live_message(store: &ImportedStore, conversation_id: i64) -> Resul
 }
 
 /// 旧引擎的 `names` 表：会话 id → 名字，外加同一份文档里的置顶 id 顺序。
-fn legacy_names_and_pins(store: &ImportedStore) -> Result<(BTreeMap<i64, String>, Vec<String>)> {
+fn legacy_names_and_pins(store: &ImportedStore) -> Result<(BTreeMap<i64, String>, Vec<String>, BTreeMap<i64, String>)> {
     let mut names = BTreeMap::new();
     let mut pins = Vec::new();
+    let mut templates = BTreeMap::new();
     for row in &store.documents {
         let kind = decode_indexed_string(text(row, "kind")?)?;
         if kind != LEGACY_NAMES_DOCUMENT_KIND {
@@ -271,8 +272,15 @@ fn legacy_names_and_pins(store: &ImportedStore) -> Result<(BTreeMap<i64, String>
         {
             pins.extend(ids.iter().filter_map(Value::as_str).map(str::to_string));
         }
+        if let Some(map) = content.get("templates").and_then(Value::as_object) {
+            for (key, value) in map {
+                if let (Ok(id), Some(template)) = (key.parse::<i64>(), value.as_str()) {
+                    templates.insert(id, template.to_string());
+                }
+            }
+        }
     }
-    Ok((names, pins))
+    Ok((names, pins, templates))
 }
 
 /// 一份会话的 `pi.agent` 快照：模型与思考档位。
