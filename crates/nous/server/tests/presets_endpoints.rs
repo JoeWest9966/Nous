@@ -171,3 +171,87 @@ async fn capabilities_enable_presets_without_a_reason() {
         "presets 的端点必须从注册表声明出来：{module}"
     );
 }
+
+fn preset_body(name: &str, summary: &str) -> Value {
+    json!({
+        "name": name,
+        "summary": summary,
+        "description": "一段说明",
+        "category": ["写作", "周报"],
+        "spec": { "v": 1, "session": "default" },
+        "requestId": "same-req",
+    })
+}
+
+#[tokio::test]
+async fn put_writes_real_file_and_roster_sha_matches_file_bytes() {
+    let fixture = Fixture::new("disk-sha");
+    let body = preset_body("foo", "第一版");
+    let (status, response, _) = call(
+        &fixture.app,
+        "PUT",
+        "/v1/presets/Session-Template/foo",
+        Some(body.clone()),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::CREATED, "{response}");
+    // 不信响应体：直接读盘。
+    let path = fixture.file("Session-Template", "foo");
+    assert!(path.is_file(), "PUT 之后磁盘上必须真的有 {path:?}");
+    let on_disk = std::fs::read(&path).unwrap();
+    let expected_sha = sha256_file(&path);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&on_disk).unwrap()["summary"],
+        json!("第一版"),
+        "文件内容必须是刚写进去的那份"
+    );
+
+    let (status, roster, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{roster}");
+    let items = roster["items"].as_array().expect("roster.items 是数组");
+    let item = items.iter().find(|item| item["name"] == json!("foo"))
+        .unwrap_or_else(|| panic!("roster 里没有 foo：{roster}"));
+    assert_eq!(item["sha"], json!(expected_sha), "roster.sha 必须等于文件字节的 sha256：{item}；文件={:?}", std::fs::read(&path).unwrap());
+    assert_eq!(item["version"], response["version"], "version 必须与 PUT 回执一致");
+}
+
+#[tokio::test]
+async fn revisions_keep_every_version_and_rollback_restores_exact_bytes() {
+    let fixture = Fixture::new("revisions");
+    let first = preset_body("rev", "甲");
+    let (status, _, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/rev", Some(first.clone()), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let mut second = preset_body("rev", "乙");
+    second["requestId"] = json!("second-req");
+    let (status, _, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/rev", Some(second), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // 库里必须真有两行，且原文不同 —— 不是内存里回个回执。
+    let rows = revision_rows(&fixture.db, "Session-Template", "rev");
+    assert_eq!(rows.len(), 2, "revisions 表应有两条：{rows:?}");
+    assert_ne!(rows[0].3, rows[1].3, "两次 PUT 的 request_id 必须不同：{rows:?}");
+    assert_ne!(rows[0].2, rows[1].2, "两版正文必须不同：{rows:?}");
+
+    let (status, list, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template/rev/revisions", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{list}");
+    assert_eq!(list["items"].as_array().unwrap().len(), 2);
+
+    let (status, old, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template/rev/revisions/1", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{old}");
+    let first_body = old["body"].as_str().unwrap();
+
+    let rollback = json!({ "n": 1, "requestId": "rollback-1" });
+    let (status, receipt, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/rev/rollback", Some(rollback), None).await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+
+    let (status, current, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template/rev", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{current}");
+    assert_eq!(
+        current["preset"]["summary"], json!("甲"),
+        "rollback 后正文逐字等于第 1 版：{current}"
+    );
+    let disk = std::fs::read_to_string(fixture.file("Session-Template", "rev")).unwrap();
+    assert_eq!(disk.trim_end(), first_body.trim_end(), "盘上的字节必须是第 1 版原文");
+    // rollback 自己也是一次修订：表从 2 行变 3 行。
+    assert_eq!(revision_rows(&fixture.db, "Session-Template", "rev").len(), 3);
+}
