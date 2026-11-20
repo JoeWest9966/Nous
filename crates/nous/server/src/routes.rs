@@ -300,13 +300,13 @@ async fn search(
     }
     let limit = query.limit.unwrap_or(20).clamp(1, 100);
     let all = state.source().search(&q, kind)?;
-    let truncated = all.len() > limit;
+    let total = all.len();
+    let truncated = total > limit;
     let items: Vec<Value> = all
         .into_iter()
         .take(limit)
         .map(|item| serde_json::to_value(item).expect("SearchItem is serializable"))
         .collect();
-    let total = items.len();
     Ok(Json(json!({ "items": items, "total": total, "truncated": truncated })))
 }
 

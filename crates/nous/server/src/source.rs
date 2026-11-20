@@ -79,7 +79,8 @@ pub trait SessionSource: Send + Sync {
     fn usage(&self, field: &str) -> Result<Value> {
         let _ = field;
         Ok(json!({}))
-    }}
+    }
+}
 
 /// 只读打开一份库（上游 v2 或本库自己的都行）。**永远不写回去**。
 pub struct ImportedSource {
@@ -140,7 +141,20 @@ impl SessionSource for ImportedSource {
                 items
             }
         };
-        items.sort_by(|a, b| b.id.cmp(&a.id));
+        // `all` 是两类命中的合并：会话 id 是数字（新的在前），文档地址是字符串，
+        // 两者没有同一条时间轴。按 kind 分组 + 组内降序，顺序稳定可断言。
+        items.sort_by(|a, b| {
+            b.kind
+                .cmp(&a.kind)
+                .then_with(|| match (a.kind, b.kind) {
+                    ("sessions", "sessions") => {
+                        let left = a.id.parse::<i64>().unwrap_or(0);
+                        let right = b.id.parse::<i64>().unwrap_or(0);
+                        right.cmp(&left)
+                    }
+                    _ => b.id.cmp(&a.id),
+                })
+        });
         Ok(items)
     }
 
