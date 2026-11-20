@@ -91,13 +91,25 @@ pub struct SessionLast {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SessionArchived {
     pub at: i64,
-    pub gen: i64,
+    pub gen: String,
     pub purged: bool,
 }
 
 /// 把全部会话渲染成会话树，**新的在前**（`wire.md`）。
+///
+/// 没有模型编目时的入口：档位表诚实给 `[]`。
 pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
-    let (names, pins) = legacy_names_and_pins(store)?;
+    render_sessions_with_levels(store, &BTreeMap::new())
+}
+
+/// 同上，但把 `device` 编目的档位表按 `"provider/modelId"` 注入。
+///
+/// durable 是 kernel，不依赖 app 层的 `nous-device`；编目只以纯数据传进来。
+pub fn render_sessions_with_levels(
+    store: &ImportedStore,
+    model_levels: &BTreeMap<String, Vec<String>>,
+) -> Result<Vec<SessionItem>> {
+    let (names, pins, archived, templates) = legacy_session_state(store)?;
     let mut items = Vec::with_capacity(store.conversations.len());
     for row in &store.conversations {
         let id = integer(row, "id")?;
@@ -118,19 +130,20 @@ pub fn render_sessions(store: &ImportedStore) -> Result<Vec<SessionItem>> {
                     task_id: owner.get("taskId")?.as_i64()?,
                 })
             }),
-            model: agent.model,
+            model: agent.model.clone(),
             thinking_level: agent.thinking_level,
-            // 旧库没有这三样；`wire.md` 允许空。
-            thinking_levels: Vec::new(),
+            thinking_levels: agent.model.as_ref()
+                .and_then(|model| model_levels.get(model))
+                .cloned()
+                .unwrap_or_default(),
             skills: Vec::new(),
-            template: None,
+            template: templates.get(&id).cloned(),
             read_only: false,
             busy: busy(store, id)?,
-            // 旧库不记「最后一次落库的时刻」，不拿 entry 的 timestamp 冒充。
-            updated_at: None,
+            updated_at: latest_entry_timestamp(store, id)?,
             last: last_entry(store, id)?,
-            // 归档墓碑由 12b 落地；fixture 里 `documents.retired_at` 全为 NULL。
-            archived: None,
+            // 墓碑是 qrd3wh.sessions 的 archived 键；没有键就是 null。
+            archived: archived.get(&id).cloned(),
             pinned: pins.iter().any(|pin| pin.parse::<i64>() == Ok(id)),
         });
     }
@@ -245,10 +258,14 @@ pub fn render_live_message(store: &ImportedStore, conversation_id: i64) -> Resul
     Ok(None)
 }
 
-/// 旧引擎的 `names` 表：会话 id → 名字，外加同一份文档里的置顶 id 顺序。
-fn legacy_names_and_pins(store: &ImportedStore) -> Result<(BTreeMap<i64, String>, Vec<String>)> {
+/// 旧引擎的 `names` 表：会话 id → 名字，外加同一份文档里的置顶 id 顺序、归档墓碑与 #72 模板。
+fn legacy_session_state(
+    store: &ImportedStore,
+) -> Result<(BTreeMap<i64, String>, Vec<String>, BTreeMap<i64, SessionArchived>, BTreeMap<i64, String>)> {
     let mut names = BTreeMap::new();
     let mut pins = Vec::new();
+    let mut archived = BTreeMap::new();
+    let mut templates = BTreeMap::new();
     for row in &store.documents {
         let kind = decode_indexed_string(text(row, "kind")?)?;
         if kind != LEGACY_NAMES_DOCUMENT_KIND {
@@ -271,8 +288,25 @@ fn legacy_names_and_pins(store: &ImportedStore) -> Result<(BTreeMap<i64, String>
         {
             pins.extend(ids.iter().filter_map(Value::as_str).map(str::to_string));
         }
+        if let Some(tombstones) = content.get("archived").and_then(Value::as_object) {
+            for (key, value) in tombstones {
+                let Ok(id) = key.parse::<i64>() else { continue };
+                let Some(at) = value.get("at").and_then(Value::as_i64) else { continue };
+                let Some(gen) = value.get("gen").and_then(Value::as_str) else { continue };
+                let Some(purged) = value.get("purged").and_then(Value::as_bool) else { continue };
+                archived.insert(id, SessionArchived { at, gen: gen.to_string(), purged });
+            }
+        }
+        // #72：template 是单值，和 names / archived 住同一份文档。
+        if let Some(map) = content.get("templates").and_then(Value::as_object) {
+            for (key, value) in map {
+                if let (Ok(id), Some(template)) = (key.parse::<i64>(), value.as_str()) {
+                    templates.insert(id, template.to_string());
+                }
+            }
+        }
     }
-    Ok((names, pins))
+    Ok((names, pins, archived, templates))
 }
 
 /// 一份会话的 `pi.agent` 快照：模型与思考档位。
@@ -311,7 +345,7 @@ fn agent_state(store: &ImportedStore, conversation_id: i64) -> Result<AgentState
 /// 一篇文档最新一条 `base` revision 的内容。
 ///
 /// 最新 revision 是 `delta` 时**明确失败**；没有 revision 时返回 `None`（文档还没写过值）。
-fn latest_base_content(store: &ImportedStore, document_id: i64) -> Result<Option<Value>> {
+pub(crate) fn latest_base_content(store: &ImportedStore, document_id: i64) -> Result<Option<Value>> {
     let mut newest: Option<(i64, &str, &str)> = None;
     for row in &store.document_revisions {
         if integer(row, "document_id")? != document_id {
@@ -353,6 +387,33 @@ fn busy(store: &ImportedStore, conversation_id: i64) -> Result<Option<String>> {
     Ok(live.map(|(_, status)| status))
 }
 
+/// `updatedAt`：该会话最新 entry 的 `model[0].timestamp`（epoch 毫秒）。
+///
+/// 时间源是 `entries[].record`（`wire.md` 声明的唯一时间源），不是文件 mtime、
+/// 也不是进程时钟。没有 entry 就是 `None` —— 诚实空值，不填 0。
+fn latest_entry_timestamp(store: &ImportedStore, conversation_id: i64) -> Result<Option<i64>> {
+    let mut newest: Option<(i64, i64)> = None;
+    for row in &store.entries {
+        if integer(row, "conversation_id")? != conversation_id {
+            continue;
+        }
+        let id = integer(row, "id")?;
+        let record = record_of(row)?;
+        let timestamp = record
+            .get("model")
+            .and_then(Value::as_array)
+            .and_then(|model| model.first())
+            .and_then(|message| message.get("timestamp"))
+            .and_then(Value::as_i64);
+        if let Some(timestamp) = timestamp {
+            if newest.as_ref().is_none_or(|(current, _)| id > *current) {
+                newest = Some((id, timestamp));
+            }
+        }
+    }
+    Ok(newest.map(|(_, timestamp)| timestamp))
+}
+
 /// 会话里 id 最大的那条 entry 的摘要。
 fn last_entry(store: &ImportedStore, conversation_id: i64) -> Result<Option<SessionLast>> {
     let mut newest: Option<(i64, Value)> = None;
@@ -382,7 +443,7 @@ fn last_entry(store: &ImportedStore, conversation_id: i64) -> Result<Option<Sess
 /// entry 的摘要文本：最后一条 model 消息的文本；没有就空串。
 ///
 /// `content` 既可能是字符串（user/system），也可能是段落数组（assistant 的 `[{type:"text",text}]`）。
-fn entry_text(record: &Value) -> String {
+pub(crate) fn entry_text(record: &Value) -> String {
     let Some(messages) = record.get("model").and_then(Value::as_array) else {
         return String::new();
     };
@@ -400,17 +461,17 @@ fn entry_text(record: &Value) -> String {
     }
 }
 
-fn record_of(row: &nous_chord::sqlite::SqliteRow) -> Result<Value> {
+pub(crate) fn record_of(row: &nous_chord::sqlite::SqliteRow) -> Result<Value> {
     Ok(serde_json::from_str(text(row, "record")?)?)
 }
 
-fn integer(row: &nous_chord::sqlite::SqliteRow, column: &str) -> Result<i64> {
+pub(crate) fn integer(row: &nous_chord::sqlite::SqliteRow, column: &str) -> Result<i64> {
     row.get(column)
         .and_then(|value| value.as_i64())
         .ok_or_else(|| StorageError::Shape(format!("column {column} is missing or not an integer")))
 }
 
-fn text<'a>(row: &'a nous_chord::sqlite::SqliteRow, column: &str) -> Result<&'a str> {
+pub(crate) fn text<'a>(row: &'a nous_chord::sqlite::SqliteRow, column: &str) -> Result<&'a str> {
     row.get(column)
         .and_then(|value| value.as_str())
         .ok_or_else(|| StorageError::Shape(format!("column {column} is missing or not text")))

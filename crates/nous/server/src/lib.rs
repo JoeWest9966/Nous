@@ -31,6 +31,7 @@ pub mod routes;
 pub mod repos;
 pub mod runtime;
 pub mod source;
+pub mod stats;
 pub mod triggers;
 
 pub use app::AppState;
@@ -42,7 +43,7 @@ pub use observer::SessionObserver;
 pub use nous_device::ModelRef;
 pub use records::{CreateSessionRequest, CreatedSession};
 pub use routes::router;
-pub use source::{ImportedSource, SessionSource};
+pub use source::{ImportedSource, SearchItem, SessionSource};
 pub mod version;
 pub mod refusal;
 pub mod workdir;

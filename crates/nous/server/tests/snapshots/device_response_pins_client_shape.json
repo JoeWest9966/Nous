@@ -9,6 +9,10 @@
   "model": null,
   "faux": false,
   "data": null,
-  "catalog": null,
+  "catalog": {
+    "state": "missing",
+    "source": null,
+    "path": "/var/lib/nous/models.json"
+  },
   "available": []
 }

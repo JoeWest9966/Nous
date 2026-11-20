@@ -25,8 +25,12 @@ nous-durable = { workspace = true }
 nous-device = { workspace = true }
 nous-env = { workspace = true }
 nous-repo = { workspace = true }
+nous-prompts = { workspace = true }
+nous-skills = { workspace = true }
+nous-env-ssh = { workspace = true }
 nous-documents = { workspace = true }
 nous-sessions = { workspace = true }
+nous-stats = { workspace = true }
 nous-runtime = { workspace = true }
 nous-tools = { workspace = true }
 nous-ai = { workspace = true }

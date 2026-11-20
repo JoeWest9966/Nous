@@ -13,8 +13,8 @@ use serde_json::json;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerError {
     BadRequest(String),
-    /// 能力未实现（远端机器）：501，不是退回本机的 200。
-    NotImplemented(String),
+    /// 远端机器不可达（ssh 连不上 / 超时）：502，不是退回本机的 200。
+    BadGateway(String),
     /// 没有权限读目标资源：403，不是 500。
     Forbidden(String),
     NotFound(String),
@@ -28,7 +28,7 @@ impl ServerError {
     pub fn status(&self) -> StatusCode {
         match self {
             ServerError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            ServerError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            ServerError::BadGateway(_) => StatusCode::BAD_GATEWAY,
             ServerError::Forbidden(_) => StatusCode::FORBIDDEN,
             ServerError::NotFound(_) => StatusCode::NOT_FOUND,
             ServerError::Conflict(_) => StatusCode::CONFLICT,
@@ -39,7 +39,7 @@ impl ServerError {
     pub fn message(&self) -> &str {
         match self {
             ServerError::BadRequest(message)
-            | ServerError::NotImplemented(message)
+            | ServerError::BadGateway(message)
             | ServerError::Forbidden(message)
             | ServerError::NotFound(message)
             | ServerError::Conflict(message)

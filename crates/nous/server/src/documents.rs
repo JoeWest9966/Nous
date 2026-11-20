@@ -115,7 +115,9 @@ impl DocumentReader for DurableDocumentBackend {
     }
 
     fn get(&self, kind: &'static str, section: &str, name: &str) -> std::result::Result<Option<(Value, String)>, String> {
-        let (_, doc) = self.find(kind, section, name).map_err(|e| e.to_string())?.ok_or("missing")?;
+        let Some((_, doc)) = self.find(kind, section, name).map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
         Ok(Some((doc.value.clone(), format!("v{}:{}", doc.version, doc.deltas_since_base))))
     }
 
@@ -250,6 +252,12 @@ fn adapter(kind: &str) -> Option<&'static KindAdapter> {
     KIND_ADAPTERS.iter().find(|adapter| adapter.kind == kind)
 }
 
+/// 404 的 body 必须带可用值清单（kind 或 section 名），别让客户端猜。
+fn kind_not_found(kind: &str) -> ServerError {
+    let available = KIND_ADAPTERS.iter().map(|adapter| adapter.kind).collect::<Vec<_>>().join(", ");
+    ServerError::NotFound(format!("unknown kind {kind}; available kinds: {available}"))
+}
+
 fn service(state: &Arc<AppState>) -> Result<DocumentService> {
     state.document_service().ok_or_else(|| ServerError::Conflict("no document backend".into()))
 }
@@ -282,7 +290,7 @@ impl PutBody {
 }
 
 async fn list(State(state): State<Arc<AppState>>, AxumPath((kind,)): AxumPath<(String,)>) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     let section = "Session-Template".to_string();
     Ok(Json((a.list)(&service(&state)?, &section).map_err(bad)?))
 }
@@ -291,9 +299,9 @@ async fn get_one(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     (a.get)(&service(&state)?, &section, &name).map_err(bad)?
-        .map(Json).ok_or_else(|| ServerError::NotFound(format!("document {name} not found")))
+        .map(Json).ok_or_else(|| ServerError::NotFound(format!("document {name} not found; available kinds: {}", KIND_ADAPTERS.iter().map(|a| a.kind).collect::<Vec<_>>().join(", "))))
 }
 
 async fn put_one(
@@ -325,7 +333,7 @@ async fn validate(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     Ok(Json((a.validate)(&service(&state)?, &section, &name).map_err(bad)?))
 }
 
@@ -333,7 +341,7 @@ async fn history(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     Ok(Json((a.history)(&service(&state)?, &section, &name).map_err(bad)?))
 }
 
@@ -351,7 +359,7 @@ async fn history_diff(
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
     axum::extract::Query(query): axum::extract::Query<DiffQuery>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     let diff = (a.diff)(&service(&state)?, &section, &name, query.hash.as_deref(), false).map_err(bad)?;
     diff.map(Json).ok_or_else(|| ServerError::NotFound("revision not found".into()))
 }
@@ -360,7 +368,7 @@ async fn pending(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     Ok(Json((a.pending)(&service(&state)?, &section, &name).map_err(bad)?))
 }
 
@@ -368,7 +376,7 @@ async fn pending_diff(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     let diff = (a.diff)(&service(&state)?, &section, &name, None, true).map_err(bad)?;
     diff.map(Json).ok_or_else(|| ServerError::NotFound("no pending diff".into()))
 }
@@ -393,7 +401,7 @@ async fn rename(
     let to = body.to.unwrap_or_default();
     let writer = svc.writer().ok_or_else(|| ServerError::Conflict("no document writer".into()))?;
     let refs = writer.rename(&kind, &section, &name, &to).await.map_err(bad)?;
-    Ok(Json(json!({ "ok": true, "kind": kind, "section": section, "name": name, "to": to, "refs": refs, "pushed": null, "commit": {} })))
+    Ok(Json(json!({ "ok": true, "kind": kind, "section": section, "name": name, "to": to, "refs": refs, "pushed": Value::Null, "commit": Value::Null })))
 }
 
 async fn action_publish(

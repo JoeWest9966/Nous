@@ -3,5 +3,9 @@
   "present": false,
   "missing": "<missing>",
   "categories": [],
-  "skills": []
+  "skills": [],
+  "repo": {
+    "root": "<root>",
+    "present": false
+  }
 }

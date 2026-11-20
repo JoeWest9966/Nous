@@ -51,13 +51,31 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
         .output()
         .expect("check-plugins.sh 可跑");
     let summary = String::from_utf8_lossy(&checked.stdout);
+    let last = summary.lines().last().unwrap_or_default();
+    // device 自己让 checked 从 17 → 18；别的票再加插件（如 #62 的 stats）会继续 +1，
+    // 所以只钉「至少 19 且 0 处不符」，不写死数字（与票面判据一致）。
+    let checked_n: u32 = last
+        .split("checked=")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     assert!(
-        summary.contains("checked=19 mismatched=0"),
-        "清单应为 19 行（含 #75 的 repo）且 0 处不符：{}",
-        summary.lines().last().unwrap_or_default()
+        checked_n >= 19 && last.contains("mismatched=0"),
+        "清单应至少 19 行（含 #75 的 repo）且 0 处不符：{last}"
     );
 
     let doc = std::fs::read_to_string(Path::new(root()).join("docs/plugins.md")).unwrap();
+    // layer-paths.sh 只读同一张表的四列，跳过 (待建)/— 行；四层之和就是 checked。
+    let mut expected = 0usize;
+    for layer in ["kernel", "platform", "app", "dev"] {
+        let out = repo_cmd("bash").args(["scripts/layer-paths.sh", layer]).output().expect("layer-paths.sh 可跑");
+        let text = String::from_utf8_lossy(&out.stdout);
+        expected += text.split_whitespace().count();
+    }
+    assert!(summary.contains(&format!("checked={expected} mismatched=0")),
+        "清单应为 {expected} 行且 0 处不符：{}", summary.lines().last().unwrap_or_default());
+
     assert!(
         doc.contains("| `device` | nous | `nous-device` | app |"),
         "docs/plugins.md 必须有 device 行"

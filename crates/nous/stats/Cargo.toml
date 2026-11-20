@@ -1,0 +1,19 @@
+[package]
+name = "nous-stats"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "应用层 stats 模块：只读观测聚合（/v1/stats/usage · tasks · db，#62）"
+
+[dependencies]
+nous-chord = { workspace = true }
+nous-durable = { workspace = true }
+nous-store = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

@@ -262,8 +262,8 @@ async fn the_local_machine_name_is_accepted() {
 }
 
 #[tokio::test]
-async fn remote_machine_is_501_and_never_falls_back_to_local() {
-    let root = temp_dir("remote");
+async fn unknown_machine_is_404_not_501_or_local_fallback() {
+    let root = temp_dir("unknown-machine");
     make_fixture(&root);
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
 
@@ -272,11 +272,8 @@ async fn remote_machine_is_501_and_never_falls_back_to_local() {
         &format!("/v1/fs/dirs?path={}&machine=some-other-box", root.display()),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_IMPLEMENTED, "远端必须 501：{body}");
-    assert!(
-        body["error"].as_str().unwrap_or("").contains("ssh 未实现"),
-        "错误正文要说清 ssh 未实现：{body}"
-    );
+    assert_eq!(status, StatusCode::NOT_FOUND, "编目里没有的机器必须 404：{body}");
+    assert!(body["error"].is_string(), "错误体是 {{error}}：{body}");
 
     std::fs::remove_dir_all(root).unwrap();
 }
