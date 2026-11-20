@@ -60,6 +60,8 @@ fn catalog() -> ModelsResponse {
             state: "ok",
             source: None,
             path: PathBuf::from("/test/models.json"),
+            fetched_at: None,
+            error: None,
         },
     }
 }
