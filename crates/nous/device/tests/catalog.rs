@@ -165,3 +165,23 @@ fn atomic_write_keeps_original_bytes_and_mtime_without_rename() {
     assert!(response.items[0].model_id == "file/one");
     assert!(response.default.is_none(), "没 rename 就不该看见新 default");
 }
+
+#[test]
+fn machines_catalog_uses_the_file_when_given_and_builtin_otherwise() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("machines.json");
+    std::fs::write(
+        &path,
+        json!({ "items": [{ "name": "from-file", "hostname": "box", "triples": ["x"] }] })
+            .to_string(),
+    )
+    .unwrap();
+    let from_file = nous_device::machines(Some(&path));
+    assert_eq!(from_file["items"][0]["name"], json!("from-file"));
+
+    let builtin = nous_device::machines(Some(&dir.path().join("absent.json")));
+    let names = builtin["items"].as_array().unwrap();
+    assert_eq!(names.len(), 2);
+    assert_eq!(names[0]["name"], json!("runtime-1"));
+    assert_eq!(names[1]["name"], json!("asus"));
+}

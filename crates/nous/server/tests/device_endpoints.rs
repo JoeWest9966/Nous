@@ -145,5 +145,4 @@ async fn put_default_refuses_a_model_outside_the_catalog() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "不存在的模型必须 400：{body}");
     assert!(body["error"].is_string());
-    assert_eq!(json!(null), json!(null)); // 保持断言聚焦：只是确认 response 是合法 JSON
 }

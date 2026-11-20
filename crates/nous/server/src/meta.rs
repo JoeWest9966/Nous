@@ -11,7 +11,6 @@
 //! #65：device 段（机器 / 模型 / 默认模型）已经搬到 `nous-device` 插件，这里只留转发。
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
@@ -35,13 +34,6 @@ pub fn device(models: &nous_device::ModelsResponse) -> Value {
         "catalog": body["catalog"],
         "available": body["available"],
     })
-}
-
-fn _started_at() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or_default()
 }
 
 /// `GET /v1/selection`：当前没有选中的会话，诚实回 `null`（客户端 0 处依赖）。
