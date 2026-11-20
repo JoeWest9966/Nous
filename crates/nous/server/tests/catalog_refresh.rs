@@ -158,3 +158,41 @@ async fn refresh_lists_three_remote_models_and_reports_fetched_at() {
         "/v1/device 的 catalog 必须有真实 fetchedAt：{device}"
     );
 }
+
+#[tokio::test]
+async fn a_failed_refresh_keeps_the_old_catalog_and_reports_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = catalog_file(&dir);
+    let (base, _seen) = fake_catalog(500, json!({ "error": "boom" }).to_string());
+    let app = app_with(env_with(&base, &dir, &path));
+
+    // 先读旧表（文件里那条），作为失败后的基准。
+    let (_, before) = call(&app, Method::GET, "/v1/models", None).await;
+    assert_eq!(before["items"].as_array().unwrap().len(), 1);
+
+    let (status, body) = call(&app, Method::POST, "/v1/catalog/refresh", None).await;
+    assert_eq!(status, StatusCode::OK, "失败也回 200 + error 正文：{body}");
+    assert!(
+        body["error"].as_str().is_some_and(|s| !s.is_empty()),
+        "error 必须非空：{body}"
+    );
+    assert_eq!(
+        body["items"].as_array().unwrap().len(),
+        1,
+        "失败响应里的 items 仍是旧那一条，不许清空：{body}"
+    );
+
+    // 两条独立断言：刷新响应之外，GET /v1/models 与 /v1/device 也要看见旧表和 error。
+    let (_, models) = call(&app, Method::GET, "/v1/models", None).await;
+    assert_eq!(models["items"].as_array().unwrap().len(), 1, "失败后旧编目仍在");
+    assert_eq!(models["items"][0]["modelId"], json!("old/only"));
+    let (_, device) = call(&app, Method::GET, "/v1/device", None).await;
+    assert!(
+        device["catalog"]["error"].as_str().is_some_and(|s| !s.is_empty()),
+        "/v1/device 的 catalog.error 必须非空：{device}"
+    );
+
+    // 本地缓存文件没被 500 响应覆盖。
+    let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["items"].as_array().unwrap().len(), 1, "失败不许写空编目");
+}

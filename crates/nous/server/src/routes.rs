@@ -302,7 +302,6 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// `POST /v1/catalog/refresh`：拉一次远端编目，成功写缓存并换入内存；失败留旧表带 error。
 /// 响应形状 `{default, items, fetchedAt, error?}`：token 只经内存请求头，不进响应/日志。
 async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let old = state.models();
     match nous_device::refresh_remote_catalog(state.catalog_env()).await {
         Ok(models) => {
             state.set_models(models.clone());
@@ -311,9 +310,16 @@ async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Valu
             Ok(Json(body))
         }
         Err(error) => {
+            // 失败保留旧编目：内存里最近一次刷新的那份优先；否则从本地缓存/文件读回。
+            let mut old = state.refreshed_models().unwrap_or_else(|| {
+                nous_device::load_models(state.catalog_env()).unwrap_or_default()
+            });
+            old.catalog.error = Some(error);
+            state.set_models(old.clone());
+            let top_error = old.catalog.error.clone().unwrap_or_default();
             let mut body = serde_json::to_value(&old).map_err(|error| ServerError::Internal(error.to_string()))?;
             body["fetchedAt"] = old.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
-            body["error"] = Value::String(error);
+            body["error"] = Value::String(top_error);
             Ok(Json(body))
         }
     }
