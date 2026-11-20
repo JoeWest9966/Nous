@@ -7,6 +7,12 @@
   "modules": [
     {
       "name": "sessions",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-sessions`",
+      "description": "**pi 本体**（#44 落地），承载最小轮次与取消收敛",
       "enabled": true,
       "endpoints": [
         "GET /v1/sessions",
@@ -30,6 +36,12 @@
     },
     {
       "name": "env",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "platform",
+      "required": true,
+      "crate": "`nous-env`",
+      "description": "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`",
       "enabled": true,
       "endpoints": [
         "GET /v1/fs/dirs"
@@ -37,6 +49,12 @@
     },
     {
       "name": "documents",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-documents`",
+      "description": "#48：一个实现生成 presets / prompts 两套端点",
       "enabled": true,
       "endpoints": [
         "GET /v1/documents/{kind}",
@@ -55,6 +73,12 @@
     },
     {
       "name": "presets",
+      "version": "0.1.3",
+      "kind": "声明式",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判",
       "enabled": false,
       "reason": {
         "code": "not_implemented",
@@ -63,6 +87,12 @@
     },
     {
       "name": "skills",
+      "version": "0.1.3",
+      "kind": "声明式",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-skills`",
+      "description": "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行",
       "enabled": true,
       "endpoints": [
         "GET /v1/skills"
@@ -70,6 +100,12 @@
     },
     {
       "name": "archive",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票",
       "enabled": false,
       "reason": {
         "code": "not_implemented",
@@ -78,6 +114,12 @@
     },
     {
       "name": "combos",
+      "version": "0.1.3",
+      "kind": "声明式",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "旧面板概念，Rust 版尚未落地",
       "enabled": false,
       "reason": {
         "code": "not_implemented",
@@ -86,6 +128,12 @@
     },
     {
       "name": "triggers",
+      "version": "0.1.3",
+      "kind": "运行时外挂",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "#57 落地；调度循环不在本票",
       "enabled": true,
       "endpoints": [
         "GET /v1/triggers",
@@ -95,6 +143,12 @@
     },
     {
       "name": "stats",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-stats`",
+      "description": "归口监控六屏；与 `--check` 共读口，tasks 现算",
       "enabled": true,
       "endpoints": [
         "GET /v1/stats/usage",
@@ -104,6 +158,12 @@
     },
     {
       "name": "device",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-device`",
+      "description": "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写",
       "enabled": true,
       "endpoints": [
         "GET /v1/machines",
@@ -118,6 +178,12 @@
     },
     {
       "name": "prompts",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-prompts`",
+      "description": "今天 `prompts/index.js`",
       "enabled": true,
       "endpoints": [
         "GET /v1/prompts"
@@ -125,6 +191,12 @@
     },
     {
       "name": "ext",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-ext`",
+      "description": "已落地（#17–#37）；`ext-host` 行是它后续的重划",
       "enabled": false,
       "reason": {
         "code": "frozen",
