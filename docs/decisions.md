@@ -816,3 +816,21 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 
 **反悔点**：若另票引入 id 命名空间（每段 id 带会话前缀，重铸不撞旧引用），可改成连
 `record_ids` 一起删；那时必须同时改 `commit.rs` 的重复检查与本票的 purge 事务。
+
+## 2026-11-20 · #67 世代归档：独立 SQLite 文件（选项甲），不进 active 库
+
+**决定**：`archive` 把会话闭包复印到活库同目录下的
+`archives/gen-YYYYMMDD.db`（可配置目录由装配注入；测试走临时目录），源文件用 durable
+自己的迁移链初始化并以**只读**方式取行；活库只写一个墓碑 `archived[id] =
+{at,gen,purged:false}`。`restore{gen}` 从那份文件读回并写活库，抹掉墓碑；`purge`
+必须先有墓碑。归档库**不进** durable 的迁移链、备份/`--check` 只认 `NOUS_DB` 那一份。
+同日重复归档按会话 id 先清后写，不产生重复行。
+
+**为什么**：归档的价值是「原件被撕了也能回来」；选项乙把复印件放在活库里，会跟活库
+一起滚进备份、一起丢，正好丢掉这份价值。甲把 durable 的建表语句与读法复用为生成物
+（`migrations()` 是唯一真相），代价只是一次按会话的闭包复制；不新增第二写者。
+
+**反悔点**：若出现「归档库与活库 schema 分叉导致恢复失败」的实证（具体：同一份 generation
+在新版 durable 的迁移链下打不开或丢行），或备份策略改成整目录快照且要求单文件可恢复，
+就翻到选项乙（活库 `archived` 表 + generation 列，一次 v3 迁移）；翻的时候改本段、
+`docs/storage.md`、`wire.md` 的 generation 语义与三条端点的存储实现，保留墓碑对外形状不变。
