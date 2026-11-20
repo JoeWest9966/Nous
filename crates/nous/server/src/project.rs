@@ -6,8 +6,9 @@
 //!   + op 触及 `generation.message` 才产出 `MessageChange`；其余格 0 帧。
 //! - **也不能用 `changes.is_empty()` 判「安静」。** `Entry` 变化照样产出 `message_end` /
 //!   `entry_appended`，`Submission` 变化产出 `submission` —— 它们是另一类帧。
-//! - `Conversation` / `Task` 不产帧：`wire.md` 没有会话元数据帧，任务状态是**不透明 JSON**
-//!   （`storage.md` §12.5 明确不解释），从它猜 `task_failed` 会把「restart」误报成故障。
+//! - `Conversation` 不产帧：`wire.md` 没有会话元数据帧。
+//! - `Task` 只产一种帧：**终态且 outcome.failed** 才发 `task_failed`。中途状态与
+//!   `completed` / `restart` 都不发（不解释状态机本身，只认终态里的失败归因）。
 //!
 //! 消息增量与工具卡片的投影都在 `nous-durable`：前者是 `harness::project::message_changes`，
 //! 后者是 `harness::project::tool_changes`（它必须解 `ops`，而本 crate 的契约面不含
@@ -15,7 +16,7 @@
 
 use nous_durable::harness::project::{message_changes, tool_changes, ToolChange};
 use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCommitChange};
-use nous_durable::types::{EntryRecord, SubmissionRecord};
+use nous_durable::types::{EntryRecord, SubmissionRecord, TaskRecord};
 use nous_wire::{RemoteEvent, SubmissionRecord as WireSubmission};
 use serde_json::{json, Value};
 
@@ -37,8 +38,8 @@ pub fn of_change(change: &CommitChange) -> Result<Vec<RemoteEvent>> {
         CommitChange::Entry(entry) => Ok(entry_events(entry)),
         CommitChange::Submission(submission) => Ok(submission_events(submission)),
         // 会话元数据：`wire.md` 没有帧。`GET /v1/sessions` 是快照，不是事件。
-        // 任务：状态是不透明 JSON，不猜 `task_failed`（见模块文档）。
-        CommitChange::Conversation(_) | CommitChange::Task(_) => Ok(Vec::new()),
+        CommitChange::Conversation(_) => Ok(Vec::new()),
+        CommitChange::Task(task) => Ok(task_events(task)),
     }
 }
 
@@ -142,6 +143,39 @@ pub fn submission_events(submission: &SubmissionRecord) -> Vec<RemoteEvent> {
             reason: submission.fields.reason.clone(),
             detail: submission.fields.detail.as_ref().map(detail_text),
         }),
+    }]
+}
+
+/// 失败终态 → `task_failed`。`TaskRecord.state` 本身是不透明 JSON，这里只认一个形状：
+/// `status == "terminal"` + `outcome.status == "failed"`。其他状态（含 `restart` 中止）都不发 ——
+/// 猜中途状态会把一次正常重启报成故障。
+pub fn task_events(task: &TaskRecord) -> Vec<RemoteEvent> {
+    const TERMINAL: &str = "terminal";
+    const FAILED: &str = "failed";
+    if task.state.get("status").and_then(Value::as_str) != Some(TERMINAL)
+        || task
+            .state
+            .get("outcome")
+            .and_then(|outcome| outcome.get("status"))
+            .and_then(Value::as_str)
+            != Some(FAILED)
+    {
+        return Vec::new();
+    }
+    let outcome = &task.state["outcome"];
+    let reason = outcome
+        .get("error")
+        .and_then(|error| {
+            error
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| error.get("message").and_then(Value::as_str).map(str::to_string))
+        })
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "任务失败".to_string());
+    vec![RemoteEvent::TaskFailed {
+        message: format!("任务 {} 失败：{reason}", task.id),
+        task_id: Some(task.id.to_string()),
     }]
 }
 

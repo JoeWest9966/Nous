@@ -85,10 +85,14 @@ fn only_an_unanswered_submission_becomes_a_frame() {
     assert!(project::of_change(&done).expect("投影").is_empty());
 }
 
+fn task(value: Value) -> CommitChange {
+    CommitChange::Task(serde_json::from_value(value).expect("task 形状"))
+}
+
 #[test]
-fn conversations_and_tasks_produce_no_frames() {
-    // 任务状态是不透明 JSON（`storage.md` §12.5）：不猜 `task_failed`。
-    let task = json!({
+fn a_failed_terminal_task_emits_task_failed_with_its_id() {
+    // 上游终态形状（`storage_conformance`）：state.terminal + outcome.failed。
+    let change = task(json!({
         "id": 7,
         "conversationId": 1,
         "kind": "pi.generation",
@@ -96,10 +100,39 @@ fn conversations_and_tasks_produce_no_frames() {
         "input": {},
         "background": false,
         "abortRequested": false,
-        "state": {"status": "faulted", "error": "boom"}
+        "state": {"status": "terminal", "outcome": {"status": "failed", "error": {"message": "provider exploded"}}}
+    }));
+    let events = project::of_change(&change).expect("投影");
+    assert_eq!(events.len(), 1, "失败终态只发一条 task_failed：{events:?}");
+    let RemoteEvent::TaskFailed { message, task_id } = &events[0] else {
+        panic!("失败终态必须发 task_failed，实测 {events:?}");
+    };
+    assert_eq!(task_id.as_deref(), Some("7"), "task_id 要带上库里的 id");
+    assert!(message.contains("provider exploded"), "message 要人能读且带原因：{message}");
+}
+
+#[test]
+fn a_successful_or_running_task_emits_no_task_failed() {
+    let base = json!({
+        "id": 8,
+        "conversationId": 1,
+        "kind": "pi.generation",
+        "version": 1,
+        "input": {},
+        "background": false,
+        "abortRequested": false,
     });
-    let change = CommitChange::Task(serde_json::from_value(task).expect("task 形状"));
-    assert!(project::of_change(&change).expect("投影").is_empty());
+    for state in [
+        json!({"status": "running"}),
+        json!({"status": "terminal", "outcome": {"status": "completed", "result": {"entryId": 99}}}),
+        // restart 是 abortReason，不是失败原因（模块文档里的误报来源）。
+        json!({"status": "waiting"}),
+    ] {
+        let mut value = base.clone();
+        value["state"] = state.clone();
+        let events = project::of_change(&task(value)).expect("投影");
+        assert!(events.is_empty(), "非失败任务不许发帧（state={state}）：{events:?}");
+    }
 }
 
 /// 「0 帧」不是注释：只改 `Conversation` / `Task` 的一次提交，SSE 上**一帧都没有**
@@ -117,7 +150,7 @@ async fn a_commit_that_only_touches_conversation_and_task_emits_no_frames_at_all
         "input": {},
         "background": false,
         "abortRequested": false,
-        "state": {"status": "running"}
+        "state": {"status": "terminal", "outcome": {"status": "completed"}}
     });
     let publication = publication(vec![
         CommitChange::Conversation(
@@ -131,7 +164,7 @@ async fn a_commit_that_only_touches_conversation_and_task_emits_no_frames_at_all
     tokio::task::yield_now().await;
     assert!(
         subscriber.try_recv().is_err(),
-        "只改会话/任务的提交不许产出任何帧（包括 message_update）"
+        "只改会话/成功任务的提交不许产出任何帧（包括 message_update）"
     );
 }
 

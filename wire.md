@@ -88,7 +88,7 @@
 | `message_end` | `entry.kind === "pi.assistant"` 时收尾 | 助手气泡结束，把攒的字定稿 |
 | `entry_appended` | `entry.kind` | 别的标签页 / 客户端加的东西；`pi.user` `pi.tool-result` 才补 |
 | `submission` | `record.status === "unanswered"` 时弹错误 | `record.reason` / `record.detail` 是「没答上来」的原因 |
-| `task_failed` | `message` | 任务挂了，弹一句 |
+| `task_failed` | `message` `taskId` | 只在任务进入终态且 `outcome.status == "failed"` 时发；中途状态与成功的终态都不发 |
 | `tool_execution_start` | `toolCallId` `toolName` | 开一个工具卡片 |
 | `tool_execution_update` | `toolCallId` `output` | `output.append` / `output.set` 追加 / 覆盖 |
 
