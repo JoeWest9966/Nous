@@ -32,7 +32,7 @@
 | `durable` | nous | `nous-durable` | kernel | 编译期 | 提交 / 文档 / 会话与 entry 查询 / scans | 是 | 存储与事务边界 |
 | `env` | nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait + 四条私库路径解析（`content.rs`：#63）+ `GET /v1/fs/dirs` 的目录解析（`NOUS_START_DIRS` 只在这里读） | 是 | 契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin` |
 | `env-local` | nous | (待建) `nous-env-local` | platform | 编译期 | `ExecutionEnv` 本地实现 | 是 | 今天的 `os_env.rs` 落点 |
-| `env-ssh` | nous | (待建) `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现 | 否 | 今天 `ssh-env.js`（631 行） |
+| `env-ssh` | nous | `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现（ssh/scp + ControlMaster + 临时密钥） | 否 | 今天 `ssh-env.js`（631 行）；#78 落地 |
 | `ai-types` | nous | `nous-ai-types` | kernel | 编译期 | TSchema / Message / Usage（纯） | 是 | 从 `nous-ai` 拆出，零 IO 零时钟（T2 已落地） |
 | `ai` | nous | `nous-ai` | platform | 编译期 | provider trait + HTTP/SSE 实现 | 是 | 今天一个包兼纯/IO 两半；纯的那半已拆成 `ai-types` |
 | `ai-providers` | nous | (待建) `nous-ai-providers` | platform | 编译期 | provider 实现（拆完只留 IO 那半） | 是 | T2 拆完由 `ai` 改出：目录改名 `ai` → `ai-providers`、包改名 `nous-ai` → `nous-ai-providers` |
