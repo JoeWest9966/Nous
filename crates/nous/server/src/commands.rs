@@ -77,6 +77,9 @@ pub trait CommandSource: Send + Sync {
 
     async fn abort(&self, session: i64) -> Result<()>;
 
+    /// #70：会话有没有未收敛的轮次（`whenBusy=interrupt` 用）。
+    async fn busy(&self, session: i64) -> Result<bool> { let _ = session; Ok(false) }
+
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
 
     /// 全部会话的未读状态（平铺 map），只读。
@@ -190,6 +193,12 @@ impl CommandSource for DurableCommands {
     async fn abort(&self, session: i64) -> Result<()> {
         abort(&self.session, session).await.map_err(command_error)?;
         Ok(())
+    }
+
+    async fn busy(&self, session: i64) -> Result<bool> {
+        nous_durable::session::commands::has_pending_submission(&self.session, session)
+            .await
+            .map_err(command_error)
     }
 
     async fn reclaim_orphans(&self) -> Result<usize> {

@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use crate::actor::Actor;
 use crate::harness::generation::LIVE_KIND;
 use crate::storage::writes::StorageWrite;
-use crate::types::{DocumentScope, EntryRecord, TerminalReason};
+use crate::types::{EntryRecord, TerminalReason};
 use crate::{DocumentContent, DocumentPoint, Id, Storage, StorageError};
 
 use super::session_document::{merge_session_document, session_scope_document, upsert_session_document};
@@ -1100,4 +1100,18 @@ pub async fn fail_submission(
     }
     commit_and_publish(session, &mut guard, vec![StorageWrite::Submission(record)]).await?;
     Ok(())
+}
+
+/// #70：这个会话有没有未收敛的 input submission（= 还有一轮在跑）。
+/// 只读，不另开写者；`whenBusy=interrupt` 用它判定是否需要先停当前轮次。
+pub async fn has_pending_submission(session: &Session, conversation: Id) -> Result<bool, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    Ok(storage.submissions(conversation)?.into_iter().any(|record| {
+        record.get("type").and_then(Value::as_str) == Some("input")
+            && matches!(
+                record.get("status").and_then(Value::as_str),
+                Some("queued") | Some("placed")
+            )
+    }))
 }

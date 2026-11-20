@@ -132,6 +132,8 @@ pub struct AssembledRuntime {
     /// #51：只影响 `/v1/models` 与 capabilities，不参与轮次语义。
     pub models: ModelsResponse,
     pub provider_kind: &'static str,
+    /// #70：一轮结束时广播它的 submission id。waitMs 等的是这个信号，不是 sleep 轮询。
+    pub completions: tokio::sync::broadcast::Sender<(i64, serde_json::Value)>,
 }
 
 /// 从宿主配置和环境变量构造注册表。
@@ -247,6 +249,7 @@ pub fn assemble(
         tool_names,
         models: catalog,
         provider_kind: kind,
+        completions: tokio::sync::broadcast::channel(64).0,
     })
 }
 
@@ -273,6 +276,7 @@ pub fn assemble_with_provider(
         tool_names,
         models: faux_catalog(),
         provider_kind: "faux",
+        completions: tokio::sync::broadcast::channel(64).0,
     }
 }
 

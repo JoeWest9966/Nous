@@ -42,6 +42,8 @@ pub struct TurnOutcome {
     pub assistant: AssistantMessage,
     pub terminal: TerminalReason,
     pub tool_calls: Vec<String>,
+    /// #70：终态 entry 的完整记录（waitMs>0 要原样回给调用方）。
+    pub entry: serde_json::Value,
 }
 
 /// 应用层的轮次驱动器。
@@ -297,7 +299,7 @@ impl TurnDriver for HarnessTurnDriver {
                 }).collect::<Vec<_>>(),
             });
         }
-        writes.push(nous_durable::StorageWrite::Entry(final_entry));
+        writes.push(nous_durable::StorageWrite::Entry(final_entry.clone()));
         if live_existed {
             writes.push(
                 generation_change(live, &live_snapshot, None).map_err(|error| error.to_string())?,
@@ -366,6 +368,7 @@ impl TurnDriver for HarnessTurnDriver {
             assistant,
             terminal,
             tool_calls,
+            entry: final_entry,
         })
     }
 }

@@ -524,10 +524,10 @@ struct SubmitBody {
     /// #70：请求体显式指定的模型（优先级最高）。
     #[serde(default)]
     model: Option<nous_device::ModelRef>,
-    /// 只要出现就拒绝：本库只实现「立即 202 + 靠 SSE 收内容」这条路径。
+    /// `0`/省略 = 立即 202；`>0` = 最多等这么久，拿到答案回 200，超时回 202。
     #[serde(default)]
     wait_ms: Option<Value>,
-    /// 受理时忙不忙的处理。当前只有一种行为（照样排队），所以显式收下、显式忽略。
+    /// `queue`（默认）/ `interrupt`。忙时排队或先停当前轮次。
     #[serde(default)]
     when_busy: Option<Value>,
 }
@@ -542,12 +542,26 @@ async fn messages(
     Json(body): Json<SubmitBody>,
 ) -> Result<impl IntoResponse> {
     let session = parse_session(&id)?;
-    if body.wait_ms.is_some() {
-        return Err(ServerError::BadRequest(
-            "waitMs is not supported; listen on /events for the answer".to_string(),
-        ));
+    let wait_ms = match &body.wait_ms {
+        None | Some(Value::Null) => 0u64,
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| ServerError::BadRequest("waitMs must be a non-negative integer".to_string()))?,
+    };
+    let when_busy = match &body.when_busy {
+        None | Some(Value::Null) => "queue",
+        Some(Value::String(value)) if value == "queue" || value == "interrupt" => value.as_str(),
+        _ => {
+            return Err(ServerError::BadRequest(
+                "whenBusy must be queue or interrupt".to_string(),
+            ))
+        }
+    };
+    if when_busy == "interrupt" && state.commands().busy(session).await? {
+        // #70：先停当前轮次（abort 会 cancel 同一个 token、写 user_cancel 终态），
+        // 再受理新的一条。停不掉就报错，不许「假装打断」。
+        state.commands().abort(session).await?;
     }
-    let _ = body.when_busy;
     let faux = state.provider_kind() == "faux";
     // #70：模型解析在**受理之前**。没有来源就 503，不许先 202 再沉默。
     let catalog = if state.injected_models() {
@@ -576,9 +590,15 @@ async fn messages(
     // 事件只用 wire 已有的类型：user entry 的 message_start/entry_appended 由
     // durable 的 CommitObserver → project 投影发出，assistant 由轮次的投影发；
     // 这里不再手工补帧（之前补的假 entry 是重复且形状不对的）。
+    let completion_rx = if wait_ms > 0 {
+        state.runtime().map(|runtime| runtime.completions.subscribe())
+    } else {
+        None
+    };
     if let Some(runtime) = state.runtime() {
         let submitted = result.clone();
         let driver = runtime.driver.clone();
+        let completions = runtime.completions.clone();
         let model = if faux && body.model.is_none() {
             // #51 的 faux 验收模式没有显式指定模型时，仍用固定 echo 模型。
             nous_ai::Model::new(
@@ -592,7 +612,7 @@ async fn messages(
             crate::runtime::model_from_ref(&reference)
         };
         tokio::spawn(async move {
-            let _ = driver
+            let outcome = driver
                 .run(TurnRequest {
                     conversation: session,
                     submission: submitted.submission_id,
@@ -603,7 +623,32 @@ async fn messages(
                     attempt: 1,
                 })
                 .await;
+            if let Ok(outcome) = outcome {
+                let _ = completions.send((submitted.submission_id, outcome.entry));
+            }
         });
+    }
+
+    if let (Some(mut rx), true) = (completion_rx, wait_ms > 0) {
+        let deadline = tokio::time::Duration::from_millis(wait_ms);
+        loop {
+            match tokio::time::timeout(deadline, rx.recv()).await {
+                Ok(Ok((id, answer))) if id == result.submission_id => {
+                    return Ok((StatusCode::OK, Json(answer)));
+                }
+                Ok(Ok(_)) => continue,
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed))
+                | Err(_) => break,
+            }
+        }
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({
+                "submissionId": result.submission_id,
+                "status": "running",
+            })),
+        ));
     }
 
     Ok((
