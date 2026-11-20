@@ -1,0 +1,11 @@
+[package]
+name = "nous-device"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "device 插件：机器编目、模型编目与默认模型（app 层）"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

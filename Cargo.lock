@@ -1297,6 +1297,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-device"
+version = "0.1.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nous-documents"
 version = "0.1.3"
 dependencies = [
