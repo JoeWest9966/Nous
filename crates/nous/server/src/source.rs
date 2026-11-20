@@ -12,14 +12,13 @@
 //! 再造一个失效管理：写进去的会话在 `/v1/sessions` 里看不见，测试就会去测缓存而不是测库。
 //! 189 条会话的全量读是毫秒级；真到了量级瓶颈，那时候已经有提交信号可以用来失效。
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
 use nous_durable::storage::import::ImportedStore;
-use nous_durable::storage::sessions::{
-    render_entries_page, render_live_message, render_sessions, SessionItem,
-};
+use nous_durable::storage::sessions::{render_entries_page, render_live_message, SessionItem};
 use serde_json::Value;
 
 use crate::error::{Result, ServerError};
@@ -28,6 +27,10 @@ use crate::error::{Result, ServerError};
 pub trait SessionSource: Send + Sync {
     /// 会话树，新的在前（`GET /v1/sessions`）。
     fn sessions(&self) -> Result<Vec<SessionItem>>;
+
+    /// 把 `device` 编目的档位表交给投影层。默认什么都不做：假源不关心档位，
+    /// 真源覆写它，在装配期把编目折成纯数据（kernel 不依赖 app 层的编目 crate）。
+    fn with_model_levels(&self, _models: &nous_device::ModelsResponse) -> Arc<dyn SessionSource>;
 
     /// 一个会话的 entry 历史，新的在前（`snapshot.entries` 用它）。
     fn entries(&self, session: i64) -> Result<Vec<Value>>;
@@ -72,6 +75,7 @@ pub trait SessionSource: Send + Sync {
 /// 只读打开一份库（上游 v2 或本库自己的都行）。**永远不写回去**。
 pub struct ImportedSource {
     path: PathBuf,
+    model_levels: BTreeMap<String, Vec<String>>,
 }
 
 impl ImportedSource {
@@ -80,7 +84,28 @@ impl ImportedSource {
         // 开库时就试读一次：路径错了要在装配期报，不要等第一个请求。
         ImportedStore::read(&path)
             .map_err(|error| ServerError::Internal(format!("open {}: {error}", path.display())))?;
-        Ok(Arc::new(Self { path }))
+        Ok(Arc::new(Self {
+            path,
+            model_levels: BTreeMap::new(),
+        }))
+    }
+
+    /// 把 `device` 编目折成 `"provider/modelId" → thinkingLevels`。
+    /// 只在装配期算一次；端点层不理解模型语义。
+    pub(crate) fn with_model_levels(&self, models: &nous_device::ModelsResponse) -> Arc<Self> {
+        Arc::new(Self {
+            path: self.path.clone(),
+            model_levels: models
+                .items
+                .iter()
+                .map(|item| {
+                    (
+                        format!("{}/{}", item.provider, item.model_id),
+                        item.thinking_levels.clone(),
+                    )
+                })
+                .collect(),
+        })
     }
 
     fn store(&self) -> Result<ImportedStore> {
@@ -91,9 +116,16 @@ impl ImportedSource {
 }
 
 impl SessionSource for ImportedSource {
+    fn with_model_levels(&self, models: &nous_device::ModelsResponse) -> Arc<dyn SessionSource> {
+        ImportedSource::with_model_levels(self, models)
+    }
+
     fn sessions(&self) -> Result<Vec<SessionItem>> {
-        render_sessions(&self.store()?)
-            .map_err(|error| ServerError::Internal(format!("render /v1/sessions: {error}")))
+        nous_durable::storage::sessions::render_sessions_with_levels(
+            &self.store()?,
+            &self.model_levels,
+        )
+        .map_err(|error| ServerError::Internal(format!("render /v1/sessions: {error}")))
     }
 
     fn entries(&self, session: i64) -> Result<Vec<Value>> {
