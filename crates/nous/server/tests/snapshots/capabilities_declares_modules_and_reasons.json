@@ -87,6 +87,7 @@
         "GET /v1/machines",
         "GET /v1/models",
         "PUT /v1/default",
+        "POST /v1/catalog/refresh",
         "GET /v1/device",
         "GET /v1/capabilities",
         "GET /v1/_routes"

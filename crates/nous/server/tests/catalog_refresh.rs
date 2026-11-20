@@ -196,3 +196,88 @@ async fn a_failed_refresh_keeps_the_old_catalog_and_reports_error() {
     let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(saved["items"].as_array().unwrap().len(), 1, "失败不许写空编目");
 }
+
+#[tokio::test]
+async fn catalog_token_never_lands_in_logs_or_cache() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let dir = tempfile::tempdir().unwrap();
+    let models_file = dir.path().join("models.json");
+    std::fs::write(
+        &models_file,
+        json!({ "default": null, "items": [] }).to_string(),
+    )
+    .unwrap();
+    let (base, _seen) = fake_catalog(200, three_models());
+    let stdout = dir.path().join("stdout.log");
+    let stderr = dir.path().join("stderr.log");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nous-app"))
+        .current_dir(dir.path())
+        .env("HOME", dir.path())
+        .env("NOUS_DB", dir.path().join("nous.db"))
+        .env("NOUS_TOKEN_FILE", dir.path().join("no-token"))
+        .env("NOUS_LISTEN", "127.0.0.1:0")
+        .env("NOUS_MODELS_FILE", &models_file)
+        .env("NOUS_CATALOG_BASE", &base)
+        .env("NOUS_CATALOG_TOKEN", FAKE_TOKEN)
+        .stdout(Stdio::from(std::fs::File::create(&stdout).unwrap()))
+        .stderr(Stdio::from(std::fs::File::create(&stderr).unwrap()))
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let addr = loop {
+        let text = std::fs::read_to_string(&stdout).unwrap_or_default();
+        if let Some(line) = text.lines().find_map(|line| line.strip_prefix("listening on ")) {
+            break line.trim().to_string();
+        }
+        assert!(Instant::now() < deadline, "启动超时");
+        std::thread::sleep(Duration::from_millis(25));
+    };
+
+    let out = Command::new("curl")
+        .args([
+            "-sS",
+            "--max-time",
+            "5",
+            "-X",
+            "POST",
+            &format!("http://{addr}/v1/catalog/refresh"),
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "refresh curl 失败");
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // 递归扫工作目录下所有文件（日志 + 缓存 + 库），密钥一个字节都不许出现。
+    let mut hits = Vec::new();
+    for entry in walk(dir.path()) {
+        if !entry.is_file() {
+            continue;
+        }
+        if let Ok(text) = std::fs::read_to_string(&entry) {
+            if text.contains(FAKE_TOKEN) {
+                hits.push(entry.display().to_string());
+            }
+        }
+    }
+    assert!(hits.is_empty(), "密钥落盘了：{hits:?}");
+    assert!(
+        std::fs::read_to_string(&stderr).unwrap().contains(FAKE_TOKEN) == false,
+        "stderr 里不许有 token"
+    );
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
