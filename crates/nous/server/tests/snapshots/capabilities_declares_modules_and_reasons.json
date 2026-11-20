@@ -23,6 +23,13 @@
       ]
     },
     {
+      "name": "env",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/fs/dirs"
+      ]
+    },
+    {
       "name": "documents",
       "enabled": true,
       "endpoints": [
@@ -95,6 +102,7 @@
       "endpoints": [
         "GET /v1/machines",
         "GET /v1/models",
+        "PUT /v1/default",
         "GET /v1/device",
         "GET /v1/capabilities",
         "GET /v1/openapi.json",
