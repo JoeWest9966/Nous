@@ -93,12 +93,19 @@ pub fn skills() -> Value {
     body
 }
 
-/// `GET /v1/prompts`：#48 前先与 skills 同构的空表。
+/// `GET /v1/prompts`：真读 `NOUS_PROMPTS`（#72），落在只读插件里，默认配置写错也如实报。
 pub fn prompts() -> Value {
-    let (_, mut body, _) = content_status(PROMPTS);
-    body["default"] = Value::Null;
-    body["categories"] = json!([]);
-    body["prompts"] = json!([]);
+    let (root, mut body, present) = content_status(PROMPTS);
+    if present {
+        let catalog = nous_prompts::catalog_value(&root);
+        for (key, value) in catalog.as_object().expect("catalog 是对象") {
+            body[key.clone()] = value.clone();
+        }
+    } else {
+        body["default"] = Value::Null;
+        body["categories"] = json!([]);
+        body["prompts"] = json!([]);
+    }
     body
 }
 

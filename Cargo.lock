@@ -1424,6 +1424,7 @@ dependencies = [
  "nous-documents",
  "nous-durable",
  "nous-env",
+ "nous-prompts",
  "nous-runtime",
  "nous-sessions",
  "nous-store",
