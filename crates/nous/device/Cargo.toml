@@ -9,3 +9,6 @@ description = "device 插件：机器编目、模型编目与默认模型（app 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
