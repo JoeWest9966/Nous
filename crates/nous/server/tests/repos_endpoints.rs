@@ -71,6 +71,8 @@ async fn status_and_pending_use_the_unified_repo_route() {
     let (_, pending) = call(&app, "GET", "/v1/repos/skills/pending", None).await;
     let units = pending["units"].as_array().expect("units 数组");
     assert!(units.iter().any(|u| u["name"] == "unit"), "pending 非空：{pending}");
+    assert!(units.iter().all(|u| u.get("aheadCommits").is_some()), "pending 字段必须 camelCase：{pending}");
+    assert!(units.iter().all(|u| u.get("ahead_commits").is_none()), "不许漏出 snake_case：{pending}");
 
     let (_, diff) = call(&app, "GET", "/v1/repos/skills/pending/diff?path=unit/a.md", None).await;
     assert_eq!(diff["after"], json!("a"), "单文件 diff 给当前正文：{diff}");
@@ -88,7 +90,12 @@ async fn commit_endpoint_publishes_only_requested_paths() {
         "paths": ["unit/nous.json"], "message": "发布 unit", "requestId": "req-1",
     }))).await;
     assert_eq!(status, StatusCode::OK, "commit 200：{result}");
-    assert!(result["pushed"].is_boolean(), "pushed 三态：{result}");
+    // 三态：有远端推成功 true / 推失败 false / 没配远端 null。fixture 没配 remote → null。
+    assert!(
+        result["pushed"].is_boolean() || result["pushed"].is_null(),
+        "pushed 只能是 true|false|null：{result}"
+    );
+    assert_eq!(result["pushed"], json!(null), "fixture 无 remote，不能冒充推成功");
     let commit = result["commit"].as_str().unwrap();
     let names = git(&root, &["show", "--pretty=format:", "--name-only", commit]);
     assert_eq!(names, "unit/nous.json", "提交里不许有搭车文件");

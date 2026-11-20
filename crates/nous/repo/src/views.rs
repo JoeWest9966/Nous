@@ -19,6 +19,7 @@ pub struct RepoStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingUnit {
     pub name: String,
     pub state: String,
