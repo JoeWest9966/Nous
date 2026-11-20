@@ -303,14 +303,14 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
 /// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
 async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
     // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
-    let injected = state.assembled_models();
-    let response = match injected {
-        Some(catalog) => catalog, // faux 验收 / 显式注入的编目
-        None if state.models().items.is_empty() && state.models().default.is_none() => {
-            nous_device::load_models(state.catalog_env()).map_err(ServerError::Internal)?
+    if state.injected_models() {
+        if let Some(catalog) = state.assembled_models() {
+            return Ok(Json(catalog));
         }
-        None => state.models().clone(),
-    };
+        return Ok(Json(state.models().clone()));
+    }
+    let response = nous_device::load_models(state.catalog_env())
+        .map_err(ServerError::Internal)?;
     Ok(Json(response))
 }
 
