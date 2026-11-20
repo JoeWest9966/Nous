@@ -183,7 +183,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/model", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/{section}", module: "presets" },
-    RegisteredRoute { method: "PUT", path: "/v1/presets/{section}", module: "presets" },
+    RegisteredRoute { method: "PUT", path: "/v1/presets/{section}/order", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/{section}/categories", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}", module: "presets" },
     RegisteredRoute { method: "PUT", path: "/v1/presets/{section}/{name}", module: "presets" },
@@ -193,6 +193,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions/{n}", module: "presets" },
     RegisteredRoute { method: "POST", path: "/v1/presets/{section}/{name}/rollback", module: "presets" },
+    // #60：生成式 OpenAPI 契约（机器可读形状；presets 第一个接入）。
+    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
     RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
 

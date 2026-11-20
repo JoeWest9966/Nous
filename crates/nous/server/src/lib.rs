@@ -24,6 +24,7 @@ pub mod documents;
 pub mod error;
 pub mod hub;
 pub mod meta;
+pub mod openapi;
 pub mod records;
 pub mod observer;
 pub mod presets;

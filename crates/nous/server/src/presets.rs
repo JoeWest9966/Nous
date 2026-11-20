@@ -752,7 +752,8 @@ pub fn attach(state: SharedStore, router: Router) -> Router {
     let presets = Router::new()
         .route("/v1/presets", axum::routing::get(sections))
         .route("/v1/presets/model", axum::routing::get(model))
-        .route("/v1/presets/{section}", axum::routing::get(roster).put(put_order))
+        .route("/v1/presets/{section}", axum::routing::get(roster))
+        .route("/v1/presets/{section}/order", axum::routing::put(put_order))
         .route("/v1/presets/{section}/categories", axum::routing::get(categories))
         .route(
             "/v1/presets/{section}/{name}",

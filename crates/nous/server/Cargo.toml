@@ -42,6 +42,7 @@ serde_json = { workspace = true }
 futures = { workspace = true }
 base64 = { workspace = true }
 rusqlite = { workspace = true }
+utoipa = "5.5.0"
 
 # 端点判据直接打 Router（`ServiceExt::oneshot`），不起真监听端口 —— 不绑 127.0.0.1，
 # 也就没有端口冲突和防火墙那类假红。`tower` 只进测试。
