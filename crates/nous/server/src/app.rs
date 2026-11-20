@@ -171,6 +171,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 
@@ -283,6 +284,8 @@ impl AppState {
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
