@@ -144,3 +144,108 @@ async fn a_real_provider_answer_is_persisted_and_finishes_the_submission() {
     let record = submissions.iter().find(|row| row["id"] == json!(submission)).unwrap();
     assert_eq!(record["status"], json!("done"), "submission 必须推进到 done：{record}");
 }
+
+/// 假 provider 的回复文本固定；模型 id 由 FauxProvider 自动写进 assistant entry 的
+/// `model[0].model`，用它断言「这一轮用的是谁」。
+fn echo_model_provider() -> Arc<dyn nous_ai::Provider> {
+    nous_ai::providers::faux::FauxProvider::new({
+        let script = nous_ai::providers::faux::FauxScript::new();
+        script.append_responses(vec![nous_ai::providers::faux::FauxStep::text("pong")]);
+        script
+    })
+}
+
+/// 建一套没有模型来源的运行时（真 provider），返回 app。
+fn app_for_model_resolution(
+    path: &PathBuf,
+    model: Option<&str>,
+    catalog: Option<nous_device::ModelsResponse>,
+) -> Router {
+    let session = Arc::new(Session::open(path).unwrap());
+    let mut assembled = nous_server::runtime::assemble_with_provider(
+        echo_model_provider(),
+        Arc::new(BTreeMap::new()),
+        session,
+    );
+    assembled.provider_kind = "real";
+    let state = AppState::durable(path).unwrap().with_runtime(Arc::new(assembled));
+    let state = match catalog {
+        Some(catalog) => state.with_models(catalog),
+        None => state,
+    };
+    router(state)
+}
+
+fn catalog_with_default(provider: &str, id: &str) -> nous_device::ModelsResponse {
+    nous_device::ModelsResponse {
+        default: Some(nous_device::ModelRef {
+            provider: provider.into(),
+            model_id: id.into(),
+        }),
+        items: vec![nous_device::ModelItem {
+            provider: provider.into(),
+            model_id: id.into(),
+            name: id.into(),
+            thinking_levels: vec![],
+            context_window: None,
+            max_tokens: None,
+        }],
+        catalog: nous_device::CatalogDiagnostics {
+            state: "ok",
+            source: Some("file"),
+            path: PathBuf::from("/tmp/models.json"),
+        },
+    }
+}
+
+async fn answer_model(app: &Router, path: &PathBuf, body: Value) -> String {
+    let (status, response) = call(app, "POST", "/v1/sessions/1/messages", Some(body)).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "实测 {response}");
+    let entries = wait_for(path, "entries", |entry| entry["kind"] == json!("pi.assistant")).await;
+    let assistant = entries.iter().find(|entry| entry["kind"] == json!("pi.assistant")).unwrap();
+    assistant["model"][0]["model"].as_str().expect("assistant 带 model id").to_string()
+}
+
+#[tokio::test]
+async fn a_model_in_the_request_body_wins_over_session_and_catalog() {
+    let path = temp_db("model-body");
+    seed(&path, Some("session/session-model")).await;
+    let app = app_for_model_resolution(&path, None, Some(catalog_with_default("catalog", "default-model")));
+    let used = answer_model(
+        &app,
+        &path,
+        json!({"content": "ping", "model": {"provider": "body", "modelId": "body-model"}}),
+    )
+    .await;
+    assert_eq!(used, "body-model");
+}
+
+#[tokio::test]
+async fn a_session_model_is_used_when_the_request_has_none() {
+    let path = temp_db("model-session");
+    seed(&path, Some("session/session-model")).await;
+    let app = app_for_model_resolution(&path, None, Some(catalog_with_default("catalog", "default-model")));
+    let used = answer_model(&app, &path, json!({"content": "ping"})).await;
+    assert_eq!(used, "session-model");
+}
+
+#[tokio::test]
+async fn the_catalog_default_is_used_when_nobody_specified_a_model() {
+    let path = temp_db("model-catalog");
+    seed(&path, None).await;
+    let app = app_for_model_resolution(&path, None, Some(catalog_with_default("catalog", "default-model")));
+    let used = answer_model(&app, &path, json!({"content": "ping"})).await;
+    assert_eq!(used, "default-model");
+}
+
+#[tokio::test]
+async fn with_no_model_anywhere_the_request_is_503_not_202() {
+    let path = temp_db("model-none");
+    seed(&path, None).await;
+    let app = app_for_model_resolution(&path, None, Some(nous_device::ModelsResponse::default()));
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping"}))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "全都没有模型必须 503：{body}");
+    assert_eq!(body["error"], json!("没有可用模型"));
+    assert!(read_rows(&path, "submissions").is_empty(), "503 之前不许写 submission");
+    assert!(read_rows(&path, "entries").is_empty(), "503 之前不许写 user entry");
+}
