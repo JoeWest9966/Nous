@@ -45,6 +45,7 @@ serde_json = { workspace = true }
 # `Sse` 认的是 `futures_core::Stream`，不为这一件事自己手写 `poll_next`。
 futures = { workspace = true }
 base64 = { workspace = true }
+rusqlite = { workspace = true }
 
 # 端点判据直接打 Router（`ServiceExt::oneshot`），不起真监听端口 —— 不绑 127.0.0.1，
 # 也就没有端口冲突和防火墙那类假红。`tower` 只进测试。

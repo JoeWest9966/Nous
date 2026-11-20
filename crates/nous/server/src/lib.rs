@@ -26,6 +26,7 @@ pub mod hub;
 pub mod meta;
 pub mod records;
 pub mod observer;
+pub mod presets;
 pub mod project;
 pub mod routes;
 pub mod runtime;

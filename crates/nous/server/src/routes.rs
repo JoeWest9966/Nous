@@ -91,7 +91,12 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/stats/db", get(crate::stats::db))
         .route("/v1/openapi.json", get(crate::stats::openapi));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
-    crate::documents::attach(state, router)
+    let router = crate::documents::attach(state.clone(), router);
+    // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
+    match state.presets() {
+        Some(store) => crate::presets::attach(store.clone(), router),
+        None => router,
+    }
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
