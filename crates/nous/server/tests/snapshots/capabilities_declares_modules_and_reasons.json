@@ -33,7 +33,6 @@
       "enabled": true,
       "endpoints": [
         "GET /v1/fs/dirs"
-
       ]
     },
     {
