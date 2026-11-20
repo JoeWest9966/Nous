@@ -137,6 +137,49 @@ fn a_successful_or_running_task_emits_no_task_failed() {
 
 /// 「0 帧」不是注释：只改 `Conversation` / `Task` 的一次提交，SSE 上**一帧都没有**
 /// （既没有 `message_update`，也没有别的）。`changes.is_empty()` 不能当「安静」的判据，
+#[tokio::test]
+async fn a_failed_terminal_task_reaches_the_sse_subscriber_with_its_id() {
+    let state = AppState::with_source(FakeSource::two_sessions());
+    let mut subscriber = state.hub().subscribe(1);
+    let failed = json!({
+        "id": 7,
+        "conversationId": 1,
+        "kind": "pi.generation",
+        "version": 1,
+        "input": {},
+        "background": false,
+        "abortRequested": false,
+        "state": {"status": "terminal", "outcome": {"status": "failed", "error": {"message": "provider exploded"}}}
+    });
+    state
+        .publish_publication(&publication(vec![task(failed)]))
+        .expect("投影不该失败");
+    tokio::task::yield_now().await;
+    let RemoteEvent::TaskFailed { message, task_id } = subscriber.try_recv().expect("SSE 必须收到 task_failed") else {
+        panic!("订阅端收到的不是 task_failed");
+    };
+    assert_eq!(task_id.as_deref(), Some("7"), "task_id 与库里的 id 相等");
+    assert!(message.contains("provider exploded"), "message 要人能读：{message}");
+    assert!(subscriber.try_recv().is_err(), "一次失败终态只发一条");
+
+    // 同一会话的成功终态不进 SSE。
+    let mut subscriber = state.hub().subscribe(1);
+    state
+        .publish_publication(&publication(vec![task(json!({
+            "id": 8,
+            "conversationId": 1,
+            "kind": "pi.generation",
+            "version": 1,
+            "input": {},
+            "background": false,
+            "abortRequested": false,
+            "state": {"status": "terminal", "outcome": {"status": "completed"}}
+        }))]))
+        .expect("投影不该失败");
+    tokio::task::yield_now().await;
+    assert!(subscriber.try_recv().is_err(), "成功任务不许发 task_failed");
+}
+
 /// 反过来「有 changes 就发一帧」也不行 —— 这条钉住后者。
 #[tokio::test]
 async fn a_commit_that_only_touches_conversation_and_task_emits_no_frames_at_all() {

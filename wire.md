@@ -64,6 +64,9 @@
   `pi.user`（右气泡）和 `pi.assistant`（左气泡），其余降级显示，别崩。
 - `parent` 是 entry 的父指针，和会话树的 `parent` 不是一回事。
 - `next` 是分页游标，`?limit=` 上限 1000。
+- `?system=1` 是回放开关：额外回 `system`（回放全部 `pi.system` 后**当前生效**的提示词，
+  可能为空串），并给每条 `pi.system` 的 `items[]` 补 `delta`（它自己带来的文本）。
+  不传时仍过滤 `pi.system`，且**没有** `system` 键。
 
 ### POST /v1/sessions/:id/messages
 
