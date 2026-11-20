@@ -55,6 +55,22 @@ fn stale_if_match_returns_409_with_current_content_and_fresh_etag_wins() {
 }
 
 #[test]
+fn etag_matches_known_sha256_vector() {
+    // 独立真相：NIST FIPS 180-4 的标准测试向量 "abc"，不由实现自己算出来。
+    // sha256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    let (_tmp, repo) = repo();
+    let written = repo.write_file(WriteFile {
+        path: "vector.txt", content: b"abc", base_etag: None,
+    }).unwrap();
+    assert_eq!(
+        written.etag,
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        "etag 必须是标准 SHA256，不是自洽的假哈希"
+    );
+    assert_eq!(repo.read_file("vector.txt").unwrap().etag, written.etag);
+}
+
+#[test]
 fn path_escape_is_rejected_without_creating_any_file() {
     let (_tmp, repo) = repo();
     let outside = repo.root().parent().unwrap().join("escaped.txt");
