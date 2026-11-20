@@ -46,6 +46,7 @@
 //! ```
 
 pub mod context;
+pub mod dirs;
 pub mod error;
 pub mod fs;
 pub mod shell;
@@ -53,6 +54,10 @@ pub mod types;
 
 pub use context::{
     Context, ContextExt, ContextKey, Progress, ProgressSink, PROGRESS_KEY,
+};
+pub use dirs::{
+    is_local_machine, list_subdirs, local_machine_name, start_dir, BrowseDir, BrowseDirs,
+    BrowseError,
 };
 pub use error::{
     io_to_file_code, io_to_file_error, ExecutionError, ExecutionErrorCode, FileError,
