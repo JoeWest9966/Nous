@@ -209,6 +209,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/trash", module: "documents" },
     RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/restore", module: "documents" },
     RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/purge", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/import", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
 

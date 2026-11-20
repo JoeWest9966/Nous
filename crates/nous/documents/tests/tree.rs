@@ -67,3 +67,30 @@ fn roundtrip_preserves_relations_and_unknown_fields() {
     assert_eq!(back.nodes["child"].extra["futureField"], serde_json::json!({"x": 1}));
     back.check_integrity().unwrap();
 }
+
+#[test]
+fn archived_tree_json_maps_groups_docs_and_gone_dirs_to_tombstones() {
+    use std::collections::BTreeSet;
+    let raw = serde_json::json!({
+        "v": 1, "name": "desk", "version": 3,
+        "root": {
+            "id": "root", "name": "根目录",
+            "children": [
+                {"id": "group-a", "name": "甲组", "children": [
+                    {"id": "note-1", "name": "笔记一", "value": 1}
+                ]},
+                {"id": "old-block", "name": "旧块", "trashed": true}
+            ]
+        }
+    });
+    let map = BTreeSet::from(["root".into(), "group-a".into(), "note-1".into()]);
+    let gone = BTreeSet::from(["deleted-one".into()]);
+    let (tree, report) = nous_documents::kinds::tree_migrate::import_tree_json(&raw, &map, &gone).unwrap();
+    assert_eq!(report.nodes, 4);
+    assert_eq!(report.folders, 2);
+    assert_eq!(report.trashed, 2, "旧 trash 标记 + .gone 目录都要变墓碑");
+    assert_eq!(tree.nodes["note-1"].parent.as_deref(), Some("group-a"));
+    assert!(tree.nodes["deleted-one"].trashed_at.is_some());
+    assert_eq!(tree.nodes["root"].title, "根目录");
+    tree.check_integrity().unwrap();
+}

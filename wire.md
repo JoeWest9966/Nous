@@ -495,8 +495,12 @@ history / diff / validate / pending）语义不变。一个 `section` = 一个�
 - 乐观锁：`PUT` 建/整份重置一盘面的树；后续的 `move` / `trash` / `restore` / `purge`
   必须带从响应拿到的 `etag`，与当前文档 etag 不一致回 409 —— 单用户边界由修订版本
   承担，不靠锁文件。
-- 迁移从 2026-11-18 归档 tar 的旧 `tree.json` + `map/` 只读解析，导入成一盘面文档；
-  目标库仍只有 `nous.db` / `nous-plugins.db`，跨库顺序不变。
+- 迁移走 `POST /v1/documents/tree/{section}/{name}/import`：入参只是旧 `tree.json` 的值
+  和可选的 `mapDirs` / `goneDirs` 目录名清单（由外部只读读出归档 tar 后送入），服务不读盘、
+  不写盘，解析出的树经同一写端落 `nous.db`；目标库仍只有 `nous.db` / `nous-plugins.db`，
+  跨库顺序不变。字段形状以
+  `crates/nous/server/tests/documents_tree.rs::archived_tree_imports_into_the_same_document_store`
+  为准。
 
 ### GET /v1/prompts
 

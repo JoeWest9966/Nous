@@ -36,6 +36,7 @@ pub const DOCUMENT_ROUTES: &[RouteInfo] = &[
     RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/trash" },
     RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/restore" },
     RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/purge" },
+    RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/import" },
 ];
 
 use serde::Serialize;

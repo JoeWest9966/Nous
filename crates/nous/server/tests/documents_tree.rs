@@ -167,3 +167,30 @@ async fn cycles_and_stale_etags_are_rejected_and_leave_the_db_untouched() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn archived_tree_imports_into_the_same_document_store() {
+    let path = temp_db("import");
+    let app = setup(&path).await;
+    let old = json!({
+        "v": 1, "name": "desk", "version": 7,
+        "root": {"id": "root", "name": "老盘", "children": [
+            {"id": "g1", "name": "组一", "children": [{"id": "n1", "name": "文档一"}]}
+        ]}
+    });
+    let (status, body) = call(&app, Method::POST,
+        "/v1/documents/tree/desk/board/import",
+        Some(json!({ "tree.json": old, "mapDirs": ["root", "g1", "n1"], "goneDirs": ["deleted"] }))).await;
+    assert_eq!(status, StatusCode::OK, "迁移导入必须 200: {body}");
+    assert_eq!(body["migration"]["nodes"], json!(3), "报告节点数: {body}");
+    assert_eq!(body["migration"]["folders"], json!(2), "报告组数: {body}");
+
+    // HTTP 进 → 库里真有一行，且内容来自旧归档（不是空树）。
+    let db = stored_tree(&path, "desk");
+    assert_eq!(db["nodes"]["n1"]["title"], json!("文档一"), "旧节点名必须落库");
+    assert_eq!(db["nodes"]["n1"]["parent"], json!("g1"), "旧父子边必须落库");
+    assert!(db["nodes"]["deleted"]["trashedAt"].is_i64(), ".gone 必须是库内墓碑");
+    println!("命中行: 迁移后库里 n1.title={} deleted.trashedAt={}",
+        db["nodes"]["n1"]["title"], db["nodes"]["deleted"]["trashedAt"]);
+    let _ = std::fs::remove_file(&path);
+}

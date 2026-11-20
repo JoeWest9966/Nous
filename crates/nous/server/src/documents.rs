@@ -212,6 +212,7 @@ fn handler_for(method: &'static str, path: &'static str) -> axum::routing::Metho
     if path.ends_with("/trash") { return post(tree_trash) }
     if path.ends_with("/restore") { return post(tree_restore) }
     if path.ends_with("/purge") { return post(tree_purge) }
+    if path.ends_with("/import") { return post(tree_import) }
     if path.ends_with("/rename") { return post(rename) }
     if path.ends_with("/publish") { return post(action_publish) }
     if path.ends_with("/reload") { return post(action_reload) }
@@ -613,6 +614,34 @@ async fn tree_purge(
         let id = body.id.clone().ok_or_else(|| TreeError::Invalid("id is required".into()))?;
         tree.purge(&id)
     }).await
+}
+
+/// 归档迁移：入参只是旧 `tree.json` 的值 + （可选的）`mapDirs` / `goneDirs` 目录名清单。
+/// 不读盘、不写盘、不碰第二库；解析出的树经同一写端落 `nous.db`。
+async fn tree_import(
+    State(state): State<Arc<AppState>>,
+    AxumPath((section, name)): AxumPath<(String, String)>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    #[derive(serde::Deserialize)]
+    struct ImportBody {
+        #[serde(rename = "tree.json")]
+        tree: Value,
+        #[serde(default, rename = "mapDirs")]
+        map_dirs: Vec<String>,
+        #[serde(default, rename = "goneDirs")]
+        gone_dirs: Vec<String>,
+    }
+    let body: ImportBody = serde_json::from_slice(&body)
+        .map_err(|e| ServerError::BadRequest(format!("import body: {e}")))?;
+    let map = body.map_dirs.into_iter().collect();
+    let gone = body.gone_dirs.into_iter().collect();
+    let (tree, report) = nous_documents::kinds::tree_migrate::import_tree_json(&body.tree, &map, &gone)
+        .map_err(ServerError::BadRequest)?;
+    let mut result = commit_tree(&state, &section, &name, &tree, true).await?;
+    result["migration"] = json!({ "nodes": report.nodes, "folders": report.folders,
+                                  "trashed": report.trashed, "skipped": report.skipped });
+    Ok(Json(result))
 }
 
 /// `GET /v1/_routes`：注册表在 `meta.rs`，与 capabilities 同源（唯一真相）。
