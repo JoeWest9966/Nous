@@ -55,10 +55,15 @@ async fn prompts_lists_real_directories_and_names_an_unconfigured_default() {
 async fn reading_prompts_never_writes_to_the_private_repo() {
     use std::process::Command;
     fn digests(root: &std::path::Path) -> String {
-        let out = Command::new("sha256sum")
-            .args(root.read_dir().unwrap().flatten().filter(|e| e.path().is_file())
-                  .map(|e| e.path()).collect::<Vec<_>>())
-            .output().unwrap();
+        fn files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+            let mut out = Vec::new();
+            for entry in dir.read_dir().unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() { out.extend(files(&path)); } else { out.push(path); }
+            }
+            out
+        }
+        let out = Command::new("sha256sum").args(files(root)).output().unwrap();
         String::from_utf8(out.stdout).unwrap()
     }
     let root = temp_root("readonly");
