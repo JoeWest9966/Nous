@@ -264,7 +264,9 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - `category` 是字符串数组，`/` 表示层级：`写作/周报` 自动蕴含父级 `写作`。一条可以挂多个。
 - `repo` 是**这一段的**仓状态 `{ head, dirty, ahead, behind, error }`；`dirty` 按段算，
   `ahead`/`behind` 是整仓的。`head` 可能是 `null`（仓读不了）—— 别拿它当字符串硬切。
-- `specError` → 这条自己写坏了，红。
+- `specError` → 这条自己写坏了，红（字段名 + 一句原因）。本库按形状校验填，不 spawn git。
+- `tracked` 在本库恒 `null`：不 spawn git，无从判「仓里有没有」；`null` 不是 `false`。
+  `dir` 是文档根下的真实绝对路径（`<root>/<kind>/<section>`）。
 - `resolved.*.state === "invalid"` → 引用失效，现在开不了。
 - `tracked === false` → 盘上有、仓里没。
 - **能否启动的判据全是引擎算好的**，客户端不自己拼规则。加了规则就等于可以跟引擎吵起来。
@@ -297,6 +299,8 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 回包 `{ ok, commit, pushed, name, to, refs }`，`refs` 是**被动到的终极模板名**（连带改的）。
 界面要把 `refs` 说出来 —— 改名顺手动了别人的东西，不说一声就是偷偷改。
+**本库不 spawn git**：`commit` 与 `pushed` 一律 `null`，不拿 `{}` 冒充「有一笔提交」。
+单条文档不存在与不认识的 kind 一律 `404`，body 带可用值清单，不许 `500`。
 
 - 只有 POST；`to` 走和新建同一套名字规则（`400`）、目标已存在 `409`、源不存在 `404`。
 #### GET / POST /v1/presets/:section/order
