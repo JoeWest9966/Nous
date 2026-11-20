@@ -142,6 +142,8 @@ async fn models_response_pins_default_and_item_field_shape() {
             state: "ok",
             source: None,
             path: std::path::PathBuf::from("/test/models.json"),
+            fetched_at: None,
+            error: None,
         },
     };
     let app =
