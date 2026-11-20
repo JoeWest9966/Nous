@@ -30,7 +30,7 @@ pub trait SessionSource: Send + Sync {
 
     /// 把 `device` 编目的档位表交给投影层。默认什么都不做：假源不关心档位，
     /// 真源覆写它，在装配期把编目折成纯数据（kernel 不依赖 app 层的编目 crate）。
-    fn with_model_levels(&self, _models: &nous_device::ModelsResponse) -> Arc<dyn SessionSource>;
+    fn set_model_levels(&self, _models: &nous_device::ModelsResponse) {}
 
     /// 一个会话的 entry 历史，新的在前（`snapshot.entries` 用它）。
     fn entries(&self, session: i64) -> Result<Vec<Value>>;
@@ -75,7 +75,7 @@ pub trait SessionSource: Send + Sync {
 /// 只读打开一份库（上游 v2 或本库自己的都行）。**永远不写回去**。
 pub struct ImportedSource {
     path: PathBuf,
-    model_levels: BTreeMap<String, Vec<String>>,
+    model_levels: std::sync::Mutex<BTreeMap<String, Vec<String>>>,
 }
 
 impl ImportedSource {
@@ -86,26 +86,23 @@ impl ImportedSource {
             .map_err(|error| ServerError::Internal(format!("open {}: {error}", path.display())))?;
         Ok(Arc::new(Self {
             path,
-            model_levels: BTreeMap::new(),
+            model_levels: std::sync::Mutex::new(BTreeMap::new()),
         }))
     }
 
     /// 把 `device` 编目折成 `"provider/modelId" → thinkingLevels`。
     /// 只在装配期算一次；端点层不理解模型语义。
-    pub(crate) fn with_model_levels(&self, models: &nous_device::ModelsResponse) -> Arc<Self> {
-        Arc::new(Self {
-            path: self.path.clone(),
-            model_levels: models
-                .items
-                .iter()
-                .map(|item| {
-                    (
-                        format!("{}/{}", item.provider, item.model_id),
-                        item.thinking_levels.clone(),
-                    )
-                })
-                .collect(),
-        })
+    fn fold_levels(models: &nous_device::ModelsResponse) -> BTreeMap<String, Vec<String>> {
+        models
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    format!("{}/{}", item.provider, item.model_id),
+                    item.thinking_levels.clone(),
+                )
+            })
+            .collect()
     }
 
     fn store(&self) -> Result<ImportedStore> {
@@ -116,15 +113,14 @@ impl ImportedSource {
 }
 
 impl SessionSource for ImportedSource {
-    fn with_model_levels(&self, models: &nous_device::ModelsResponse) -> Arc<dyn SessionSource> {
-        ImportedSource::with_model_levels(self, models)
+    fn set_model_levels(&self, models: &nous_device::ModelsResponse) {
+        *self.model_levels.lock().unwrap_or_else(|e| e.into_inner()) =
+            Self::fold_levels(models);
     }
 
     fn sessions(&self) -> Result<Vec<SessionItem>> {
-        nous_durable::storage::sessions::render_sessions_with_levels(
-            &self.store()?,
-            &self.model_levels,
-        )
+        let levels = self.model_levels.lock().unwrap_or_else(|e| e.into_inner());
+        nous_durable::storage::sessions::render_sessions_with_levels(&self.store()?, &levels)
         .map_err(|error| ServerError::Internal(format!("render /v1/sessions: {error}")))
     }
 
