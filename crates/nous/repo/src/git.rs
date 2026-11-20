@@ -33,10 +33,23 @@ pub(crate) fn git_ok(root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// 仓是否配了可用的 push 目标。没有 origin → `Unknown`（wire null）。
+pub(crate) fn has_push_target(root: &Path) -> bool {
+    git_ok(root, &["remote"])
+        .map(|out| out.lines().any(|line| !line.trim().is_empty()))
+        .unwrap_or(false)
+}
+
 /// 带 25s 软超时的 push（poll 子进程，超时 kill；不把控制权交给外部 shell）。
-pub(crate) fn git_push(root: &Path) -> Result<bool> {
+///
+/// `Unknown`（wire null）留给没有配置远端的情况；失败是 `No`，绝不报成功。
+pub(crate) fn git_push(root: &Path) -> Result<crate::Pushed> {
     use std::thread;
     use std::time::Instant;
+
+    if !has_push_target(root) {
+        return Ok(crate::Pushed::Unknown);
+    }
 
     let mut child = Command::new("git")
         .args(["-c", "http.version=HTTP/1.1", "push", "--porcelain"])
@@ -54,13 +67,13 @@ pub(crate) fn git_push(root: &Path) -> Result<bool> {
             Ok(Some(status)) => {
                 let out = child.wait_with_output().map_err(|e| RepoError::Io(e.to_string()))?;
                 let _ = status;
-                return Ok(out.status.success());
+                return Ok(if out.status.success() { crate::Pushed::Yes } else { crate::Pushed::No });
             }
             Ok(None) if started.elapsed() < GIT_TIMEOUT => thread::sleep(Duration::from_millis(20)),
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Ok(false);
+                return Ok(crate::Pushed::No);
             }
             Err(e) => return Err(RepoError::Io(format!("git push 等待失败：{e}"))),
         }

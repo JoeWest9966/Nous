@@ -5,7 +5,7 @@ fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 use std::sync::Arc;
 
-use nous_repo::{Repo, WriteFile};
+use nous_repo::{Pushed, Repo, WriteFile};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new(git_bin())
@@ -47,7 +47,7 @@ fn fixture() -> Fixture {
 fn write_and_publish(repo: &Repo, path: &str, content: &[u8]) {
     let w = repo.write_file(WriteFile { path, content, base_etag: None }).unwrap();
     let result = repo.commit(&[w.path], "publish", None).unwrap();
-    assert!(result.pushed);
+    assert_eq!(result.pushed, Pushed::Yes);
 }
 
 #[test]
@@ -58,13 +58,13 @@ fn archive_restore_purge_three_generations_move_files_and_commit_each_step() {
 
     let before = git(&f.root, &["rev-list", "--count", "HEAD"]);
     let a = repo.archive("unit-a", None).unwrap();
-    assert!(a.pushed, "归档要 git mv + commit + push");
+    assert_eq!(a.pushed, Pushed::Yes, "归档要 git mv + commit + push");
     assert!(!f.root.join("unit-a").exists());
     assert!(f.root.join(".archive/unit-a/SKILL.md").exists());
     assert_eq!(git(&f.root, &["rev-list", "--count", "HEAD"]), incr(&before, 1));
 
     let r = repo.restore("unit-a", None).unwrap();
-    assert!(r.pushed);
+    assert_eq!(r.pushed, Pushed::Yes);
     assert!(f.root.join("unit-a/SKILL.md").exists());
     assert!(!f.root.join(".archive/unit-a").exists());
     assert_eq!(git(&f.root, &["rev-list", "--count", "HEAD"]), incr(&before, 2));
@@ -72,7 +72,7 @@ fn archive_restore_purge_three_generations_move_files_and_commit_each_step() {
     // purge 作用于归档中的单元：restore 之后要再归档一次才谈得上撕。
     repo.archive("unit-a", None).unwrap();
     let p = repo.purge("unit-a", None).unwrap();
-    assert!(p.pushed);
+    assert_eq!(p.pushed, Pushed::Yes);
     assert!(!f.root.join(".archive/unit-a").exists());
     assert_eq!(git(&f.root, &["rev-list", "--count", "HEAD"]), incr(&before, 4));
     assert!(git(&f.root, &["cat-file", "-e", &format!("{}^:.archive/unit-a/SKILL.md", p.commit)]).is_empty(), "purge 前归档文件在历史里");
@@ -99,7 +99,7 @@ fn pending_groups_by_unit_and_ahead_commits_counts_unpushed_commits() {
     git(&f.root, &["remote", "set-url", "origin", "/nonexistent/remote.git"]);
     let w = repo.read_file("unit-a/x.md").unwrap();
     let result = repo.commit(&[w.path], "unpushed", None).unwrap();
-    assert!(!result.pushed, "这条判据要求 commit 成功但没推上去");
+    assert_eq!(result.pushed, Pushed::No, "这条判据要求 commit 成功但没推上去");
     let pending = repo.pending().unwrap();
     let unit = pending.iter().find(|u| u.name == "unit-a").unwrap();
     assert_eq!(unit.ahead_commits, 1, "已 commit 未 push 的单元 aheadCommits=1：{pending:?}");
@@ -123,7 +123,7 @@ fn push_failure_reports_false_and_never_rolls_back_local_changes() {
     git(&f.root, &["remote", "set-url", "origin", "/nonexistent/remote.git"]);
     let w = repo.write_file(WriteFile { path: "keep.md", content: b"keep me", base_etag: None }).unwrap();
     let result = repo.commit(&[w.path], "offline", None).unwrap();
-    assert!(!result.pushed, "推送失败必须报 false，不许冒充 true");
+    assert_eq!(result.pushed, Pushed::No, "推送失败必须报 false，不许冒充 true");
     assert_eq!(std::fs::read(f.root.join("keep.md")).unwrap(), b"keep me", "用户改动必须留在盘上");
     assert_eq!(git(&f.root, &["rev-parse", "--short", "HEAD"]).trim(), &result.commit[..7], "本地提交仍在");
 }
@@ -144,7 +144,7 @@ fn concurrent_writes_to_same_repo_are_serialized_and_both_commits_survive() {
         }));
     }
     let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-    assert!(results.iter().all(|r| r.pushed));
+    assert!(results.iter().all(|r| r.pushed == Pushed::Yes));
     let after: usize = git(&f.root, &["rev-list", "--count", "HEAD"]).parse().unwrap();
     assert_eq!(after, before + 2, "两笔提交都要在，不许交叉或丢失");
     let messages = git(&f.root, &["log", "-2", "--pretty=%s"]);

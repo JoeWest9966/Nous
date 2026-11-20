@@ -6,7 +6,7 @@ fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use nous_repo::{Repo, WriteFile};
+use nous_repo::{Pushed, Repo, WriteFile};
 use serde_json::json;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -75,7 +75,7 @@ fn write_then_publish_commits_only_the_requested_path_and_advances_remote() {
     let result = repo
         .commit(&[written.path.clone()], "发布 alpha", None)
         .unwrap();
-    assert!(result.pushed, "本地 bare remote 可达时必须推送成功");
+    assert_eq!(result.pushed, Pushed::Yes, "本地 bare remote 可达时必须推送成功");
 
     let after = git(&f.remote, &["rev-parse", "refs/heads/main"]);
     assert_ne!(before, after, "bare remote 的 HEAD 应多一笔");
@@ -101,4 +101,35 @@ fn write_then_publish_commits_only_the_requested_path_and_advances_remote() {
 
     // 误用的 JSON 输入也不该在这里编译：确保公共 API 上能看到 etag/path。
     assert_eq!(written.path, "drafts/alpha.md");
+    assert_eq!(result.pushed, Pushed::Yes, "有远端时必须是 true");
+    assert_eq!(serde_json::to_value(result.pushed).unwrap(), json!(true));
+}
+
+#[test]
+fn commit_without_remote_reports_pushed_null_instead_of_lying() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("skills");
+    std::fs::create_dir_all(&root).unwrap();
+    git(&tmp.path(), &["init", "-q"]);
+    git(&root, &["config", "user.email", "test@example.com"]);
+    git(&root, &["config", "user.name", "Test"]);
+    git(&root, &["config", "commit.gpgsign", "false"]);
+    git(&root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    let repo = Repo::open(&root).unwrap();
+    let w = repo
+        .write_file(WriteFile {
+            path: "no-remote.md",
+            content: b"still committed\n",
+            base_etag: None,
+        })
+        .unwrap();
+    let result = repo.commit(&[w.path], "no remote", None).unwrap();
+    assert_eq!(result.pushed, Pushed::Unknown, "没有远端时不能冒充推送成功");
+    assert_eq!(serde_json::to_value(result.pushed).unwrap(), json!(null));
+    assert_eq!(
+        std::fs::read(root.join("no-remote.md")).unwrap(),
+        b"still committed\n",
+        "没有远端也不许动用户改动"
+    );
 }

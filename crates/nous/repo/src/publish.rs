@@ -7,10 +7,30 @@ use serde::Serialize;
 use crate::error::{RepoError, Result};
 use crate::git;
 
+/// 推送结果的 wire 三态：`true`（推上去了）/ `false`（推失败）/ `null`（没有远端）。
+/// 默认序列化为 `true|false|null`，不是字符串。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pushed {
+    Yes,
+    No,
+    #[default]
+    Unknown,
+}
+
+impl Serialize for Pushed {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Pushed::Yes => serializer.serialize_bool(true),
+            Pushed::No => serializer.serialize_bool(false),
+            Pushed::Unknown => serializer.serialize_none(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CommitResult {
     pub commit: String,
-    pub pushed: bool,
+    pub pushed: Pushed,
     pub refs: Vec<String>,
 }
 
@@ -32,7 +52,7 @@ pub struct HistoryItem {
 #[derive(Debug, Clone, Serialize)]
 pub struct LifecycleResult {
     pub commit: String,
-    pub pushed: bool,
+    pub pushed: Pushed,
 }
 
 fn lines(out: &str) -> Vec<String> {
