@@ -311,7 +311,7 @@ fn agent_state(store: &ImportedStore, conversation_id: i64) -> Result<AgentState
 /// 一篇文档最新一条 `base` revision 的内容。
 ///
 /// 最新 revision 是 `delta` 时**明确失败**；没有 revision 时返回 `None`（文档还没写过值）。
-fn latest_base_content(store: &ImportedStore, document_id: i64) -> Result<Option<Value>> {
+pub(crate) fn latest_base_content(store: &ImportedStore, document_id: i64) -> Result<Option<Value>> {
     let mut newest: Option<(i64, &str, &str)> = None;
     for row in &store.document_revisions {
         if integer(row, "document_id")? != document_id {
@@ -382,7 +382,7 @@ fn last_entry(store: &ImportedStore, conversation_id: i64) -> Result<Option<Sess
 /// entry 的摘要文本：最后一条 model 消息的文本；没有就空串。
 ///
 /// `content` 既可能是字符串（user/system），也可能是段落数组（assistant 的 `[{type:"text",text}]`）。
-fn entry_text(record: &Value) -> String {
+pub(crate) fn entry_text(record: &Value) -> String {
     let Some(messages) = record.get("model").and_then(Value::as_array) else {
         return String::new();
     };
@@ -400,17 +400,17 @@ fn entry_text(record: &Value) -> String {
     }
 }
 
-fn record_of(row: &nous_chord::sqlite::SqliteRow) -> Result<Value> {
+pub(crate) fn record_of(row: &nous_chord::sqlite::SqliteRow) -> Result<Value> {
     Ok(serde_json::from_str(text(row, "record")?)?)
 }
 
-fn integer(row: &nous_chord::sqlite::SqliteRow, column: &str) -> Result<i64> {
+pub(crate) fn integer(row: &nous_chord::sqlite::SqliteRow, column: &str) -> Result<i64> {
     row.get(column)
         .and_then(|value| value.as_i64())
         .ok_or_else(|| StorageError::Shape(format!("column {column} is missing or not an integer")))
 }
 
-fn text<'a>(row: &'a nous_chord::sqlite::SqliteRow, column: &str) -> Result<&'a str> {
+pub(crate) fn text<'a>(row: &'a nous_chord::sqlite::SqliteRow, column: &str) -> Result<&'a str> {
     row.get(column)
         .and_then(|value| value.as_str())
         .ok_or_else(|| StorageError::Shape(format!("column {column} is missing or not text")))

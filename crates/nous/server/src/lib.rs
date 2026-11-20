@@ -43,7 +43,7 @@ pub use observer::SessionObserver;
 pub use models::ModelRef;
 pub use records::{CreateSessionRequest, CreatedSession};
 pub use routes::router;
-pub use source::{ImportedSource, SessionSource};
+pub use source::{ImportedSource, SearchItem, SessionSource};
 pub mod version;
 pub mod refusal;
 pub mod workdir;

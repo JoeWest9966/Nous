@@ -74,6 +74,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
+        .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/triggers/{code}/fires", get(trigger_fires))
@@ -185,19 +186,77 @@ async fn selection() -> Json<Value> {
     Json(crate::meta::selection())
 }
 
-/// `GET /v1/skills`：空目录就是空表。
-async fn skills() -> Json<Value> {
-    Json(crate::meta::skills())
-}
-
 /// `GET /v1/prompts`：A 阶段空表。
 async fn prompts() -> Json<Value> {
     Json(crate::meta::prompts())
 }
 
-/// `GET /v1/extensions`：ext 冻结，空清单。
-async fn extensions() -> Json<Value> {
-    Json(crate::meta::extensions())
+/// `GET /v1/extensions`：ext 冻结，空清单。`?usage=1` 时回答「谁在用」（#85）。
+async fn extensions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("extensions")?));
+    }
+    Ok(Json(crate::meta::extensions()))
+}
+
+/// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。
+async fn skills(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("skills")?));
+    }
+    Ok(Json(crate::meta::skills()))
+}
+
+/// `?usage=1`：反查模式开关。缺席 / 0 / false / 其它值都不是反查，
+/// 不因为一个可选参数让整个端点 400（serde 的 `bool` 会把 `1` 判成非法）。
+#[derive(Debug, Deserialize)]
+struct UsageQuery {
+    usage: Option<String>,
+}
+
+impl UsageQuery {
+    fn requested(&self) -> bool {
+        matches!(self.usage.as_deref(), Some("1" | "true"))
+    }
+}
+
+/// `GET /v1/search?q=&kind=&limit=`（#85）：服务端扫一次会话正文 / 文档，
+/// `q` 少于两个字符 → 400，`limit` 上限 100 且 `truncated` 明确。
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    kind: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>> {
+    let q = query.q.unwrap_or_default().trim().to_string();
+    if q.chars().count() < 2 {
+        return Err(ServerError::BadRequest("q must be at least 2 characters".into()));
+    }
+    let kind = query.kind.as_deref().unwrap_or("all");
+    if !matches!(kind, "all" | "sessions" | "documents") {
+        return Err(ServerError::BadRequest("kind must be all/sessions/documents".into()));
+    }
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let all = state.source().search(&q, kind)?;
+    let truncated = all.len() > limit;
+    let items: Vec<Value> = all
+        .into_iter()
+        .take(limit)
+        .map(|item| serde_json::to_value(item).expect("SearchItem is serializable"))
+        .collect();
+    let total = items.len();
+    Ok(Json(json!({ "items": items, "total": total, "truncated": truncated })))
 }
 
 /// `GET /v1/triggers`：观测清单 + 调度健康（#58）。装配了 store 就读真行；
