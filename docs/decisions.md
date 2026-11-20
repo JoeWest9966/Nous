@@ -675,3 +675,21 @@ systemd unit 拉起，`NOUS_HOST` 全仓 0 处读取。这些文件不参与 car
 `git show abf1c0a^:server/api.ts` 之类内容寻址的写法，不要用会随提交漂移的 `HEAD~1`）。
 真要恢复之前先回答一个问题：
 恢复的是面板本身，还是只是想找某个旧实现做参照？后者直接从历史读，不用把壳子请回来。
+
+## 2026-11-20（票 #65）· device 从 server 里长成插件：编目有来源，默认模型有写者
+
+**决定**：把 `meta.rs` 的 device/machines/models 段和 `machines.rs` / `models.rs` 搬进新插件
+`crates/nous/device`（app 层，`nous-device`）；`server → device` 单向依赖，device 不认识 server。
+`/v1/models` 的来源优先级是「装配注入的编目（faux 验收 / 快照测试）> `NOUS_MODELS` 内联 >
+`NOUS_MODELS_FILE` 文件 > 诚实空表 + `catalog.state="missing"`」。
+`PUT /v1/default` 只写文件编目（临时文件 + rename，先校验模型在 items 里），内联编目没有可写路径 → 400。
+
+**为什么**：旧 `/v1/models` 永远 `{default:null, items:[]}` 而 `models.rs` 注释说「宿主会填」——
+本仓里没有宿主，空表是死的。给它文件与内联两个来源 + 可诊断的 `catalog` 块，才让「没编目」
+从「忘了填」变成一条能贴进 issue 的事实。默认模型必须能写回，且不许写一个 items 之外的
+模型（写假模型比不写更坏）。机器编目同样：`NOUS_MACHINES_FILE` 优先，内置两台只是退化兜底。
+
+**反悔点**：真接上远端 provider 编目（Anthropic/OpenAI）时，把来源换成「远端拉取 + 本地缓存」，
+`catalog.source` 加一个 `"remote"` 值、`PUT /v1/default` 改为写缓存那一份；`state/source/path`
+三字段的形状和「missing 就是诚实空表」不改。faux 注入优先是验收模式的特例，真 provider
+装配不该再注入 catalog —— 否则 `NOUS_MODELS_FILE` 会被静默吞掉。

@@ -186,3 +186,13 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 `cargo clean -p <那个 crate>` 不够 —— 只要有一条还指着，红的就换一条（本例先红 durable，clean 后红 store）。
 **解**：worktree 里跑判据一律用自己的 target（`CARGO_TARGET_DIR=./target` 或干脆不设）；
 串了就这么收拾：`cargo clean` 全量重编（`clean -p` 会留下别的）。判据红的时候先看**报错里的路径**是谁的。
+
+## 2026-11-20 · `/v1/models` 空表注释说「宿主会填」，但仓里没有宿主
+
+**症状**：真机上 `/v1/models` 永远 `{"default":null,"items":[]}`，客户端模型栏空白；`models.rs`
+开头写着「编目由宿主进程填进来」，顺着调用链找不到任何填的地方。
+**根因**：一份「谁都会填」的契约没有指名填的人；空表既可能是「没配编目」也可能是「加载失败」，
+客户端和运维都分不出来。
+**解**：#65 给空表加 `catalog: {state, source, path}` 诊断块，编目来源落成两个明确的入口
+（`NOUS_MODELS` 内联 / `NOUS_MODELS_FILE` 文件），默认模型写回同一份文件（临时文件 + rename）。
+**推广**：凡是注释写「由上层填进来」的地方，都要能回答「哪一层的哪个函数填」，否则它就是没实现。
