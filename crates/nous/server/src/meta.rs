@@ -61,36 +61,42 @@ fn content_status(path: ContentPath) -> (PathBuf, Value, bool) {
 }
 
 /// `GET /v1/skills`：目录不存在就是空表，不伪造内容、不 404。
+///
+/// 盘上真相由 `nous_skills` 插件解析（`SKILL.md` frontmatter / 附件 / 类别词表）。
+/// 这里只做 wire 投影：目录路径转字符串、`Option` 转 `null`，`tracked` 恒 null
+/// （#71 不碰 git，判定留给别的票）。`repo` 块只给 root + present（#63 形状）。
 pub fn skills() -> Value {
-    let (root, status, present) = content_status(SKILLS);
-    let entries = if present {
-        std::fs::read_dir(root)
-            .map(|read_dir| {
-                read_dir
-                    .filter_map(|entry| entry.ok())
-                    .filter(|entry| entry.path().is_dir())
-                    .map(|entry| {
-                        json!({
-                            "name": entry.file_name().to_string_lossy().into_owned(),
-                            "description": Value::Null,
-                            "category": Value::Array(vec![]),
-                            "hidden": false,
-                            "tracked": false,
-                            "dir": entry.path().to_string_lossy().into_owned(),
-                            "file": Value::Null,
-                            "load": { "state": "ok" },
-                        })
-                    })
-                    .collect::<Vec<Value>>()
+    let (root, mut status, present) = content_status(SKILLS);
+    let scanned = nous_skills::scan(&root);
+    let entries = scanned
+        .skills
+        .iter()
+        .map(|skill| {
+            let load = if let Some(detail) = &skill.load.detail {
+                json!({ "state": skill.load.state, "detail": detail })
+            } else {
+                json!({ "state": skill.load.state })
+            };
+            json!({
+                "name": skill.name,
+                "description": skill.description,
+                "category": skill.category,
+                "hidden": skill.hidden,
+                "tracked": skill.tracked,
+                "dir": skill.dir.to_string_lossy().into_owned(),
+                "file": skill.file.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                "attachments": skill.attachments,
+                "load": load,
             })
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
-    let mut body = status;
-    body["categories"] = json!([]);
-    body["skills"] = json!(entries);
-    body
+        })
+        .collect::<Vec<Value>>();
+    status["categories"] = json!(scanned.categories);
+    status["skills"] = json!(entries);
+    status["repo"] = json!({
+        "root": root.to_string_lossy().into_owned(),
+        "present": present,
+    });
+    status
 }
 
 /// `GET /v1/prompts`：#48 前先与 skills 同构的空表。

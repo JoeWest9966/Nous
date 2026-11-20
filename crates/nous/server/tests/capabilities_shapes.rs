@@ -242,12 +242,18 @@ async fn skills_response_pins_client_shape() {
             ("missing", |v| v.is_string() || v.is_null()),
             ("categories", is_array),
             ("skills", is_array),
+            ("repo", |v| v.is_object()),
         ],
     );
     assert!(body["categories"].as_array().unwrap().iter().all(Value::is_string));
+    // #71：repo 块只给 root + present（#63 形状），没有 git 状态字段。
+    let mut repo_keys: Vec<_> = body["repo"].as_object().unwrap().keys().cloned().collect();
+    repo_keys.sort();
+    assert_eq!(repo_keys, ["present", "root"]);
     let mut stable = body.clone();
     stable["root"] = json!("<root>");
     stable["missing"] = json!("<missing>");
+    stable["repo"]["root"] = json!("<root>");
     snapshot("skills_response_pins_client_shape", &stable);
 }
 

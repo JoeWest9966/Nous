@@ -364,6 +364,18 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
   勾上也不会动；`state != ok` 的加载不出来。
 - `categories` 只是词表，和技能身上挂的 `category` 取并集才是栏里该有的那些。
 
+#71 把「盘上真相」补上（只解析 `SKILL.md` 的 frontmatter，不碰 git）：
+
+- `name` 缺省用目录名；`description` 可为 `null`；`category` 是字符串数组；
+  `hidden` 来自 `disable-model-invocation: true`（条目仍全部返回，隐藏是渲染层的事）。
+- `attachments` 是目录内除正文外的文件数，跳过点开头、`node_modules`、`test`。
+- `load.state` 为 `problem` 时带 `detail` 原文 —— 缺正文或 frontmatter 坏都不能恒报 ok。
+- `tracked` **可空，当前不提供（恒 null）**。判定要问 git，而本引擎不 spawn git；
+  填 `false` 是撒谎。
+- `repo` 块只给 `root` 与 `present`（#63 形状），**没有 git 状态字段**。
+- `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
+- 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
+
 ### GET /v1/prompts
 
 `{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
