@@ -234,6 +234,7 @@ async fn capabilities_declares_modules_and_reasons() {
     // 名字 == docs/plugins.md 的 module 列（评论拍板：ext，不是 extensions）。
     for name in [
         "sessions",
+        "env",
         "documents",
         "presets",
         "archive",
@@ -292,6 +293,27 @@ async fn capabilities_declares_modules_and_reasons() {
     assert_eq!(by_name["ext"]["enabled"], json!(false));
     assert_eq!(by_name["ext"]["reason"]["code"], json!("frozen"));
     snapshot("capabilities_declares_modules_and_reasons", &body);
+}
+
+/// #68：目录浏览作为已启用端点出现在 capabilities 声明里（从 ROUTES 自动生成）。
+#[tokio::test]
+async fn capabilities_declares_the_directory_browsing_endpoint() {
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (status, body) = get_json(&app, "/v1/capabilities").await;
+    assert_eq!(status, StatusCode::OK);
+    let endpoint = "GET /v1/fs/dirs";
+    let owners: Vec<&str> = body["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|module| {
+            module["endpoints"]
+                .as_array()
+                .is_some_and(|list| list.iter().any(|value| value.as_str() == Some(endpoint)))
+        })
+        .map(|module| module["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(owners, vec!["env"], "端点必须只由 env 模块声明一次");
 }
 
 /// 拷问结果 §8：_routes ↔ enabled 模块 endpoints 多重集相等（双向）。
