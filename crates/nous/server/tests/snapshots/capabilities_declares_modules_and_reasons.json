@@ -60,11 +60,22 @@
     },
     {
       "name": "presets",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "presets 模块尚未落地"
-      }
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/presets",
+        "GET /v1/presets/model",
+        "GET /v1/presets/{section}",
+        "PUT /v1/presets/{section}/order",
+        "GET /v1/presets/{section}/categories",
+        "GET /v1/presets/{section}/{name}",
+        "PUT /v1/presets/{section}/{name}",
+        "PATCH /v1/presets/{section}/{name}",
+        "DELETE /v1/presets/{section}/{name}",
+        "POST /v1/presets/{section}/{name}/copy",
+        "GET /v1/presets/{section}/{name}/revisions",
+        "GET /v1/presets/{section}/{name}/revisions/{n}",
+        "POST /v1/presets/{section}/{name}/rollback"
+      ]
     },
     {
       "name": "skills",

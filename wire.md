@@ -308,7 +308,50 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
   这个约束是引擎强制的，不是产品挑的。
 - 四个动作的回包都是同一形状 `{<动作过去分词>: [ids], gen, rows}`，客户端一律不读。
 
-### GET /v1/presets/:section
+### presets：模板 / 预设（#60）
+
+`presets` 是资源化的端点族（13 条 + 生成式 OpenAPI），**盘是唯一真相**，文件住在模板私库
+（`NOUS_PRESETS`，默认 `/opt/Nous-Template`）：`<root>/<section>/<name>/preset.json`。
+段只有两个：`Session-Template`、`Ultimate-Template`，**没有第三种**。没有进程内常驻的
+`name → preset` map —— roster 由扫目录得出，盘上有目录 = 这条存在。
+
+端点表（OpenAPI 生成物 `/v1/openapi.json` 是它的机器可读版本，字段形状以
+`crates/nous/server/tests/presets_endpoints.rs` 为准）：
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `GET /v1/presets` | 段清单，每段带 `count` |
+| `GET /v1/presets/:section` | roster：`name` / `sha` / `version` / `category` / `order` / `archived` / `problem`（**清单即详情**） |
+| `GET /v1/presets/model` | 预设能引用的模型清单（只读，沿用原状） |
+| `GET /v1/presets/:section/categories` | 段内类别名册 |
+| `PUT /v1/presets/:section/order` | 整段顺序，一次写全（幂等） |
+| `GET /v1/presets/:section/:name` | 单条原文 + `ETag`（= `version`） |
+| `PUT /v1/presets/:section/:name` | 建或覆盖；`If-Match` 缺失=新建、匹配=覆盖、不匹配=412；`?dry_run=1` 校验不落盘（validate 走同一条路） |
+| `PATCH /v1/presets/:section/:name` | 只改元数据位：`{archived}` / `{name}` / `{category}` / `{order}` |
+| `DELETE /v1/presets/:section/:name` | 删（软删即 `archived`） |
+| `POST /v1/presets/:section/:name/copy` | 复制成新名，body `{name, requestId}` |
+| `GET /v1/presets/:section/:name/revisions` | 修订清单：`n` / 时间 / `actor` / `sha` / 摘要 |
+| `GET /v1/presets/:section/:name/revisions/:n` | 某一版原文（diff 由 Desk 算，无状态） |
+| `POST /v1/presets/:section/:name/rollback` | 回到第 `n` 版，原子写一次修订，body `{n, requestId}` |
+| `GET /v1/openapi.json` | 从路由注册表生成的机器可读契约（presets 第一个接入方） |
+
+- `sha` 是 `preset.json` **文件字节**的 sha256（不是清单里某个字段），roster 的 sha 必须
+  等于读文件算出的值。
+- `version` 是乐观锁的 ETag；`If-Match` 不匹配 → 412 且磁盘字节不变。
+- `?dry_run=1` 与真 PUT 共用同一份校验：坏 JSON 都是 400，区别只在 dry_run 不写盘。
+- 写端点整段串行锁；`requestId` 是幂等锚：重放回第一次的回执，`version` 不涨，
+  幂等证据看 `version` 与磁盘，不看 `changed`。
+- 修订落在 `nous-plugins.db` 的 `presets_revisions` 表（`section` / `name` / `n` / `sha` /
+  `body` / `actor` / `at` / `request_id`），**不是私库 git 历史**（那个是 #75 的 `history`）。
+  不 spawn `git`；`rollback` 替代 `git revert`。
+- 人手 `scp` 改文件仍可行：那条路走内部重扫，下一版 PUT 看到新盘面。
+- `publish` 不在这里：`POST /v1/repos/presets/commit` 是 #75。
+- 字段形状以 `crates/nous/server/tests/presets_endpoints.rs::put_writes_real_file_and_roster_sha_matches_file_bytes` 为准（本文件只索引端点与约束）。
+
+下面这段是 2026-11-19 前的旧形状，留作迁移背景；**新契约以上表为准**，
+旧 `files` / `pending` / `history` / `POST rename` / `GET|POST order` 已删：
+
+### 旧 GET /v1/presets/:section（存档）
 
 模板（通讯录）那一页的数据。**段（section）不是只有一个**：同一个私仓按段放，
 `Session-Template`（会话模板）和 `Ultimate-Template`（终极模板）各自一套端点、一套数据、
