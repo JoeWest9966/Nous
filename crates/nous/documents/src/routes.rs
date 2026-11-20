@@ -31,6 +31,11 @@ pub const DOCUMENT_ROUTES: &[RouteInfo] = &[
     RouteInfo { module: "documents", method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history/diff" },
     RouteInfo { module: "documents", method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending" },
     RouteInfo { module: "documents", method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending/diff" },
+    // #87：盘面树动作（走同一份文档、同一把写锁；不是第二个写通道）。
+    RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/move" },
+    RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/trash" },
+    RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/restore" },
+    RouteInfo { module: "documents", method: "POST", path: "/v1/documents/tree/{section}/{name}/purge" },
 ];
 
 use serde::Serialize;

@@ -29,7 +29,7 @@ pub struct TreeNode {
     /// 直接孩子（只含在世节点，移动时同步维护）。
     #[serde(default)]
     pub children: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, rename = "trashedAt", skip_serializing_if = "Option::is_none")]
     pub trashed_at: Option<i64>,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
