@@ -476,3 +476,30 @@ async fn an_unknown_when_busy_value_is_400() {
     let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping", "whenBusy": "explode"}))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "非法 whenBusy 必须 400：{body}");
 }
+
+/// 空脚本 provider（= unconfigured/offline 的真实行为）：不许静默受理后停在 queued。
+#[tokio::test]
+async fn a_provider_with_no_answer_leaves_the_submission_unanswered_not_queued() {
+    let path = temp_db("empty-provider");
+    seed(&path, Some("catalog/empty-model")).await;
+    let provider = nous_ai::providers::faux::FauxProvider::new(nous_ai::providers::faux::FauxScript::new());
+    let app = app_with_provider(&path, provider, "empty-model");
+
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping"}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "实测 {body}");
+    let submission = body["submissionId"].as_i64().unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let rows = read_rows(&path, "submissions");
+        if let Some(record) = rows.iter().find(|row| row["id"] == json!(submission)) {
+            assert_ne!(record["status"], json!("queued"), "受理后不许停在 queued：{record}");
+            if record["status"] == json!("unanswered") {
+                assert!(record["reason"].is_string(), "unanswered 必须有 reason：{record}");
+                break;
+            }
+        }
+        assert!(tokio::time::Instant::now() < deadline, "空 provider 没收敛 submission：{rows:?}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
