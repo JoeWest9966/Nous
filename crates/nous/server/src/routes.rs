@@ -68,6 +68,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/fs/dirs", get(fs_dirs))
         .route("/v1/models", get(models))
         .route("/v1/default", put(put_default))
+        .route("/v1/catalog/refresh", post(catalog_refresh))
         .route("/v1/device", get(device))
         .route("/v1/selection", get(selection))
         .route("/v1/unread", get(unread))
@@ -78,10 +79,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
+        .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/triggers/{code}/fires", get(trigger_fires))
-        .route("/v1/capabilities", get(capabilities));
+        .route("/v1/capabilities", get(capabilities))
+        .route("/v1/stats/usage", get(crate::stats::usage))
+        .route("/v1/stats/tasks", get(crate::stats::tasks))
+        .route("/v1/stats/db", get(crate::stats::db))
+        .route("/v1/openapi.json", get(crate::stats::openapi));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
     crate::documents::attach(state, router)
 }
@@ -109,19 +115,47 @@ const FS_DIRS_LIMIT: usize = 500;
 
 /// `GET /v1/fs/dirs`：只读列子目录。
 ///
-/// 路径规则与本机判定都在 `nous_env::dirs`（env 插件读唯一一次环境变量）；
-/// 远端 `machine` 明确 501，不静默退回本机。
+/// 路径规则与本机判定都在 `nous_env::dirs`；显式远端 `machine` 走 env-ssh，
+/// 编目里没有 → 404，连不上 → 502，绝不静默退回本机。
 async fn fs_dirs(Query(query): Query<FsDirsQuery>) -> Result<Json<Value>> {
-    if !nous_env::is_local_machine(query.machine.as_deref()) {
-        return Err(ServerError::NotImplemented("ssh 未实现".to_string()));
+    let hidden = query.hidden.as_deref() == Some("1");
+    if let Some(machine) = query.machine.as_deref().filter(|name| !name.is_empty()) {
+        if !nous_env::is_local_machine(Some(machine)) {
+            let result = nous_env_ssh::remote_subdirs(
+                machine,
+                query.path.as_deref().unwrap_or(""),
+                hidden,
+                FS_DIRS_LIMIT,
+            )
+            .await
+            .map_err(fs_remote_error)?;
+            return Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)));
+        }
     }
     let result = nous_env::list_subdirs(
         query.path.as_deref().unwrap_or(""),
-        query.hidden.as_deref() == Some("1"),
+        hidden,
         FS_DIRS_LIMIT,
     )
     .map_err(fs_dirs_error)?;
     Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
+}
+
+fn fs_remote_error(error: nous_env_ssh::RemoteDirsError) -> ServerError {
+    use nous_env_ssh::RemoteDirsError;
+    match error {
+        RemoteDirsError::MachineNotFound => ServerError::NotFound("机器不在编目里".to_string()),
+        RemoteDirsError::Unreachable(message) => ServerError::BadGateway(message),
+        RemoteDirsError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        RemoteDirsError::NotFound => ServerError::NotFound("远端目录不存在".to_string()),
+        RemoteDirsError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个远端目录".to_string())
+        }
+        RemoteDirsError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        RemoteDirsError::Other => ServerError::Internal("远端目录读不出来".to_string()),
+    }
 }
 
 fn fs_dirs_error(error: nous_env::BrowseError) -> ServerError {
@@ -247,7 +281,8 @@ async fn pin(
 
 /// `GET /v1/device`：进程/宿主配置，About 面板读它。
 async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(crate::meta::device(state.models()))
+    let models = state.models();
+    Json(crate::meta::device(&models))
 }
 
 /// `GET /v1/selection`：当前选中的会话（配置里没有就 null）。
@@ -255,19 +290,77 @@ async fn selection() -> Json<Value> {
     Json(crate::meta::selection())
 }
 
-/// `GET /v1/skills`：空目录就是空表。
-async fn skills() -> Json<Value> {
-    Json(crate::meta::skills())
-}
-
 /// `GET /v1/prompts`：A 阶段空表。
 async fn prompts() -> Json<Value> {
     Json(crate::meta::prompts())
 }
 
-/// `GET /v1/extensions`：ext 冻结，空清单。
-async fn extensions() -> Json<Value> {
-    Json(crate::meta::extensions())
+/// `GET /v1/extensions`：ext 冻结，空清单。`?usage=1` 时回答「谁在用」（#85）。
+async fn extensions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("extensions")?));
+    }
+    Ok(Json(crate::meta::extensions()))
+}
+
+/// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。
+async fn skills(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("skills")?));
+    }
+    Ok(Json(crate::meta::skills()))
+}
+
+/// `?usage=1`：反查模式开关。缺席 / 0 / false / 其它值都不是反查，
+/// 不因为一个可选参数让整个端点 400（serde 的 `bool` 会把 `1` 判成非法）。
+#[derive(Debug, Deserialize)]
+struct UsageQuery {
+    usage: Option<String>,
+}
+
+impl UsageQuery {
+    fn requested(&self) -> bool {
+        matches!(self.usage.as_deref(), Some("1" | "true"))
+    }
+}
+
+/// `GET /v1/search?q=&kind=&limit=`（#85）：服务端扫一次会话正文 / 文档，
+/// `q` 少于两个字符 → 400，`limit` 上限 100 且 `truncated` 明确。
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    kind: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>> {
+    let q = query.q.unwrap_or_default().trim().to_string();
+    if q.chars().count() < 2 {
+        return Err(ServerError::BadRequest("q must be at least 2 characters".into()));
+    }
+    let kind = query.kind.as_deref().unwrap_or("all");
+    if !matches!(kind, "all" | "sessions" | "documents") {
+        return Err(ServerError::BadRequest("kind must be all/sessions/documents".into()));
+    }
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let all = state.source().search(&q, kind)?;
+    let total = all.len();
+    let truncated = total > limit;
+    let items: Vec<Value> = all
+        .into_iter()
+        .take(limit)
+        .map(|item| serde_json::to_value(item).expect("SearchItem is serializable"))
+        .collect();
+    Ok(Json(json!({ "items": items, "total": total, "truncated": truncated })))
 }
 
 /// `GET /v1/triggers`：观测清单 + 调度健康（#58）。装配了 store 就读真行；
@@ -360,17 +453,47 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(body)
 }
 
+/// `POST /v1/catalog/refresh`：拉一次远端编目，成功写缓存并换入内存；失败留旧表带 error。
+/// 响应形状 `{default, items, fetchedAt, error?}`：token 只经内存请求头，不进响应/日志。
+async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    match nous_device::refresh_remote_catalog(state.catalog_env()).await {
+        Ok(models) => {
+            state.set_models(models.clone());
+            let mut body = serde_json::to_value(&models).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = models.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            Ok(Json(body))
+        }
+        Err(error) => {
+            // 失败保留旧编目：内存里最近一次刷新的那份优先；否则从本地缓存/文件读回。
+            let mut old = state.refreshed_models().unwrap_or_else(|| {
+                nous_device::load_models(state.catalog_env()).unwrap_or_default()
+            });
+            old.catalog.error = Some(error);
+            state.set_models(old.clone());
+            let top_error = old.catalog.error.clone().unwrap_or_default();
+            let mut body = serde_json::to_value(&old).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = old.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            body["error"] = Value::String(top_error);
+            Ok(Json(body))
+        }
+    }
+}
+
 /// `GET /v1/models`：默认模型 + 列表 + 来源诊断块。
 ///
 /// 编目来源由 `nous-device` 收口：内联（`NOUS_MODELS`）> 文件 > 诚实空表；
 /// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
+/// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
 async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
     // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
     if state.injected_models() {
         if let Some(catalog) = state.assembled_models() {
             return Ok(Json(catalog));
         }
-        return Ok(Json(state.models().clone()));
+        return Ok(Json(state.models()));
+    }
+    if let Some(refreshed) = state.refreshed_models() {
+        return Ok(Json(refreshed));
     }
     let response = nous_device::load_models(state.catalog_env())
         .map_err(ServerError::Internal)?;

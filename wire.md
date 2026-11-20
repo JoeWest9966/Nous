@@ -71,6 +71,31 @@
 - `skills` / `template` / `thinkingLevels` / `extensions` 是**生效值**，不是请求值 —— 拿来画勾，
   别自己猜。引擎改这些字段，列表预览不受影响，只有详情面板受影响。
 
+### GET /v1/stats/usage?from=&to=&group_by=day|model|conversation
+
+用量与账本。`totals` 与 `rows[]` 的四元组完全相同：`totalTokens` / `costTotal` /
+`requests` / `errors`；额外 `rows[].key`（桶名）与 `rows[].label`（可直接上屏）。
+`group_by=day` 用 UTC 日期 `YYYY-MM-DD`（按 entry 的 `model[].timestamp` 归桶）；
+`model` 用 `provider/modelId`（缺失记 `unknown`）；`conversation` 用会话 id 字符串。
+- `from` / `to` 都是 **epoch 毫秒**，闭开区间 `[from, to)` —— `from` 命中、`to` 不命中。
+  缺省 `from` = 全量起点、缺省 `to` = 全量终点；无时间戳的 entry 不进任何桶、也不进 totals。
+- `requests` 计有时间戳的 `pi.assistant` entry，`errors` 计 `model[].stopReason == "error"`。
+- 只聚合 durable 库里现存 entry；归档/fixture 副本不在内。只读，无分页。
+
+### GET /v1/stats/tasks
+
+任务计数：`{byState, active}`。`byState` 的键全集是 `pending` / `running` / `waiting` /
+`sleeping` / `completing` / `terminal`，值从 `tasks` 表 `GROUP BY status` 现算（与 triggers 的
+`counts` 同规矩，**不许内存计数器**）；`active = byState` 中除 `terminal` 外之和。
+
+### GET /v1/stats/db
+
+两个库各一份读数：`{ durable: {...}, plugins: {...} }`，每份含 `bytes`（主文件长度）、
+`rows`（关键表计数对象）、`quickCheck`（`"ok"` 或诊断串）、`schema`（整数版本）。
+durable 这一份与 `nous-app --check` 共用 `nous_durable::ops::check` 的读口；
+plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store` 的只读读口。
+`nous-plugins.db` 不存在时按空插件库读（schema/rows 为 0），不 404/500。
+
 ### GET /v1/sessions/:id/entries
 
 历史。返回 `{ items: [{id, kind, text, parent}], next }`，**新的在前**，客户端要翻正。
@@ -142,6 +167,10 @@
 
 我们依赖：`model`（默认模型）+ `faux`（假 provider 标志，本地验流式时用）。About 面板显示引擎版本用 `node`。
 
+#79：`catalog` 现在是 device 自己那份诊断对象（`state` / `source` / `path` / `fetchedAt` / `error`），
+不是 `null`。`fetchedAt` 是最近一次成功刷新的时刻，`error` 是最近一次失败的原因；
+两者都可能为 `null`（缺席）。字段形状以 `crates/nous/server/tests/catalog_refresh.rs` 为准。
+
 ### GET /v1/selection · POST /v1/selection
 
 `{ id }` 或 `{ id: null }` —— 「现在盯着哪个对话」。桌面端三栏同屏时，左栏高亮当前会话就用它，
@@ -204,6 +233,11 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 归档 = 把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
 撕原件 = 真删（活库那行 + 那份复印件）。四个方法在 `crates/nous-engine` 里都有
 （`archive` / `purge` / `archive_list` / `restore`），UI 层一行 HTTP 都不碰。
+
+#### GET /v1/openapi.json
+
+只读机读视图：从 `meta::ROUTES` 生成 OpenAPI `paths`，与 `/v1/capabilities` / `/v1/_routes`
+三处同源。加端点先改 `meta::ROUTES`，这里自动跟着变；不手抄第二份路径清单。
 
 #### POST /v1/sessions/:id/archive
 
@@ -352,9 +386,20 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - `thinkingLevels` 从少想到多（`off` … `max`），**每个模型不一样**。换模型必须按新模型的表
   重新夹档位（`off` 一定要在表里，没有就退成 `off`）。
 - 242 个模型是常态 —— 模型那一列必须能滚，别想着一次画完。
-- #65：多一个 `catalog: { state: "missing"|"ok", source: "env"|"file"|null, path }` 诊断块。
+- #65：多一个 `catalog` 诊断块（字段形状见 `crates/nous/server/tests/device_endpoints.rs`）。
   `missing` + `items: []` 是**诚实空表**（没有编目来源），客户端别把它当成「加载中」无限重试；
-  `ok` 时 `source` 指明是内联（`NOUS_MODELS`）还是文件（`NOUS_MODELS_FILE`），`path` 是看哪份文件。
+  `ok` 时 `source` 指明是内联（`NOUS_MODELS`）、文件（`NOUS_MODELS_FILE`）还是远端（`remote`）。
+- #79：远端刷新成功后内存里的编目优先于文件来源；`fetchedAt` / `error` 由刷新写入。
+
+### POST /v1/catalog/refresh
+
+拉一次远端编目写进本地缓存，回 `{ default, items, fetchedAt, error? }`。
+远端入口是 `NOUS_CATALOG_BASE`（`{base}/models.json`）+ `NOUS_CATALOG_TOKEN`（Bearer）。
+字段形状以 `crates/nous/server/tests/catalog_refresh.rs` 为准（本文件只索引端点与约束）。
+
+- 成功：远端三条就回三条，`fetchedAt` 非空，`error` 缺席；`/v1/models` 立即换成新表。
+- 失败（含 HTTP 500）：**回 200 但带 `error`**，`items` 仍是旧表，绝不把模型表清空。
+- 密钥只在内存的请求头里过一手：不落盘、不进日志、不进响应、不进会话记录。换密钥刷新即可。
 
 ### PUT /v1/default
 
@@ -378,6 +423,39 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - **只列 `load.state == "ok" && !hidden`**。`hidden` 是 `disable-model-invocation`，
   勾上也不会动；`state != ok` 的加载不出来。
 - `categories` 只是词表，和技能身上挂的 `category` 取并集才是栏里该有的那些。
+- `?usage=1`（#85）：反查模式，回 `{ <技能名>: [<会话 id>, ...] }` —— 谁在用这个技能。
+  没人用就回 `{}`（空映射，**不是 404**）。不带该参数仍是上面的技能目录形状。
+
+### GET /v1/extensions
+
+正常回清单形状（今天冻结为 `{ items: [] }`）。`?usage=1`（#85）回
+`{ <扩展名>: [<会话 id>, ...] }` —— 扫会话记录里的 `extensions` 字段；没人用回 `{}`，
+不因为一个可选参数把端点判死。
+
+### GET /v1/search
+
+`GET /v1/search?q=&kind=&limit=`（#85）：服务端一次扫描完成，**客户端不许逐会话拉正文**。
+
+- `kind=sessions` 搜会话名 + entry 正文；`kind=documents` 搜文档名（`kind/section/name`）
+  与正文；`kind=all`（默认）两者合并，新的在前。
+- 回 `{ items: [{kind, id, title, snippet, at}], total, truncated }`。`kind` 是
+  `"sessions" | "documents"`；`id` 是会话 id 的字符串 / 文档地址 `kind/name`；
+  `snippet` 带命中上下文（前后各 40 字符），`at` 是 epoch 毫秒，来源不明给 `null`。
+- `total` 是**命中总数**（不受 `limit` 影响）；`truncated = total > items.len()`。
+- `limit` 默认 20、上限 100、最小 1（越界夹到边界）。大小写不敏感；`q` 先 `trim`，
+  少于两个字符回 `400 {error}`（不许全表扫）。
+
+#71 把「盘上真相」补上（只解析 `SKILL.md` 的 frontmatter，不碰 git）：
+
+- `name` 缺省用目录名；`description` 可为 `null`；`category` 是字符串数组；
+  `hidden` 来自 `disable-model-invocation: true`（条目仍全部返回，隐藏是渲染层的事）。
+- `attachments` 是目录内除正文外的文件数，跳过点开头、`node_modules`、`test`。
+- `load.state` 为 `problem` 时带 `detail` 原文 —— 缺正文或 frontmatter 坏都不能恒报 ok。
+- `tracked` **可空，当前不提供（恒 null）**。判定要问 git，而本引擎不 spawn git；
+  填 `false` 是撒谎。
+- `repo` 块只给 `root` 与 `present`（#63 形状），**没有 git 状态字段**。
+- `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
+- 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
 
 ### GET /v1/prompts
 

@@ -25,6 +25,8 @@ pub struct AppState {
     commands: Arc<dyn CommandSource>,
     hub: Arc<Hub>,
     models: nous_device::ModelsResponse,
+    /// #79：最近一次远端刷新的编目（成功时才写，失败保留旧表）。
+    refreshed: std::sync::Mutex<Option<nous_device::ModelsResponse>>,
     /// #65：模型编目的来源快照（`NOUS_MODELS` / `NOUS_MODELS_FILE`），由入口读一次。
     catalog_env: nous_device::CatalogEnvironment,
     /// 显式注入的编目（faux 验收 / 测试快照）优先于文件来源。
@@ -35,6 +37,8 @@ pub struct AppState {
     origin: String,
     /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
     triggers: Option<crate::triggers::TriggerRuntime>,
+    /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
+    stats: Option<crate::stats::StatsRuntime>,
 }
 
 impl AppState {
@@ -48,6 +52,7 @@ impl AppState {
             commands,
             hub,
             models: nous_device::ModelsResponse::default(),
+            refreshed: std::sync::Mutex::new(None),
             catalog_env: nous_device::CatalogEnvironment::from_env(),
             injected_models: false,
             runtime: std::sync::Mutex::new(None),
@@ -60,6 +65,7 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            stats: None,
         })
     }
 
@@ -88,6 +94,7 @@ impl AppState {
             commands: commands.clone(),
             hub: Hub::new(),
             models: nous_device::ModelsResponse::default(),
+            refreshed: std::sync::Mutex::new(None),
             catalog_env: nous_device::CatalogEnvironment::from_env(),
             injected_models: false,
             runtime: std::sync::Mutex::new(None),
@@ -97,6 +104,7 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            stats: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -126,12 +134,14 @@ impl AppState {
 
     /// 换入真编目：默认 catalog 是空的，宿主填进来才有内容。
     pub fn with_models(self: Arc<Self>, models: nous_device::ModelsResponse) -> Arc<Self> {
+        self.source.set_model_levels(&models);
         Arc::new(Self {
             source: self.source.clone(),
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models,
             catalog_env: self.catalog_env.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             injected_models: true,
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
@@ -142,11 +152,27 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 
-    pub fn models(&self) -> &nous_device::ModelsResponse {
-        &self.models
+    /// 最近一次远端刷新的编目优先；没有就回静态来源的那份。
+    pub fn models(&self) -> nous_device::ModelsResponse {
+        self.refreshed
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+            .unwrap_or_else(|| self.models.clone())
+    }
+
+    /// 只看远端刷新那一份（没有就是 None），给路由判断要不要读文件来源。
+    pub fn refreshed_models(&self) -> Option<nous_device::ModelsResponse> {
+        self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// 远端刷新成功后换入新编目；失败不调用，旧表原样保留。
+    pub fn set_models(&self, models: nous_device::ModelsResponse) {
+        *self.refreshed.lock().unwrap_or_else(|p| p.into_inner()) = Some(models);
     }
 
     pub fn injected_models(&self) -> bool {
@@ -160,6 +186,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env,
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(
@@ -171,6 +198,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 
@@ -194,6 +222,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(
@@ -202,6 +231,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin,
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 
@@ -254,17 +284,45 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: Some(triggers),
+            stats: self.stats.clone(),
         })
     }
 
     pub fn triggers(&self) -> Option<&crate::triggers::TriggerRuntime> {
         self.triggers.as_ref()
+    }
+
+    pub fn stats(&self) -> Option<&crate::stats::StatsRuntime> {
+        self.stats.as_ref()
+    }
+
+    /// 装上 stats 的只读句柄（生产装配只调一次；测试用它打真 Router）。
+    pub fn with_stats(self: Arc<Self>, runtime: crate::stats::StatsRuntime) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            refreshed: std::sync::Mutex::new(
+                self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            stats: Some(runtime),
+        })
     }
 
     /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
@@ -275,6 +333,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
@@ -284,6 +343,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 

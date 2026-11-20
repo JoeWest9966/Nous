@@ -51,8 +51,20 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
         .output()
         .expect("check-plugins.sh 可跑");
     let summary = String::from_utf8_lossy(&checked.stdout);
-    // checked 数必须跟着 docs/plugins.md 的表走：新增插件时这条断言自己涨，
-    // 不许写死成「再 +1」——写死会让下一张票假红（#72 的坑）。
+    let last = summary.lines().last().unwrap_or_default();
+    // device 自己让 checked 从 17 → 18；别的票再加插件（如 #62 的 stats）会继续 +1，
+    // 所以只钉「至少 18 且 0 处不符」，不写死数字（与票面判据一致）。
+    let checked_n: u32 = last
+        .split("checked=")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    assert!(
+        checked_n >= 18 && last.contains("mismatched=0"),
+        "清单应至少 18 行且 0 处不符：{last}"
+    );
+
     let doc = std::fs::read_to_string(Path::new(root()).join("docs/plugins.md")).unwrap();
     // layer-paths.sh 只读同一张表的四列，跳过 (待建)/— 行；四层之和就是 checked。
     let mut expected = 0usize;

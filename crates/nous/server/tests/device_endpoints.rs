@@ -45,6 +45,9 @@ fn app_with(fixture: &Fixture, inline: Option<String>) -> Router {
         inline,
         file: Some(fixture.path.clone()),
         file_path: fixture.path.clone(),
+        remote_base: None,
+        remote_token: None,
+        cache_path: None,
     };
     router(
         AppState::with_source(common::FakeSource::two_sessions())
@@ -100,6 +103,9 @@ async fn absent_catalog_reports_missing_state_and_default_path() {
         inline: None,
         file: None,
         file_path: PathBuf::from("/var/lib/nous/models.json"),
+        remote_base: None,
+        remote_token: None,
+        cache_path: None,
     };
     let app = router(AppState::with_source(common::FakeSource::two_sessions()).with_catalog_env(env));
     let (status, body) = call(&app, Method::GET, "/v1/models", None).await;

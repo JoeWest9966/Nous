@@ -61,36 +61,42 @@ fn content_status(path: ContentPath) -> (PathBuf, Value, bool) {
 }
 
 /// `GET /v1/skills`：目录不存在就是空表，不伪造内容、不 404。
+///
+/// 盘上真相由 `nous_skills` 插件解析（`SKILL.md` frontmatter / 附件 / 类别词表）。
+/// 这里只做 wire 投影：目录路径转字符串、`Option` 转 `null`，`tracked` 恒 null
+/// （#71 不碰 git，判定留给别的票）。`repo` 块只给 root + present（#63 形状）。
 pub fn skills() -> Value {
-    let (root, status, present) = content_status(SKILLS);
-    let entries = if present {
-        std::fs::read_dir(root)
-            .map(|read_dir| {
-                read_dir
-                    .filter_map(|entry| entry.ok())
-                    .filter(|entry| entry.path().is_dir())
-                    .map(|entry| {
-                        json!({
-                            "name": entry.file_name().to_string_lossy().into_owned(),
-                            "description": Value::Null,
-                            "category": Value::Array(vec![]),
-                            "hidden": false,
-                            "tracked": false,
-                            "dir": entry.path().to_string_lossy().into_owned(),
-                            "file": Value::Null,
-                            "load": { "state": "ok" },
-                        })
-                    })
-                    .collect::<Vec<Value>>()
+    let (root, mut status, present) = content_status(SKILLS);
+    let scanned = nous_skills::scan(&root);
+    let entries = scanned
+        .skills
+        .iter()
+        .map(|skill| {
+            let load = if let Some(detail) = &skill.load.detail {
+                json!({ "state": skill.load.state, "detail": detail })
+            } else {
+                json!({ "state": skill.load.state })
+            };
+            json!({
+                "name": skill.name,
+                "description": skill.description,
+                "category": skill.category,
+                "hidden": skill.hidden,
+                "tracked": skill.tracked,
+                "dir": skill.dir.to_string_lossy().into_owned(),
+                "file": skill.file.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                "attachments": skill.attachments,
+                "load": load,
             })
-            .unwrap_or_default()
-    } else {
-        vec![]
-    };
-    let mut body = status;
-    body["categories"] = json!([]);
-    body["skills"] = json!(entries);
-    body
+        })
+        .collect::<Vec<Value>>();
+    status["categories"] = json!(scanned.categories);
+    status["skills"] = json!(entries);
+    status["repo"] = json!({
+        "root": root.to_string_lossy().into_owned(),
+        "present": present,
+    });
+    status
 }
 
 /// `GET /v1/prompts`：真读 `NOUS_PROMPTS`（#72），落在只读插件里，默认配置写错也如实报。
@@ -153,6 +159,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
+    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/sessions/:id/entries", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
@@ -167,12 +174,19 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
+    // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
+    RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
     RegisteredRoute { method: "GET", path: "/v1/triggers", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/fire", module: "triggers" },
     // #58：观测读口 —— 每个触发器自己的账，可读（时间倒序）。
     RegisteredRoute { method: "GET", path: "/v1/triggers/{code}/fires", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
+    // #62：stats 三条只读观测端点。
+    RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/db", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
     // #48：documents 的 12 条端点（模板原文来自 nous_documents::DOCUMENT_ROUTES）。
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}", module: "documents" },
@@ -206,6 +220,21 @@ pub fn routes_view() -> Value {
     })
 }
 
+/// `GET /v1/openapi.json`：从 `ROUTES` 生成 paths，与 capabilities/_routes 三处同源。
+pub fn openapi_paths() -> Value {
+    let mut paths = serde_json::Map::new();
+    for route in enabled_routes() {
+        let entry = paths.entry(route.path.to_string()).or_insert_with(|| json!({}));
+        if let Some(object) = entry.as_object_mut() {
+            object.insert(
+                route.method.to_ascii_lowercase(),
+                json!({ "operationId": format!("{} {}", route.method, route.path) }),
+            );
+        }
+    }
+    Value::Object(paths)
+}
+
 /// 某模块是否在发行清单里开着且可用（给判据与 _routes 用）。
 pub fn route_enabled(module: &str) -> bool {
     MANIFEST
@@ -231,6 +260,7 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("archive", Some(ReasonCode::NotImplemented)),
     ("combos", Some(ReasonCode::NotImplemented)),
     ("triggers", None),
+    ("stats", None),
     ("device", None),
     ("selection", None),
     ("prompts", None),

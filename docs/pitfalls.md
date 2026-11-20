@@ -205,3 +205,15 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 变量名也漂了（多了 `_ROOT` 后缀），unit 一个都没设。
 **解**：默认值回到 TS 版原值，`root` 恒为解析后的字符串；另给 `present` 与
 `missing` 说"在不在"。只读，不因为缺目录就建一个空目录掩盖事实（#63）。
+
+## 2026-11-20 · 给公开结构体加字段，把别人的测试字面量全打红了
+
+**症状**：给 `CatalogEnvironment` 加三个远端字段后，`cargo test --workspace` 在
+`nous-device/tests/catalog.rs` 和 `server/tests/device_endpoints.rs` 报五处
+`E0063 missing fields ... in initializer`，跟业务行为无关。
+**根因**：多个测试用结构体字面量构造环境快照（这是好事：不依赖全局 env），
+但 Rust 没有「字面量自动补默认值」这回事。
+**解**：每个字面量显式写 `remote_base: None, remote_token: None, cache_path: None`，
+让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
+**推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
+再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
