@@ -37,6 +37,8 @@ pub struct AppState {
     origin: String,
     /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
     triggers: Option<crate::triggers::TriggerRuntime>,
+    /// #60：模板私库 + 修订表的写者（整段串行锁）。按 env 的路径解析，进程内不留 map。
+    presets: Option<crate::presets::SharedStore>,
     /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
     stats: Option<crate::stats::StatsRuntime>,
 }
@@ -65,8 +67,34 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            presets: None,
             stats: None,
         })
+    }
+
+    /// 把 presets 写者接上（main 装配一次；测试按临时目录注入）。
+    pub fn with_presets(self: Arc<Self>, store: crate::presets::SharedStore) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(
+                self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            presets: Some(store),
+            stats: self.stats.clone(),
+        })
+    }
+
+    pub fn presets(&self) -> Option<&crate::presets::SharedStore> {
+        self.presets.as_ref()
     }
 
     /// 只读装配：读端点可用，写端点一律 409（不假装能写）。
@@ -104,6 +132,7 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            presets: None,
             stats: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
@@ -152,6 +181,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
     }
@@ -198,6 +228,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
     }
@@ -231,6 +262,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin,
             triggers: self.triggers.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
     }
@@ -291,6 +323,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: Some(triggers),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
     }
@@ -321,6 +354,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            presets: self.presets.clone(),
             stats: Some(runtime),
         })
     }
@@ -343,6 +377,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
     }
