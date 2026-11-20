@@ -538,8 +538,7 @@ async fn inject_prompt_section(
     session_id: i64,
     submitted: &crate::commands::SubmitResult,
 ) -> Option<nous_ai::Message> {
-    let durable = state.durable_session()?;
-    let template_name = durable.template(session_id).await.ok().flatten()?;
+    let template_name = state.commands().template(session_id).await.ok().flatten()?;
     let prompts_root = nous_env::PROMPTS.resolve();
     let (text, actor) = if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
         (nous_prompts::render(&template.body, &Default::default()), "prompts".to_string())
@@ -549,6 +548,7 @@ async fn inject_prompt_section(
     let message_value = serde_json::to_value(nous_ai::transform::system::section_patch(
         &[("prompts", Some(text.as_str()))], 0,
     )).ok()?;
+    let durable = state.durable_session()?;
     let entry = serde_json::json!({
         "id": submitted.entry_id + 4,
         "conversationId": session_id,

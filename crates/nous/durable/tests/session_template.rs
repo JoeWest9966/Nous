@@ -20,7 +20,7 @@ async fn a_created_session_remembers_its_template_after_reopen() {
         "name": "tpl-session", "template": "alpha"
     })).await.unwrap();
     let id = created["id"].as_i64().unwrap();
-    assert_eq!(session.template(id).await.unwrap(), Some("alpha".to_string()));
+    assert_eq!(nous_durable::session::commands::session_template(&session, id).await.unwrap(), Some("alpha".to_string()));
     session.close().await.unwrap();
 
     // 只读重开：值在库里，不在进程内存里。

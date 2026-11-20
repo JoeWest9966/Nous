@@ -732,6 +732,20 @@ pub async fn record_origin(session: &Session, origin: OriginRecord) -> Result<()
     Ok(())
 }
 
+/// 一条会话当前挂的模板名（#72：建会话时记下的单值，重启后仍在）。
+/// 放在 commands 面而不是 `Session`：后者的 async 公共面被 A3 判据钉死六条。
+pub async fn session_template(session: &Session, id: Id) -> Result<Option<String>, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let Some(value) = session_scope_document(storage, NAMES_KIND)?.1 else {
+        return Ok(None);
+    };
+    Ok(value.get("templates")
+        .and_then(|map| map.get(id.to_string()))
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
 /// 血缘反查：`{items: [...]}`，按 `trigger` 过滤（`None` = 不过滤）。只读扫描，不另开写者。
 pub async fn origins_map(session: &Session, trigger: Option<&str>) -> Result<Value, CommandError> {
     let guard = session.storage.lock().await;

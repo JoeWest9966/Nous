@@ -358,19 +358,6 @@ impl Session {
         Ok(result)
     }
 
-    /// 一条会话当前挂的模板名（建会话时记下的单值，重启后仍在）。
-    pub async fn template(&self, id: Id) -> Result<Option<String>, SessionError> {
-        let guard = self.storage.lock().await;
-        let storage = guard.as_ref().ok_or(SessionError::Closed)?;
-        let Some(value) = session_document::session_scope_document(storage, "qrd3wh.sessions")?.1 else {
-            return Ok(None);
-        };
-        Ok(value.get("templates")
-            .and_then(|map| map.get(id.to_string()))
-            .and_then(Value::as_str)
-            .map(str::to_string))
-    }
-
     /// 一条 entry 与它落库时的 `seq`。
     pub async fn get_entry(&self, id: Id) -> Result<Option<(EntryRecord, Seq)>, SessionError> {
         let guard = self.storage.lock().await;
