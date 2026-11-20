@@ -70,12 +70,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/default", put(put_default))
         .route("/v1/catalog/refresh", post(catalog_refresh))
         .route("/v1/device", get(device))
-        .route("/v1/selection", get(selection))
         .route("/v1/unread", get(unread))
         .route("/v1/origins", get(origins))
         .route("/v1/read/{id}", post(mark_read))
         .route("/v1/sessions/{id}/rename", post(rename))
         .route("/v1/sessions/{id}/pin", post(pin))
+        .route("/v1/sessions/{id}/config", post(config))
+        .route("/v1/sessions/{id}/purge", post(purge))
+        .route("/v1/selection", get(selection).post(write_selection))
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
@@ -279,15 +281,87 @@ async fn pin(
     })?))
 }
 
+
 /// `GET /v1/device`：进程/宿主配置，About 面板读它。
 async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
     let models = state.models();
     Json(crate::meta::device(&models))
 }
 
-/// `GET /v1/selection`：当前选中的会话（配置里没有就 null）。
-async fn selection() -> Json<Value> {
-    Json(crate::meta::selection())
+/// `GET /v1/selection`：当前选中的会话，落库、重启后仍在。
+async fn selection(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let result = state.commands().selection().await?;
+    Ok(Json(json!({ "id": result.id })))
+}
+
+/// `POST /v1/selection {id}`：写选中的会话；`{id:null}` 清空。
+async fn write_selection(
+    State(state): State<Arc<AppState>>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let body: SelectionBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("id is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("selection body: {error}")))?
+    };
+    let result = state.commands().select(body.id).await?;
+    Ok(Json(json!({ "id": result.id })))
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectionBody {
+    id: Option<i64>,
+}
+
+/// `POST /v1/sessions/{id}/config`：逐键覆盖，回生效值。
+async fn config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let patch: Value = if body.is_empty() {
+        return Err(ServerError::BadRequest("config patch is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("config body: {error}")))?
+    };
+    // 档位表来自 /v1/models 的编目，不是请求体：换模型时按新模型的表夹档位。
+    let mut patch = patch;
+    if let Some(model) = patch.get("model") {
+        let wanted = model
+            .get("provider")
+            .and_then(Value::as_str)
+            .zip(model.get("modelId").and_then(Value::as_str));
+        if let Some((provider, model_id)) = wanted {
+            if let Some(item) = state
+                .assembled_models()
+                .unwrap_or_else(|| state.models().clone())
+                .items
+                .iter()
+                .find(|item| item.provider == provider && item.model_id == model_id)
+            {
+                patch["thinkingLevels"] = json!(item.thinking_levels);
+            }
+        }
+    }
+    let result = state.commands().configure(id, patch).await?;
+    Ok(Json(result.value))
+}
+
+/// `POST /v1/sessions/{id}/purge`：真删 + 墓碑；第二次 409。
+async fn purge(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().purge(id).await?;
+    Ok(Json(json!({
+        "id": result.id,
+        "purged": true,
+        "at": result.at,
+    })))
 }
 
 /// `GET /v1/prompts`：A 阶段空表。

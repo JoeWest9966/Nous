@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use crate::actor::Actor;
 use crate::harness::generation::LIVE_KIND;
 use crate::storage::writes::StorageWrite;
-use crate::types::{DocumentScope, EntryRecord, TerminalReason};
+use crate::types::{EntryRecord, TerminalReason};
 use crate::{DocumentContent, DocumentPoint, Id, Storage, StorageError};
 
 use super::session_document::{merge_session_document, session_scope_document, upsert_session_document};
@@ -901,6 +901,236 @@ async fn commit_and_publish(
         .map_err(|error| CommandError::Session(SessionError::Shape(error.to_string())))?;
     session.observers.publish(&publication, &Context::new());
     Ok(publication)
+}
+
+// ---------------------------------------------------------------------------
+// #64：selection / config / purge
+//
+// 三条都走 `commit_and_publish`：同一把写锁、同一个事务、同一份广播。
+// ---------------------------------------------------------------------------
+
+/// `POST /v1/selection` 的入参语义：`None` 表示清空（文档里记 `null`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionRequest {
+    pub id: Option<Id>,
+}
+
+/// selection 的回包：`{id}`，和 `wire.md` 一条字段。
+pub type SelectionResult = SelectionRequest;
+
+/// 读 selection：不存在就是 `null`；指向已删会话时顺手清掉死指针（同一条 `Session` 写者）。
+pub async fn read_selection(session: &Session) -> Result<SelectionResult, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    let (_, value) = session_scope_document(storage, NAMES_KIND)?;
+    let id = value
+        .as_ref()
+        .and_then(|value| value.get("selection"))
+        .and_then(Value::as_i64)
+        .filter(|id| storage.conversation(*id).ok().flatten().is_some());
+    let alive = id.is_some();
+    let stale = value
+        .as_ref()
+        .and_then(|value| value.get("selection"))
+        .and_then(Value::as_i64)
+        .is_some()
+        && !alive;
+    drop(guard);
+    if stale {
+        let mut guard = session.storage.lock().await;
+        let storage = storage_mut(&mut guard)?;
+        let (existing, value) = session_scope_document(storage, NAMES_KIND)?;
+        let mut value = value.unwrap_or_else(|| json!({}));
+        if !value.is_object() {
+            value = json!({});
+        }
+        value["selection"] = Value::Null;
+        let writes = upsert_session_document(storage, NAMES_KIND, existing, value)?;
+        commit_and_publish(session, &mut guard, writes).await?;
+    }
+    Ok(SelectionResult { id })
+}
+
+/// 写 selection：非空 id 必须存在，否则 404；写进 `qrd3wh.sessions.selection`，经同一写者广播。
+pub async fn set_selection(
+    session: &Session,
+    id: Option<Id>,
+) -> Result<SelectionResult, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if let Some(id) = id {
+        if storage.conversation(id)?.is_none() {
+            return Err(CommandError::NotFound(format!("session {id} not found")));
+        }
+    }
+    let (existing, value) = session_scope_document(storage, NAMES_KIND)?;
+    let mut value = value.unwrap_or_else(|| json!({}));
+    if !value.is_object() {
+        value = json!({});
+    }
+    value["selection"] = id.map(Value::from).unwrap_or(Value::Null);
+    let writes = upsert_session_document(storage, NAMES_KIND, existing, value)?;
+    commit_and_publish(session, &mut guard, writes).await?;
+    Ok(SelectionResult { id })
+}
+
+/// `POST /v1/sessions/:id/config` 的结果：生效值逐键回包。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigResult {
+    pub id: Id,
+    pub value: Value,
+}
+
+/// 逐键覆盖会话配置。只改请求里出现的键：`readOnly` / `model` / `thinkingLevel` /
+/// `skills` / `extensions` / `template` / `machine` / `cwd`；`skills` / `extensions`
+/// 是相对增删（patch 里的 `add` / `remove` 数组）。换模型后按新模型的档位表夹档位，
+/// 应用层填的 `thinkingLevels` 随配置一起落库（durable 不认识模型目录，只执行规则）。
+pub async fn configure_session(
+    session: &Session,
+    id: Id,
+    patch: Value,
+) -> Result<ConfigResult, CommandError> {
+    let patch = patch.as_object().cloned().unwrap_or_default();
+    if patch.is_empty() {
+        return Err(CommandError::BadRequest("config patch is empty".to_string()));
+    }
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    let agent_id = storage
+        .find_document(
+            &json!({
+                "kind": "pi.agent",
+                "scope": { "kind": "conversation", "conversationId": id },
+            }),
+            DocumentPoint::Current,
+        )?
+        .and_then(|record| record.get("id").and_then(Value::as_i64));
+    let mut value = agent_id
+        .and_then(|agent_id| storage.materialize(agent_id, DocumentPoint::Current).ok().flatten())
+        .map(|document| document.value)
+        .unwrap_or_else(|| json!({}));
+    if !value.is_object() {
+        value = json!({});
+    }
+    for key in [
+        "readOnly",
+        "model",
+        "thinkingLevel",
+        "thinkingLevels",
+        "skills",
+        "extensions",
+        "template",
+        "machine",
+        "cwd",
+    ] {
+        if let Some(next) = patch.get(key) {
+            value[key] = next.clone();
+        }
+    }
+    // `skills` / `extensions` 是相对增删：{add:[...], remove:[...]}，从当前集合出发。
+    for key in ["skills", "extensions"] {
+        if let Some(change) = patch.get(key).filter(|value| value.is_object()) {
+            let mut current = value[key].as_array().cloned().unwrap_or_default();
+            if let Some(add) = change.get("add").and_then(Value::as_array) {
+                for item in add {
+                    if !current.contains(item) {
+                        current.push(item.clone());
+                    }
+                }
+            }
+            if let Some(remove) = change.get("remove").and_then(Value::as_array) {
+                current.retain(|item| !remove.contains(item));
+            }
+            value[key] = Value::Array(current);
+        }
+    }
+    // 换模型：档位表随之换。请求没带 thinkingLevel 就取新表的第二档（off 之后第一档），
+    // 带了就按新表夹；没有表就退成 off。
+    if patch.contains_key("model") {
+        let levels = value
+            .get("thinkingLevels")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| vec![json!("off")]);
+        let fallback = json!("off");
+        let level = value.get("thinkingLevel").cloned().unwrap_or(fallback.clone());
+        let effective = levels
+            .iter()
+            .find(|candidate| **candidate == level)
+            .cloned()
+            .or_else(|| levels.get(1).cloned())
+            .or_else(|| levels.first().cloned())
+            .unwrap_or(fallback);
+        value["thinkingLevel"] = effective;
+    }
+    let writes = match agent_id {
+        Some(id) => vec![StorageWrite::DocumentChange {
+            id,
+            content: DocumentContent::Base {
+                version: 1,
+                value: value.clone(),
+            },
+        }],
+        None => {
+            let id = storage.mint_id()?;
+            vec![StorageWrite::DocumentCreate {
+                id,
+                record: json!({
+                    "id": id,
+                    "kind": "pi.agent",
+                    "scope": { "kind": "conversation", "conversationId": id },
+                }),
+                content: DocumentContent::Base {
+                    version: 1,
+                    value: value.clone(),
+                },
+            }]
+        }
+    };
+    commit_and_publish(session, &mut guard, writes).await?;
+    Ok(ConfigResult { id, value })
+}
+
+/// `POST /v1/sessions/:id/purge` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PurgeResult {
+    pub id: Id,
+    pub at: i64,
+}
+
+/// 真删一条会话：一次事务删干净九张表里属于它的行，写墓碑。
+/// 会话不存在 → 404；已有墓碑 → 409（第二次撕不返回 200，也不返回 500）。
+pub async fn purge_session(
+    session: &Session,
+    id: Id,
+    _actor: Actor,
+) -> Result<PurgeResult, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    let (_, value) = session_scope_document(storage, NAMES_KIND)?;
+    if let Some(tombstone) = value
+        .as_ref()
+        .and_then(|value| value.get("purged"))
+        .and_then(Value::as_object)
+    {
+        if tombstone.get("id").and_then(Value::as_str) == Some(id.to_string().as_str()) {
+            return Err(CommandError::Conflict(format!("session {id} already purged")));
+        }
+    }
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    let at = now_ms();
+    storage.purge_conversation(id, at)?;
+    drop(guard);
+    session.observers.publish(
+        &CommitPublication::new(at, vec![]),
+        &Context::new(),
+    );
+    Ok(PurgeResult { id, at })
 }
 
 /// 一次通用的文档写入。应用层（#48 的 `documents`）用它写任何 kind 的文档：

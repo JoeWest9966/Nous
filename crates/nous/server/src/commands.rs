@@ -13,8 +13,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use nous_durable::actor::Actor;
 use nous_durable::session::commands::{
-    abort, fork, mark_read, rename_session, scan_orphans, set_pin, submit_message, unread_map,
-    CommandError, ForkRequest, PinOutcome, PinRequest, SubmitRequest,
+    abort, configure_session, fork, mark_read, purge_session, read_selection, rename_session,
+    scan_orphans, set_pin, set_selection, submit_message, unread_map, CommandError,
+    ConfigResult, ForkRequest, PinOutcome, PinRequest, PurgeResult, SelectionResult,
+    SubmitRequest,
 };
 use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
@@ -90,6 +92,18 @@ pub trait CommandSource: Send + Sync {
 
     /// 置顶/取消置顶：走 `Session` 写者并广播。
     async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult>;
+
+    /// 当前选中的会话：读走同一个 durable 源，不存在则清掉死指针。
+    async fn selection(&self) -> Result<SelectionResult>;
+
+    /// 写选中的会话：`None` 表示清空，落 durable 文档、经 `Session` 写者广播。
+    async fn select(&self, session: Option<i64>) -> Result<SelectionResult>;
+
+    /// 逐键覆盖会话配置：只改传进来的键，回包是生效值。
+    async fn configure(&self, session: i64, patch: Value) -> Result<ConfigResult>;
+
+    /// 真删一条会话并写墓碑；已有墓碑 → 409。
+    async fn purge(&self, session: i64) -> Result<PurgeResult>;
 
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
@@ -250,6 +264,28 @@ impl CommandSource for DurableCommands {
         .await
         .map_err(command_error)
     }
+
+    async fn selection(&self) -> Result<SelectionResult> {
+        read_selection(&self.session).await.map_err(command_error)
+    }
+
+    async fn select(&self, session: Option<i64>) -> Result<SelectionResult> {
+        set_selection(&self.session, session)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn configure(&self, session: i64, patch: Value) -> Result<ConfigResult> {
+        configure_session(&self.session, session, patch)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn purge(&self, session: i64) -> Result<PurgeResult> {
+        purge_session(&self.session, session, self.actor.clone())
+            .await
+            .map_err(command_error)
+    }
 }
 
 /// 只读装配：写请求一律 409；读投影（unread）从注入的只读数据源出处，形状与写装配一致。
@@ -298,6 +334,23 @@ impl CommandSource for ReadOnlyCommands {
     }
 
     async fn pin(&self, _: i64, _: bool, _: String) -> Result<PinResult> {
+        Err(read_only())
+    }
+
+    async fn selection(&self) -> Result<SelectionResult> {
+        // 只读装配没有 durable 源，selection 的契约形状必须是 `{id:null}`，不是 409。
+        Ok(SelectionResult { id: None })
+    }
+
+    async fn select(&self, _: Option<i64>) -> Result<SelectionResult> {
+        Err(read_only())
+    }
+
+    async fn configure(&self, _: i64, _: Value) -> Result<ConfigResult> {
+        Err(read_only())
+    }
+
+    async fn purge(&self, _: i64) -> Result<PurgeResult> {
         Err(read_only())
     }
 

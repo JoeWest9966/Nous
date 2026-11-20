@@ -176,6 +176,16 @@ plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store
 `{ id }` 或 `{ id: null }` —— 「现在盯着哪个对话」。桌面端三栏同屏时，左栏高亮当前会话就用它，
 **别为左栏开 N 条 SSE**。SSE 只连当前会话，其余靠 `GET /v1/sessions` 低频轮询。
 
+本库把这两条归到 `sessions` 模块（selection 是两行状态，不是独立能力面）。状态落 durable
+会话库（`qrd3wh.sessions` 文档），重启后还在；指向已删会话时 `GET` 回 `null` 并清掉死指针。
+
+### POST /v1/sessions/:id/config
+
+逐键覆盖会话配置：`readOnly` / `model`（`provider/modelId`）/ `thinkingLevel` / `skills` /
+`extensions` / `template`（单值或 `null`）/ `machine` / `cwd`。**未出现的键不动**；
+`skills` / `extensions` 是相对增删，不是整份覆盖。换模型按新模型的 `thinkingLevels` 重新夹
+档位（`off` 一定要在表里，没有就退成 `off`）。回包是生效值。
+
 ### GET /v1/unread
 
 每条会话的未读数，**平铺的 map**，一个会话一个键（**没有 `items` 包一层**）：
@@ -255,6 +265,10 @@ body 空。回 200 `{"purged":[699],"gen":"20261113","rows":6}`。**真删**，�
 
 - **必须先归档**；会话闲置、分支里没有活后代也是引擎的前置条件。不满足返回 409 / 400，
   形状还是 `{error}`，照原文显示。
+
+本库当前只实现「真删 + 墓碑」这一步（归档另票）：一次事务删干净 conversations / entries /
+tasks / submissions / documents / document_revisions / record_ids 及该会话的 pins / unread
+条目，写墓碑 `{purged:true, at}` 到 `qrd3wh.sessions`。会话不存在 → 404，已有墓碑 → 409。
 
 #### GET /v1/archive
 
