@@ -66,6 +66,25 @@ fn path_escape_is_rejected_without_creating_any_file() {
 }
 
 #[test]
+fn symlink_escape_is_rejected_by_realpath_check() {
+    // `../../` 由组件检查就能挡住；只有 realpath 能挡住「路径在仓内、但符号链接指向仓外」。
+    use std::os::unix::fs::symlink;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("skills");
+    std::fs::create_dir_all(&root).unwrap();
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, root.join("link")).unwrap();
+
+    let repo = Repo::open(&root).unwrap();
+    let err = repo.write_file(WriteFile {
+        path: "link/escaped.txt", content: b"oops", base_etag: None,
+    }).unwrap_err();
+    assert!(matches!(err, RepoError::BadRequest(_)), "符号链接逃逸必须 400：{err:?}");
+    assert!(!outside.join("escaped.txt").exists(), "仓外不许出现文件");
+}
+
+#[test]
 fn binary_and_oversize_files_are_rejected() {
     let (_tmp, repo) = repo();
     let binary = repo.write_file(WriteFile {
