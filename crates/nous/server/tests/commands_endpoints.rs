@@ -369,3 +369,22 @@ fn request_clone() -> Request<Body> {
         .body(Body::empty())
         .unwrap()
 }
+
+#[tokio::test]
+async fn unread_has_the_same_object_shape_in_read_only_and_durable_assemblies() {
+    let read_only = router(AppState::read_only(common::FakeSource::two_sessions()));
+    let (status, body) = call(&read_only, "GET", "/v1/unread", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.is_object(), "只读装配的 unread 必须是平铺 map，不是 {body}");
+    assert!(body.as_object().unwrap().keys().all(|key| key.parse::<i64>().is_ok()), "key 必须是会话 id：{body}");
+    assert!(body.get("1").is_some() && body.get("2").is_some(), "只读装配也要按会话 id 给条目：{body}");
+
+    let path = temp_db("unread-shape");
+    seed(&path, None).await;
+    let durable = router(AppState::durable(&path).unwrap());
+    let (status, body) = call(&durable, "GET", "/v1/unread", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.is_object(), "正常装配的 unread 也必须是平铺 map：{body}");
+    assert!(body.get("1").is_some_and(|value| value.get("unread").is_some()), "id 是字符串键的会话条目：{body}");
+    let _ = std::fs::remove_file(&path);
+}

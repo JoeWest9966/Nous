@@ -187,29 +187,47 @@ pub fn machines(file: Option<&Path>) -> serde_json::Value {
 }
 
 fn builtin_machines() -> serde_json::Value {
+    let items = serde_json::json!([
+        {
+            "name": "runtime-1",
+            "at": "j1900",
+            "user": null,
+            "port": null,
+            "ips": [],
+            "addr": "",
+            "note": "线上宿主；默认不收构建任务",
+            "tags": ["runtime"],
+            // 旧字段保留一版（同一字段不换含义）。
+            "hostname": "j1900",
+            "os": "linux",
+            "arch": "x86_64",
+            "triples": ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"],
+            "rustc": "1.99.1",
+            "roles": ["runtime"],
+            "annotations": { "site": "home", "note": "线上宿主；默认不收构建任务" }
+        },
+        {
+            "name": "asus",
+            "at": "asus",
+            "user": null,
+            "port": null,
+            "ips": [],
+            "addr": "",
+            "note": "开发机，跨 target 编译",
+            "tags": ["build", "runtime"],
+            "hostname": "asus",
+            "os": "linux",
+            "arch": "x86_64",
+            "triples": ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"],
+            "rustc": "1.99.1",
+            "roles": ["build", "runtime"],
+            "annotations": { "site": "home", "note": "开发机，跨 target 编译" }
+        }
+    ]);
     serde_json::json!({
-        "items": [
-            {
-                "name": "runtime-1",
-                "hostname": "j1900",
-                "os": "linux",
-                "arch": "x86_64",
-                "triples": ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"],
-                "rustc": "1.99.1",
-                "roles": ["runtime"],
-                "annotations": { "site": "home", "note": "线上宿主；默认不收构建任务" }
-            },
-            {
-                "name": "asus",
-                "hostname": "asus",
-                "os": "linux",
-                "arch": "x86_64",
-                "triples": ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"],
-                "rustc": "1.99.1",
-                "roles": ["build", "runtime"],
-                "annotations": { "site": "home", "note": "开发机，跨 target 编译" }
-            }
-        ]
+        "at": "j1900",
+        "machines": items,
+        "items": items,
     })
 }
 

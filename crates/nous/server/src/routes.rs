@@ -71,6 +71,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/device", get(device))
         .route("/v1/selection", get(selection))
         .route("/v1/unread", get(unread))
+        .route("/v1/origins", get(origins))
         .route("/v1/read/{id}", post(mark_read))
         .route("/v1/sessions/{id}/rename", post(rename))
         .route("/v1/sessions/{id}/pin", post(pin))
@@ -157,6 +158,24 @@ async fn create_session(
 /// `GET /v1/unread`：平铺 map（`{"id": {unread, readAt}}`），覆盖所有会话。
 async fn unread(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     Ok(Json(state.commands().unread().await?))
+}
+
+/// `GET /v1/origins`：会话血缘反查，`?trigger=<code>` 按触发器过滤。
+/// 数据在 durable 的 session 作用域文档里（与 names / pins 同一份），只读。
+async fn origins(State(state): State<Arc<AppState>>, Query(query): Query<OriginsQuery>) -> Result<Json<Value>> {
+    // 没有 durable 写后端的只读装配：诚实回空表，不 409（与其它只读列表端点一致）。
+    let Some(session) = state.durable_session() else {
+        return Ok(Json(json!({ "items": [] })));
+    };
+    Ok(Json(nous_durable::session::commands::origins_map(
+        &session,
+        query.trigger.as_deref(),
+    ).await.map_err(|error| ServerError::Internal(error.to_string()))?))
+}
+
+#[derive(Debug, Deserialize)]
+struct OriginsQuery {
+    trigger: Option<String>,
 }
 
 /// `POST /v1/read/:id`：把水位推到最新，回 `{id, readAt, unread: 0}`。
@@ -452,6 +471,8 @@ struct EntriesQuery {
     cursor: Option<String>,
     /// 按 entry 的 `kind` 过滤（审计可见性靠它，不加新端点，spec 8.5）。
     kind: Option<String>,
+    /// `system=1` 时额外回 `items[].delta` 与回放后的 `system`，且不过滤 `pi.system`。
+    system: Option<String>,
 }
 
 /// `GET /v1/sessions/:id/entries`：`{ items, next }`，新的在前。
@@ -500,10 +521,57 @@ async fn entries(
     if let Some(kind) = query.kind.as_deref() {
         items.retain(|entry| entry.get("kind").and_then(Value::as_str) == Some(kind));
     }
-    Ok(Json(json!({
+    let with_system = query.system.as_deref() == Some("1");
+    if with_system {
+        for item in &mut items {
+            if item.get("kind").and_then(Value::as_str) == Some("pi.system") {
+                item["delta"] = json!(system_entry_text(item));
+            }
+        }
+    } else {
+        items.retain(|entry| entry.get("kind").and_then(Value::as_str) != Some("pi.system"));
+    }
+    let mut response = json!({
         "items": items,
         "next": next.map(|cursor| cursor.encode()),
-    })))
+    });
+    if with_system {
+        // 回放：按 entry id 升序遍历全部 pi.system，最后一条生效的提示词为当前 system。
+        let mut all = state.source().entries(session)?;
+        all.sort_by_key(|entry| entry.get("id").and_then(Value::as_i64).unwrap_or(0));
+        let effective = all
+            .iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("pi.system"))
+            .filter_map(system_entry_text)
+            .last()
+            .unwrap_or_default();
+        response["system"] = json!(effective);
+    }
+    Ok(Json(response))
+}
+
+/// 一条 `pi.system` entry 自己带来的提示词文本。`model[]` 里 system 消息的 content
+/// 可能是字符串，也可能是 `[{type:"text",text}]` 块。
+fn system_entry_text(entry: &Value) -> Option<String> {
+    let message = entry
+        .get("model")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("system"))?;
+    let content = message.get("content")?;
+    match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(blocks) => {
+            let text = blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("");
+            Some(text)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]

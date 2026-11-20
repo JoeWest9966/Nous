@@ -582,3 +582,21 @@ async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
         );
     }
 }
+
+#[tokio::test]
+async fn machines_items_carry_the_wire_fields() {
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (status, body) = get_json(&app, "/v1/machines").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().expect("items 是数组");
+    assert!(!items.is_empty());
+    for item in items {
+        for key in ["at", "user", "port", "ips", "note", "tags"] {
+            assert!(item.get(key).is_some(), "机器缺 wire 字段 {key}：{item}");
+        }
+        // 旧字段作为附加字段保留一版。
+        for key in ["name", "hostname", "os", "arch", "triples", "rustc", "roles", "annotations"] {
+            assert!(item.get(key).is_some(), "旧字段 {key} 不该在这一版突然消失：{item}");
+        }
+    }
+}

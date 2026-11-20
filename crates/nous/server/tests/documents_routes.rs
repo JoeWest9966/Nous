@@ -117,3 +117,22 @@ async fn validate_response_shape_is_snapshotted() {
         "validate 形状快照漂移"
     );
 }
+
+#[tokio::test]
+async fn missing_document_and_unknown_kind_are_404_with_available_values() {
+    let app = app();
+    let (status, body) = call(&app, Method::GET, "/v1/documents/presets/Session-Template/nope", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "不存在的单条文档要 404，不是 500：{body}");
+    let text = body.to_string();
+    assert!(text.contains("presets") || text.contains("prompts"), "body 要给出可用值：{body}");
+
+    // 真机 bug：别的 section 下的单条曾回 500。
+    let (status, body) = call(&app, Method::GET, "/v1/documents/presets/default/x", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "别的 section 不存在单条也要 404，不是 500：{body}");
+    assert!(body.to_string().contains("available"), "body 要带可用值：{body}");
+
+    let (status, body) = call(&app, Method::GET, "/v1/documents/nonsense", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "不认识的 kind 要 404：{body}");
+    let text = body["error"].as_str().unwrap_or_default();
+    assert!(text.contains("presets") && text.contains("prompts"), "body 要说清支持哪些 kind：{body}");
+}
