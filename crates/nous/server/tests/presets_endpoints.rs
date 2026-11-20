@@ -255,3 +255,95 @@ async fn revisions_keep_every_version_and_rollback_restores_exact_bytes() {
     // rollback 自己也是一次修订：表从 2 行变 3 行。
     assert_eq!(revision_rows(&fixture.db, "Session-Template", "rev").len(), 3);
 }
+
+fn cleanup_debug(msg: String) -> String { msg }
+
+#[tokio::test]
+async fn idempotent_replays_keep_version_and_disk_unchanged() {
+    let fixture = Fixture::new("idempotent");
+    let body = preset_body("idem", "首版");
+    let (_, first, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/idem", Some(body.clone()), None).await;
+    let version = first["version"].as_i64().unwrap();
+    let (_, replay, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/idem", Some(body), None).await;
+    assert_eq!(replay["version"], json!(version), "重放 PUT 的 version 不许涨：{replay}");
+    assert_eq!(revision_rows(&fixture.db, "Session-Template", "idem").len(), 1, "重放不许多一条修订");
+
+    let copy = json!({ "name": "copied", "requestId": "copy-1" });
+    let (status, _, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/idem/copy", Some(copy.clone()), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, again, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/idem/copy", Some(copy), None).await;
+    let copy_version = again["version"].as_i64().unwrap();
+    assert_eq!(revision_rows(&fixture.db, "Session-Template", "copied").len(), 1);
+    assert!(!fixture.root.join("Session-Template/copied2").exists(), "目录不多一份");
+
+    let rollback = json!({ "n": 1, "requestId": "rb-1" });
+    let (_, rb1, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/idem/rollback", Some(rollback.clone()), None).await;
+    let (_, rb2, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/idem/rollback", Some(rollback), None).await;
+    assert_eq!(rb1["version"], rb2["version"], "rollback 重放 version 不涨");
+    assert_eq!(revision_rows(&fixture.db, "Session-Template", "idem").len(), 2, "rollback 重放不许多一条修订");
+    assert!(copy_version >= 1, "{}", cleanup_debug("copy 回执必须有 version".into()));
+}
+
+#[tokio::test]
+async fn wrong_if_match_refuses_and_leaves_the_file_bytes_untouched() {
+    let fixture = Fixture::new("if-match");
+    let body = preset_body("locked", "原文");
+    let (_, first, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/locked", Some(body.clone()), None).await;
+    let version = first["version"].as_i64().unwrap();
+    let before = std::fs::read(fixture.file("Session-Template", "locked")).unwrap();
+    let mut changed = preset_body("locked", "不该写进去");
+    changed["requestId"] = json!("other-req");
+    let (status, error, _) = call(
+        &fixture.app,
+        "PUT",
+        "/v1/presets/Session-Template/locked",
+        Some(changed),
+        Some(&format!("{}", version + 99)),
+    ).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{error}");
+    // 不信状态码：读文件逐字比对。
+    assert_eq!(std::fs::read(fixture.file("Session-Template", "locked")).unwrap(), before);
+    assert_eq!(revision_rows(&fixture.db, "Session-Template", "locked").len(), 1);
+}
+
+#[tokio::test]
+async fn dry_run_validates_without_writing_but_real_put_rejects_the_same_file() {
+    let fixture = Fixture::new("dry-run");
+    let bad = json!({ "name": "bad", "requestId": "dry-1", "content": "正文不归 preset 管" });
+    let (status, body, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/bad?dry_run=1", Some(bad.clone()), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "dry_run 也走同一份校验：{body}");
+    assert!(!fixture.file("Session-Template", "bad").exists(), "dry_run 不许建目录");
+    let (status, body, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/bad", Some(bad), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "真 PUT 必须同样 400：{body}");
+    assert!(!fixture.file("Session-Template", "bad").exists());
+}
+
+#[tokio::test]
+async fn get_preset_returns_etag_equal_to_its_version() {
+    let fixture = Fixture::new("etag");
+    let body = preset_body("tag", "有 ETag");
+    let (_, put, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/tag", Some(body), None).await;
+    let (status, _, etag) = call(&fixture.app, "GET", "/v1/presets/Session-Template/tag", None, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(etag.as_deref(), put["version"].as_i64().map(|v| v.to_string()).as_deref());
+}
+
+#[tokio::test]
+async fn writes_to_one_section_never_touch_the_other() {
+    let fixture = Fixture::new("isolation");
+    let body = preset_body("only", "只在 Session-Template");
+    let (status, _, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/only", Some(body), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let patch = json!({ "archived": true, "requestId": "patch-1" });
+    let (status, _, _) = call(&fixture.app, "PATCH", "/v1/presets/Session-Template/only", Some(patch), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let rollback = json!({ "n": 1, "requestId": "rb-1" });
+    let (status, _, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/only/rollback", Some(rollback), None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, other, _) = call(&fixture.app, "GET", "/v1/presets/Ultimate-Template", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{other}");
+    assert_eq!(other["items"].as_array().unwrap().len(), 0, "另一段 roster 不许多一条：{other}");
+    assert!(revision_rows(&fixture.db, "Ultimate-Template", "only").is_empty(), "另一段 revisions 不许多一条");
+    assert!(!fixture.file("Ultimate-Template", "only").exists());
+}

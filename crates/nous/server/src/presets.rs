@@ -520,7 +520,7 @@ pub async fn put_preset(
     let version = store.revisions(&section, &name)?.last().map(|r| r.n).unwrap_or(0);
     if let Some(expected) = if_match {
         if existing.is_none() || expected.trim_matches('"') != version.to_string() {
-            return Err(ServerError::Conflict(format!(
+            return Err(ServerError::PreconditionFailed(format!(
                 "If-Match 不匹配：要 {expected}，盘上是 {version}"
             )));
         }
@@ -540,6 +540,7 @@ pub async fn put_preset(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PatchBody {
     #[serde(default)]
     request_id: Option<String>,
