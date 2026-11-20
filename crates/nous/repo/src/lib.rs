@@ -13,7 +13,7 @@ mod views;
 
 pub use error::{RepoError, Result};
 pub use files::{WriteFile, WrittenFile};
-pub use publish::{CommitResult, CommitFile, LifecycleResult, Pushed};
+pub use publish::{CommitDetail, CommitResult, CommitFile, LifecycleResult, Pushed};
 pub use views::{Diff, PendingUnit, RepoStatus};
 
 use std::collections::HashMap;
@@ -97,8 +97,8 @@ impl Repo {
         views::pending_diff(&self.root, path)
     }
 
-    pub fn pending_commit(&self, hash: &str) -> Result<Vec<CommitFile>> {
-        publish::commit_files(&self.root, hash)
+    pub fn pending_commit(&self, hash: &str) -> Result<CommitDetail> {
+        publish::commit_detail(&self.root, hash)
     }
 
     pub fn history(&self, name: &str, limit: usize) -> Result<Vec<publish::HistoryItem>> {

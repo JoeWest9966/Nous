@@ -130,6 +130,7 @@ async fn history_and_pending_commit_are_readable_over_http() {
     let hash = committed["commit"].as_str().unwrap();
     let (_, detail) = call(&app, "GET", &format!("/v1/repos/skills/pending/commit?hash={hash}"), None).await;
     assert_eq!(detail["hash"], json!(hash));
+    assert_eq!(detail["message"], json!("发布 unit"), "pending/commit 要给真提交消息");
     assert_eq!(detail["files"][0]["path"], json!("unit/SKILL.md"));
     let (_, history) = call(&app, "GET", "/v1/repos/skills/history?name=unit&limit=10", None).await;
     assert!(history["items"].as_array().is_some_and(|a| a.iter().any(|i| i["hash"] == json!(hash))));

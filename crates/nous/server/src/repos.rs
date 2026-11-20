@@ -122,8 +122,7 @@ async fn pending_diff(State(state): State<Arc<AppState>>, AxumPath(kind): AxumPa
 async fn pending_commit(State(state): State<Arc<AppState>>, AxumPath(kind): AxumPath<String>, Query(q): Query<CommitQuery>) -> std::result::Result<Json<Value>, ServerError> {
     let repo = select(&state, &kind)?;
     let hash = q.hash.unwrap_or_default();
-    let files = repo.pending_commit(&hash).map_err(repo_error)?;
-    Ok(Json(json!({ "hash": hash, "message": "", "files": files })))
+    json_result(repo.pending_commit(&hash))
 }
 
 async fn commit(State(state): State<Arc<AppState>>, AxumPath(kind): AxumPath<String>, Json(body): Json<CommitBody>) -> std::result::Result<Json<Value>, ServerError> {

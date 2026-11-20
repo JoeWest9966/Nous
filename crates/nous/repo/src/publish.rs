@@ -42,6 +42,13 @@ pub struct CommitFile {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct CommitDetail {
+    pub hash: String,
+    pub message: String,
+    pub files: Vec<CommitFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct HistoryItem {
     pub hash: String,
     pub at: String,
@@ -166,6 +173,13 @@ pub fn commit(root: &Path, paths: &[String], message: &str, request_id: Option<&
     let pushed = git::git_push(root)?;
     let refs = lines(&git::git_ok(root, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])?);
     Ok(CommitResult { commit: hash, pushed, refs })
+}
+
+pub fn commit_detail(root: &Path, hash: &str) -> Result<CommitDetail> {
+    let files = commit_files(root, hash)?;
+    let message = git::git_ok(root, &["show", "-s", "--pretty=format:%s", hash])
+        .unwrap_or_default().trim().to_string();
+    Ok(CommitDetail { hash: hash.to_string(), message, files })
 }
 
 pub fn commit_files(root: &Path, hash: &str) -> Result<Vec<CommitFile>> {

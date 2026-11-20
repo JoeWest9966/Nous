@@ -91,11 +91,12 @@ fn write_then_publish_commits_only_the_requested_path_and_advances_remote() {
         "提交只许包含请求的那一个路径（防搭车）"
     );
 
-    let files = repo.pending_commit(&result.commit).unwrap();
-    assert_eq!(files.len(), 1, "commit 详情应只有一笔文件");
-    assert_eq!(files[0].path, "drafts/alpha.md");
+    let detail = repo.pending_commit(&result.commit).unwrap();
+    assert_eq!(detail.message, "发布 alpha", "pending/commit 要给真提交消息");
+    assert_eq!(detail.files.len(), 1, "commit 详情应只有一笔文件");
+    assert_eq!(detail.files[0].path, "drafts/alpha.md");
     assert_eq!(
-        serde_json::to_value(&files[0].after).unwrap(),
+        serde_json::to_value(&detail.files[0].after).unwrap(),
         json!("# alpha\n")
     );
 
