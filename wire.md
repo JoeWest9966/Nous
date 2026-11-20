@@ -91,6 +91,13 @@
 - `requestId` 是幂等锚：重连重发同一句拿到同一次提交，不会答两遍。**桌面端一定要传**。
 - 不传 `waitMs` 时立即回 `202 { submissionId, status: "queued" }`，真正的流走 SSE。
   桌面端就按这条来：发消息 → 拿 202 → 靠 SSE 收内容。别用 `waitMs` 等同步。
+- #70：任何 202 之后都会起一轮（真 provider 与 faux 一样），submission 必须离开 `queued`
+  并收敛到 `done` 或 `unanswered`。模型解析顺序写死：请求体 `model` → 会话当前的
+  `model` → 编目 `default` → 都没有就 **503 `{error:"没有可用模型"}`**，不许静默受理。
+- `waitMs`：`0`（或省略）回 202；`>0` 最多等这么久，轮次完成回 **200 且带答案 entry**，
+  超时回 202（答案仍走 SSE）。真实等待绑在轮次完成信号上，不是 sleep 轮询。
+- `whenBusy`：`queue`（默认，忙时排队）或 `interrupt`（先停当前轮次再受理）；
+  非法值 400。忙时判定以服务端会话状态为准，客户端不自己猜。
 
 ### GET /v1/sessions/:id/events —— SSE
 
