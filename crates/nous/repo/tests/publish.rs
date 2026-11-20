@@ -103,6 +103,11 @@ fn write_then_publish_commits_only_the_requested_path_and_advances_remote() {
     assert_eq!(written.path, "drafts/alpha.md");
     assert_eq!(result.pushed, Pushed::Yes, "有远端时必须是 true");
     assert_eq!(serde_json::to_value(result.pushed).unwrap(), json!(true));
+
+    // 防搭车不仅看提交内容，也看 index：`git add .` 会把 UNRELATED.md 悄悄 staged，
+    // 即使 commit -- pathspec 没带它，下一次无 pathspec 的提交就会把它捎上。
+    let staged = git(&f.root, &["diff", "--cached", "--name-only"]);
+    assert_eq!(staged, "", "发布后不许留下被误 staged 的搭车文件：{staged}");
 }
 
 #[test]
