@@ -120,6 +120,15 @@ pub fn pending_diff(root: &Path, path: &str) -> Result<Diff> {
 }
 
 pub fn history_diff(root: &Path, name: &str, hash: &str, path: &str) -> Result<Diff> {
+    for part in [name, path] {
+        let part = part.trim().trim_matches('/');
+        if part.is_empty() || part.contains("..") || part.starts_with('/') {
+            return Err(crate::RepoError::BadRequest("history/diff 的 name/path 非法".into()));
+        }
+    }
+    if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(crate::RepoError::BadRequest("hash 非法".into()));
+    }
     let full = format!("{name}/{path}");
     let before_ref = format!("{hash}^:{full}");
     let after_ref = format!("{hash}:{full}");

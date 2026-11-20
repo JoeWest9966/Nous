@@ -105,6 +105,10 @@ fn pending_diff_rejects_path_escape() {
     let (_tmp, repo) = repo();
     let err = repo.pending_diff("../../etc/passwd").unwrap_err();
     assert!(matches!(err, RepoError::BadRequest(_)), "diff 路径也必须防逃逸：{err:?}");
+    let err = repo.history_diff("../../etc", "abc", "passwd").unwrap_err();
+    assert!(matches!(err, RepoError::BadRequest(_)), "history/diff 的 name 也必须防逃逸：{err:?}");
+    let err = repo.history_diff("unit", "../../abc", "file").unwrap_err();
+    assert!(matches!(err, RepoError::BadRequest(_)), "history/diff 的 hash 也必须是 hex：{err:?}");
 }
 
 #[test]
