@@ -21,6 +21,21 @@
 
 ## 通用
 
+### 配置：四条私库路径（#63）
+
+服务端按 TS 版 `server.js:77-83` 解析下面四个变量，变量名与默认值**只有这一份真相**
+（代码落在 `crates/nous/env/src/content.rs`，别在各端点里自己 `std::env::var`）：
+
+| 变量 | 默认值 | 指向 |
+|---|---|---|
+| `NOUS_SKILLS` | `/opt/Nous-skills` | 技能条目 |
+| `NOUS_PROMPTS` | `/opt/Nous-prompts` | 提示词条目 |
+| `NOUS_PRESETS` | `/opt/Nous-Template` | 模板条目（#60 的数据根；不得写死别的目录） |
+| `NOUS_EXTEND` | `/opt/Nous-extend` | 自研扩展源码（`ext` 仍 `frozen`，只登记路径） |
+
+**部署时 unit 里不写这四个变量**：默认值就够，写了就成了两份真相。旧的
+移植期的旧变量名已删除，不做双名兼容。
+
 - 会话 id 是 **数字**（不是字符串）。`GET /v1/sessions/:id/...` 里的 `:id` 是数字。
 - 列表里 `busy` 是 `"queued" | "running" | <task state kind> | null`，不是布尔。
 - 错误形状统一 `{ error: string }`，状态码跟着语义走（400 / 404 / 409 / 500…）。
@@ -64,6 +79,9 @@
   `pi.user`（右气泡）和 `pi.assistant`（左气泡），其余降级显示，别崩。
 - `parent` 是 entry 的父指针，和会话树的 `parent` 不是一回事。
 - `next` 是分页游标，`?limit=` 上限 1000。
+- `?system=1` 是回放开关：额外回 `system`（回放全部 `pi.system` 后**当前生效**的提示词，
+  可能为空串），并给每条 `pi.system` 的 `items[]` 补 `delta`（它自己带来的文本）。
+  不传时仍过滤 `pi.system`，且**没有** `system` 键。
 
 ### POST /v1/sessions/:id/messages
 
@@ -88,7 +106,7 @@
 | `message_end` | `entry.kind === "pi.assistant"` 时收尾 | 助手气泡结束，把攒的字定稿 |
 | `entry_appended` | `entry.kind` | 别的标签页 / 客户端加的东西；`pi.user` `pi.tool-result` 才补 |
 | `submission` | `record.status === "unanswered"` 时弹错误 | `record.reason` / `record.detail` 是「没答上来」的原因 |
-| `task_failed` | `message` | 任务挂了，弹一句 |
+| `task_failed` | `message` `taskId` | 只在任务进入终态且 `outcome.status == "failed"` 时发；中途状态与成功的终态都不发 |
 | `tool_execution_start` | `toolCallId` `toolName` | 开一个工具卡片 |
 | `tool_execution_update` | `toolCallId` `output` | `output.append` / `output.set` 追加 / 覆盖 |
 
@@ -145,6 +163,14 @@
   `null` 不是「读到过」，只是一个还没被 `POST /v1/read/:id` 推进过的水位。
 - 覆盖**所有**会话；没有水位的会话给 `{ unread: 0, readAt: null }`。
 - 跟 `GET /v1/sessions` **一起拉**（同一帧并发），别一会拉一个。
+
+### GET /v1/origins
+
+会话血缘反查：`{ items: [{ id, ultimate, trigger, at, forced }] }`。
+`id` 是会话 id（数字），`ultimate` 是终极模板/模板 ref 名，`trigger` 是点火的触发器 slug，
+`at` 是点火时刻（epoch 毫秒），`forced` 只给手动 launch —— 触发器点起来的恒 `false`。
+`?trigger=<code>` 按键过滤；手动建的会话**没有**条目。
+状态与 `names` / `pins` 同住 `qrd3wh.sessions` 文档的 `origins` 键，不建表；重启后仍可反查。
 
 ### POST /v1/read/:id
 
@@ -256,7 +282,9 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - `category` 是字符串数组，`/` 表示层级：`写作/周报` 自动蕴含父级 `写作`。一条可以挂多个。
 - `repo` 是**这一段的**仓状态 `{ head, dirty, ahead, behind, error }`；`dirty` 按段算，
   `ahead`/`behind` 是整仓的。`head` 可能是 `null`（仓读不了）—— 别拿它当字符串硬切。
-- `specError` → 这条自己写坏了，红。
+- `specError` → 这条自己写坏了，红（字段名 + 一句原因）。本库按形状校验填，不 spawn git。
+- `tracked` 在本库恒 `null`：不 spawn git，无从判「仓里有没有」；`null` 不是 `false`。
+  `dir` 是文档根下的真实绝对路径（`<root>/<kind>/<section>`）。
 - `resolved.*.state === "invalid"` → 引用失效，现在开不了。
 - `tracked === false` → 盘上有、仓里没。
 - **能否启动的判据全是引擎算好的**，客户端不自己拼规则。加了规则就等于可以跟引擎吵起来。
@@ -289,6 +317,8 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 回包 `{ ok, commit, pushed, name, to, refs }`，`refs` 是**被动到的终极模板名**（连带改的）。
 界面要把 `refs` 说出来 —— 改名顺手动了别人的东西，不说一声就是偷偷改。
+**本库不 spawn git**：`commit` 与 `pushed` 一律 `null`，不拿 `{}` 冒充「有一笔提交」。
+单条文档不存在与不认识的 kind 一律 `404`，body 带可用值清单，不许 `500`。
 
 - 只有 POST；`to` 走和新建同一套名字规则（`400`）、目标已存在 `409`、源不存在 `404`。
 #### GET / POST /v1/presets/:section/order
@@ -336,7 +366,10 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 
 ### GET /v1/skills
 
-`{ root, categories: string[], repo, skills: [...] }`。技能那条：
+`{ root: string, present: boolean, missing: string | null, categories: string[], repo, skills: [...] }`。
+`root` 永远是解析后的路径（未显式要求「不要数据根」时不会是 `null`）；目录不存在时
+`present=false` 且 `missing` 给一句人话，`skills=[]`。服务端只读，不建目录、不写私库。
+技能那条：
 
 ```
 { name, path, description, dir, file, hidden, category: string[], tracked, load: { state } }
@@ -348,7 +381,9 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 
 ### GET /v1/prompts
 
-`{ default: string | null, categories: string[], prompts: [...] }`。模板那条至少有
+`{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
+`root` / `present` / `missing` 与 skills 同义：有路径但没目录是正常状态，不是 `null`。
+模板那条至少有
 `{ name, description?, category?, load: { state } }`。
 
 - 和技能不是一回事：**模板是单值**（每轮都带的那份规则），技能是集合。所以列表里
@@ -362,12 +397,24 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - #65：机器编目优先读 `NOUS_MACHINES_FILE` 给的 JSON；没有就用内置两台（形状不变）。
 
 - 没有 `machine` 字段 = **本机**。名字要和创建请求里的 `machine` 对得上。
+- 本库的静态编目不知道具体 `user` / `port` / `ips` / `addr`，就回 `null` / `[]` / `""` ——
+  不编造地址。旧字段（`hostname` / `os` / `arch` / `triples` / `rustc` / `roles` /
+  `annotations` / `items`）保留一版，客户端按任一套都能读到。
 
-### GET /v1/fs/dirs?path=
+### GET /v1/fs/dirs?path=&machine=&hidden=
 
-`{ path, dirs: [{ name, path }] }`。**列的是 qrd3wh 那台机器上的目录。**
+`{ path, dirs: [{ name, path, hidden }], truncated }`。**列的是引擎那台机器上的目录。**
 
-- 不带 `path` = 引擎给的起点（board 的 map 根）；`path: ""` 是起点，不是「没有路径」。
+- 不带 `path` = 引擎给的起点：`NOUS_START_DIRS` 的第一条（冒号分隔）或进程 cwd；
+  `path: ""` 是起点，不是「没有路径」。**不做 home 展开**：`~` 由客户端展开，
+  引擎只认绝对路径。
+- 只列子目录（符号链接不算目录），按名字稳定排序；点开头的目录默认跳过，
+  `?hidden=1` 时收录并标 `hidden: true`。最多 500 条，超出时 `truncated: true`。
+- `machine` 省略 / 空 = 本机。远端机器（`machine` 不等于本机主机名）回 **501**
+  `{ "error": "ssh 未实现" }`，**不许静默退回本机目录**（SSH 远端由 env-ssh 另票）。
+- 错误：相对路径 / `~` 开头 **400**，绝对路径不存在 **404**，权限不足 **403**，
+  路径指向文件 **400**，其余读失败 500；错误体统一 `{ error: string }`。
+- 只读：这个端点不改目标目录（mtime 与内容都不变）。
 - 浏览发生在引擎进程里：引擎以后跑在远程机器上，这一页一行都不用改。
 
 ### POST /v1/sessions —— 建会话

@@ -65,7 +65,7 @@ impl AppState {
 
     /// 只读装配：读端点可用，写端点一律 409（不假装能写）。
     pub fn read_only(source: Arc<dyn SessionSource>) -> Arc<Self> {
-        Self::new(source, Arc::new(ReadOnlyCommands), Hub::new())
+        Self::new(source.clone(), ReadOnlyCommands::new(source), Hub::new())
     }
 
     /// 读 + 写都接在**同一份库**上。写走 `Session`，`CommitObserver` 挂到同一个 hub ——
@@ -113,6 +113,11 @@ impl AppState {
 
     pub fn commands(&self) -> &Arc<dyn CommandSource> {
         &self.commands
+    }
+
+    /// 只读投影（origins / unread）用的 `Session`：只读装配没有。
+    pub fn durable_session(&self) -> Option<Arc<nous_durable::session::Session>> {
+        self.commands.session()
     }
 
     pub fn hub(&self) -> &Arc<Hub> {

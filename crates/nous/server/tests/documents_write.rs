@@ -84,3 +84,75 @@ async fn create_get_put_history_go_through_session_and_broadcast() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+#[tokio::test]
+async fn list_items_have_honest_tracked_dir_and_spec_error() {
+    let path = temp_db(); let path = path.with_file_name(format!("{}-list.sqlite", path.file_stem().unwrap().to_string_lossy()));
+    let registry = ObserverRegistry::new();
+    let session = Arc::new(nous_durable::session::Session::with_observers(
+        nous_durable::Storage::open(&path).unwrap(), registry.clone(),
+    ));
+    let commands = DurableCommands::with_session(session.clone(), registry);
+    let state = AppState::durable_with_commands(
+        nous_server::ImportedSource::open(&path).unwrap(), commands,
+    ).with_documents_backend(path.clone(), session);
+    let app = nous_server::router(state);
+
+    // 一份好文档
+    let good = json!({
+        "name": "good", "summary": "一句话", "description": "说明", "category": ["写作"],
+        "spec": null, "body": null
+    });
+    let (status, _) = call(&app, Method::POST, "/v1/documents/presets/Session-Template", Some(json!({"fields": good}))).await;
+    assert_eq!(status, StatusCode::CREATED);
+    // 一份形状写坏的文档：缺 summary，specError 要指到字段
+    let broken = json!({
+        "name": "broken", "summary": "", "description": "说明", "category": ["写作"],
+        "spec": {"session": "missing"}, "body": null
+    });
+    let (status, _) = call(&app, Method::POST, "/v1/documents/presets/Session-Template", Some(json!({"fields": broken}))).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = call(&app, Method::GET, "/v1/documents/presets", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert!(item["tracked"].is_null(), "不 spawn git：tracked 只能是 null：{item}");
+        let dir = item["dir"].as_str().unwrap_or_default();
+        assert!(dir.starts_with('/'), "dir 要是非空绝对路径：{item}");
+    }
+    let broken = items.iter().find(|item| item["name"] == json!("broken")).unwrap();
+    let error = broken["specError"].as_str().unwrap_or_default();
+    assert!(error.contains("summary"), "specError 要指到写坏的字段：{broken}");
+    let good = items.iter().find(|item| item["name"] == json!("good")).unwrap();
+    assert!(good["specError"].is_null(), "好文档的 specError 该是 null：{good}");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn rename_never_pretends_a_commit_or_a_push() {
+    let path = temp_db(); let path = path.with_file_name(format!("{}-rename.sqlite", path.file_stem().unwrap().to_string_lossy()));
+    let registry = ObserverRegistry::new();
+    let session = Arc::new(nous_durable::session::Session::with_observers(
+        nous_durable::Storage::open(&path).unwrap(), registry.clone(),
+    ));
+    let commands = DurableCommands::with_session(session.clone(), registry);
+    let state = AppState::durable_with_commands(
+        nous_server::ImportedSource::open(&path).unwrap(), commands,
+    ).with_documents_backend(path.clone(), session);
+    let app = nous_server::router(state);
+    let preset = json!({
+        "name": "desk", "summary": "一句话", "description": "说明", "category": ["写作"],
+        "spec": null, "body": null
+    });
+    assert_eq!(call(&app, Method::POST, "/v1/documents/presets/Session-Template", Some(preset)).await.0, StatusCode::CREATED);
+
+    let (status, body) = call(&app, Method::POST, "/v1/documents/presets/Session-Template/desk/rename", Some(json!({"to": "new-desk"}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["pushed"].is_null(), "没推就不能造一个推送结果：{body}");
+    assert!(body["commit"].is_null(), "没提交就不能拿 {{}} 冒充：{body}");
+
+    let _ = std::fs::remove_file(&path);
+}

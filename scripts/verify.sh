@@ -577,7 +577,7 @@ allow={
  # 这一节扩边不等于放宽「内核层不依赖应用层」——那条是判据 2，另有人在守。
  'nous-server': {'nous-durable','nous-wire','nous-telemetry',
                  'nous-ai','nous-runtime','nous-sessions','nous-tools','nous-documents',
-                 'nous-store'},
+                 'nous-store','nous-env'},
  # #56：Nous 自己的库。**没有内部依赖**（尤其没有 nous-durable）—— 多一条边就是判据 1 破了。
  'nous-store': set(),
 }

@@ -6,7 +6,9 @@
 
 mod common;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -14,6 +16,8 @@ use axum::Router;
 use nous_server::{router, AppState};
 use serde_json::{json, Value};
 use tower::ServiceExt;
+
+static CONTENT_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 fn snapshots_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots")
@@ -124,30 +128,185 @@ async fn selection_response_pins_id_field() {
     snapshot("selection_response_pins_id_field", &body);
 }
 
+/// 四条私库路径的环境变量入口。测试同时持有进程级 env 锁，避免互相踩。
+struct ContentEnv {
+    previous: Vec<(&'static str, Option<OsString>)>,
+    _guard: std::sync::MutexGuard<'static, ()>,
+}
+
+impl ContentEnv {
+    /// 清空本票涉及的变量；其余环境（HOME 等）原样保留 —— 路径解析不读 HOME。
+    fn cleared() -> Self {
+        let guard = CONTENT_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = [
+            "NOUS_SKILLS",
+            "NOUS_PROMPTS",
+            "NOUS_PRESETS",
+            "NOUS_EXTEND",
+        ];
+        let previous = names
+            .iter()
+            .map(|name| {
+                let prev = std::env::var_os(name);
+                std::env::remove_var(name);
+                (*name, prev)
+            })
+            .collect();
+        Self { previous, _guard: guard }
+    }
+
+    fn set(&mut self, name: &'static str, value: &Path) {
+        std::env::set_var(name, value);
+    }
+}
+
+impl Drop for ContentEnv {
+    fn drop(&mut self) {
+        for (name, prev) in self.previous.drain(..) {
+            match prev {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
+
+/// 私有内容根的测试替身：真目录、真条目；本测试夹具负责写入，产品代码只读。
+struct ContentRepo {
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+}
+
+impl ContentRepo {
+    fn with_two_skills() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        for name in ["alpha", "beta"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+            std::fs::write(root.join(name).join("SKILL.md"), format!("# {name}\n")).unwrap();
+        }
+        Self { _dir: dir, root }
+    }
+
+    /// (路径, mtime 纳秒, sha256) —— 用独立入口 `sha256sum` 算摘要，不看产品代码。
+    fn fingerprint(&self) -> Vec<(String, Option<u128>, String)> {
+        let mut files: Vec<_> = walk(&self.root);
+        files.sort();
+        files
+            .into_iter()
+            .map(|path| {
+                let meta = std::fs::metadata(&path).unwrap();
+                let modified = meta.modified().ok().and_then(|t| {
+                    t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_nanos())
+                });
+                let output = std::process::Command::new("sha256sum")
+                    .arg(&path)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "sha256sum 失败");
+                let sha = String::from_utf8(output.stdout).unwrap();
+                let sha = sha.split_whitespace().next().unwrap().to_string();
+                (path.display().to_string(), modified, sha)
+            })
+            .collect()
+    }
+}
+
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
+}
+
 /// GET /v1/skills —— `types.rs::Skills` / `Skill`。
 #[tokio::test]
 async fn skills_response_pins_client_shape() {
+    let env = ContentEnv::cleared();
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
     let (status, body) = get_json(&app, "/v1/skills").await;
+    drop(env);
     assert_eq!(status, StatusCode::OK, "GET /v1/skills 应 200");
     fields(
         &body,
         "skills",
         &[
-            ("root", is_string_or_null),
+            ("root", is_string),
+            ("present", is_bool),
+            ("missing", |v| v.is_string() || v.is_null()),
             ("categories", is_array),
             ("skills", is_array),
         ],
     );
     assert!(body["categories"].as_array().unwrap().iter().all(Value::is_string));
-    snapshot("skills_response_pins_client_shape", &body);
+    let mut stable = body.clone();
+    stable["root"] = json!("<root>");
+    stable["missing"] = json!("<missing>");
+    snapshot("skills_response_pins_client_shape", &stable);
+}
+
+/// 判据 2：不设任何环境变量，技能数据根回 TS 版的默认值（不是 null）。
+#[tokio::test]
+async fn skills_default_root_is_the_private_repo_path() {
+    let env = ContentEnv::cleared();
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (status, body) = get_json(&app, "/v1/skills").await;
+    drop(env);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["root"], json!("/opt/Nous-skills"));
+}
+
+/// 判据 3：默认路径不存在时，root 照旧是路径，present=false，列表空。
+#[tokio::test]
+async fn missing_private_repo_says_where_it_looked() {
+    assert!(!std::path::Path::new("/opt/Nous-skills").exists(), "本测试要求默认路径不存在");
+    let env = ContentEnv::cleared();
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (_, body) = get_json(&app, "/v1/skills").await;
+    drop(env);
+    assert_eq!(body["root"], json!("/opt/Nous-skills"));
+    assert_eq!(body["present"], json!(false));
+    assert!(body["missing"].is_string(), "missing 要给一句人话");
+    assert_eq!(body["skills"], json!([]));
+}
+
+/// 判据 4：NOUS_SKILLS 指向临时目录时，真条目可见，root 就是覆盖值。
+#[tokio::test]
+async fn skills_from_an_overridden_private_repo_are_visible() {
+    let mut env = ContentEnv::cleared();
+    let repo = ContentRepo::with_two_skills();
+    let before = repo.fingerprint();
+    env.set("NOUS_SKILLS", &repo.root);
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (_, body) = get_json(&app, "/v1/skills").await;
+
+    assert_eq!(body["root"], json!(repo.root.display().to_string()));
+    assert_eq!(body["present"], json!(true));
+    assert!(body["missing"].is_null(), "present=true 时不该有 missing");
+    let skills = body["skills"].as_array().expect("skills 是数组");
+    assert_eq!(skills.len(), 2);
+    let mut names: Vec<_> = skills.iter().map(|s| s["name"].as_str().unwrap()).collect();
+    names.sort_unstable();
+    assert_eq!(names, ["alpha", "beta"]);
+
+    // 判据 5：只读 —— 引擎看过之后，临时目录里每个文件的 mtime 与 sha256 都没变。
+    assert_eq!(repo.fingerprint(), before, "GET /v1/skills 改了私库里的文件");
+    drop(env);
 }
 
 /// GET /v1/prompts —— `types.rs::Prompts` / `Prompt`。
 #[tokio::test]
 async fn prompts_response_pins_client_shape() {
+    let env = ContentEnv::cleared();
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
     let (status, body) = get_json(&app, "/v1/prompts").await;
+    drop(env);
     assert_eq!(status, StatusCode::OK, "GET /v1/prompts 应 200");
     fields(
         &body,
@@ -156,10 +315,28 @@ async fn prompts_response_pins_client_shape() {
             ("default", is_string_or_null),
             ("categories", is_array),
             ("prompts", is_array),
-            ("root", is_string_or_null),
+            ("root", is_string),
+            ("present", is_bool),
+            ("missing", |v| v.is_string() || v.is_null()),
         ],
     );
-    snapshot("prompts_response_pins_client_shape", &body);
+    let mut stable = body.clone();
+    stable["root"] = json!("<root>");
+    stable["missing"] = json!("<missing>");
+    snapshot("prompts_response_pins_client_shape", &stable);
+}
+
+/// 提示词与技能走同一条解析规则：默认值回来，缺目录用 present 说清楚。
+#[tokio::test]
+async fn prompts_report_the_default_root_and_its_presence() {
+    let env = ContentEnv::cleared();
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (_, body) = get_json(&app, "/v1/prompts").await;
+    drop(env);
+    assert_eq!(body["root"], json!("/opt/Nous-prompts"));
+    assert_eq!(body["present"], json!(false));
+    assert!(body["missing"].is_string());
+    assert_eq!(body["prompts"], json!([]));
 }
 
 /// GET /v1/triggers —— 没有装配的测试路由也诚实返回空表，不是 404（#49 空表契约保留）。
@@ -234,6 +411,7 @@ async fn capabilities_declares_modules_and_reasons() {
     // 名字 == docs/plugins.md 的 module 列（评论拍板：ext，不是 extensions）。
     for name in [
         "sessions",
+        "env",
         "documents",
         "presets",
         "archive",
@@ -292,6 +470,27 @@ async fn capabilities_declares_modules_and_reasons() {
     assert_eq!(by_name["ext"]["enabled"], json!(false));
     assert_eq!(by_name["ext"]["reason"]["code"], json!("frozen"));
     snapshot("capabilities_declares_modules_and_reasons", &body);
+}
+
+/// #68：目录浏览作为已启用端点出现在 capabilities 声明里（从 ROUTES 自动生成）。
+#[tokio::test]
+async fn capabilities_declares_the_directory_browsing_endpoint() {
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (status, body) = get_json(&app, "/v1/capabilities").await;
+    assert_eq!(status, StatusCode::OK);
+    let endpoint = "GET /v1/fs/dirs";
+    let owners: Vec<&str> = body["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|module| {
+            module["endpoints"]
+                .as_array()
+                .is_some_and(|list| list.iter().any(|value| value.as_str() == Some(endpoint)))
+        })
+        .map(|module| module["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(owners, vec!["env"], "端点必须只由 env 模块声明一次");
 }
 
 /// 拷问结果 §8：_routes ↔ enabled 模块 endpoints 多重集相等（双向）。
@@ -381,5 +580,23 @@ async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
             "注册表声明的 {} {uri} 没打到 handler：{}",
             route.method, response.status()
         );
+    }
+}
+
+#[tokio::test]
+async fn machines_items_carry_the_wire_fields() {
+    let app = router(AppState::with_source(common::FakeSource::two_sessions()));
+    let (status, body) = get_json(&app, "/v1/machines").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().expect("items 是数组");
+    assert!(!items.is_empty());
+    for item in items {
+        for key in ["at", "user", "port", "ips", "note", "tags"] {
+            assert!(item.get(key).is_some(), "机器缺 wire 字段 {key}：{item}");
+        }
+        // 旧字段作为附加字段保留一版。
+        for key in ["name", "hostname", "os", "arch", "triples", "rustc", "roles", "annotations"] {
+            assert!(item.get(key).is_some(), "旧字段 {key} 不该在这一版突然消失：{item}");
+        }
     }
 }
