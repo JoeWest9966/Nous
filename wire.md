@@ -385,6 +385,15 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 `root` / `present` / `missing` 与 skills 同义：有路径但没目录是正常状态，不是 `null`。
 模板那条至少有
 `{ name, description?, category?, load: { state } }`。
+字段形状以 `crates/nous/server/tests/prompts_endpoints.rs::prompts_lists_real_directories_and_names_an_unconfigured_default` 为准。
+
+- 真读 `NOUS_PROMPTS`：每个子目录一条 `path`，至少要有 `PROMPT.md` + `nous.json`；
+  缺哪份就在 `problem` 里点名，不许把坏目录从列表里抹掉。
+- `settings.json` 的 `default` 指向不存在的模板时照样回那个名字（不变成 null），
+  并在 `problem` 里说清“不存在”。
+- `prompt:<名>` 会话模板在起轮时把 `PROMPT.md` 正文放进 `pi.system` 的
+  `model[0].sections.prompts`（见 `crates/nous/server/tests/prompt_injection.rs`）；
+  模板缺失时轮次照跑，诊断以 `template: missing` 写进同一段。
 
 - 和技能不是一回事：**模板是单值**（每轮都带的那份规则），技能是集合。所以列表里
   模板用单选框、技能用复选框 —— 形状本身在说能选几个。
