@@ -141,6 +141,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/read/:id", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
+    // #68：只读目录浏览（env 插件）。
+    RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "device" },
@@ -213,6 +215,8 @@ fn enabled_routes() -> impl Iterator<Item = &'static RegisteredRoute> {
 /// `enabled` = 清单 ∩ 代码：没有注册路由的模块一律 disabled + reason。
 const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("sessions", None),
+    // #68：env 的本地目录浏览已落地，SSH 远端另票。
+    ("env", None),
     // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
     ("documents", None),
     ("presets", Some(ReasonCode::NotImplemented)),

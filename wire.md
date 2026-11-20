@@ -398,11 +398,20 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 
 - 没有 `machine` 字段 = **本机**。名字要和创建请求里的 `machine` 对得上。
 
-### GET /v1/fs/dirs?path=
+### GET /v1/fs/dirs?path=&machine=&hidden=
 
-`{ path, dirs: [{ name, path }] }`。**列的是 qrd3wh 那台机器上的目录。**
+`{ path, dirs: [{ name, path, hidden }], truncated }`。**列的是引擎那台机器上的目录。**
 
-- 不带 `path` = 引擎给的起点（board 的 map 根）；`path: ""` 是起点，不是「没有路径」。
+- 不带 `path` = 引擎给的起点：`NOUS_START_DIRS` 的第一条（冒号分隔）或进程 cwd；
+  `path: ""` 是起点，不是「没有路径」。**不做 home 展开**：`~` 由客户端展开，
+  引擎只认绝对路径。
+- 只列子目录（符号链接不算目录），按名字稳定排序；点开头的目录默认跳过，
+  `?hidden=1` 时收录并标 `hidden: true`。最多 500 条，超出时 `truncated: true`。
+- `machine` 省略 / 空 = 本机。远端机器（`machine` 不等于本机主机名）回 **501**
+  `{ "error": "ssh 未实现" }`，**不许静默退回本机目录**（SSH 远端由 env-ssh 另票）。
+- 错误：相对路径 / `~` 开头 **400**，绝对路径不存在 **404**，权限不足 **403**，
+  路径指向文件 **400**，其余读失败 500；错误体统一 `{ error: string }`。
+- 只读：这个端点不改目标目录（mtime 与内容都不变）。
 - 浏览发生在引擎进程里：引擎以后跑在远程机器上，这一页一行都不用改。
 
 ### POST /v1/sessions —— 建会话
