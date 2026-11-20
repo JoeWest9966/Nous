@@ -1,0 +1,11 @@
+name = "skills"
+vendor = "nous"
+version = "0.1.3"
+layer = "app"
+crate = "nous-skills"
+
+[requires]
+
+[provides]
+capability = "skills"
+endpoints  = []

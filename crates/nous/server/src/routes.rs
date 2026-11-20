@@ -18,6 +18,7 @@
 //! 接再自己 parse —— 让 axum 的 `Path<i64>` 拒掉会吐一段纯文本，破坏 `{error}`。
 
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
@@ -41,7 +42,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::app::AppState;
 use crate::coalesce::{self, Framing};
 use crate::error::{Result, ServerError};
-use crate::models::ModelsResponse;
+use nous_device::ModelsResponse;
 use crate::records::CreateSessionRequest;
 use crate::source::SessionSource;
 
@@ -64,9 +65,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/abort", post(abort))
         .route("/v1/sessions/{id}/fork", post(fork))
         .route("/v1/machines", get(machines))
+        .route("/v1/fs/dirs", get(fs_dirs))
         .route("/v1/models", get(models))
+        .route("/v1/default", put(put_default))
+        .route("/v1/catalog/refresh", post(catalog_refresh))
         .route("/v1/device", get(device))
         .route("/v1/unread", get(unread))
+        .route("/v1/origins", get(origins))
         .route("/v1/read/{id}", post(mark_read))
         .route("/v1/sessions/{id}/rename", post(rename))
         .route("/v1/sessions/{id}/pin", post(pin))
@@ -76,17 +81,98 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
+        .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/triggers/{code}/fires", get(trigger_fires))
-        .route("/v1/capabilities", get(capabilities));
+        .route("/v1/capabilities", get(capabilities))
+        .route("/v1/stats/usage", get(crate::stats::usage))
+        .route("/v1/stats/tasks", get(crate::stats::tasks))
+        .route("/v1/stats/db", get(crate::stats::db))
+        .route("/v1/openapi.json", get(crate::stats::openapi));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
     crate::documents::attach(state, router)
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
 async fn machines() -> Json<Value> {
-    Json(crate::machines::catalog())
+    let file = std::env::var("NOUS_MACHINES_FILE")
+        .ok()
+        .filter(|text| !text.trim().is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    Json(nous_device::machines(file.as_deref()))
+}
+
+/// `GET /v1/fs/dirs` 的查询参数。未知字段由 axum 忽略，协议保持哑的。
+#[derive(Debug, Deserialize)]
+struct FsDirsQuery {
+    path: Option<String>,
+    machine: Option<String>,
+    hidden: Option<String>,
+}
+
+/// 目录浏览上限。超出的项不计入 `dirs`，只把 `truncated` 翻成 true。
+const FS_DIRS_LIMIT: usize = 500;
+
+/// `GET /v1/fs/dirs`：只读列子目录。
+///
+/// 路径规则与本机判定都在 `nous_env::dirs`；显式远端 `machine` 走 env-ssh，
+/// 编目里没有 → 404，连不上 → 502，绝不静默退回本机。
+async fn fs_dirs(Query(query): Query<FsDirsQuery>) -> Result<Json<Value>> {
+    let hidden = query.hidden.as_deref() == Some("1");
+    if let Some(machine) = query.machine.as_deref().filter(|name| !name.is_empty()) {
+        if !nous_env::is_local_machine(Some(machine)) {
+            let result = nous_env_ssh::remote_subdirs(
+                machine,
+                query.path.as_deref().unwrap_or(""),
+                hidden,
+                FS_DIRS_LIMIT,
+            )
+            .await
+            .map_err(fs_remote_error)?;
+            return Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)));
+        }
+    }
+    let result = nous_env::list_subdirs(
+        query.path.as_deref().unwrap_or(""),
+        hidden,
+        FS_DIRS_LIMIT,
+    )
+    .map_err(fs_dirs_error)?;
+    Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
+}
+
+fn fs_remote_error(error: nous_env_ssh::RemoteDirsError) -> ServerError {
+    use nous_env_ssh::RemoteDirsError;
+    match error {
+        RemoteDirsError::MachineNotFound => ServerError::NotFound("机器不在编目里".to_string()),
+        RemoteDirsError::Unreachable(message) => ServerError::BadGateway(message),
+        RemoteDirsError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        RemoteDirsError::NotFound => ServerError::NotFound("远端目录不存在".to_string()),
+        RemoteDirsError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个远端目录".to_string())
+        }
+        RemoteDirsError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        RemoteDirsError::Other => ServerError::Internal("远端目录读不出来".to_string()),
+    }
+}
+
+fn fs_dirs_error(error: nous_env::BrowseError) -> ServerError {
+    use nous_env::BrowseError;
+    match error {
+        BrowseError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        BrowseError::NotFound => ServerError::NotFound("目录不存在".to_string()),
+        BrowseError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个目录".to_string())
+        }
+        BrowseError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        BrowseError::Other => ServerError::Internal("目录读不出来".to_string()),
+    }
 }
 
 /// `GET /v1/sessions`：`{ items: [...] }`，新的在前（排序在 `nous-durable` 的投影里）。
@@ -107,6 +193,24 @@ async fn create_session(
 /// `GET /v1/unread`：平铺 map（`{"id": {unread, readAt}}`），覆盖所有会话。
 async fn unread(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     Ok(Json(state.commands().unread().await?))
+}
+
+/// `GET /v1/origins`：会话血缘反查，`?trigger=<code>` 按触发器过滤。
+/// 数据在 durable 的 session 作用域文档里（与 names / pins 同一份），只读。
+async fn origins(State(state): State<Arc<AppState>>, Query(query): Query<OriginsQuery>) -> Result<Json<Value>> {
+    // 没有 durable 写后端的只读装配：诚实回空表，不 409（与其它只读列表端点一致）。
+    let Some(session) = state.durable_session() else {
+        return Ok(Json(json!({ "items": [] })));
+    };
+    Ok(Json(nous_durable::session::commands::origins_map(
+        &session,
+        query.trigger.as_deref(),
+    ).await.map_err(|error| ServerError::Internal(error.to_string()))?))
+}
+
+#[derive(Debug, Deserialize)]
+struct OriginsQuery {
+    trigger: Option<String>,
 }
 
 /// `POST /v1/read/:id`：把水位推到最新，回 `{id, readAt, unread: 0}`。
@@ -180,7 +284,8 @@ async fn pin(
 
 /// `GET /v1/device`：进程/宿主配置，About 面板读它。
 async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(crate::meta::device(state.models()))
+    let models = state.models();
+    Json(crate::meta::device(&models))
 }
 
 /// `GET /v1/selection`：当前选中的会话，落库、重启后仍在。
@@ -259,19 +364,77 @@ async fn purge(
     })))
 }
 
-/// `GET /v1/skills`：空目录就是空表。
-async fn skills() -> Json<Value> {
-    Json(crate::meta::skills())
-}
-
 /// `GET /v1/prompts`：A 阶段空表。
 async fn prompts() -> Json<Value> {
     Json(crate::meta::prompts())
 }
 
-/// `GET /v1/extensions`：ext 冻结，空清单。
-async fn extensions() -> Json<Value> {
-    Json(crate::meta::extensions())
+/// `GET /v1/extensions`：ext 冻结，空清单。`?usage=1` 时回答「谁在用」（#85）。
+async fn extensions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("extensions")?));
+    }
+    Ok(Json(crate::meta::extensions()))
+}
+
+/// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。
+async fn skills(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("skills")?));
+    }
+    Ok(Json(crate::meta::skills()))
+}
+
+/// `?usage=1`：反查模式开关。缺席 / 0 / false / 其它值都不是反查，
+/// 不因为一个可选参数让整个端点 400（serde 的 `bool` 会把 `1` 判成非法）。
+#[derive(Debug, Deserialize)]
+struct UsageQuery {
+    usage: Option<String>,
+}
+
+impl UsageQuery {
+    fn requested(&self) -> bool {
+        matches!(self.usage.as_deref(), Some("1" | "true"))
+    }
+}
+
+/// `GET /v1/search?q=&kind=&limit=`（#85）：服务端扫一次会话正文 / 文档，
+/// `q` 少于两个字符 → 400，`limit` 上限 100 且 `truncated` 明确。
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    kind: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>> {
+    let q = query.q.unwrap_or_default().trim().to_string();
+    if q.chars().count() < 2 {
+        return Err(ServerError::BadRequest("q must be at least 2 characters".into()));
+    }
+    let kind = query.kind.as_deref().unwrap_or("all");
+    if !matches!(kind, "all" | "sessions" | "documents") {
+        return Err(ServerError::BadRequest("kind must be all/sessions/documents".into()));
+    }
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let all = state.source().search(&q, kind)?;
+    let total = all.len();
+    let truncated = total > limit;
+    let items: Vec<Value> = all
+        .into_iter()
+        .take(limit)
+        .map(|item| serde_json::to_value(item).expect("SearchItem is serializable"))
+        .collect();
+    Ok(Json(json!({ "items": items, "total": total, "truncated": truncated })))
 }
 
 /// `GET /v1/triggers`：观测清单 + 调度健康（#58）。装配了 store 就读真行；
@@ -364,11 +527,80 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(body)
 }
 
-/// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。
+/// `POST /v1/catalog/refresh`：拉一次远端编目，成功写缓存并换入内存；失败留旧表带 error。
+/// 响应形状 `{default, items, fetchedAt, error?}`：token 只经内存请求头，不进响应/日志。
+async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    match nous_device::refresh_remote_catalog(state.catalog_env()).await {
+        Ok(models) => {
+            state.set_models(models.clone());
+            let mut body = serde_json::to_value(&models).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = models.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            Ok(Json(body))
+        }
+        Err(error) => {
+            // 失败保留旧编目：内存里最近一次刷新的那份优先；否则从本地缓存/文件读回。
+            let mut old = state.refreshed_models().unwrap_or_else(|| {
+                nous_device::load_models(state.catalog_env()).unwrap_or_default()
+            });
+            old.catalog.error = Some(error);
+            state.set_models(old.clone());
+            let top_error = old.catalog.error.clone().unwrap_or_default();
+            let mut body = serde_json::to_value(&old).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = old.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            body["error"] = Value::String(top_error);
+            Ok(Json(body))
+        }
+    }
+}
+
+/// `GET /v1/models`：默认模型 + 列表 + 来源诊断块。
 ///
-/// 本层不认识 provider，空目录是诚实的「不知道」；宿主可换入带 catalog 的 `AppState`。
-async fn models(State(state): State<Arc<AppState>>) -> Json<ModelsResponse> {
-    Json(state.assembled_models().unwrap_or_else(|| state.models().clone()))
+/// 编目来源由 `nous-device` 收口：内联（`NOUS_MODELS`）> 文件 > 诚实空表；
+/// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
+/// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
+async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
+    // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
+    if state.injected_models() {
+        if let Some(catalog) = state.assembled_models() {
+            return Ok(Json(catalog));
+        }
+        return Ok(Json(state.models()));
+    }
+    if let Some(refreshed) = state.refreshed_models() {
+        return Ok(Json(refreshed));
+    }
+    let response = nous_device::load_models(state.catalog_env())
+        .map_err(ServerError::Internal)?;
+    Ok(Json(response))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DefaultBody {
+    provider: String,
+    #[serde(rename = "modelId")]
+    model_id: String,
+}
+
+/// `PUT /v1/default`：把默认模型原子写回同一份编目；模型不在 items 里 → 400。
+async fn put_default(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DefaultBody>,
+) -> Result<Json<Value>> {
+    let env = state.catalog_env();
+    if env.inline.is_some() {
+        return Err(ServerError::BadRequest(
+            "NOUS_MODELS 是内联编目，不能写回 default；请用 NOUS_MODELS_FILE".to_string(),
+        ));
+    }
+    let path = &env.file_path;
+    let model = nous_device::ModelRef {
+        provider: body.provider,
+        model_id: body.model_id,
+    };
+    nous_device::save_default(path, &model)
+        .map_err(|error| ServerError::BadRequest(error))?;
+    Ok(Json(json!({ "default": model, "wrote": true })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -377,6 +609,8 @@ struct EntriesQuery {
     cursor: Option<String>,
     /// 按 entry 的 `kind` 过滤（审计可见性靠它，不加新端点，spec 8.5）。
     kind: Option<String>,
+    /// `system=1` 时额外回 `items[].delta` 与回放后的 `system`，且不过滤 `pi.system`。
+    system: Option<String>,
 }
 
 /// `GET /v1/sessions/:id/entries`：`{ items, next }`，新的在前。
@@ -425,10 +659,57 @@ async fn entries(
     if let Some(kind) = query.kind.as_deref() {
         items.retain(|entry| entry.get("kind").and_then(Value::as_str) == Some(kind));
     }
-    Ok(Json(json!({
+    let with_system = query.system.as_deref() == Some("1");
+    if with_system {
+        for item in &mut items {
+            if item.get("kind").and_then(Value::as_str) == Some("pi.system") {
+                item["delta"] = json!(system_entry_text(item));
+            }
+        }
+    } else {
+        items.retain(|entry| entry.get("kind").and_then(Value::as_str) != Some("pi.system"));
+    }
+    let mut response = json!({
         "items": items,
         "next": next.map(|cursor| cursor.encode()),
-    })))
+    });
+    if with_system {
+        // 回放：按 entry id 升序遍历全部 pi.system，最后一条生效的提示词为当前 system。
+        let mut all = state.source().entries(session)?;
+        all.sort_by_key(|entry| entry.get("id").and_then(Value::as_i64).unwrap_or(0));
+        let effective = all
+            .iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("pi.system"))
+            .filter_map(system_entry_text)
+            .last()
+            .unwrap_or_default();
+        response["system"] = json!(effective);
+    }
+    Ok(Json(response))
+}
+
+/// 一条 `pi.system` entry 自己带来的提示词文本。`model[]` 里 system 消息的 content
+/// 可能是字符串，也可能是 `[{type:"text",text}]` 块。
+fn system_entry_text(entry: &Value) -> Option<String> {
+    let message = entry
+        .get("model")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("system"))?;
+    let content = message.get("content")?;
+    match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(blocks) => {
+            let text = blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("");
+            Some(text)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]

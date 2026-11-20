@@ -186,3 +186,34 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 `cargo clean -p <那个 crate>` 不够 —— 只要有一条还指着，红的就换一条（本例先红 durable，clean 后红 store）。
 **解**：worktree 里跑判据一律用自己的 target（`CARGO_TARGET_DIR=./target` 或干脆不设）；
 串了就这么收拾：`cargo clean` 全量重编（`clean -p` 会留下别的）。判据红的时候先看**报错里的路径**是谁的。
+
+## 2026-11-20 · `/v1/models` 空表注释说「宿主会填」，但仓里没有宿主
+
+**症状**：真机上 `/v1/models` 永远 `{"default":null,"items":[]}`，客户端模型栏空白；`models.rs`
+开头写着「编目由宿主进程填进来」，顺着调用链找不到任何填的地方。
+**根因**：一份「谁都会填」的契约没有指名填的人；空表既可能是「没配编目」也可能是「加载失败」，
+客户端和运维都分不出来。
+**解**：#65 给空表加 `catalog: {state, source, path}` 诊断块，编目来源落成两个明确的入口
+（`NOUS_MODELS` 内联 / `NOUS_MODELS_FILE` 文件），默认模型写回同一份文件（临时文件 + rename）。
+**推广**：凡是注释写「由上层填进来」的地方，都要能回答「哪一层的哪个函数填」，否则它就是没实现。
+
+## 2026-11-20 · `root: null` 把「私库没装」说成「不知道在哪」
+
+**症状**：三个资源端点全 200，Desk 却显示 0 条；从响应里读不出是机子上没副本，
+还是服务端压根没配数据根。
+**根因**：移植时把 TS 版的四条默认路径丢成 `null`，变量名还从 `NOUS_SKILLS`
+变量名也漂了（多了 `_ROOT` 后缀），unit 一个都没设。
+**解**：默认值回到 TS 版原值，`root` 恒为解析后的字符串；另给 `present` 与
+`missing` 说"在不在"。只读，不因为缺目录就建一个空目录掩盖事实（#63）。
+
+## 2026-11-20 · 给公开结构体加字段，把别人的测试字面量全打红了
+
+**症状**：给 `CatalogEnvironment` 加三个远端字段后，`cargo test --workspace` 在
+`nous-device/tests/catalog.rs` 和 `server/tests/device_endpoints.rs` 报五处
+`E0063 missing fields ... in initializer`，跟业务行为无关。
+**根因**：多个测试用结构体字面量构造环境快照（这是好事：不依赖全局 env），
+但 Rust 没有「字面量自动补默认值」这回事。
+**解**：每个字面量显式写 `remote_base: None, remote_token: None, cache_path: None`，
+让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
+**推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
+再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。

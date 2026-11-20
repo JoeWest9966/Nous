@@ -4,7 +4,7 @@
 //! `nous-tools`，轮次编排在 `nous-sessions`。server 不实现任何一家的业务状态。
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nous_ai::tool::AgentTool;
@@ -16,7 +16,7 @@ use nous_tools::tools::tool_context::ExecutionToolContext as ToolsExecutionToolC
 use nous_tools::OsExecutionEnv;
 
 use crate::error::Result;
-use crate::models::{ModelItem, ModelRef, ModelsResponse};
+use nous_device::{ModelItem, ModelRef, ModelsResponse};
 
 /// #51 钉死的假回复。测试与生产共用同一个常量，避免两边各写一份然后漂移。
 pub const FAUX_MODEL_ID: &str = "echo";
@@ -31,7 +31,7 @@ pub fn provider_kind(values: &dyn ValueSource) -> &'static str {
 }
 
 /// 只给 faux 用的编目：一个 `faux/echo` 模型，没有凭证要求。
-fn faux_catalog() -> ModelsResponse {
+pub fn faux_catalog() -> ModelsResponse {
     ModelsResponse {
         default: Some(ModelRef {
             provider: "faux".into(),
@@ -45,6 +45,13 @@ fn faux_catalog() -> ModelsResponse {
             context_window: Some(128_000),
             max_tokens: Some(16_384),
         }],
+        catalog: nous_device::CatalogDiagnostics {
+            state: "ok",
+            source: None,
+            path: PathBuf::from(nous_device::DEFAULT_MODELS_FILE),
+            fetched_at: None,
+            error: None,
+        },
     }
 }
 

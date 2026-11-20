@@ -30,9 +30,9 @@
 | `wire` | nous | `nous-wire` | kernel | 编译期 | `/v1/*` 事件与实体类型 | 是 | 契约层，零依赖优先 |
 | `chord` | nous | `nous-chord` | kernel | 编译期 | context / json / delta / sqlite / watch / output | 是 | 语义基元 |
 | `durable` | nous | `nous-durable` | kernel | 编译期 | 提交 / 文档 / 会话与 entry 查询 / scans | 是 | 存储与事务边界 |
-| `env` | nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait | 是 | 契约；实现见 `env-local` / `env-ssh` |
+| `env` | nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait + 四条私库路径解析（`content.rs`：#63）+ `GET /v1/fs/dirs` 的目录解析（`NOUS_START_DIRS` 只在这里读） | 是 | 契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin` |
 | `env-local` | nous | (待建) `nous-env-local` | platform | 编译期 | `ExecutionEnv` 本地实现 | 是 | 今天的 `os_env.rs` 落点 |
-| `env-ssh` | nous | (待建) `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现 | 否 | 今天 `ssh-env.js`（631 行） |
+| `env-ssh` | nous | `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现（ssh/scp + ControlMaster + 临时密钥） | 否 | 今天 `ssh-env.js`（631 行）；#78 落地 |
 | `ai-types` | nous | `nous-ai-types` | kernel | 编译期 | TSchema / Message / Usage（纯） | 是 | 从 `nous-ai` 拆出，零 IO 零时钟（T2 已落地） |
 | `ai` | nous | `nous-ai` | platform | 编译期 | provider trait + HTTP/SSE 实现 | 是 | 今天一个包兼纯/IO 两半；纯的那半已拆成 `ai-types` |
 | `ai-providers` | nous | (待建) `nous-ai-providers` | platform | 编译期 | provider 实现（拆完只留 IO 那半） | 是 | T2 拆完由 `ai` 改出：目录改名 `ai` → `ai-providers`、包改名 `nous-ai` → `nous-ai-providers` |
@@ -40,6 +40,7 @@
 | `runtime` | nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
 | `telemetry` | nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
 | `store` | nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
+| `device` | nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
 | `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
 | `documents` | nous | `nous-documents` | app | 编译期 | `DocumentKind` + 泛型文档端点 + 路由注册表 | 是 | #48：一个实现生成 presets / prompts 两套端点 |
 | `prompts` | nous | (待建) `nous-prompts` | app | 编译期 | `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
@@ -53,9 +54,10 @@
 | `dispatcher` | nous | (待建) `nous-dispatcher` | app | 编译期 | 调度节拍（trigger → 会话） | 否 | 内核算核心三件之一，见下注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
 | `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口） | 否 | #57 落地；调度循环不在本票 |
+| `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
-| `presets` | nous | — | app | 声明式 | 模板 / 终极模板名册 | 否 | Rust 版是否保留待判 |
-| `skills` | nous | — | app | 声明式 | skill 目录（提供） | 否 | 数据；管理面见下一行 |
+| `presets` | nous | — | app | 声明式 | 模板 / 终极模板名册 | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判 |
+| `skills` | nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行 |
 | `prompt-text` | nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
 | `trigger-spec` | nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
@@ -89,9 +91,9 @@
 
 ## 注：与 `ls -d crates/*/*/` 的一一对应
 
-今天 `crates/nous/` 下 17 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 17 行：
+今天 `crates/nous/` 下 18 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 18 行：
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry` `documents`
-`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
+`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `stats` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用
 `cargo tree -p nous-durable --depth 2 | grep providers`，路径里带 `providers` 会让它永远假红。
