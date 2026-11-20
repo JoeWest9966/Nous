@@ -221,6 +221,21 @@ async fn answer_model(app: &Router, path: &PathBuf, body: Value) -> String {
     assistant["model"][0]["model"].as_str().expect("assistant 带 model id").to_string()
 }
 
+fn app_with_provider(path: &PathBuf, provider: Arc<dyn nous_ai::Provider>, default_id: &str) -> Router {
+    let session = Arc::new(Session::open(path).unwrap());
+    let mut assembled = nous_server::runtime::assemble_with_provider(
+        provider,
+        Arc::new(BTreeMap::new()),
+        session,
+    );
+    assembled.provider_kind = "real";
+    let state = AppState::durable(path)
+        .unwrap()
+        .with_runtime(Arc::new(assembled))
+        .with_models(catalog_with_default("catalog", default_id));
+    router(state)
+}
+
 #[tokio::test]
 async fn a_model_in_the_request_body_wins_over_session_and_catalog() {
     let path = temp_db("model-body");
@@ -391,4 +406,73 @@ async fn a_real_turn_emits_message_start_message_end_and_entry_appended_on_sse()
     for expected in ["message_start", "message_end", "entry_appended"] {
         assert!(types.iter().any(|seen| seen == expected), "缺 {expected}：{types:?}");
     }
+}
+
+/// waitMs=0 与负数的判据：0 立即 202；负数/非数字 400。
+#[tokio::test]
+async fn wait_ms_zero_accepts_immediately_and_invalid_wait_ms_is_400() {
+    let path = temp_db("wait-zero");
+    seed(&path, Some("catalog/wait-model")).await;
+    let app = app_for_model_resolution(&path, Some(catalog_with_default("catalog", "wait-model")));
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping", "waitMs": 0}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "waitMs=0 必须 202：{body}");
+    assert_eq!(body["status"], json!("queued"));
+
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping", "waitMs": -1}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "负数 waitMs 必须 400：{body}");
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping", "waitMs": "soon"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "非数字 waitMs 必须 400：{body}");
+}
+
+#[tokio::test]
+async fn wait_ms_waits_for_the_answer_and_times_out_when_it_is_slow() {
+    let path = temp_db("wait-timeout");
+    seed(&path, Some("catalog/wait-model")).await;
+    let (status, body) = call(&app_with_provider(&path, slow_provider(), "wait-model"), "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping", "waitMs": 50}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "慢轮次超时必须 202：{body}");
+    assert_eq!(body["status"], json!("running"), "超时回 running：{body}");
+
+    let path2 = temp_db("wait-answer");
+    seed(&path2, Some("catalog/wait-model")).await;
+    let (status, body) = call(&app_with_provider(&path2, echo_model_provider(), "wait-model"), "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping", "waitMs": 5000}))).await;
+    assert_eq!(status, StatusCode::OK, "轮次完成后必须 200 + 答案：{body}");
+    assert_eq!(body["kind"], json!("pi.assistant"), "200 体带答案 entry：{body}");
+    assert_eq!(body["model"][0]["content"][0]["text"], json!("pong"));
+}
+
+#[tokio::test]
+async fn when_busy_interrupt_stops_the_old_turn_before_accepting_a_new_one() {
+    let path = temp_db("busy-interrupt");
+    seed(&path, Some("catalog/slow-model")).await;
+    let app = app_with_provider(&path, slow_provider(), "slow-model");
+
+    let (status, first) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "first"}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "实测 {first}");
+    let first_submission = first["submissionId"].as_i64().unwrap();
+
+    // 旧轮次还在跑：interrupt 必须先停它。
+    let (status, second) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "second", "whenBusy": "interrupt"}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "实测 {second}");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let submissions = read_rows(&path, "submissions");
+        if let Some(old) = submissions.iter().find(|row| row["id"] == json!(first_submission)) {
+            if old["status"] == json!("unanswered") {
+                assert_eq!(old["reason"], json!("user_cancel"));
+                break;
+            }
+        }
+        assert!(tokio::time::Instant::now() < deadline, "旧轮次没被中断：{submissions:?}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_when_busy_value_is_400() {
+    let path = temp_db("busy-invalid");
+    seed(&path, Some("catalog/model")).await;
+    let app = app_for_model_resolution(&path, Some(catalog_with_default("catalog", "model")));
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping", "whenBusy": "explode"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "非法 whenBusy 必须 400：{body}");
 }
