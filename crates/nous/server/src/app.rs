@@ -134,6 +134,7 @@ impl AppState {
 
     /// 换入真编目：默认 catalog 是空的，宿主填进来才有内容。
     pub fn with_models(self: Arc<Self>, models: nous_device::ModelsResponse) -> Arc<Self> {
+        self.source.set_model_levels(&models);
         Arc::new(Self {
             source: self.source.clone(),
             commands: self.commands.clone(),
