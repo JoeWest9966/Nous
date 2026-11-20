@@ -242,7 +242,6 @@ async fn capabilities_declares_modules_and_reasons() {
         "extensions",
         "skills",
         "prompts",
-        "selection",
         "device",
         "ext",
     ] {

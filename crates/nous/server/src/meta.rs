@@ -137,8 +137,12 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/rename", module: "sessions" },
     // #49：置顶写穿走 sessions 模块；与 rename/read 一样经同一个 `Session` 写者。
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/pin", module: "sessions" },
+    // #64：写入面与 selection 两行状态都属于 sessions 模块。
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/config", module: "sessions" },
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/purge", module: "sessions" },
+    RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
+    RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
-    RegisteredRoute { method: "GET", path: "/v1/selection", module: "selection" },
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
@@ -205,7 +209,6 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("combos", Some(ReasonCode::NotImplemented)),
     ("triggers", None),
     ("device", None),
-    ("selection", None),
     ("prompts", None),
     ("ext", Some(ReasonCode::Frozen)),
 ];
