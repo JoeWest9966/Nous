@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use nous_durable::actor::{Actor, ActorKind};
-use nous_durable::session::commands::{submit_message, SubmitRequest};
+use nous_durable::session::commands::{record_origin, submit_message, OriginRecord, SubmitRequest};
 use nous_durable::session::Session;
 use nous_store::{
     FireActor, TriggerError, scheduler_lag, FireCounts, FireState, Inserted, SCHEDULER_TICK_MS,
@@ -128,7 +128,21 @@ pub async fn fire(
     )
     .await
     .map_err(|error| ServerError::Internal(format!("submit_message: {error}")))?;
-    // ⑥ 落账 done（又是同步片段）
+    // ⑥ 血缘：与目标会话同在一个 durable 库里（`qrd3wh.sessions.origins`），不建表。
+    // 模板 ref 就是「终极模板」的名字；`forced` 只给手动 launch，这里恒 false。
+    record_origin(
+        durable,
+        OriginRecord {
+            id: conversation,
+            ultimate: ref_name.clone(),
+            trigger: code.to_string(),
+            at: now_ms,
+            forced: false,
+        },
+    )
+    .await
+    .map_err(|error| ServerError::Internal(format!("record_origin: {error}")))?;
+    // ⑦ 落账 done（又是同步片段）
     {
         let store = store.lock().await;
         store.mark_done(code, now_ms).map_err(internal)?;

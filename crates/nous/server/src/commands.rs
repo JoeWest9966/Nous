@@ -62,6 +62,9 @@ pub type PinResult = PinOutcome;
 
 #[async_trait]
 pub trait CommandSource: Send + Sync {
+    /// 真写后端的同一条 `Session`（只读投影用）；只读装配没有，`None`。
+    fn session(&self) -> Option<Arc<Session>> { None }
+
     /// 建会话：经 `Session::create_conversation`，和别的写共享一把锁并广播帧。
     async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession>;
 
@@ -144,6 +147,10 @@ impl DurableCommands {
 
 #[async_trait]
 impl CommandSource for DurableCommands {
+    fn session(&self) -> Option<Arc<Session>> {
+        Some(self.session.clone())
+    }
+
     async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession> {
         let config = request.into_config();
         let value = self.session.create_conversation(config).await.map_err(|error| match error {
@@ -245,8 +252,16 @@ impl CommandSource for DurableCommands {
     }
 }
 
-/// 只读装配：写请求一律 409。
-pub struct ReadOnlyCommands;
+/// 只读装配：写请求一律 409；读投影（unread）从注入的只读数据源出处，形状与写装配一致。
+pub struct ReadOnlyCommands {
+    source: Arc<dyn crate::source::SessionSource>,
+}
+
+impl ReadOnlyCommands {
+    pub fn new(source: Arc<dyn crate::source::SessionSource>) -> Arc<Self> {
+        Arc::new(Self { source })
+    }
+}
 
 #[async_trait]
 impl CommandSource for ReadOnlyCommands {
@@ -267,7 +282,11 @@ impl CommandSource for ReadOnlyCommands {
     }
 
     async fn unread(&self) -> Result<Value> {
-        Ok(json!({}))
+        let mut map = serde_json::Map::new();
+        for session in self.source.sessions()? {
+            map.insert(session.id.to_string(), json!({ "unread": 0, "readAt": Value::Null }));
+        }
+        Ok(Value::Object(map))
     }
 
     async fn read(&self, _: i64) -> Result<ReadResult> {
