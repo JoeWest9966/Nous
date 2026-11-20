@@ -101,6 +101,13 @@ fn symlink_escape_is_rejected_by_realpath_check() {
 }
 
 #[test]
+fn pending_diff_rejects_path_escape() {
+    let (_tmp, repo) = repo();
+    let err = repo.pending_diff("../../etc/passwd").unwrap_err();
+    assert!(matches!(err, RepoError::BadRequest(_)), "diff 路径也必须防逃逸：{err:?}");
+}
+
+#[test]
 fn binary_and_oversize_files_are_rejected() {
     let (_tmp, repo) = repo();
     let binary = repo.write_file(WriteFile {

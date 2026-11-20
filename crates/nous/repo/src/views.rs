@@ -113,8 +113,9 @@ pub fn pending(root: &Path) -> Result<Vec<PendingUnit>> {
 }
 
 pub fn pending_diff(root: &Path, path: &str) -> Result<Diff> {
+    let safe = crate::files::safe_path(root, path)?;
     let before = git::git_ok(root, &[&format!("HEAD:{path}")]).unwrap_or_default();
-    let after = std::fs::read_to_string(root.join(path)).unwrap_or_default();
+    let after = std::fs::read_to_string(safe).unwrap_or_default();
     Ok(Diff { before, after })
 }
 
