@@ -83,6 +83,11 @@ async fn tree_lifecycle_has_http_and_db_rows_on_every_step() {
     assert_eq!(status, StatusCode::OK, "建节点 PUT: status={status} body={body}");
     let db = stored_tree(&path, board);
     assert_eq!(db["nodes"]["doc"]["title"], json!("笔记"), "HTTP 写进去的节点必须在库里");
+    let (status, readback) = call(&app, Method::GET,
+        &format!("/v1/documents/tree/{board}/board"), None).await;
+    assert_eq!(status, StatusCode::OK, "GET 读回整棵树: {readback}");
+    assert_eq!(readback["fields"]["nodes"]["doc"]["title"], json!("笔记"), "GET 必须读到刚写的节点");
+
     assert_eq!(db["nodes"]["root"]["children"], json!(["folder"]), "父子边必须落库");
     println!("命中行: 库里 tree.{board}/board 的 doc 节点 title={}", db["nodes"]["doc"]["title"]);
 
