@@ -19,7 +19,8 @@
         "POST /v1/sessions/:id/abort",
         "POST /v1/sessions/:id/fork",
         "POST /v1/sessions/:id/rename",
-        "POST /v1/sessions/:id/pin"
+        "POST /v1/sessions/:id/pin",
+        "GET /v1/search"
       ]
     },
     {
