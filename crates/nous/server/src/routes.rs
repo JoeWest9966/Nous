@@ -726,6 +726,42 @@ struct SubmitBody {
     when_busy: Option<Value>,
 }
 
+/// 把会话 template 的正文写进一条 `pi.system` entry，并回一条 message 给本轮 provider。
+///
+/// 正文进 `sections.prompts`（不是 `content`）：#74 的 `?system=1` 回放按 sections 合并，
+/// 后续系统消息能按名字覆盖这一段；名字本身就是诊断位（`template: missing`）。
+async fn inject_prompt_section(
+    state: &Arc<AppState>,
+    session_id: i64,
+    submitted: &crate::commands::SubmitResult,
+) -> Option<nous_ai::Message> {
+    let template_name = state.commands().template(session_id).await.ok().flatten()?;
+    let prompts_root = nous_env::PROMPTS.resolve();
+    let (text, actor) = if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
+        (nous_prompts::render(&template.body, &Default::default()), "prompts".to_string())
+    } else {
+        (format!("template: missing ({template_name})"), "prompts".to_string())
+    };
+    let message_value = serde_json::to_value(nous_ai::transform::system::section_patch(
+        &[("prompts", Some(text.as_str()))], 0,
+    )).ok()?;
+    let durable = state.durable_session()?;
+    let entry = serde_json::json!({
+        "id": submitted.entry_id + 4,
+        "conversationId": session_id,
+        "kind": "pi.system",
+        "model": [message_value],
+        "actor": { "kind": "system", "id": actor },
+    });
+    let _ = durable.commit(
+        vec![nous_durable::StorageWrite::Entry(entry)],
+        nous_durable::session::CommitOptions::default(),
+    ).await;
+    Some(nous_ai::Message::System(Box::new(
+        nous_ai::transform::system::section_patch(&[("prompts", Some(text.as_str()))], 0),
+    )))
+}
+
 /// `POST /v1/sessions/:id/messages`：不传 `waitMs` 时立即 202。
 ///
 /// `requestId` 是幂等锚：同一个值打两次返回同一个 `submissionId`，库里也只多一条 submission
@@ -757,6 +793,13 @@ async fn messages(
         if let Some(runtime) = state.runtime() {
             let submitted = result.clone();
             let driver = runtime.driver.clone();
+            // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
+            // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
+            let system_message = inject_prompt_section(&state, session, &submitted).await;
+            let mut turn_context = nous_ai::Context::new(Vec::new());
+            if let Some(message) = system_message {
+                turn_context.messages.push(message);
+            }
             let model = nous_ai::Model::new(
                 crate::runtime::FAUX_MODEL_ID,
                 "Faux Echo",
@@ -772,7 +815,7 @@ async fn messages(
                         entry_id: submitted.assistant_entry_id,
                         live: submitted.live_id,
                         model,
-                        context: nous_ai::Context::new(Vec::new()),
+                        context: turn_context,
                         attempt: 1,
                     })
                     .await;

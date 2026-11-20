@@ -37,6 +37,7 @@ mod session_document;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use nous_chord::context::Context;
 use nous_chord::watch::WatchEnd;
@@ -308,7 +309,7 @@ impl Session {
         &self,
         config: serde_json::Value,
     ) -> Result<serde_json::Value, SessionError> {
-        use serde_json::json;
+        use serde_json::{json, Value};
 
         let mut guard = self.storage.lock().await;
         let storage = guard.as_mut().ok_or(SessionError::Closed)?;
@@ -318,14 +319,27 @@ impl Session {
         // `qrd3wh.sessions` 是 session 作用域的单例：第二、第三条会话都合并进同一份文档，
         // 绝不再次 DocumentCreate（地址唯一，第二次会被 storage 拒绝）。本次只补 names 的
         // 一个新键，不改 pins/archived 等别人管的字段；config 没有任何读者，不再写进去。
-        let mut document_writes = session_document::merge_session_document(
-            storage,
-            "qrd3wh.sessions",
-            "names",
-            |names| {
-                names[id.to_string()] = name;
-            },
-        )?;
+        let template = config.get("template").cloned().unwrap_or(Value::Null);
+        // #72：names 与 templates 住在同一份单例文档，必须一次读改写；
+        // 分两次 merge 第二次会撞地址（docs/pitfalls.md 的 DocumentCreate 坑）。
+        let (document_id, existing) = session_document::session_scope_document(storage, "qrd3wh.sessions")?;
+        let mut document = existing.unwrap_or_else(|| json!({}));
+        if !document.is_object() {
+            document = json!({});
+        }
+        let mut names = document.get("names").cloned().unwrap_or_else(|| json!({}));
+        if !names.is_object() {
+            names = json!({});
+        }
+        names[id.to_string()] = name;
+        document["names"] = names;
+        let mut templates = document.get("templates").cloned().unwrap_or_else(|| json!({}));
+        if !templates.is_object() {
+            templates = json!({});
+        }
+        templates[id.to_string()] = template;
+        document["templates"] = templates;
+        let mut document_writes = session_document::upsert_session_document(storage, "qrd3wh.sessions", document_id, document)?;
         let mut writes = vec![StorageWrite::Conversation(json!({ "id": id }))];
         writes.append(&mut document_writes);
         let committed = storage.commit(&[writes], |_, _| {})?;

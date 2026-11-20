@@ -109,7 +109,7 @@ pub fn render_sessions_with_levels(
     store: &ImportedStore,
     model_levels: &BTreeMap<String, Vec<String>>,
 ) -> Result<Vec<SessionItem>> {
-    let (names, pins, archived) = legacy_session_state(store)?;
+    let (names, pins, archived, templates) = legacy_session_state(store)?;
     let mut items = Vec::with_capacity(store.conversations.len());
     for row in &store.conversations {
         let id = integer(row, "id")?;
@@ -137,7 +137,7 @@ pub fn render_sessions_with_levels(
                 .cloned()
                 .unwrap_or_default(),
             skills: Vec::new(),
-            template: None,
+            template: templates.get(&id).cloned(),
             read_only: false,
             busy: busy(store, id)?,
             updated_at: latest_entry_timestamp(store, id)?,
@@ -258,13 +258,14 @@ pub fn render_live_message(store: &ImportedStore, conversation_id: i64) -> Resul
     Ok(None)
 }
 
-/// 旧引擎的 `names` 表：会话 id → 名字，外加同一份文档里的置顶 id 顺序与归档墓碑。
+/// 旧引擎的 `names` 表：会话 id → 名字，外加同一份文档里的置顶 id 顺序、归档墓碑与 #72 模板。
 fn legacy_session_state(
     store: &ImportedStore,
-) -> Result<(BTreeMap<i64, String>, Vec<String>, BTreeMap<i64, SessionArchived>)> {
+) -> Result<(BTreeMap<i64, String>, Vec<String>, BTreeMap<i64, SessionArchived>, BTreeMap<i64, String>)> {
     let mut names = BTreeMap::new();
     let mut pins = Vec::new();
     let mut archived = BTreeMap::new();
+    let mut templates = BTreeMap::new();
     for row in &store.documents {
         let kind = decode_indexed_string(text(row, "kind")?)?;
         if kind != LEGACY_NAMES_DOCUMENT_KIND {
@@ -293,18 +294,19 @@ fn legacy_session_state(
                 let Some(at) = value.get("at").and_then(Value::as_i64) else { continue };
                 let Some(gen) = value.get("gen").and_then(Value::as_str) else { continue };
                 let Some(purged) = value.get("purged").and_then(Value::as_bool) else { continue };
-                archived.insert(
-                    id,
-                    SessionArchived {
-                        at,
-                        gen: gen.to_string(),
-                        purged,
-                    },
-                );
+                archived.insert(id, SessionArchived { at, gen: gen.to_string(), purged });
+            }
+        }
+        // #72：template 是单值，和 names / archived 住同一份文档。
+        if let Some(map) = content.get("templates").and_then(Value::as_object) {
+            for (key, value) in map {
+                if let (Ok(id), Some(template)) = (key.parse::<i64>(), value.as_str()) {
+                    templates.insert(id, template.to_string());
+                }
             }
         }
     }
-    Ok((names, pins, archived))
+    Ok((names, pins, archived, templates))
 }
 
 /// 一份会话的 `pi.agent` 快照：模型与思考档位。
