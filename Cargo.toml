@@ -61,6 +61,7 @@ nous-ext = { path = "crates/nous/ext", version = "0.1.0" }
 nous-ext-probe = { path = "crates/nous/ext-probe", version = "0.1.0" }
 nous-server = { path = "crates/nous/server", version = "0.1.0" }
 nous-device = { path = "crates/nous/device", version = "0.1.0" }
+nous-skills = { path = "crates/nous/skills", version = "0.1.0" }
 nous-sessions = { path = "crates/nous/sessions", version = "0.1.0" }
 nous-fixture = { path = "crates/nous/fixture", version = "0.1.0" }
 nous-store = { path = "crates/nous/store", version = "0.1.0" }
