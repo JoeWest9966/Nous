@@ -22,7 +22,7 @@
 
 use std::sync::Mutex;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use nous_chord::sqlite::{SqliteDatabase, SqliteExecutor, SqliteValue as Cell};
 
@@ -32,11 +32,12 @@ use super::commit::{
 };
 use super::documents::{materialize_cached, DocumentCache, DocumentPoint, StoredDocument};
 use super::cursor::{cut_page, scan_start, Cursor, Page, ScanOrder};
-use super::sqlite::rows::{parse_json, required_i64};
+use super::sqlite::rows::{document_row, encode_indexed_string, encode_json, parse_json, required_i64};
 use super::sqlite::schema::SqliteSchema;
 use super::writes::{Refusal, Seq, StorageWrite};
 use super::SqliteStore;
 use crate::error::{Result, StorageError};
+use crate::Id;
 
 /// 一条 entry 扫描的过滤条件。
 #[derive(Debug, Clone, Copy)]
@@ -96,6 +97,147 @@ impl Storage {
 
     pub fn store(&self) -> &SqliteStore {
         &self.store
+    }
+
+    /// #64：一次事务真删一条会话及其全部从属行，写墓碑到 `qrd3wh.sessions`。
+    ///
+    /// 墓碑住在 session 作用域的单例文档里（和 names / pins 同一份）。`record_ids`
+    /// 不删：id 一旦铸出就永不复用（见模块顶部规矩），删掉会让 `next_id` 重新分配同一个
+    /// id，撞上别处对旧 id 的引用。
+    pub fn purge_conversation(&mut self, id: Id, at: i64) -> Result<()> {
+        self.ensure_open()?;
+        let schema = self.store.schema().clone();
+        let (_, next_seq) = self.store.metadata()?;
+        let seq = next_seq + 1;
+
+        let session_doc = self.store.db().get(
+            &format!(
+                "SELECT id, record FROM {} WHERE kind = ? AND scope_kind = 'session' LIMIT 1",
+                schema.table("documents")
+            ),
+            &[Cell::Text(encode_indexed_string("qrd3wh.sessions"))],
+        )?;
+        let existing_id = session_doc
+            .as_ref()
+            .and_then(|row| row.get("id").and_then(Cell::as_i64));
+        let mut value = session_doc
+            .as_ref()
+            .and_then(|row| row.get("record").and_then(Cell::as_str))
+            .and_then(|text| parse_json::<Value>(text).ok())
+            .unwrap_or_else(|| json!({}));
+        if !value.is_object() {
+            value = json!({});
+        }
+        value["purged"] = json!({ "id": id.to_string(), "at": at });
+        if let Some(pins) = value.get_mut("pins") {
+            if let Some(ids) = pins.get_mut("ids").and_then(Value::as_array_mut) {
+                let key = id.to_string();
+                ids.retain(|item| item.as_str() != Some(key.as_str()));
+            }
+            if let Some(requests) = pins.get_mut("requests").and_then(Value::as_object_mut) {
+                requests.retain(|_, outcome| outcome.get("id").and_then(Value::as_i64) != Some(id));
+            }
+        }
+
+        let unread_doc = self.store.db().get(
+            &format!(
+                "SELECT id, record FROM {} WHERE kind = ? AND scope_kind = 'session' LIMIT 1",
+                schema.table("documents")
+            ),
+            &[Cell::Text(encode_indexed_string("qrd3wh.unread"))],
+        )?;
+        let mut unread = unread_doc
+            .as_ref()
+            .and_then(|row| row.get("record").and_then(Cell::as_str))
+            .and_then(|text| parse_json::<Value>(text).ok())
+            .unwrap_or_else(|| json!({}));
+        if let Some(marks) = unread.get_mut("marks").and_then(Value::as_object_mut) {
+            marks.remove(&id.to_string());
+        }
+
+        let doc_id = match existing_id {
+            Some(doc_id) => doc_id,
+            None => {
+                let minted = self.mint_id()?;
+                self.base_next_id = self.base_next_id.max(minted + 1);
+                minted
+            }
+        };
+
+        let documents = schema.table("documents").to_string();
+        let revisions = schema.table("document_revisions").to_string();
+        self.store.db_mut().transaction(|tx| -> Result<()> {
+            let owned: Vec<i64> = tx
+                .all(
+                    &format!(
+                        "SELECT id FROM {documents} WHERE scope_kind = 'conversation' AND owner_id = ?"
+                    ),
+                    &[Cell::Integer(id)],
+                )?
+                .into_iter()
+                .filter_map(|row| row.get("id").and_then(Cell::as_i64))
+                .collect();
+            for doc in owned {
+                tx.run(
+                    &format!("DELETE FROM {revisions} WHERE document_id = ?"),
+                    &[Cell::Integer(doc)],
+                )?;
+            }
+            tx.run(
+                &format!("DELETE FROM {documents} WHERE scope_kind = 'conversation' AND owner_id = ?"),
+                &[Cell::Integer(id)],
+            )?;
+            // #64：属于这条会话的从属行一次删干净；record_ids 不在其中（id 永不复用）。
+            for table in ["entries", "tasks", "submissions"] {
+                tx.run(
+                    &format!("DELETE FROM {} WHERE conversation_id = ?", schema.table(table)),
+                    &[Cell::Integer(id)],
+                )?;
+            }
+            tx.run(
+                &format!("DELETE FROM {} WHERE id = ?", schema.table("conversations")),
+                &[Cell::Integer(id)],
+            )?;
+
+            // 墓碑文档（和 names / pins 同一份）：整份 base 覆盖 + 一条 base revision。
+            let record = json!({
+                "id": doc_id,
+                "kind": "qrd3wh.sessions",
+                "scope": { "kind": "session" },
+                "createdAt": seq,
+            });
+            let row = document_row(&record)?;
+            let storage_row: Vec<Cell> = row
+                .into_iter()
+                .enumerate()
+                .map(|(index, cell)| if index == 6 { Cell::Integer(seq) } else { cell })
+                .collect();
+            tx.run(
+                &format!(
+                    "INSERT OR REPLACE INTO {documents} (id, kind, family, key_value, scope_kind, owner_id, created_at, retired_at, record) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                ),
+                &storage_row,
+            )?;
+            tx.run(
+                &format!(
+                    "INSERT OR REPLACE INTO {revisions} (document_id, seq, kind, version, content) VALUES (?, ?, 'base', 1, ?)"
+                ),
+                &[Cell::Integer(doc_id), Cell::Integer(seq), Cell::Text(encode_json(&value))],
+            )?;
+
+            if let Some(unread_id) = unread_doc
+                .as_ref()
+                .and_then(|row| row.get("id").and_then(Cell::as_i64))
+            {
+                tx.run(
+                    &format!("UPDATE {documents} SET record = ? WHERE id = ?"),
+                    &[Cell::Text(encode_json(&unread)), Cell::Integer(unread_id)],
+                )?;
+            }
+            write_metadata(tx, &schema, self.next_id.max(self.base_next_id), seq + 1)?;
+            Ok(())
+        })?;
+        Ok(())
     }
 
     pub fn next_id(&self) -> i64 {
