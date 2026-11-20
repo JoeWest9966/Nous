@@ -18,6 +18,9 @@ pub fn materialize(pem: &str) -> std::io::Result<PathBuf> {
         .prefix("nous-ssh-")
         .tempdir()?;
     let dir = dir.keep(); // 交给 RAII 之外的生命周期：由 cleanup/drop 删除
+    // 目录权限显式钉 0700：tempfile 在部分 TMPDIR/umask 组合下会给 0755，
+    // 私钥虽然还是 0600，但目录可列会让旁人看见「这里有一把密钥」。
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     let file = dir.join("id");
     let mut handle = std::fs::OpenOptions::new()
         .write(true)
