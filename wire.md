@@ -71,6 +71,31 @@
 - `skills` / `template` / `thinkingLevels` / `extensions` 是**生效值**，不是请求值 —— 拿来画勾，
   别自己猜。引擎改这些字段，列表预览不受影响，只有详情面板受影响。
 
+### GET /v1/stats/usage?from=&to=&group_by=day|model|conversation
+
+用量与账本。`totals` 与 `rows[]` 的四元组完全相同：`totalTokens` / `costTotal` /
+`requests` / `errors`；额外 `rows[].key`（桶名）与 `rows[].label`（可直接上屏）。
+`group_by=day` 用 UTC 日期 `YYYY-MM-DD`（按 entry 的 `model[].timestamp` 归桶）；
+`model` 用 `provider/modelId`（缺失记 `unknown`）；`conversation` 用会话 id 字符串。
+- `from` / `to` 都是 **epoch 毫秒**，闭开区间 `[from, to)` —— `from` 命中、`to` 不命中。
+  缺省 `from` = 全量起点、缺省 `to` = 全量终点；无时间戳的 entry 不进任何桶、也不进 totals。
+- `requests` 计有时间戳的 `pi.assistant` entry，`errors` 计 `model[].stopReason == "error"`。
+- 只聚合 durable 库里现存 entry；归档/fixture 副本不在内。只读，无分页。
+
+### GET /v1/stats/tasks
+
+任务计数：`{byState, active}`。`byState` 的键全集是 `pending` / `running` / `waiting` /
+`sleeping` / `completing` / `terminal`，值从 `tasks` 表 `GROUP BY status` 现算（与 triggers 的
+`counts` 同规矩，**不许内存计数器**）；`active = byState` 中除 `terminal` 外之和。
+
+### GET /v1/stats/db
+
+两个库各一份读数：`{ durable: {...}, plugins: {...} }`，每份含 `bytes`（主文件长度）、
+`rows`（关键表计数对象）、`quickCheck`（`"ok"` 或诊断串）、`schema`（整数版本）。
+durable 这一份与 `nous-app --check` 共用 `nous_durable::ops::check` 的读口；
+plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store` 的只读读口。
+`nous-plugins.db` 不存在时按空插件库读（schema/rows 为 0），不 404/500。
+
 ### GET /v1/sessions/:id/entries
 
 历史。返回 `{ items: [{id, kind, text, parent}], next }`，**新的在前**，客户端要翻正。
@@ -208,6 +233,11 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 归档 = 把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
 撕原件 = 真删（活库那行 + 那份复印件）。四个方法在 `crates/nous-engine` 里都有
 （`archive` / `purge` / `archive_list` / `restore`），UI 层一行 HTTP 都不碰。
+
+#### GET /v1/openapi.json
+
+只读机读视图：从 `meta::ROUTES` 生成 OpenAPI `paths`，与 `/v1/capabilities` / `/v1/_routes`
+三处同源。加端点先改 `meta::ROUTES`，这里自动跟着变；不手抄第二份路径清单。
 
 #### POST /v1/sessions/:id/archive
 

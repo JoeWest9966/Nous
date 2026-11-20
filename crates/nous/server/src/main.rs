@@ -348,6 +348,13 @@ async fn run() -> Result<(), RunError> {
     )?;
     let state = state.with_triggers(trigger_runtime);
 
+    // #62：stats 的只读句柄。库路径与启动/`--check`/`--triggers` 共用 `db` 与
+    // `plugins_db_path()` 的推导，不让三条端点读另一份库。
+    let state = state.with_stats(nous_server::stats::StatsRuntime {
+        durable_db: std::path::PathBuf::from(&db),
+        plugins_db: std::path::PathBuf::from(&plugins_db),
+    });
+
     // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
     // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。
     let loaded = auth::load_or_generate(&token_path, false)?;

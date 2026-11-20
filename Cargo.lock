@@ -1300,7 +1300,6 @@ dependencies = [
 name = "nous-device"
 version = "0.1.3"
 dependencies = [
- "reqwest",
  "serde",
  "serde_json",
  "tempfile",
@@ -1341,19 +1340,6 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "nous-env-ssh"
-version = "0.1.3"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "nous-env",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
 ]
 
 [[package]]
@@ -1429,10 +1415,9 @@ dependencies = [
  "nous-documents",
  "nous-durable",
  "nous-env",
- "nous-env-ssh",
  "nous-runtime",
  "nous-sessions",
- "nous-skills",
+ "nous-stats",
  "nous-store",
  "nous-telemetry",
  "nous-tools",
@@ -1462,12 +1447,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "nous-skills"
+name = "nous-stats"
 version = "0.1.3"
 dependencies = [
+ "nous-chord",
+ "nous-durable",
+ "nous-store",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

@@ -37,6 +37,8 @@ pub struct AppState {
     origin: String,
     /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
     triggers: Option<crate::triggers::TriggerRuntime>,
+    /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
+    stats: Option<crate::stats::StatsRuntime>,
 }
 
 impl AppState {
@@ -63,6 +65,7 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            stats: None,
         })
     }
 
@@ -101,6 +104,7 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            stats: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -147,6 +151,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 
@@ -192,6 +197,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 
@@ -224,6 +230,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin,
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 
@@ -283,11 +290,35 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: Some(triggers),
+            stats: self.stats.clone(),
         })
     }
 
     pub fn triggers(&self) -> Option<&crate::triggers::TriggerRuntime> {
         self.triggers.as_ref()
+    }
+
+    pub fn stats(&self) -> Option<&crate::stats::StatsRuntime> {
+        self.stats.as_ref()
+    }
+
+    /// 装上 stats 的只读句柄（生产装配只调一次；测试用它打真 Router）。
+    pub fn with_stats(self: Arc<Self>, runtime: crate::stats::StatsRuntime) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            stats: Some(runtime),
+        })
     }
 
     /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
@@ -308,6 +339,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            stats: self.stats.clone(),
         })
     }
 

@@ -175,6 +175,11 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // #58：观测读口 —— 每个触发器自己的账，可读（时间倒序）。
     RegisteredRoute { method: "GET", path: "/v1/triggers/{code}/fires", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
+    // #62：stats 三条只读观测端点。
+    RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/db", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
     // #48：documents 的 12 条端点（模板原文来自 nous_documents::DOCUMENT_ROUTES）。
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}", module: "documents" },
@@ -208,6 +213,21 @@ pub fn routes_view() -> Value {
     })
 }
 
+/// `GET /v1/openapi.json`：从 `ROUTES` 生成 paths，与 capabilities/_routes 三处同源。
+pub fn openapi_paths() -> Value {
+    let mut paths = serde_json::Map::new();
+    for route in enabled_routes() {
+        let entry = paths.entry(route.path.to_string()).or_insert_with(|| json!({}));
+        if let Some(object) = entry.as_object_mut() {
+            object.insert(
+                route.method.to_ascii_lowercase(),
+                json!({ "operationId": format!("{} {}", route.method, route.path) }),
+            );
+        }
+    }
+    Value::Object(paths)
+}
+
 /// 某模块是否在发行清单里开着且可用（给判据与 _routes 用）。
 pub fn route_enabled(module: &str) -> bool {
     MANIFEST
@@ -233,6 +253,7 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("archive", Some(ReasonCode::NotImplemented)),
     ("combos", Some(ReasonCode::NotImplemented)),
     ("triggers", None),
+    ("stats", None),
     ("device", None),
     ("selection", None),
     ("prompts", None),

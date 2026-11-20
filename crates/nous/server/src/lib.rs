@@ -30,6 +30,7 @@ pub mod project;
 pub mod routes;
 pub mod runtime;
 pub mod source;
+pub mod stats;
 pub mod triggers;
 
 pub use app::AppState;
