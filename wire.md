@@ -21,6 +21,21 @@
 
 ## 通用
 
+### 配置：四条私库路径（#63）
+
+服务端按 TS 版 `server.js:77-83` 解析下面四个变量，变量名与默认值**只有这一份真相**
+（代码落在 `crates/nous/env/src/content.rs`，别在各端点里自己 `std::env::var`）：
+
+| 变量 | 默认值 | 指向 |
+|---|---|---|
+| `NOUS_SKILLS` | `/opt/Nous-skills` | 技能条目 |
+| `NOUS_PROMPTS` | `/opt/Nous-prompts` | 提示词条目 |
+| `NOUS_PRESETS` | `/opt/Nous-Template` | 模板条目（#60 的数据根；不得写死别的目录） |
+| `NOUS_EXTEND` | `/opt/Nous-extend` | 自研扩展源码（`ext` 仍 `frozen`，只登记路径） |
+
+**部署时 unit 里不写这四个变量**：默认值就够，写了就成了两份真相。旧的
+移植期的旧变量名已删除，不做双名兼容。
+
 - 会话 id 是 **数字**（不是字符串）。`GET /v1/sessions/:id/...` 里的 `:id` 是数字。
 - 列表里 `busy` 是 `"queued" | "running" | <task state kind> | null`，不是布尔。
 - 错误形状统一 `{ error: string }`，状态码跟着语义走（400 / 404 / 409 / 500…）。
@@ -336,7 +351,10 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 
 ### GET /v1/skills
 
-`{ root, categories: string[], repo, skills: [...] }`。技能那条：
+`{ root: string, present: boolean, missing: string | null, categories: string[], repo, skills: [...] }`。
+`root` 永远是解析后的路径（未显式要求「不要数据根」时不会是 `null`）；目录不存在时
+`present=false` 且 `missing` 给一句人话，`skills=[]`。服务端只读，不建目录、不写私库。
+技能那条：
 
 ```
 { name, path, description, dir, file, hidden, category: string[], tracked, load: { state } }
@@ -348,7 +366,9 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 
 ### GET /v1/prompts
 
-`{ default: string | null, categories: string[], prompts: [...] }`。模板那条至少有
+`{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
+`root` / `present` / `missing` 与 skills 同义：有路径但没目录是正常状态，不是 `null`。
+模板那条至少有
 `{ name, description?, category?, load: { state } }`。
 
 - 和技能不是一回事：**模板是单值**（每轮都带的那份规则），技能是集合。所以列表里

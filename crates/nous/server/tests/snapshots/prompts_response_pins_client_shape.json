@@ -1,6 +1,8 @@
 {
+  "root": "<root>",
+  "present": false,
+  "missing": "<missing>",
   "default": null,
   "categories": [],
-  "prompts": [],
-  "root": null
+  "prompts": []
 }

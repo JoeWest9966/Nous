@@ -1413,6 +1413,7 @@ dependencies = [
  "nous-device",
  "nous-documents",
  "nous-durable",
+ "nous-env",
  "nous-runtime",
  "nous-sessions",
  "nous-store",

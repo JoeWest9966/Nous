@@ -1,7 +1,11 @@
 # nous-env
 
-`ExecutionEnv` 契约层：`FileSystem` + `Shell` 两张 trait 面 + `Context` + 两份错误类型。
+`ExecutionEnv` 契约层：`FileSystem` + `Shell` 两张 trait 面 + `Context` + 两份错误类型 +
+四条私库路径解析（`content.rs`：#63）。
 
+- **私库路径**：`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，
+  默认值分别是 `/opt/Nous-skills` / `/opt/Nous-prompts` / `/opt/Nous-Template` /
+  `/opt/Nous-extend`（与 TS 版 `server.js:77-83` 对齐）。只查环境、只给路径，不碰盘。
 - **形状来源**：`packages/durable/src/env/index.ts`（TS）。理由不是「哪份更全」，是调用点
   数量：durable 侧 116 处 vs rpi-tools 侧 27 处。逐行出处见仓库根 `SOURCES.md`。
 - **依赖**：只有 `async-trait` + `tokio-util`。无内部依赖（AGENTS.md §二）。
