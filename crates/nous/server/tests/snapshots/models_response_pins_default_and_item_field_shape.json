@@ -26,5 +26,10 @@
       "contextWindow": null,
       "maxTokens": null
     }
-  ]
+  ],
+  "catalog": {
+    "state": "ok",
+    "source": null,
+    "path": "/test/models.json"
+  }
 }

@@ -12,6 +12,7 @@ readme = "README.md"
 # 出现 nous-ai / nous-durable / nous-tools / reqwest / rusqlite 就是契约图破了。
 [dependencies]
 async-trait = { workspace = true }
+serde = { workspace = true }
 tokio-util = { workspace = true }
 nous-chord = { workspace = true }
 

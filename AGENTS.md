@@ -23,6 +23,13 @@ deploy/nous-app.service     ← j1900 上的那个单元
 `.env.example`、`deploy/nous-panel.service`）**已在 #59 从仓里删掉**。要回旧面板就从 git 历史读
 （别把壳子请回来）；j1900 上的 `nous-panel.service` 还留在 `/etc/systemd/system`，可回。
 
+**盘面/文档/进程形态（#86 拍板，细节见 `docs/decisions.md` 2026-11-20 四条）**：v1 的文档真相是
+`documents` 数据库文档（`kind` / `section` / `name` + 修订），不复活 `content/<board>/tree.json`、
+`map/<node>/*.md` 文件树、`.trash/`、`.nous/locks.json` 与 `/p/:board/:id/*` 反代。树/文件夹语义
+由 **#87** 在 documents 上加（不是文件形态）；单用户无并发写，冲突走修订版本与 409，多人同盘
+编辑是重开服务端锁的反悔条件；块进程统一由 `ext` 承担（**#81** 解冻），不另起按 node 的路由。
+`content/` 已于 2026-11-18 归档出仓库，盘面节点/块不是 v1 的概念。
+
 ## 常用命令
 
 ```bash

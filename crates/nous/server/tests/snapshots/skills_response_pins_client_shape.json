@@ -1,5 +1,7 @@
 {
-  "root": null,
+  "root": "<root>",
+  "present": false,
+  "missing": "<missing>",
   "categories": [],
   "skills": []
 }
