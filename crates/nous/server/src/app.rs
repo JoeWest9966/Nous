@@ -316,6 +316,9 @@ impl AppState {
             ),
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
+            refreshed: std::sync::Mutex::new(
+                self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
