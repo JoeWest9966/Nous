@@ -107,6 +107,11 @@ impl AppState {
         &self.commands
     }
 
+    /// 只读投影（origins / unread）用的 `Session`：只读装配没有。
+    pub fn durable_session(&self) -> Option<Arc<nous_durable::session::Session>> {
+        self.commands.session()
+    }
+
     pub fn hub(&self) -> &Arc<Hub> {
         &self.hub
     }

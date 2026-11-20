@@ -509,7 +509,7 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
         let mut writes = vec![StorageWrite::Conversation(record)];
         let name = request.name.unwrap_or_default();
         if !name.is_empty() {
-            // 同 create/rename：改单例文档的 names 一个键，pins 等别的键原样留着。
+            // 同 create/rename：改单例文档的 names 一个键，pins / origins 等别的键原样留着。
             let mut document_writes =
                 merge_session_document(storage, NAMES_KIND, "names", |names| {
                     names[id.to_string()] = json!(name);
@@ -524,10 +524,10 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
 }
 
 // ---------------------------------------------------------------------------
-// #47：rename / read / unread
+// #47：rename / read / unread；#74：origins
 //
-// 三种写都走 `commit_and_publish`（同一把锁、同一个事务、同一份广播）；读走同一 Session
-// 的存储引用（只读扫描），不另开第二条 Storage。名字/水位住在本库自己的文档里，键是会话 id。
+// 四种读写都走 `commit_and_publish` / 同一 Session 的存储引用（只读扫描），不另开第二条
+// Storage。名字 / 置顶 / 血缘住在同一份 `qrd3wh.sessions` 文档里，水位单独一份；键是会话 id。
 // ---------------------------------------------------------------------------
 
 const NAMES_KIND: &str = "qrd3wh.sessions";
@@ -695,6 +695,59 @@ pub async fn rename_session(
     drop(guard);
     commit_and_publish_with_new_guard(session, writes).await?;
     Ok(RenamedOutcome { id, name })
+}
+
+/// 一次触发器点火的血缘。住在 `qrd3wh.sessions` 的 `origins` 键里，键是会话 id
+/// （与 names / pins 同一份文档，同一条写者）。`forced` 只记手动 launch —— 本库不写它。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginRecord {
+    pub id: Id,
+    pub ultimate: String,
+    pub trigger: String,
+    pub at: i64,
+    pub forced: bool,
+}
+
+/// 记一次点火的血缘：**与点火时的 conversation 创建 / submit 经同一个 `Session`**，
+/// 这里只产出一批写；调用方把它并进同一批提交（跨库补偿由应用层负责顺序）。
+pub fn origin_writes(storage: &mut Storage, origin: &OriginRecord) -> Result<Vec<crate::StorageWrite>, CommandError> {
+    let value = json!({
+        "id": origin.id,
+        "ultimate": origin.ultimate,
+        "trigger": origin.trigger,
+        "at": origin.at,
+        "forced": origin.forced,
+    });
+    Ok(merge_session_document(storage, NAMES_KIND, "origins", |origins| {
+        origins[origin.id.to_string()] = value;
+    })?)
+}
+
+/// 经同一个 `Session` 记一次血缘（独立提交；点火已经成功落账，这一步只是补投影）。
+pub async fn record_origin(session: &Session, origin: OriginRecord) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let writes = origin_writes(storage_mut(&mut guard)?, &origin)?;
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(())
+}
+
+/// 血缘反查：`{items: [...]}`，按 `trigger` 过滤（`None` = 不过滤）。只读扫描，不另开写者。
+pub async fn origins_map(session: &Session, trigger: Option<&str>) -> Result<Value, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let origins = session_scope_document(storage, NAMES_KIND)?
+        .1
+        .and_then(|value| value.get("origins").cloned())
+        .unwrap_or_else(|| json!({}));
+    let mut items = origins
+        .as_object()
+        .map(|map| map.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if let Some(trigger) = trigger {
+        items.retain(|item| item.get("trigger").and_then(Value::as_str) == Some(trigger));
+    }
+    Ok(json!({ "items": items }))
 }
 
 /// 全部会话的未读状态：`{"id": {"unread": N, "readAt": ms|null}}`。

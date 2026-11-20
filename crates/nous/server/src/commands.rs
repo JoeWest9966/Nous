@@ -62,6 +62,9 @@ pub type PinResult = PinOutcome;
 
 #[async_trait]
 pub trait CommandSource: Send + Sync {
+    /// 真写后端的同一条 `Session`（只读投影用）；只读装配没有，`None`。
+    fn session(&self) -> Option<Arc<Session>> { None }
+
     /// 建会话：经 `Session::create_conversation`，和别的写共享一把锁并广播帧。
     async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession>;
 
@@ -144,6 +147,10 @@ impl DurableCommands {
 
 #[async_trait]
 impl CommandSource for DurableCommands {
+    fn session(&self) -> Option<Arc<Session>> {
+        Some(self.session.clone())
+    }
+
     async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession> {
         let config = request.into_config();
         let value = self.session.create_conversation(config).await.map_err(|error| match error {

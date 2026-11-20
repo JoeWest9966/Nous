@@ -125,6 +125,7 @@ pub struct RegisteredRoute {
 pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
+    RegisteredRoute { method: "GET", path: "/v1/origins", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/read/:id", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },

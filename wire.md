@@ -146,6 +146,14 @@
 - 覆盖**所有**会话；没有水位的会话给 `{ unread: 0, readAt: null }`。
 - 跟 `GET /v1/sessions` **一起拉**（同一帧并发），别一会拉一个。
 
+### GET /v1/origins
+
+会话血缘反查：`{ items: [{ id, ultimate, trigger, at, forced }] }`。
+`id` 是会话 id（数字），`ultimate` 是终极模板/模板 ref 名，`trigger` 是点火的触发器 slug，
+`at` 是点火时刻（epoch 毫秒），`forced` 只给手动 launch —— 触发器点起来的恒 `false`。
+`?trigger=<code>` 按键过滤；手动建的会话**没有**条目。
+状态与 `names` / `pins` 同住 `qrd3wh.sessions` 文档的 `origins` 键，不建表；重启后仍可反查。
+
 ### POST /v1/read/:id
 
 把这条会话标成读到最新，body 空。回 `{ id, readAt, unread: 0 }`。
