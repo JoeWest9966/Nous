@@ -263,3 +263,56 @@ async fn with_no_model_anywhere_the_request_is_503_not_202() {
     assert!(read_rows(&path, "submissions").is_empty(), "503 之前不许写 submission");
     assert!(read_rows(&path, "entries").is_empty(), "503 之前不许写 user entry");
 }
+
+/// 慢 provider：每 5 秒吐一段文本，给 abort 留窗口。
+fn slow_provider() -> Arc<dyn nous_ai::Provider> {
+    nous_ai::providers::faux::FauxProvider::new(
+        nous_ai::providers::faux::FauxScript::new()
+            .with_text("a slow answer that should be interrupted")
+            .with_tokens_per_second(0.2),
+    )
+}
+
+#[tokio::test]
+async fn abort_settles_the_submission_with_user_cancel_and_an_aborted_entry() {
+    let path = temp_db("abort");
+    seed(&path, Some("catalog/slow-model")).await;
+    let session = Arc::new(Session::open(&path).unwrap());
+    let mut assembled = nous_server::runtime::assemble_with_provider(
+        slow_provider(),
+        Arc::new(BTreeMap::new()),
+        session,
+    );
+    assembled.provider_kind = "real";
+    let state = AppState::durable(&path)
+        .unwrap()
+        .with_runtime(Arc::new(assembled))
+        .with_models(catalog_with_default("catalog", "slow-model"));
+    let app = router(state);
+
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping"}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "实测 {body}");
+    let submission = body["submissionId"].as_i64().unwrap();
+
+    let (status, aborted) = call(&app, "POST", "/v1/sessions/1/abort", None).await;
+    assert_eq!(status, StatusCode::OK, "abort 应该成功：{aborted}");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let submissions = read_rows(&path, "submissions");
+        let record = submissions.iter().find(|row| row["id"] == json!(submission));
+        if record.is_some_and(|row| row["status"] == json!("unanswered")) {
+            let record = record.unwrap();
+            assert_eq!(record["reason"], json!("user_cancel"), "abort 归因：{record}");
+            break;
+        }
+        assert!(tokio::time::Instant::now() < deadline, "abort 后 submission 没收敛：{submissions:?}");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let entries = read_rows(&path, "entries");
+    let terminal = entries
+        .iter()
+        .find(|entry| entry["kind"] == json!("pi.assistant") && entry["reason"] == json!("user_cancel"))
+        .expect("abort 应落一条 user_cancel 的 assistant entry");
+    assert_eq!(terminal["model"][0]["stopReason"], json!("aborted"));
+}
