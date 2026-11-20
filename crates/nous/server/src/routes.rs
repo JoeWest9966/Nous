@@ -65,6 +65,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/abort", post(abort))
         .route("/v1/sessions/{id}/fork", post(fork))
         .route("/v1/machines", get(machines))
+        .route("/v1/fs/dirs", get(fs_dirs))
         .route("/v1/models", get(models))
         .route("/v1/default", put(put_default))
         .route("/v1/device", get(device))
@@ -92,6 +93,49 @@ async fn machines() -> Json<Value> {
         .map(PathBuf::from)
         .filter(|path| path.is_file());
     Json(nous_device::machines(file.as_deref()))
+}
+
+/// `GET /v1/fs/dirs` 的查询参数。未知字段由 axum 忽略，协议保持哑的。
+#[derive(Debug, Deserialize)]
+struct FsDirsQuery {
+    path: Option<String>,
+    machine: Option<String>,
+    hidden: Option<String>,
+}
+
+/// 目录浏览上限。超出的项不计入 `dirs`，只把 `truncated` 翻成 true。
+const FS_DIRS_LIMIT: usize = 500;
+
+/// `GET /v1/fs/dirs`：只读列子目录。
+///
+/// 路径规则与本机判定都在 `nous_env::dirs`（env 插件读唯一一次环境变量）；
+/// 远端 `machine` 明确 501，不静默退回本机。
+async fn fs_dirs(Query(query): Query<FsDirsQuery>) -> Result<Json<Value>> {
+    if !nous_env::is_local_machine(query.machine.as_deref()) {
+        return Err(ServerError::NotImplemented("ssh 未实现".to_string()));
+    }
+    let result = nous_env::list_subdirs(
+        query.path.as_deref().unwrap_or(""),
+        query.hidden.as_deref() == Some("1"),
+        FS_DIRS_LIMIT,
+    )
+    .map_err(fs_dirs_error)?;
+    Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
+}
+
+fn fs_dirs_error(error: nous_env::BrowseError) -> ServerError {
+    use nous_env::BrowseError;
+    match error {
+        BrowseError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        BrowseError::NotFound => ServerError::NotFound("目录不存在".to_string()),
+        BrowseError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个目录".to_string())
+        }
+        BrowseError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        BrowseError::Other => ServerError::Internal("目录读不出来".to_string()),
+    }
 }
 
 /// `GET /v1/sessions`：`{ items: [...] }`，新的在前（排序在 `nous-durable` 的投影里）。

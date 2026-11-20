@@ -1337,6 +1337,7 @@ version = "0.1.3"
 dependencies = [
  "async-trait",
  "nous-chord",
+ "serde",
  "tokio",
  "tokio-util",
 ]
