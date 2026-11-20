@@ -351,6 +351,16 @@ impl TurnDriver for HarnessTurnDriver {
             }
         }
 
+        // #70：assistant entry 落库后把 submission 从 queued 推到 done。
+        // 这是第二次提交（entry 与 submission 分表），但都在同一个 Session 写者里。
+        nous_durable::session::commands::settle_submission(
+            &self.session,
+            submission,
+            entry_id,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
         Ok(TurnOutcome {
             submission,
             assistant,

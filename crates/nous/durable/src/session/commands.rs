@@ -1017,3 +1017,61 @@ fn now_ms() -> i64 {
 pub fn cancel_token(session: &Session) -> tokio_util::sync::CancellationToken {
     session.cancellation.token().clone()
 }
+
+/// #70：把一条 `input/queued` 或 `input/placed` 的 submission 推到 `done`。
+///
+/// 只改 `status` 与 `answer` 两个键，其余字段（requestId / actor / trace）原样保留；
+/// 与 assistant entry 分开提交（entry 提交成功才算答上）。重复调用是幂等的：
+/// 已经是 `done` 就直接返回。
+pub async fn settle_submission(
+    session: &Session,
+    submission: Id,
+    answer: Id,
+) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let record = {
+        let storage = storage_mut(&mut guard)?;
+        storage
+            .submission(submission)?
+            .ok_or_else(|| CommandError::NotFound(format!("submission {submission} not found")))?
+    };
+    let mut record = record;
+    let status = record.get("status").and_then(Value::as_str).unwrap_or_default();
+    if status == "done" || status == "unanswered" {
+        return Ok(());
+    }
+    record["status"] = Value::String("done".to_string());
+    record["answer"] = json!(answer);
+    record["entry"] = json!(answer);
+    commit_and_publish(session, &mut guard, vec![StorageWrite::Submission(record)]).await?;
+    Ok(())
+}
+
+/// #70：轮次失败（没有可用模型 / provider 出错 / 用户取消）时把 submission 收敛到
+/// `unanswered`，让 `queued` 不留在库里。reason 是五值终态的语义串。
+pub async fn fail_submission(
+    session: &Session,
+    submission: Id,
+    reason: &str,
+    detail: Option<Value>,
+) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let record = {
+        let storage = storage_mut(&mut guard)?;
+        storage
+            .submission(submission)?
+            .ok_or_else(|| CommandError::NotFound(format!("submission {submission} not found")))?
+    };
+    let mut record = record;
+    let status = record.get("status").and_then(Value::as_str).unwrap_or_default();
+    if status == "done" || status == "unanswered" {
+        return Ok(());
+    }
+    record["status"] = Value::String("unanswered".to_string());
+    record["reason"] = Value::String(reason.to_string());
+    if let Some(detail) = detail {
+        record["detail"] = detail;
+    }
+    commit_and_publish(session, &mut guard, vec![StorageWrite::Submission(record)]).await?;
+    Ok(())
+}

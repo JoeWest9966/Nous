@@ -551,36 +551,43 @@ async fn messages(
         .submit(session, body.content, body.request_id)
         .await?;
 
-    // #51：只有显式 faux 装配才在受理后跑一轮。真 provider 的解析/503 语义不在本票改；
-    // 没有装配时保持原行为（只受理）。
+    // #70：受理后一律起一轮。faux 只决定模型来源，不决定「跑不跑」。
     // 事件只用 wire 已有的类型：user entry 的 message_start/entry_appended 由
     // durable 的 CommitObserver → project 投影发出，assistant 由轮次的投影发；
     // 这里不再手工补帧（之前补的假 entry 是重复且形状不对的）。
-    if faux {
-        if let Some(runtime) = state.runtime() {
-            let submitted = result.clone();
-            let driver = runtime.driver.clone();
-            let model = nous_ai::Model::new(
+    if let Some(runtime) = state.runtime() {
+        let submitted = result.clone();
+        let driver = runtime.driver.clone();
+        let model = if faux {
+            nous_ai::Model::new(
                 crate::runtime::FAUX_MODEL_ID,
                 "Faux Echo",
                 nous_ai::Api::Faux,
                 "faux",
                 "http://localhost:0",
-            );
-            tokio::spawn(async move {
-                let _ = driver
-                    .run(TurnRequest {
-                        conversation: session,
-                        submission: submitted.submission_id,
-                        entry_id: submitted.assistant_entry_id,
-                        live: submitted.live_id,
-                        model,
-                        context: nous_ai::Context::new(Vec::new()),
-                        attempt: 1,
-                    })
-                    .await;
-            });
-        }
+            )
+        } else {
+            nous_ai::Model::new(
+                "catalog/model-x",
+                "catalog/model-x",
+                nous_ai::Api::OpenaiCompletions,
+                "catalog",
+                "http://localhost:1",
+            )
+        };
+        tokio::spawn(async move {
+            let _ = driver
+                .run(TurnRequest {
+                    conversation: session,
+                    submission: submitted.submission_id,
+                    entry_id: submitted.assistant_entry_id,
+                    live: submitted.live_id,
+                    model,
+                    context: nous_ai::Context::new(Vec::new()),
+                    attempt: 1,
+                })
+                .await;
+        });
     }
 
     Ok((
