@@ -79,6 +79,23 @@ fn archive_restore_purge_three_generations_move_files_and_commit_each_step() {
     assert!(!f.root.join(".archive/unit-a").exists());
 }
 
+#[test]
+fn archive_does_not_ride_on_unrelated_staged_changes() {
+    let f = fixture();
+    let repo = Repo::open(&f.root).unwrap();
+    write_and_publish(&repo, "unit-a/SKILL.md", b"---\nname: a\ndescription: t\n---\nbody\n");
+
+    // 预先 stage 一个搭车文件；archive 的 commit 只许带走 git mv 的那一对路径。
+    std::fs::write(f.root.join("STAGED.md"), "should not ride\n").unwrap();
+    git(&f.root, &["add", "STAGED.md"]);
+
+    let result = repo.archive("unit-a", None).unwrap();
+    let names = git(&f.root, &["show", "--pretty=format:", "--name-only", &result.commit]);
+    let names: Vec<_> = names.lines().filter(|l| !l.is_empty()).collect();
+    assert!(!names.iter().any(|p| p.contains("STAGED")), "archive 提交不许搭车：{names:?}");
+    assert!(names.iter().any(|p| p.starts_with(".archive/unit-a")), "archive 要带走归档路径：{names:?}");
+}
+
 fn incr(value: &str, by: i32) -> String {
     (value.parse::<i32>().unwrap() + by).to_string()
 }

@@ -198,10 +198,11 @@ pub fn history(root: &Path, name: &str, limit: usize) -> Result<Vec<HistoryItem>
     }).collect())
 }
 
-fn commit_and_push(root: &Path, pathspec: &str, message: &str) -> Result<LifecycleResult> {
-    // git mv 已经把目标放进 index；commit 只按 pathspec，不再 add（避免搭车）。
-    let _ = pathspec; // 只提交 index 中已经 staged 的精确变化（git mv / rm 已写好 index）
-    git::git_ok(root, &["commit", "-m", message])?;
+fn commit_and_push(root: &Path, pathspecs: &[&str], message: &str) -> Result<LifecycleResult> {
+    // git mv 已把目标放进 index；commit 仍按 pathspec 约束，避免无关 staged 文件搭车。
+    let mut args = vec!["commit", "-m", message, "--"];
+    args.extend_from_slice(pathspecs);
+    git::git_ok(root, &args)?;
     let hash = git::git_ok(root, &["rev-parse", "HEAD"])?.trim().to_string();
     Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
 }
@@ -217,7 +218,8 @@ pub fn archive(root: &Path, name: &str, _request_id: Option<&str>) -> Result<Lif
     if target.exists() { return Err(RepoError::Conflict { message: format!("已归档过：{name}"), current: None, etag: None }); }
     let rel = format!(".archive/{name}");
     git::git_ok(root, &["mv", name, &rel])?;
-    commit_and_push(root, ".archive", &format!("archive: {name}"))
+    let spec = format!(".archive/{name}");
+    commit_and_push(root, &[name, &spec], &format!("archive: {name}"))
 }
 
 pub fn restore(root: &Path, name: &str, _request_id: Option<&str>) -> Result<LifecycleResult> {
@@ -229,7 +231,7 @@ pub fn restore(root: &Path, name: &str, _request_id: Option<&str>) -> Result<Lif
         return Err(RepoError::Conflict { message: format!("目标已存在：{name}"), current: None, etag: None });
     }
     git::git_ok(root, &["mv", &archived, name])?;
-    commit_and_push(root, name, &format!("restore: {name}"))
+    commit_and_push(root, &[name, &archived], &format!("restore: {name}"))
 }
 
 pub fn purge(root: &Path, name: &str, _request_id: Option<&str>) -> Result<LifecycleResult> {
@@ -238,7 +240,7 @@ pub fn purge(root: &Path, name: &str, _request_id: Option<&str>) -> Result<Lifec
         return Err(RepoError::NotFound(format!("没有归档单元：{name}")));
     }
     git::git_ok(root, &["rm", "-r", "-q", "--", &archived])?;
-    git::git_ok(root, &["commit", "-m", &format!("purge: {name}")])?;
+    git::git_ok(root, &["commit", "-m", &format!("purge: {name}"), "--", &archived])?;
     let hash = git::git_ok(root, &["rev-parse", "HEAD"])?;
     let hash = hash.trim().to_string();
     Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
