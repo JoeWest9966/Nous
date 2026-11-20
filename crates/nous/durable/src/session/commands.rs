@@ -226,11 +226,30 @@ pub async fn cancel(
         }
 
         let tasks = live_task_ids(storage, request.conversation)?;
-        if tasks.is_empty() {
-            return Err(CommandError::Conflict(
-                "session has no running task to abort".to_string(),
-            ));
-        }
+        // #70：真 provider 的轮次不建 task（它只在 durable 的 live 文档里留痕），
+        // 所以「没有 task」不等于「没有正在跑的轮次」——有未收敛的 input submission
+        // 就说明有一轮还活着，abort 必须停 token 并落终态，不能回 409 假装没事。
+        let live_submissions = if tasks.is_empty() {
+            let pending: Vec<Value> = storage
+                .submissions(request.conversation)?
+                .into_iter()
+                .filter(|record| {
+                    record.get("type").and_then(Value::as_str) == Some("input")
+                        && matches!(
+                            record.get("status").and_then(Value::as_str),
+                            Some("queued") | Some("placed")
+                        )
+                })
+                .collect();
+            if pending.is_empty() {
+                return Err(CommandError::Conflict(
+                    "session has no running task to abort".to_string(),
+                ));
+            }
+            pending
+        } else {
+            Vec::new()
+        };
         let entry_id = storage.mint_id()?;
         // 终态与正文同一条 entry、同一次提交。若 pi.live 里已有落库的 partial，
         // 把它搬进来（并清 generation）—— 重连看到的是「有结局的一段文本」。
@@ -251,6 +270,13 @@ pub async fn cancel(
             };
             mark_abort_requested(&mut task);
             writes.push(StorageWrite::Task(task));
+        }
+        // #70：submission 也必须跟着收敛，不能停在 queued。
+        for record in &live_submissions {
+            let mut record = record.clone();
+            record["status"] = Value::String("unanswered".to_string());
+            record["reason"] = Value::String(request.reason.as_str().to_string());
+            writes.push(StorageWrite::Submission(record));
         }
         (
             CancelOutcome {
