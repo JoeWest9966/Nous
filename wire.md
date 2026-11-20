@@ -361,6 +361,9 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 `{ at, machines: [{ name, user, port, ips: [{addr,label}], addr, note, tags }] }`。
 
 - 没有 `machine` 字段 = **本机**。名字要和创建请求里的 `machine` 对得上。
+- 本库的静态编目不知道具体 `user` / `port` / `ips` / `addr`，就回 `null` / `[]` / `""` ——
+  不编造地址。旧字段（`hostname` / `os` / `arch` / `triples` / `rustc` / `roles` /
+  `annotations` / `items`）保留一版，客户端按任一套都能读到。
 
 ### GET /v1/fs/dirs?path=
 

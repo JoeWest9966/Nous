@@ -13,28 +13,42 @@ use serde_json::{json, Value};
 /// `triples` 是**宿主兼容列表**，不是单一 triple：musl 静态产物在 gnu 宿主上能跑，反过来不行
 /// （spec 3.5 / EX-50）。
 pub fn catalog() -> Value {
-    json!({
-        "items": [
-            {
+    let items = vec![
+            json!({
                 "name": "runtime-1",
+                "at": "j1900",
+                "user": Value::Null,
+                "port": Value::Null,
+                "ips": json!([]),
+                "addr": "",
+                "note": "线上宿主；默认不收构建任务",
+                "tags": ["runtime"],
+                // 旧字段保留一版（同一字段不换含义）。
                 "hostname": "j1900",
                 "os": "linux",
                 "arch": "x86_64",
                 "triples": ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"],
                 "rustc": "1.99.1",
                 "roles": ["runtime"],
-                "annotations": { "site": "home", "note": "线上宿主；默认不收构建任务" }
-            },
-            {
+                "annotations": json!({ "site": "home", "note": "线上宿主；默认不收构建任务" })
+            }),
+            json!({
                 "name": "asus",
+                "at": "asus",
+                "user": Value::Null,
+                "port": Value::Null,
+                "ips": json!([]),
+                "addr": "",
+                "note": "开发机，跨 target 编译",
+                "tags": ["build", "runtime"],
                 "hostname": "asus",
                 "os": "linux",
                 "arch": "x86_64",
                 "triples": ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl"],
                 "rustc": "1.99.1",
                 "roles": ["build", "runtime"],
-                "annotations": { "site": "home", "note": "开发机，跨 target 编译" }
-            }
-        ]
-    })
+                "annotations": json!({ "site": "home", "note": "开发机，跨 target 编译" })
+            })
+    ];
+    json!({ "at": "j1900", "machines": items.clone(), "items": items })
 }
