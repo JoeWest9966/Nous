@@ -108,6 +108,9 @@ pub trait CommandSource: Send + Sync {
     /// #72：一条会话挂的 template 名（durable 的 session 作用域文档，重启后仍在）。
     async fn template(&self, session: i64) -> Result<Option<String>> { let _ = session; Ok(None) }
 
+    /// #83：一条会话选中的技能名，**按选中顺序**（pi.agent 文档）。
+    async fn skills(&self, session: i64) -> Result<Vec<String>> { let _ = session; Ok(Vec::new()) }
+
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
     /// 放在这条 trait 上是为了让**同一个 `Session` 写者**做这件事：另开一个 `Session`
@@ -211,6 +214,11 @@ impl CommandSource for DurableCommands {
 
     async fn template(&self, session: i64) -> Result<Option<String>> {
         nous_durable::session::commands::session_template(&self.session, session)
+            .await.map_err(command_error)
+    }
+
+    async fn skills(&self, session: i64) -> Result<Vec<String>> {
+        nous_durable::session::commands::session_skills(&self.session, session)
             .await.map_err(command_error)
     }
 

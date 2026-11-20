@@ -119,6 +119,26 @@ async fn a_missing_skill_does_not_fail_the_turn_and_records_a_diagnostic() {
 }
 
 #[tokio::test]
+async fn skills_chosen_through_config_are_injected_on_the_next_turn() {
+    let (app, _root, id) = fixture("via-config", &["alpha"]).await;
+    let (status, body) = call(&app, "POST", &format!("/v1/sessions/{id}/config"), Some(json!({"skills": {"add": ["beta"]}}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["skills"], json!(["alpha", "beta"]), "{body}");
+    let prompts = turn_prompts(&app, id, "r6").await;
+    assert!(prompts.contains(BODY_A) && prompts.contains(BODY_B), "config 选的技能也要进提示词：{prompts}");
+}
+
+#[tokio::test]
+async fn read_only_sessions_still_receive_skill_prompts() {
+    let (app, _root, id) = fixture("readonly", &["alpha"]).await;
+    let (status, body) = call(&app, "POST", &format!("/v1/sessions/{id}/config"), Some(json!({"readOnly": true}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["readOnly"], json!(true), "{body}");
+    let prompts = turn_prompts(&app, id, "r5").await;
+    assert!(prompts.contains(BODY_A), "技能是提示词，只读会话也要注入：{prompts}");
+}
+
+#[tokio::test]
 async fn no_selected_skills_leaves_no_skill_block_in_the_system_prompt() {
     let (app, _root, id) = fixture("none", &[]).await;
     let prompts = turn_prompts(&app, id, "r4").await;
