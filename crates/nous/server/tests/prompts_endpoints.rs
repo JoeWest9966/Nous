@@ -49,3 +49,25 @@ async fn prompts_lists_real_directories_and_names_an_unconfigured_default() {
     let problem = body["problem"].as_str().unwrap_or_default();
     assert!(problem.contains("不存在"), "不存在要点名：{problem}");
 }
+
+/// 只读取端点不许改提示词目录：跑之前/之后逐文件 sha256 完全相同。
+#[tokio::test]
+async fn reading_prompts_never_writes_to_the_private_repo() {
+    use std::process::Command;
+    fn digests(root: &std::path::Path) -> String {
+        let out = Command::new("sha256sum")
+            .args(root.read_dir().unwrap().flatten().filter(|e| e.path().is_file())
+                  .map(|e| e.path()).collect::<Vec<_>>())
+            .output().unwrap();
+        String::from_utf8(out.stdout).unwrap()
+    }
+    let root = temp_root("readonly");
+    fs::create_dir_all(root.join("X")).unwrap();
+    fs::write(root.join("X/PROMPT.md"), "readonly body").unwrap();
+    fs::write(root.join("X/nous.json"), json!({"description":"X","category":[]}).to_string()).unwrap();
+    fs::write(root.join("settings.json"), json!({"default":"X"}).to_string()).unwrap();
+    let before = digests(&root);
+    assert!(!before.is_empty(), "目录里真有文件才谈得上只读");
+    let _ = get_prompts(&root).await;
+    assert_eq!(digests(&root), before, "GET /v1/prompts 不许写盘");
+}
