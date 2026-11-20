@@ -143,6 +143,16 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
     // #68：只读目录浏览（env 插件）。
     RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/status", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending/diff", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending/commit", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history/diff", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/commit", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/archive", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/restore", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/purge", module: "repo" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/sessions", module: "sessions" },
@@ -216,6 +226,7 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("sessions", None),
     // #68：env 的本地目录浏览已落地，SSH 远端另票。
     ("env", None),
+    ("repo", None),
     // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
     ("documents", None),
     ("presets", Some(ReasonCode::NotImplemented)),

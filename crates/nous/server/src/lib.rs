@@ -28,6 +28,7 @@ pub mod records;
 pub mod observer;
 pub mod project;
 pub mod routes;
+pub mod repos;
 pub mod runtime;
 pub mod source;
 pub mod triggers;

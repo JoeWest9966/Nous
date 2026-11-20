@@ -13,7 +13,7 @@ mod views;
 
 pub use error::{RepoError, Result};
 pub use files::{WriteFile, WrittenFile};
-pub use publish::{CommitResult, CommitFile};
+pub use publish::{CommitResult, CommitFile, LifecycleResult};
 pub use views::{Diff, PendingUnit, RepoStatus};
 
 use std::collections::HashMap;

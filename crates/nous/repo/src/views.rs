@@ -119,7 +119,9 @@ pub fn pending_diff(root: &Path, path: &str) -> Result<Diff> {
 
 pub fn history_diff(root: &Path, name: &str, hash: &str, path: &str) -> Result<Diff> {
     let full = format!("{name}/{path}");
-    let before = git::git_ok(root, &[&format!("{hash}^:{full}")]).unwrap_or_default();
-    let after = git::git_ok(root, &[&format!("{hash}:{full}")]).unwrap_or_default();
+    let before_ref = format!("{hash}^:{full}");
+    let after_ref = format!("{hash}:{full}");
+    let before = git::git_ok(root, &["cat-file", "-p", &before_ref]).unwrap_or_default();
+    let after = git::git_ok(root, &["cat-file", "-p", &after_ref]).unwrap_or_default();
     Ok(Diff { before, after })
 }

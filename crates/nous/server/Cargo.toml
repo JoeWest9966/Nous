@@ -24,6 +24,7 @@ path = "src/main.rs"
 nous-durable = { workspace = true }
 nous-device = { workspace = true }
 nous-env = { workspace = true }
+nous-repo = { workspace = true }
 nous-documents = { workspace = true }
 nous-sessions = { workspace = true }
 nous-runtime = { workspace = true }
