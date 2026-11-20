@@ -6,6 +6,7 @@
 mod common;
 
 use std::path::Path;
+fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 
 use axum::body::Body;
@@ -15,7 +16,7 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git").args(args).current_dir(dir)
+    let out = Command::new(git_bin()).args(args).current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0").env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null").output().unwrap();
     assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));

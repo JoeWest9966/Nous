@@ -2,6 +2,7 @@
 //! 不读生产数据根、不联网、不 spawn 服务端。
 
 use std::path::{Path, PathBuf};
+fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -11,7 +12,7 @@ use serde_json::json;
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = Command::new(git_bin())
         .args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")

@@ -30,6 +30,22 @@
       ]
     },
     {
+      "name": "repo",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/repos/:repo/status",
+        "GET /v1/repos/:repo/pending",
+        "GET /v1/repos/:repo/pending/diff",
+        "GET /v1/repos/:repo/pending/commit",
+        "GET /v1/repos/:repo/history",
+        "GET /v1/repos/:repo/history/diff",
+        "POST /v1/repos/:repo/commit",
+        "POST /v1/repos/:repo/archive",
+        "POST /v1/repos/:repo/restore",
+        "POST /v1/repos/:repo/purge"
+      ]
+    },
+    {
       "name": "documents",
       "enabled": true,
       "endpoints": [

@@ -1,12 +1,13 @@
 //! #75 接缝 A · 文件层：etag / If-Match / 路径安全 / 二进制与大小闸。
 
 use std::path::Path;
+fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 
 use nous_repo::{Repo, RepoError, WriteFile};
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
+    let out = Command::new(git_bin())
         .args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")

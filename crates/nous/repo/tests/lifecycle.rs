@@ -1,13 +1,14 @@
 //! #75 接缝 A · 生命周期与状态：归档三代 / pending / aheadCommits / 推送失败 / 并发。
 
 use std::path::{Path, PathBuf};
+fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 use std::sync::Arc;
 
 use nous_repo::{Repo, WriteFile};
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git")
+    let out = Command::new(git_bin())
         .args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0")

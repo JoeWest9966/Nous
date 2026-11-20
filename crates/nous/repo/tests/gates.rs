@@ -1,12 +1,13 @@
 //! #75 接缝 A · 内容闸：四种私库各造坏样例，commit 400 且远端不动。
 
 use std::path::{Path, PathBuf};
+fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 
 use nous_repo::{Repo, RepoError, WriteFile};
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git").args(args).current_dir(dir)
+    let out = Command::new(git_bin()).args(args).current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0").env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null").output().unwrap();
     assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
