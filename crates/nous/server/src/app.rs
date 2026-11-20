@@ -310,6 +310,7 @@ impl AppState {
             commands: self.commands.clone(),
             hub: self.hub.clone(),
             models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),

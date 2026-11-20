@@ -12,6 +12,7 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use nous_durable::session::{CommitOptions, Session};
 use nous_durable::{DocumentContent, StorageWrite};
+use nous_device::{CatalogDiagnostics, ModelItem, ModelsResponse};
 use nous_server::{router, AppState, DurableCommands, ImportedSource};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -84,10 +85,17 @@ fn app(path: &PathBuf) -> Router {
         ImportedSource::open(path).unwrap(),
         commands,
     )
-    .with_models(nous_server::models::ModelsResponse {
+    .with_models(ModelsResponse {
         default: None,
+        catalog: CatalogDiagnostics {
+            state: "inline",
+            source: Some("test"),
+            path: PathBuf::from("test"),
+            fetched_at: None,
+            error: None,
+        },
         items: vec![
-            nous_server::models::ModelItem {
+            ModelItem {
                 provider: "p".into(),
                 model_id: "many".into(),
                 name: "Many levels".into(),
@@ -95,7 +103,7 @@ fn app(path: &PathBuf) -> Router {
                 context_window: None,
                 max_tokens: None,
             },
-            nous_server::models::ModelItem {
+            ModelItem {
                 provider: "p".into(),
                 model_id: "two-levels".into(),
                 name: "Two levels".into(),
