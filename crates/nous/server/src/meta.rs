@@ -11,6 +11,7 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use nous_env::{ContentPath, PRESETS, PROMPTS, SKILLS};
 use serde_json::{json, Value};
 
 use crate::models::ModelsResponse;
@@ -50,47 +51,69 @@ pub fn selection() -> Value {
     json!({ "id": std::env::var("NOUS_SELECTION").ok().and_then(|s| s.parse::<i64>().ok()) })
 }
 
+/// 一条私库路径的只读状态：`root` 永远给解析出的路径，`present` 才说它在不在盘上。
+/// 目录不存在时不建、不写、不 spawn —— "没装" 和 "不知道在哪" 从此可区分（#63）。
+fn content_status(path: ContentPath) -> (PathBuf, Value, bool) {
+    let root = path.resolve();
+    let present = root.is_dir();
+    let shown = Value::String(root.to_string_lossy().into_owned());
+    let status = if present {
+        json!({ "root": shown, "present": true, "missing": Value::Null })
+    } else {
+        json!({
+            "root": shown,
+            "present": false,
+            "missing": format!("私库路径不存在：{}（设 {} 指到你的副本）", path.default, path.var),
+        })
+    };
+    (root, status, present)
+}
+
 /// `GET /v1/skills`：目录不存在就是空表，不伪造内容、不 404。
 pub fn skills() -> Value {
-    let root = std::env::var("NOUS_SKILLS_ROOT").ok().map(PathBuf::from);
-    let entries = root
-        .as_ref()
-        .and_then(|root| std::fs::read_dir(root).ok())
-        .map(|read_dir| {
-            read_dir
-                .filter_map(|entry| entry.ok())
-                .filter(|entry| entry.path().is_dir())
-                .map(|entry| {
-                    json!({
-                        "name": entry.file_name().to_string_lossy().into_owned(),
-                        "description": Value::Null,
-                        "category": Value::Array(vec![]),
-                        "hidden": false,
-                        "tracked": false,
-                        "dir": entry.path().to_string_lossy().into_owned(),
-                        "file": Value::Null,
-                        "load": { "state": "ok" },
+    let (root, status, present) = content_status(SKILLS);
+    let entries = if present {
+        std::fs::read_dir(root)
+            .map(|read_dir| {
+                read_dir
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| entry.path().is_dir())
+                    .map(|entry| {
+                        json!({
+                            "name": entry.file_name().to_string_lossy().into_owned(),
+                            "description": Value::Null,
+                            "category": Value::Array(vec![]),
+                            "hidden": false,
+                            "tracked": false,
+                            "dir": entry.path().to_string_lossy().into_owned(),
+                            "file": Value::Null,
+                            "load": { "state": "ok" },
+                        })
                     })
-                })
-                .collect::<Vec<Value>>()
-        })
-        .unwrap_or_default();
-    json!({
-        "root": root.map(|root| root.to_string_lossy().into_owned()),
-        "categories": [],
-        "skills": entries,
-    })
+                    .collect::<Vec<Value>>()
+            })
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+    let mut body = status;
+    body["categories"] = json!([]);
+    body["skills"] = json!(entries);
+    body
 }
 
 /// `GET /v1/prompts`：#48 前先与 skills 同构的空表。
 pub fn prompts() -> Value {
-    let root = std::env::var("NOUS_PROMPTS_ROOT").unwrap_or_default();
-    json!({
-        "default": Value::Null,
-        "categories": [],
-        "prompts": [],
-        "root": if root.is_empty() { Value::Null } else { Value::String(root) },
-    })
+    let (_, mut body, _) = content_status(PROMPTS);
+    body["default"] = Value::Null;
+    body["categories"] = json!([]);
+    body["prompts"] = json!([]);
+    body
+}
+
+/// 模板数据根（#60 用）：只解析、只登记，不在这里读写私库。
+pub fn presets_root() -> std::path::PathBuf {
+    PRESETS.resolve()
 }
 
 /// `GET /v1/extensions`：扩展运行时冻结，清单为空。

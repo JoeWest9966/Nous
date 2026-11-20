@@ -1403,6 +1403,7 @@ dependencies = [
  "nous-ai",
  "nous-documents",
  "nous-durable",
+ "nous-env",
  "nous-runtime",
  "nous-sessions",
  "nous-store",
