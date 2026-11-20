@@ -296,6 +296,13 @@ async fn run() -> Result<(), RunError> {
     // 的轮次由各自的生成路径负责，这里拿 faux Model 硬跑一轮会产出一条假回复）。
     let trigger_driver = if faux { Some(assembled.driver.clone()) } else { None };
     let state = state.with_runtime(Arc::new(assembled));
+    // faux 验收模式保留自己的固定编目（原来由 assemble 注入），它优先于文件编目。
+    // 真 provider 走 `nous_device` 的文件/内联来源。
+    let state = if faux {
+        state.with_models(nous_server::runtime::faux_catalog())
+    } else {
+        state
+    };
     // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
     // 不另开第二个 Storage。
     let state = state.with_documents_backend(

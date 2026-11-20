@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use nous_server::models::{ModelItem, ModelRef, ModelsResponse};
+use nous_device::{ModelItem, ModelRef, ModelsResponse};
 use nous_server::{router, AppState};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -138,6 +138,11 @@ async fn models_response_pins_default_and_item_field_shape() {
                 max_tokens: None,
             },
         ],
+        catalog: nous_device::CatalogDiagnostics {
+            state: "ok",
+            source: None,
+            path: std::path::PathBuf::from("/test/models.json"),
+        },
     };
     let app =
         router(AppState::with_source(common::FakeSource::two_sessions()).with_models(catalog));

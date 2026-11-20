@@ -18,6 +18,7 @@
 //! 接再自己 parse —— 让 axum 的 `Path<i64>` 拒掉会吐一段纯文本，破坏 `{error}`。
 
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
@@ -41,7 +42,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::app::AppState;
 use crate::coalesce::{self, Framing};
 use crate::error::{Result, ServerError};
-use crate::models::ModelsResponse;
+use nous_device::ModelsResponse;
 use crate::records::CreateSessionRequest;
 use crate::source::SessionSource;
 
@@ -65,6 +66,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/fork", post(fork))
         .route("/v1/machines", get(machines))
         .route("/v1/models", get(models))
+        .route("/v1/default", put(put_default))
         .route("/v1/device", get(device))
         .route("/v1/selection", get(selection))
         .route("/v1/unread", get(unread))
@@ -84,7 +86,12 @@ pub fn router(state: Arc<AppState>) -> Router {
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
 async fn machines() -> Json<Value> {
-    Json(crate::machines::catalog())
+    let file = std::env::var("NOUS_MACHINES_FILE")
+        .ok()
+        .filter(|text| !text.trim().is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    Json(nous_device::machines(file.as_deref()))
 }
 
 /// `GET /v1/sessions`：`{ items: [...] }`，新的在前（排序在 `nous-durable` 的投影里）。
@@ -290,11 +297,50 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(body)
 }
 
-/// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。
+/// `GET /v1/models`：默认模型 + 列表 + 来源诊断块。
 ///
-/// 本层不认识 provider，空目录是诚实的「不知道」；宿主可换入带 catalog 的 `AppState`。
-async fn models(State(state): State<Arc<AppState>>) -> Json<ModelsResponse> {
-    Json(state.assembled_models().unwrap_or_else(|| state.models().clone()))
+/// 编目来源由 `nous-device` 收口：内联（`NOUS_MODELS`）> 文件 > 诚实空表；
+/// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
+async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
+    // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
+    if state.injected_models() {
+        if let Some(catalog) = state.assembled_models() {
+            return Ok(Json(catalog));
+        }
+        return Ok(Json(state.models().clone()));
+    }
+    let response = nous_device::load_models(state.catalog_env())
+        .map_err(ServerError::Internal)?;
+    Ok(Json(response))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DefaultBody {
+    provider: String,
+    #[serde(rename = "modelId")]
+    model_id: String,
+}
+
+/// `PUT /v1/default`：把默认模型原子写回同一份编目；模型不在 items 里 → 400。
+async fn put_default(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DefaultBody>,
+) -> Result<Json<Value>> {
+    let env = state.catalog_env();
+    if env.inline.is_some() {
+        return Err(ServerError::BadRequest(
+            "NOUS_MODELS 是内联编目，不能写回 default；请用 NOUS_MODELS_FILE".to_string(),
+        ));
+    }
+    let path = &env.file_path;
+    let model = nous_device::ModelRef {
+        provider: body.provider,
+        model_id: body.model_id,
+    };
+    nous_device::save_default(path, &model)
+        .map_err(|error| ServerError::BadRequest(error))?;
+    Ok(Json(json!({ "default": model, "wrote": true })))
 }
 
 #[derive(Debug, Deserialize)]
