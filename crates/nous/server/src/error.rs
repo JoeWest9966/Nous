@@ -21,6 +21,8 @@ pub enum ServerError {
     /// 状态冲突：会话已关闭、正在跑、没有可中止的任务。**不许降级成 400** ——
     /// 400 是「参数这么写不行」，409 是「现在不行」。
     Conflict(String),
+    /// 内容闸未过：400 + `{field, problem}`（私库发布前校验）。
+    Validation { field: String, problem: String },
     Internal(String),
 }
 
@@ -32,6 +34,7 @@ impl ServerError {
             ServerError::Forbidden(_) => StatusCode::FORBIDDEN,
             ServerError::NotFound(_) => StatusCode::NOT_FOUND,
             ServerError::Conflict(_) => StatusCode::CONFLICT,
+            ServerError::Validation { .. } => StatusCode::BAD_REQUEST,
             ServerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -44,6 +47,7 @@ impl ServerError {
             | ServerError::NotFound(message)
             | ServerError::Conflict(message)
             | ServerError::Internal(message) => message,
+            ServerError::Validation { .. } => "内容闸未过",
         }
     }
 }
@@ -51,7 +55,12 @@ impl ServerError {
 impl IntoResponse for ServerError {
     fn into_response(self) -> Response {
         let status = self.status();
-        (status, Json(json!({ "error": self.message() }))).into_response()
+        let mut body = json!({ "error": self.message() });
+        if let ServerError::Validation { field, problem } = &self {
+            body["field"] = json!(field);
+            body["problem"] = json!(problem);
+        }
+        (status, Json(body)).into_response()
     }
 }
 

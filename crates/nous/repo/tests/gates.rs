@@ -39,8 +39,13 @@ fn assert_rejected(kind: &str, path: &str, content: &[u8]) {
     let head = git(&root, &["rev-parse", "HEAD"]);
     let w = repo.write_file(WriteFile { path, content, base_etag: None }).unwrap();
     let err = repo.commit(&[w.path], "bad", None).unwrap_err();
-    assert!(matches!(err, RepoError::BadRequest(_)), "{kind} 坏样例必须 400：{err:?}");
-    assert!(!err.to_string().is_empty(), "400 要指出字段");
+    match &err {
+        RepoError::Validation { field, problem } => {
+            assert!(!field.is_empty(), "400 要指出 field");
+            assert!(!problem.is_empty(), "400 要指出 problem");
+        }
+        other => panic!("{kind} 坏样例必须是结构化内容闸错误：{other:?}"),
+    }
     assert_eq!(git(&remote, &["rev-parse", "refs/heads/main"]), git(&root, &["rev-parse", "HEAD"]), "{kind} 坏样例不许推上去");
     assert_eq!(git(&root, &["rev-parse", "HEAD"]), head, "{kind} 坏样例不许 commit");
 }

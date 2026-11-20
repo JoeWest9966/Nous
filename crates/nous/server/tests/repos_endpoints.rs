@@ -113,6 +113,8 @@ async fn gate_failure_is_400_and_never_commits() {
         "paths": ["bad/SKILL.md"], "message": "bad",
     }))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "内容闸 400：{body}");
+    assert!(body.get("field").is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())), "400 要指出 field：{body}");
+    assert!(body.get("problem").is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())), "400 要指出 problem：{body}");
     assert_eq!(git(&root, &["rev-parse", "HEAD"]), before, "闸失败不许 commit");
 }
 

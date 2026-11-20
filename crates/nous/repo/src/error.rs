@@ -4,8 +4,10 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepoError {
-    /// 路径逃逸 / 二进制 / 超限 / frontmatter 坏等输入问题 → 400。
+    /// 路径逃逸 / 二进制 / 超限等输入问题 → 400。
     BadRequest(String),
+    /// 内容闸未过 → 400，带 `{field, problem}` 定位信息。
+    Validation { field: String, problem: String },
     /// 仓根不存在或不可访问 → 400。
     InvalidPath(String),
     NotFound(String),
@@ -28,6 +30,7 @@ impl std::fmt::Display for RepoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BadRequest(m) | Self::NotFound(m) | Self::Busy(m) | Self::Io(m) | Self::InvalidPath(m) => f.write_str(m),
+            Self::Validation { field, problem } => write!(f, "内容闸未过：{field} / {problem}"),
             Self::Conflict { message, .. } => f.write_str(message),
             Self::LockPoisoned => f.write_str("私库写锁中毒"),
         }

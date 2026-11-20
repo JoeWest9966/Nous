@@ -60,70 +60,68 @@ fn lines(out: &str) -> Vec<String> {
 }
 
 /// 内容闸：不同私库有自己的规则。失败时绝不 commit / push。
+/// 返回 `RepoError::Validation { field, problem }`，HTTP 层直接映射为 400 + `{field, problem}`。
 fn validate(root: &Path, paths: &[String]) -> Result<()> {
     let repo_kind = detect_kind(root);
     for path in paths {
         let full = root.join(path);
         if !full.is_file() { continue; }
         let content = std::fs::read_to_string(&full).map_err(|e| RepoError::Io(e.to_string()))?;
-        let issue = match repo_kind.as_str() {
+        let issue: Option<(String, String)> = match repo_kind.as_str() {
             "skills" if path.ends_with("SKILL.md") => {
                 if !(content.starts_with("---\n") && content[4..].contains("\n---")) {
-                    Some(("SKILL.md", "缺少 frontmatter"))
+                    Some(("SKILL.md".into(), "缺少 frontmatter".into()))
                 } else {
                     let fm = content[4..].split("\n---").next().unwrap_or("");
-                    let mut missing = Vec::new();
-                    for field in ["name", "description"] {
-                        if !fm.lines().any(|l| l.trim_start().starts_with(&format!("{field}:"))) {
-                            missing.push(field);
-                        }
-                    }
+                    let missing: Vec<&str> = ["name", "description"].into_iter()
+                        .filter(|field| !fm.lines().any(|l| l.trim_start().starts_with(&format!("{field}:"))))
+                        .collect();
                     if missing.is_empty() { None }
-                    else { Some(("SKILL.md", &*Box::leak(format!("frontmatter 缺字段：{}", missing.join(", ")).into_boxed_str()))) }
+                    else { Some(("SKILL.md".into(), format!("frontmatter 缺字段：{}", missing.join(", ")))) }
                 }
             }
             "prompts" if path.ends_with(".md") => {
-                if content.trim().is_empty() { Some(("body", "正文为空")) } else { None }
+                if content.trim().is_empty() { Some(("body".into(), "正文为空".into())) } else { None }
             }
             "prompts" if path.ends_with("nous.json") => {
                 match serde_json::from_str::<serde_json::Value>(&content) {
-                    Err(_) => Some(("nous.json", "不是合法 JSON")),
+                    Err(_) => Some(("nous.json".into(), "不是合法 JSON".into())),
                     Ok(v) => {
                         let missing: Vec<&str> = ["name", "description", "prompt"]
                             .into_iter().filter(|k| v.get(k).is_none()).collect();
                         if missing.is_empty() { None }
-                        else { Some(("nous.json", &*Box::leak(format!("缺字段：{}", missing.join(", ")).into_boxed_str()))) }
+                        else { Some(("nous.json".into(), format!("缺字段：{}", missing.join(", ")))) }
                     }
                 }
             }
             "presets" if path.ends_with(".json") => {
                 match serde_json::from_str::<serde_json::Value>(&content) {
-                    Err(_) => Some(("spec", "不是合法 JSON")),
+                    Err(_) => Some(("spec".into(), "不是合法 JSON".into())),
                     Ok(v) => {
-                        if v.get("v").is_none() { Some(("spec.v", "缺字段")) }
+                        if v.get("v").is_none() { Some(("spec.v".into(), "缺字段".into())) }
                         else {
                             let allowed = ["v","name","summary","description","category","trigger","params","session","enabled"];
                             let bad: Vec<String> = v.as_object().unwrap().keys()
                                 .filter(|k| !allowed.contains(&k.as_str())).cloned().collect();
                             if bad.is_empty() { None }
-                            else { Some(("spec", &*Box::leak(format!("不认识的键：{}", bad.join(", ")).into_boxed_str()))) }
+                            else { Some(("spec".into(), format!("不认识的键：{}", bad.join(", ")))) }
                         }
                     }
                 }
             }
             "extend" if path.ends_with("nous.json") => {
                 match serde_json::from_str::<serde_json::Value>(&content) {
-                    Err(_) => Some(("nous.json", "不是合法 JSON")),
+                    Err(_) => Some(("nous.json".into(), "不是合法 JSON".into())),
                     Ok(v) => {
                         let declared = v.get("name").and_then(|n| n.as_str()).unwrap_or("");
                         let dir_name = full.parent().and_then(|p| p.file_name())
                             .map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                         if declared != dir_name {
-                            Some(("name", &*Box::leak(format!("name 必须等于目录名 {dir_name}").into_boxed_str())))
+                            Some(("name".into(), format!("name 必须等于目录名 {dir_name}")))
                         } else {
                             let entry = v.get("entry").and_then(|e| e.as_str()).unwrap_or("index.js");
                             if full.parent().unwrap().join(entry).is_file() { None }
-                            else { Some(("entry", &*Box::leak(format!("入口文件不存在：{entry}").into_boxed_str()))) }
+                            else { Some(("entry".into(), format!("入口文件不存在：{entry}"))) }
                         }
                     }
                 }
@@ -131,7 +129,7 @@ fn validate(root: &Path, paths: &[String]) -> Result<()> {
             _ => None,
         };
         if let Some((field, problem)) = issue {
-            return Err(RepoError::BadRequest(format!("内容闸未过：{path} / {field} / {problem}")));
+            return Err(RepoError::Validation { field, problem });
         }
     }
     Ok(())

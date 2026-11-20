@@ -60,6 +60,7 @@ pub struct HistoryDiffQuery {
 fn repo_error(error: RepoError) -> ServerError {
     match error {
         RepoError::BadRequest(m) | RepoError::InvalidPath(m) => ServerError::BadRequest(m),
+        RepoError::Validation { field, problem } => ServerError::Validation { field, problem },
         RepoError::NotFound(m) => ServerError::NotFound(m),
         RepoError::Busy(m) => ServerError::Conflict(m),
         RepoError::Conflict { message, current, etag } => {
