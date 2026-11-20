@@ -803,3 +803,16 @@ lock/unlock 端点。单用户桌面端的替代是**单用户 + 无并发写**�
 **反悔点**：若 `#87` 的实现票证明 `documents` 的 `kind` 无法表达树（引用完整性、循环、
 移动原子性三者有一样落不下去），就按上面第一条的反悔点重开文件形态，并同步改 `wire.md`、
 `docs/plugins.md` 与 `GLOSSARY.md` 的「块」词条。
+
+## 2026-11-20 · #64 purge 不删 record_ids（id 永不复用）
+
+**决定**：`POST /v1/sessions/:id/purge` 的一次事务里删 conversations / entries / tasks /
+submissions / documents / document_revisions 与该会话的 pins / unread 条目；**不删
+`record_ids` 里这些 id 的行**，只写墓碑到 `qrd3wh.sessions`。
+
+**为什么**：`record_ids` 是全库单调 id 的注册表（`storage/commit.rs` 用它拒绝重复铸造），
+删掉这些行会让 `next_id` 下一次铸出同一个 id，撞上其它会话/文档里还活着的旧引用。票面列了
+`record_ids`，但删它会破坏「id 一旦铸出永不复用」的硬规矩；墓碑让派生视图认得这条会话已死。
+
+**反悔点**：若另票引入 id 命名空间（每段 id 带会话前缀，重铸不撞旧引用），可改成连
+`record_ids` 一起删；那时必须同时改 `commit.rs` 的重复检查与本票的 purge 事务。
