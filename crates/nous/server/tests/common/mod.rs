@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use nous_durable::storage::sessions::SessionItem;
+use nous_device::ModelsResponse;
 use nous_server::{Result, ServerError, SessionSource};
 use serde_json::{json, Value};
 
@@ -45,6 +46,10 @@ impl FakeSource {
 }
 
 impl SessionSource for FakeSource {
+    fn with_model_levels(&self, _models: &ModelsResponse) -> Arc<dyn SessionSource> {
+        unreachable!("假源不接编目注入")
+    }
+
     fn sessions(&self) -> Result<Vec<SessionItem>> {
         Ok(self.sessions.clone())
     }
