@@ -52,8 +52,8 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
         .expect("check-plugins.sh 可跑");
     let summary = String::from_utf8_lossy(&checked.stdout);
     assert!(
-        summary.contains("checked=18 mismatched=0"),
-        "清单应为 18 行且 0 处不符：{}",
+        summary.contains("checked=19 mismatched=0"),
+        "清单应为 19 行（含 #75 的 repo）且 0 处不符：{}",
         summary.lines().last().unwrap_or_default()
     );
 
