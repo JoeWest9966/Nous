@@ -89,7 +89,9 @@ fn archive_does_not_ride_on_unrelated_staged_changes() {
     std::fs::write(f.root.join("STAGED.md"), "should not ride\n").unwrap();
     git(&f.root, &["add", "STAGED.md"]);
 
-    let result = repo.archive("unit-a", None).unwrap();
+    let result = repo.archive("unit-a", Some("req-archive")).unwrap();
+    let body = git(&f.root, &["show", "-s", "--pretty=format:%B", &result.commit]);
+    assert!(body.contains("Request-Id: req-archive"), "归档提交要记 requestId：{body}");
     let names = git(&f.root, &["show", "--pretty=format:", "--name-only", &result.commit]);
     let names: Vec<_> = names.lines().filter(|l| !l.is_empty()).collect();
     assert!(!names.iter().any(|p| p.contains("STAGED")), "archive 提交不许搭车：{names:?}");

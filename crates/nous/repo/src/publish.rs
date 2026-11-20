@@ -212,16 +212,20 @@ pub fn history(root: &Path, name: &str, limit: usize) -> Result<Vec<HistoryItem>
     }).collect())
 }
 
-fn commit_and_push(root: &Path, pathspecs: &[&str], message: &str) -> Result<LifecycleResult> {
+fn commit_and_push(root: &Path, pathspecs: &[&str], message: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
     // git mv 已把目标放进 index；commit 仍按 pathspec 约束，避免无关 staged 文件搭车。
-    let mut args = vec!["commit", "-m", message, "--"];
+    let subject = match request_id {
+        Some(id) if !id.is_empty() => format!("{message}\n\nRequest-Id: {id}"),
+        _ => message.to_string(),
+    };
+    let mut args = vec!["commit", "-m", &subject, "--"];
     args.extend_from_slice(pathspecs);
     git::git_ok(root, &args)?;
     let hash = git::git_ok(root, &["rev-parse", "HEAD"])?.trim().to_string();
     Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
 }
 
-pub fn archive(root: &Path, name: &str, _request_id: Option<&str>) -> Result<LifecycleResult> {
+pub fn archive(root: &Path, name: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
     let safe = crate::files::safe_path(root, name)?;
     if !safe.is_dir() || safe == root {
         return Err(RepoError::NotFound(format!("要归档的单元不存在：{name}")));
@@ -233,10 +237,10 @@ pub fn archive(root: &Path, name: &str, _request_id: Option<&str>) -> Result<Lif
     let rel = format!(".archive/{name}");
     git::git_ok(root, &["mv", name, &rel])?;
     let spec = format!(".archive/{name}");
-    commit_and_push(root, &[name, &spec], &format!("archive: {name}"))
+    commit_and_push(root, &[name, &spec], &format!("archive: {name}"), request_id)
 }
 
-pub fn restore(root: &Path, name: &str, _request_id: Option<&str>) -> Result<LifecycleResult> {
+pub fn restore(root: &Path, name: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
     let archived = format!(".archive/{name}");
     if !root.join(&archived).is_dir() {
         return Err(RepoError::NotFound(format!("没有归档单元：{name}")));
@@ -245,16 +249,20 @@ pub fn restore(root: &Path, name: &str, _request_id: Option<&str>) -> Result<Lif
         return Err(RepoError::Conflict { message: format!("目标已存在：{name}"), current: None, etag: None });
     }
     git::git_ok(root, &["mv", &archived, name])?;
-    commit_and_push(root, &[name, &archived], &format!("restore: {name}"))
+    commit_and_push(root, &[name, &archived], &format!("restore: {name}"), request_id)
 }
 
-pub fn purge(root: &Path, name: &str, _request_id: Option<&str>) -> Result<LifecycleResult> {
+pub fn purge(root: &Path, name: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
     let archived = format!(".archive/{name}");
     if !root.join(&archived).is_dir() {
         return Err(RepoError::NotFound(format!("没有归档单元：{name}")));
     }
     git::git_ok(root, &["rm", "-r", "-q", "--", &archived])?;
-    git::git_ok(root, &["commit", "-m", &format!("purge: {name}"), "--", &archived])?;
+    let subject = match request_id {
+        Some(id) if !id.is_empty() => format!("purge: {name}\n\nRequest-Id: {id}"),
+        _ => format!("purge: {name}"),
+    };
+    git::git_ok(root, &["commit", "-m", &subject, "--", &archived])?;
     let hash = git::git_ok(root, &["rev-parse", "HEAD"])?;
     let hash = hash.trim().to_string();
     Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
