@@ -493,13 +493,12 @@ async fn a_provider_with_no_answer_leaves_the_submission_unanswered_not_queued()
     loop {
         let rows = read_rows(&path, "submissions");
         if let Some(record) = rows.iter().find(|row| row["id"] == json!(submission)) {
-            assert_ne!(record["status"], json!("queued"), "受理后不许停在 queued：{record}");
             if record["status"] == json!("unanswered") {
                 assert!(record["reason"].is_string(), "unanswered 必须有 reason：{record}");
                 break;
             }
         }
-        assert!(tokio::time::Instant::now() < deadline, "空 provider 没收敛 submission：{rows:?}");
+        assert!(tokio::time::Instant::now() < deadline, "空 provider 没收敛 submission（仍在 queued 是失败）：{rows:?}");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }

@@ -288,13 +288,6 @@ impl ValueSource for ProcessEnvValues {
     }
 }
 
-/// 真装配的占位 provider：没有凭证时不产生回复。
-/// 注意当前路由层还没有 #44 的 resolve/503 判定，所以这里有回复就等同于「真模型在答」；
-/// 绝不许把它换成返回固定文本的 provider（那会让「没配 key 也能答」变成真的）。
-pub fn unconfigured_provider() -> Arc<dyn nous_ai::Provider> {
-    crate::runtime::offline_provider()
-}
-
 /// 离线/测试用的 provider。生产走 RuntimeConfig::resolve 绑定真实供应商。
 pub fn offline_provider() -> Arc<dyn nous_ai::Provider> {
     nous_ai::providers::faux::FauxProvider::new(nous_ai::providers::faux::FauxScript::new())

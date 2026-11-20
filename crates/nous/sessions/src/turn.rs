@@ -244,6 +244,11 @@ impl TurnDriver for HarnessTurnDriver {
 
         let terminal = if assistant.stop_reason == StopReason::Aborted {
             return Err("aborted turn must be settled through cancel(), not a normal commit".into());
+        } else if assistant.stop_reason == StopReason::Error {
+            return Err(assistant
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "provider returned an error".to_string()));
         } else {
             nous_durable::types::TerminalReason::Done
         };

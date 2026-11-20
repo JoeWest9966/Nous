@@ -599,6 +599,7 @@ async fn messages(
         let submitted = result.clone();
         let driver = runtime.driver.clone();
         let completions = runtime.completions.clone();
+        let commands = state.commands().clone();
         let model = if faux && body.model.is_none() {
             // #51 的 faux 验收模式没有显式指定模型时，仍用固定 echo 模型。
             nous_ai::Model::new(
@@ -623,8 +624,20 @@ async fn messages(
                     attempt: 1,
                 })
                 .await;
-            if let Ok(outcome) = outcome {
-                let _ = completions.send((submitted.submission_id, outcome.entry));
+            match outcome {
+                Ok(outcome) => {
+                    let _ = completions.send((submitted.submission_id, outcome.entry));
+                }
+                Err(error) => {
+                    // #70：失败也必须收敛 submission，不能停在 queued 假装受理。
+                    eprintln!("nous-server: 轮次失败：{error}");
+                    if let Err(fail_error) = commands
+                        .fail_submission(session, submitted.submission_id, "model_error")
+                        .await
+                    {
+                        eprintln!("nous-server: submission 收敛失败：{fail_error}");
+                    }
+                }
             }
         });
     }
