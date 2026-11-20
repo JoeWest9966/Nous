@@ -89,7 +89,7 @@ mod tests {
         let exe = std::env::current_exe().unwrap();
         let out = std::process::Command::new(exe)
             .env(MUX_ENV, "0")
-            .args(["--exact", "mux_disabled_probe", "--nocapture"])
+            .args(["--exact", "mux::tests::mux_disabled_probe", "--nocapture"])
             .output()
             .unwrap();
         let text = String::from_utf8_lossy(&out.stdout);

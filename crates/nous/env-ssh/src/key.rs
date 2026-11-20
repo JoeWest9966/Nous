@@ -18,6 +18,8 @@ pub fn materialize(pem: &str) -> std::io::Result<PathBuf> {
         .prefix("nous-ssh-")
         .tempdir()?;
     let dir = dir.keep(); // 交给 RAII 之外的生命周期：由 cleanup/drop 删除
+    // tempfile 只保证 0700（受 umask 影响可能更松）：私钥目录的 0700 是安全契约，显式钉住。
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
     let file = dir.join("id");
     let mut handle = std::fs::OpenOptions::new()
         .write(true)
