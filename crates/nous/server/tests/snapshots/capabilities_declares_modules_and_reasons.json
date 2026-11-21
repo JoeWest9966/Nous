@@ -2,12 +2,12 @@
   "contract": 1,
   "server": {
     "name": "nous",
-    "version": "0.1.3"
+    "version": "0.1.4"
   },
   "modules": [
     {
       "name": "sessions",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": true,
@@ -36,7 +36,7 @@
     },
     {
       "name": "env",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
@@ -49,7 +49,7 @@
     },
     {
       "name": "repo",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
@@ -90,7 +90,7 @@
     },
     {
       "name": "documents",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": true,
@@ -119,7 +119,7 @@
     },
     {
       "name": "presets",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -144,7 +144,7 @@
     },
     {
       "name": "skills",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "声明式",
       "layer": "app",
       "required": false,
@@ -157,7 +157,7 @@
     },
     {
       "name": "archive",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -172,7 +172,7 @@
     },
     {
       "name": "combos",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -188,7 +188,7 @@
     },
     {
       "name": "triggers",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "运行时外挂",
       "layer": "app",
       "required": false,
@@ -211,7 +211,7 @@
     },
     {
       "name": "stats",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -226,7 +226,7 @@
     },
     {
       "name": "device",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": true,
@@ -246,7 +246,7 @@
     },
     {
       "name": "prompts",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": true,
@@ -259,7 +259,7 @@
     },
     {
       "name": "ext",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
