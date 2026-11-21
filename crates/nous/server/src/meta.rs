@@ -150,6 +150,9 @@ pub struct RegisteredRoute {
 /// documents 一族既在 `documents::DOCUMENT_ROUTES`（泛型 handler 的注册源），也在这里
 /// 逐条登记；`documents_routes.rs` 的判据守住两张表不漂移。
 pub const ROUTES: &[RegisteredRoute] = &[
+    // #61：combos 两条端点（开关是引擎算出来的，Desk 只显示 + 写穿）。
+    RegisteredRoute { method: "GET", path: "/v1/combos/:section", module: "combos" },
+    RegisteredRoute { method: "PATCH", path: "/v1/combos/:section/:name", module: "combos" },
     RegisteredRoute { method: "GET", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/origins", module: "sessions" },
@@ -277,7 +280,8 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("presets", None),
     ("skills", None),
     ("archive", Some(ReasonCode::NotImplemented)),
-    ("combos", Some(ReasonCode::NotImplemented)),
+    // #61：两条 combos 端点已落地，清单打开。
+    ("combos", None),
     ("triggers", None),
     ("stats", None),
     ("device", None),

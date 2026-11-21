@@ -89,11 +89,11 @@
     },
     {
       "name": "combos",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "combos 模块尚未落地"
-      }
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/combos/:section",
+        "PATCH /v1/combos/:section/:name"
+      ]
     },
     {
       "name": "triggers",

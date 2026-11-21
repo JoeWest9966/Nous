@@ -21,7 +21,7 @@ pub enum ServerError {
     /// 状态冲突：会话已关闭、正在跑、没有可中止的任务。**不许降级成 400** ——
     /// 400 是「参数这么写不行」，409 是「现在不行」。
     Conflict(String),
-    /// HTTP 412：If-Match 乐观锁不匹配（#60）。409 是「现在不行」，412 是「你手里的版本过期了」。
+    /// HTTP 412：If-Match 乐观锁不匹配（#60 / #61）。409 是「现在不行」，412 是「你手里的版本过期了」。
     PreconditionFailed(String),
     Internal(String),
 }

@@ -3,9 +3,10 @@
 #
 #   ./scripts/check-desk.sh
 #
-# 断言两件事（缺一不可）：
+# 断言三件事（缺一不可）：
 #   1. GET /v1/capabilities 里 presets.enabled == true 且 reason 消失；
-#   2. PUT 一条模板后 GET /v1/presets/Session-Template 200 且 items 非空。
+#   2. PUT 一条模板后 GET /v1/presets/Session-Template 200 且 items 非空；
+#   3. #61：GET /v1/combos/Session-Template 200。
 #
 # SKIP 不是 PASS：任何一步跑不起来都打印 SKIP 到 stderr 并退出非 0。
 set -uo pipefail
@@ -84,6 +85,12 @@ else
 	printf '  ✗ roster.items 是空的 —— Desk 模板页会白屏\n' >&2
 	FAILED=$((FAILED + 1))
 fi
+
+CODE=$(curl -sS --max-time 5 -o "$TMP/combos.json" -w '%{http_code}' \
+	"http://$ADDR/v1/combos/Session-Template")
+check 'GET /v1/combos/Session-Template' "$CODE" '200'
+COMBOS_OK=$(python3 -c 'import json,sys; print("true" if isinstance(json.load(open(sys.argv[1]))["combos"], list) else "false")' "$TMP/combos.json")
+check 'combos 是数组' "$COMBOS_OK" 'true'
 
 if [ "$FAILED" -ne 0 ]; then
 	printf 'check-desk: 红（%d 条）\n' "$FAILED" >&2
