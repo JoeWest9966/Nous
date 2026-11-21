@@ -14,9 +14,13 @@ nous-tools = ["nous-ai", "nous-env"]
 nous-runtime = ["nous-ai"]
 nous-durable = ["nous-chord", "nous-ai", "nous-wire", "nous-telemetry", "nous-env", "nous-ai-types"]
 
+# #73 dispatcher 用 durable sleeping 任务落 tick、store 读写账本、chord 处理增量。
+nous-dispatcher = ["nous-chord", "nous-durable", "nous-store"]
+
 # nous-server 是组装根：它必须摸到这些层才能把 HTTP 面拼起来。
 # #56/#44/#47/#48/#49/#51 的原始边；#65 device、#71/#83 skills、#78 env-ssh、
-# #75 repo、#81 ext、#62 stats、#60 presets 的边由 #89 按实际代码补齐。
+# #75 repo、#81 ext、#62 stats、#60 presets 的边由 #89 按实际代码补齐；
+# #73 dispatcher 的边由本次合并按实际代码补上。
 nous-server = [
   "nous-durable", "nous-wire", "nous-telemetry",
   "nous-ai", "nous-runtime", "nous-sessions", "nous-tools", "nous-documents",
@@ -33,6 +37,8 @@ nous-server = [
   "nous-repo",
   # #62 只读观测聚合
   "nous-stats",
+  # #73 60s 节拍与 evaluate 在 app 装配处启动
+  "nous-dispatcher",
 ]
 
 # #56 Nous 自己的库，没有内部依赖（尤其没有 nous-durable）—— 多一条边就是判据 1 破。
