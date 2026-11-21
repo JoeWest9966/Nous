@@ -57,6 +57,42 @@
   `definition` 是从库里读回的生效值，不是把请求体原样吐回来。
 - 不存在 / 已墓碑的 `code` → 404；坏 body（未知键、错类型、坏 cron、空对象、改 `code`）→ 400。
 
+### 触发器管理面（#80：trigger-catalog）
+
+`PATCH /v1/triggers/{code}` 见上（#73，本票不重做）。#80 补新建 / 整份改定义 / 归档 / 捞回 / 真删 / 类别。
+实现仍在 `nous-server` 的 `triggers` 面，定义与账仍只在 `nous-store` 的 `triggers` / `fires` 两张表；
+不新增 crates、不新增数据目录、不另开写通道。
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `POST /v1/triggers` | 新建。201 回 `{code, name, category, spec, version, enabled, definition}`。 |
+| `PUT /v1/triggers/{code}` | 整份改定义：稀疏覆盖 `schedule` / `on` / `params` / `session` / `enabled`。 |
+| `POST /v1/triggers/{code}/archive` | 归档墓碑；账不动。回 `{code, archivedAt}`。 |
+| `POST /v1/triggers/{code}/restore` | 抹掉归档墓碑；回 `{code, restoredAt}`。 |
+| `POST /v1/triggers/{code}/purge` | 真删：先归档才能 purge。回 `{code, purgedAt, fires}`（`fires` 是删掉的账行数）。 |
+| `GET /v1/triggers/categories` | 类别词表：`{categories: [...]}`（词表 ∪ 在用的，排序）。 |
+| `POST /v1/triggers/category` | body `{code, category}`；`null` 清除。回 `{code, category}`。 |
+
+- `code` 必须匹配 `^[a-z][a-z0-9_]{2,63}$`，且创建后不可变。**写死**：改端点（PUT）
+  body 里出现 `code` 键一律 **400**（不是忽略）—— 静默忽略会让人以为改名成功。
+  POST 用 body 的 `code` 建、路径不带 `code`；重名 / 墓碑占用的 `code` 回 409。
+- `schedule` 是五段 cron（`分 时 日 月 周`，数字或 `*` / `*/n`）或 `null`。`on` 是 `null`
+  或 `kind` / `kind:ref` 形式的 slug（`kind ∈ cron|clock|event|agent|human|ext`）。
+  **发布闸**：两者在写入时校验，坏定义 → 400 且库里一行都不写（负向哨兵见票面判据 4）。
+- `params` 是字符串 / 数字 / 布尔组成的对象；`session`（整数字节 id 或 `null`）是落点简写，
+  `null` = 新会话；也接受显式 `target: {kind:"new"|"conversation", id?}`。两者同时出现 → 400。
+- PUT 是**逐键覆盖**：出现的键才改，未出现的键不动；显式 `null` 能清掉 `schedule` / `on` /
+  `session`。`version` 是 ETag：出现必须与当前一致（不一致 412），每次有效写入 +1。
+  改定义 / 归档 / 捞回 / 真删都由 `version` 守着；归档与捞回不改 `version`（ETag 只描述定义）。
+- `GET /v1/triggers` 的 `triggers[]` **不含**已归档 / 已真删的触发器，但 `fires` 账仍在；
+  每条多一个 `category`（字符串或 `null`）。archive → restore → 原样回来。
+- **purge 的账怎么处理（拍板）**：真删该 `code` 的**全部 `fires` 行**（账随触发器一起销毁，
+  不留在孤儿表里），触发器行留墓碑并带 `purgedAt`，`code` 永不复用；对已真删的行再 purge → 409。
+  未归档先 purge → 409（与会话归档同规矩）。这与会话「撕原件」不同：会话的 gen 复印件是
+  独立文件，触发器的定义只有 `triggers` 一行，留行只为占住 `code`。
+- 类别词表是字符串数组，**没有 id**。`POST category` 给一个触发器挂单值类别；类别不在词表里
+  时自动登记（与 skills 的「词表 ∪ 在用」同规矩），`null` 只清该行的挂值、不删词表条目。
+
 ### GET /v1/sessions
 
 会话**树**（不是列表）。返回 `{ items: [...] }`，**新的在前**。

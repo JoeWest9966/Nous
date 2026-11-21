@@ -47,12 +47,12 @@ fn a_fresh_file_lands_on_current_version_with_exactly_the_plugin_tables() {
     let dir = temp();
     let store = Store::open(nous_db(&dir)).expect("open");
 
-    assert_eq!(CURRENT_VERSION, 3, "#73 加了 triggers.version 与 PATCH 回执：第三版");
+    assert_eq!(CURRENT_VERSION, 4, "#80 加了 triggers 归档/类别列与词表：第四版");
     assert_eq!(store.schema_version().expect("schema_version"), CURRENT_VERSION);
     // 每张表都在册。多一张就是有人偷偷加了列/表而没走迁移。
     assert_eq!(tables(&store), vec![
         "fires", "preset_write_receipts", "presets_revisions", "schema_version",
-        "trigger_patch_receipts", "triggers",
+        "trigger_categories", "trigger_patch_receipts", "triggers",
     ]);
 }
 

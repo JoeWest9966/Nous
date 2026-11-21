@@ -302,3 +302,11 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 才是描述列；集成前两格恰好相同，所以空转地绿。
 **解**：改清单表格时若撞上这条红，先逐列打印 `cells[i]` 与 entry 字段确认索引；
 保持 `cells[8]` 与 `MANIFEST.description` 逐字相同，#77 的上游追踪说明放 `cells[6]`。
+## 2026-11-22 · 发布闸有两层，负向哨兵只拆 HTTP 那层不会红
+
+**症状**：#80 做「坏 schedule → 400」的哨兵时，把 HTTP 层的 `validate_rules` 拆掉，
+判据仍然绿 —— 坏定义在 `Trigger::new` 里又被 `parse_five_field_cron` 拒了一次。
+**根因**：闸被写了两遍（HTTP 翻译层 + 定义层 conformance），只拆外层时内层还在守门，
+判据测的是「有没有被拒」，不是「哪一层拒的」。
+**解**：哨兵要拆到**唯一真正的写入闸**（这里是 `Trigger::new` 的 cron 校验）；两层都保留，
+外层给好人话 400、内层是 conformance 的物理保证。判据注释里写清哨兵该拆哪一层。

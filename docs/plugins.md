@@ -69,7 +69,7 @@
 | `trigger-spec` | nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
 | `presets-admin` | nous | (待建) `nous-presets-admin` | app | 声明式 + 管理 API | 模板管理 | 否 | 今天 `presets-api.js` 947 + `presets.js` 750 |
-| `trigger-catalog` | nous | — | app | 运行时外挂 | 触发器清单（列/改/发布） | 否 | 今天 `n8qkkj` 块 |
+| `trigger-catalog` | nous | — | app | 运行时外挂 | 触发器清单（列/改/发布）：`POST /v1/triggers`、`PUT /v1/triggers/{code}`（#80：schedule/on/params/session/enabled 整份改）、`POST /v1/triggers/{code}/{archive,restore,purge}`（墓碑语义）、`GET /v1/triggers/categories` + `POST /v1/triggers/category`（类别词表），写入闸校验 cron 与 on | 否 | 今天 `n8qkkj` 块；实现落 `crates/nous/server/src/triggers*`，与 #73 的 PATCH 同一处 |
 
 ## 待判（还没归位，归位前不许进仓）
 

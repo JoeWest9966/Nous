@@ -230,11 +230,20 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
     RegisteredRoute { method: "GET", path: "/v1/triggers", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/triggers", module: "triggers" },
+    // #80：trigger-catalog 管理面（新建 / 整份改 / 归档 / 捞回 / 真删 / 词表）。
+    RegisteredRoute { method: "GET", path: "/v1/triggers/categories", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/triggers/category", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/archive", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/restore", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/purge", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/fire", module: "triggers" },
     // #58：观测读口 —— 每个触发器自己的账，可读（时间倒序）。
     RegisteredRoute { method: "GET", path: "/v1/triggers/{code}/fires", module: "triggers" },
     // #73：PATCH /v1/triggers/{code} —— 改 schedule/params/enabled，code 不可变。
     RegisteredRoute { method: "PATCH", path: "/v1/triggers/{code}", module: "triggers" },
+    // #80：PUT /v1/triggers/{code} —— 整份改定义（schedule/on/params/session/enabled）。
+    RegisteredRoute { method: "PUT", path: "/v1/triggers/{code}", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
     // #62：stats 三条只读观测端点。
     RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
