@@ -381,6 +381,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
         })
     }
@@ -422,6 +423,7 @@ impl AppState {
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(), variant_tables: tables,
             presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(), combos: self.combos.clone(),
+            ext_admin: self.ext_admin.clone(),
         })
     }
 
@@ -543,7 +545,9 @@ impl AppState {
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
-            repos: self.repos.clone(), presets: self.presets.clone(), stats: self.stats.clone(),
+            repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
+            presets: self.presets.clone(), stats: self.stats.clone(),
             ext: self.ext.clone(), ext_admin: Some(nous_ext::AdminStore::new(root, trash)),
             combos: self.combos.clone(),
         })
