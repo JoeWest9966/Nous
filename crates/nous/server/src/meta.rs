@@ -157,6 +157,16 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
     // #68：只读目录浏览（env 插件）。
     RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/status", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending/diff", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending/commit", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history/diff", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/commit", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/archive", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/restore", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/purge", module: "repo" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "device" },
@@ -328,6 +338,8 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "sessions", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-sessions`", description: "**pi 本体**（#44 落地），承载最小轮次与取消收敛" },
     // #68：env 的本地目录浏览已落地，SSH 远端另票。
     ManifestEntry { name: "env", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-env`", description: "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`" },
+    // #75：四套私库共用的 git 发布 / 归档 / pending / diff / history。
+    ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history；唯一的 git 进程调用面" },
     // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
     ManifestEntry { name: "documents", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-documents`", description: "#48：一个实现生成 presets / prompts 两套端点" },
     // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。

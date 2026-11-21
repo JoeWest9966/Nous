@@ -563,6 +563,25 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
   不编造地址。旧字段（`hostname` / `os` / `arch` / `triples` / `rustc` / `roles` /
   `annotations` / `items`）保留一版，客户端按任一套都能读到。
 
+## 私库读写与发布（#75）
+
+四套私库（`:repo` ∈ `presets | skills | prompts | extend`）共用一套端点；文件 CRUD
+在 `nous-repo` 的公共 API，HTTP 只暴露发布与读视图。字段形状以
+`crates/nous/server/tests/repos_endpoints.rs` 为准（本文件只索引端点与约束）。
+
+- `GET /v1/repos/:repo/status` → `{root, head, branch, ahead, behind, dirty, locked}`。
+- `GET /v1/repos/:repo/pending` → `{units:[{name, state, aheadCommits, paths[]}]}`，按目录单元分组。
+- `GET /v1/repos/:repo/pending/diff?path=` / `history/diff?name=&hash=&path=` → `{before, after}`（全文，不是 git patch）。
+- `GET /v1/repos/:repo/pending/commit?hash=` → `{hash, message, files[]}`。
+- `POST /v1/repos/:repo/commit` `{paths[], message, requestId}` → `{commit, pushed, refs}`。
+  `pushed` 三态 `true | false | null`，推送失败不能报 true；pathspec 防搭车。
+- `GET /v1/repos/:repo/history?name=&limit=` → `{items:[{hash, at, actor, message}]}`，是私库 git 历史，
+  与 `#60` 的引擎内 `revisions` 不同，不许混。
+- `POST /v1/repos/:repo/{archive,restore,purge}` `{name, requestId}` → `{commit, pushed}`。
+
+- `:repo` 不在四值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
+  且 `{field, problem}`，不 commit 不 push。推送失败不改盘上文件。
+
 ### GET /v1/fs/dirs?path=&machine=&hidden=
 
 `{ path, dirs: [{ name, path, hidden }], truncated }`。**列的是引擎那台机器上的目录。**

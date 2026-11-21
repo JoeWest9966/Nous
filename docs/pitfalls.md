@@ -217,3 +217,13 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
 **推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
 再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
+
+## 2026-11-20 · 判据 3 的 `../../` 打不中 realpath 检查
+
+**症状**：把 `files.rs` 里两处 `resolved.starts_with(&real_root)` 改成 `if false && …`，
+`path_escape_is_rejected_without_creating_any_file` 照样绿——负向哨兵没变红，判据在空转。
+**根因**：`../../etc/passwd` 被 `Component::ParentDir` 词法检查挡在 realpath 之前；真正需要
+realpath 的是「路径片段全合法、但目录是仓内指向仓外的符号链接」。
+**解**：补 `symlink_escape_is_rejected_by_realpath_check`（仓内 `link` → 仓外，写 `link/escaped.txt`），
+关掉 realpath 检查时它在 `仓外不许出现文件` 断言红；同一招也用于 `git add .` 哨兵
+（加 `git diff --cached --name-only` 空断言，`commit -- pathspec` 挡不住误 staged 的搭车文件）。

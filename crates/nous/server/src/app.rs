@@ -37,6 +37,8 @@ pub struct AppState {
     origin: String,
     /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
     triggers: Option<crate::triggers::TriggerRuntime>,
+    /// #75：四套私库（presets / skills / prompts / extend）的读写与发布面。
+    repos: std::collections::BTreeMap<String, std::sync::Arc<nous_repo::Repo>>,
     /// #60：模板私库 + 修订表的写者（整段串行锁）。按 env 的路径解析，进程内不留 map。
     presets: Option<crate::presets::SharedStore>,
     /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
@@ -67,6 +69,7 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            repos: crate::repos::from_env(),
             presets: None,
             stats: None,
         })
@@ -88,6 +91,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
             presets: Some(store),
             stats: self.stats.clone(),
         })
@@ -132,6 +136,7 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            repos: crate::repos::from_env(),
             presets: None,
             stats: None,
         });
@@ -181,6 +186,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
@@ -228,6 +234,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
@@ -262,6 +269,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin,
             triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
@@ -309,6 +317,26 @@ impl AppState {
         self.documents.clone()
     }
 
+    /// #75：按私库名取 repository（未装配返回 None，由路由报 400/500）。
+    pub fn repo(&self, kind: &str) -> Option<std::sync::Arc<nous_repo::Repo>> {
+        self.repos.get(kind).cloned()
+    }
+
+    /// #75：测试注入指定私库根（只用于进程内 Router 测试）。
+    pub fn with_repos_for_test(self: Arc<Self>, kind: &str, root: impl AsRef<std::path::Path>) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(), commands: self.commands.clone(), hub: self.hub.clone(),
+            models: self.models.clone(), catalog_env: self.catalog_env.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            repos: crate::repos::from_path(kind, root.as_ref()),
+            presets: self.presets.clone(),
+            stats: self.stats.clone(),
+        })
+    }
+
     /// #57 的点火装配（只有 main 注入一次）。
     pub fn with_triggers(self: Arc<Self>, triggers: crate::triggers::TriggerRuntime) -> Arc<Self> {
         Arc::new(Self {
@@ -323,6 +351,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: Some(triggers),
+            repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
         })
@@ -354,6 +383,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: Some(runtime),
         })
@@ -377,6 +407,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
         })

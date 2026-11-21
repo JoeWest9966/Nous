@@ -90,7 +90,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/stats/tasks", get(crate::stats::tasks))
         .route("/v1/stats/db", get(crate::stats::db))
         .route("/v1/openapi.json", get(crate::stats::openapi));
+    // #75：repo 路由与 documents 路由都在同一份 state 上；documents::attach 统一应用 state。
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
+    // #75：repo 路由先挂在带 state 的 Router 上（与 #48 documents 同一份 state）。
+    let router = crate::repos::attach(router);
     let router = crate::documents::attach(state.clone(), router);
     // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
     match state.presets() {

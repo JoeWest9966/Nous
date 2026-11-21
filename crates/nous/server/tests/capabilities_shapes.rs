@@ -411,7 +411,7 @@ async fn capabilities_declares_modules_and_reasons() {
 
     let modules = body["modules"].as_array().unwrap();
     // #88：每个 module（含未启用的）都带六列，且 enum 闭集。
-    assert_eq!(modules.len(), 12, "capabilities 必须吐出全部 12 个 module");
+    assert_eq!(modules.len(), 13, "capabilities 必须吐出全部 13 个 module");
     for module in modules {
         let name = module["name"].as_str().unwrap();
         let where_ = format!("capabilities.modules[{name}]");
@@ -446,6 +446,7 @@ async fn capabilities_declares_modules_and_reasons() {
     for name in [
         "sessions",
         "env",
+        "repo",
         "documents",
         "presets",
         "archive",
