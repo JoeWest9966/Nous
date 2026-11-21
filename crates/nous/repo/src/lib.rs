@@ -9,11 +9,15 @@ mod error;
 mod files;
 mod git;
 mod publish;
+mod variants;
 mod views;
 
 pub use error::{RepoError, Result};
 pub use files::{WriteFile, WrittenFile};
 pub use publish::{CommitDetail, CommitResult, CommitFile, LifecycleResult, Pushed};
+pub use variants::{
+    variants, BindVariant, BoundVariant, PruneVariant, PrunedVariant, PublishedVariant, VariantFamily,
+};
 pub use views::{Diff, PendingUnit, RepoStatus};
 
 use std::collections::HashMap;
@@ -127,5 +131,66 @@ impl Repo {
     /// 异步写者共用的锁 future：同一仓排队，不等价于返回 429（票面允许排队）。
     pub fn write_permit(&self) -> Arc<Mutex<()>> {
         self.write_lock.clone()
+    }
+
+    // ── #76：变体（worktree + 分支 + 绑定表） ──────────────────────────────
+    // 绑定表路径由调用方（server）按私库种类注入，repo 不猜数据目录。
+
+    pub fn variants(&self, table_path: &std::path::Path) -> Result<serde_json::Value> {
+        variants::variants(table_path)
+    }
+
+    pub fn bind(
+        &self,
+        family: VariantFamily,
+        table_path: &std::path::Path,
+        input: BindVariant<'_>,
+    ) -> Result<BoundVariant> {
+        let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
+        variants::bind(&self.root, table_path, family, input)
+    }
+
+    pub fn unbind(
+        &self,
+        family: VariantFamily,
+        table_path: &std::path::Path,
+        id: &str,
+    ) -> Result<()> {
+        let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
+        variants::unbind(&self.root, table_path, family, id)
+    }
+
+    pub fn switch_branch(
+        &self,
+        family: VariantFamily,
+        table_path: &std::path::Path,
+        id: &str,
+        branch: &str,
+    ) -> Result<String> {
+        let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
+        variants::switch_branch(&self.root, table_path, family, id, branch)
+    }
+
+    pub fn publish(
+        &self,
+        family: VariantFamily,
+        table_path: &std::path::Path,
+        id: &str,
+        message: &str,
+        request_id: Option<&str>,
+    ) -> Result<PublishedVariant> {
+        let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
+        variants::publish(&self.root, table_path, family, id, message, request_id)
+    }
+
+    pub fn prune(
+        &self,
+        family: VariantFamily,
+        table_path: &std::path::Path,
+        id: &str,
+        opts: PruneVariant,
+    ) -> Result<PrunedVariant> {
+        let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
+        variants::prune(&self.root, table_path, family, id, opts)
     }
 }

@@ -649,6 +649,25 @@ history / diff / validate / pending）语义不变。一个 `section` = 一个�
   与 `#60` 的引擎内 `revisions` 不同，不许混。
 - `POST /v1/repos/:repo/{archive,restore,purge}` `{name, requestId}` → `{commit, pushed}`。
 
+#### 变体（#76，只给 `skills` / `extend`）
+
+绑定表是数据文件 `data/skills.local.json` / `data/extensions.local.json`：
+`{v:1, variants:{family:{id:{root,branch}}}}`，本地状态，不进私库发布。变体是仓库自己的
+worktree + 分支：主干（main/master/HEAD）永远不许变。
+
+- `GET /v1/repos/:repo/variants` → `{v, variants}` 原样回绑定表（缺文件回 `{v:1, variants:{}}`）。
+- `POST /v1/repos/:repo/variants/bind` `{id, paths?}` → `{id, root, branch}`。分支存在就 checkout，
+  不存在就 `-b`；未提交的改动从工作区拷到 worktree 并在变体分支提交。
+- `POST /v1/repos/:repo/variants/unbind` `{id}` → `{id, removed:true}`；只解绑定，树还在。
+- `POST /v1/repos/:repo/variants/branch` `{id, branch}` → `{id, branch, root}`；
+  `main` / `master` / `HEAD` → 400。
+- `POST /v1/repos/:repo/variants/publish` `{id, message, requestId?}` → `{commit, pushed, branch}`；
+  只 commit/push 变体分支，主干不动。
+- `POST /v1/repos/:repo/variants/prune` `{id, force?}` → `{unmerged, remoteBranch, removed:true}`；
+  未合并且不带 `force:true` → 409，确认后删 worktree + 本地分支 + 远端分支。
+- `GET /v1/repos/:repo/variants/usage?id=` → `[会话 id...]`：扫会话 `skills` / `extensions` 字段
+  反查谁在用这个变体；没人用回空数组，不 404。
+
 - `:repo` 不在四值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
   且 `{field, problem}`，不 commit 不 push。推送失败不改盘上文件。
 

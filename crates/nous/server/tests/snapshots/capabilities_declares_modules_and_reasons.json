@@ -54,7 +54,7 @@
       "layer": "platform",
       "required": true,
       "crate": "`nous-repo`",
-      "description": "四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history；唯一的 git 进程调用面",
+      "description": "唯一的 git 进程调用面；四条私库路径解析沿用 `env`",
       "enabled": true,
       "endpoints": [
         "GET /v1/repos/:repo/status",
@@ -66,7 +66,14 @@
         "POST /v1/repos/:repo/commit",
         "POST /v1/repos/:repo/archive",
         "POST /v1/repos/:repo/restore",
-        "POST /v1/repos/:repo/purge"
+        "POST /v1/repos/:repo/purge",
+        "GET /v1/repos/:repo/variants",
+        "POST /v1/repos/:repo/variants/bind",
+        "POST /v1/repos/:repo/variants/unbind",
+        "POST /v1/repos/:repo/variants/branch",
+        "POST /v1/repos/:repo/variants/publish",
+        "POST /v1/repos/:repo/variants/prune",
+        "GET /v1/repos/:repo/variants/usage"
       ]
     },
     {

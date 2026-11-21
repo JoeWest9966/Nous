@@ -245,3 +245,10 @@ driver 共用同一个 `Session`，再断言 provider 见过取消信号；负�
 **根因**：两张票分头落，墓碑是同一份 `qrd3wh.sessions` 文档的两个键，没有单一真相。
 **解**：#67 收口为唯一形状 `archived[id]={at,gen,purged}`；archive 写 `purged:false`、
 purge 只翻这一位且必须先有墓碑、restore 抹掉整个键；wire.md 同步改口径。
+## 2026-11-20 · 变体分支没有 upstream，裸 `git push` 报假失败
+
+**症状**：`publish` 在变体 worktree 里 commit 成功，但 `pushed=false`，远端根本没有变体分支。
+**根因**：`git push --porcelain` 在 `push.default=simple` 下要求当前分支有 upstream；
+worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
+**解**：显式 `git push origin HEAD:refs/heads/<branch>`；没有远端才回 `Unknown`（wire null），
+推送失败仍回 `false`，绝不冒成功。哨兵：把 refspec 改成 `main` → 判据 2 的远端主干不变断言红。
