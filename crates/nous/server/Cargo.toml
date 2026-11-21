@@ -29,6 +29,7 @@ nous-prompts = { workspace = true }
 nous-skills = { workspace = true }
 nous-env-ssh = { workspace = true }
 nous-documents = { workspace = true }
+nous-ext = { workspace = true }
 nous-sessions = { workspace = true }
 nous-stats = { workspace = true }
 nous-runtime = { workspace = true }
@@ -51,6 +52,7 @@ rusqlite = { workspace = true }
 # 端点判据直接打 Router（`ServiceExt::oneshot`），不起真监听端口 —— 不绑 127.0.0.1，
 # 也就没有端口冲突和防火墙那类假红。`tower` 只进测试。
 [dev-dependencies]
+libc = "0.2"
 nous-device = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 # 判据 `refusal_schema_too_new`：把库的版本推到「代码看不懂」那一版（真 SQL，不调我们的迁移）。

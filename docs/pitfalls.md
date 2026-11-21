@@ -218,6 +218,23 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 **推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
 再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
 
+## 2026-11-21 · 冻结的解法不是空数组，是把运行时的脸露出来
+
+**症状**：`GET /v1/extensions` 恒 `{items:[]}`，`capabilities.ext` 写着 frozen，
+可 `ext/src/spawn.rs` 里 `Command::new` 早在、六个样例扩展也都在仓里 —— 客户端显示「没有扩展」。
+**根因**：声明关着、代码开着，观测面没有读运行时的事实，两张真相分叉。
+**解**：清单改回 enabled；`items` 直接由 Runtime 的清单/进程/状态机投影，失败项也留一行带 error；
+reload 走同一个实例的唯一入口。别在 server 里再存一张注册表。
+
+## 2026-11-21 · 命中行里出现字符串不等于打中了执行路径
+
+**症状**：`if false && libc::prctl(libc::PR_SET_PDEATHSIG, …)` 让父死收割彻底失效，
+只查 `source.contains("PR_SET_PDEATHSIG")` 的静态判据照样绿——哨兵在空转。
+**根因**：字符串命中不区分注释、短路和被包在 `cfg!` 里的死分支；进程级测试又被
+管道 EOF / `Runtime::drop` 两级兜底盖住，单独关掉第三级也看不出差别。
+**解**：静态判据只读含 prctl 的那一行，要求它恰是 `if libc::prctl(...) != 0` 的真执行条件；
+负向哨兵用 `false &&` 短路验红。进程级判据保留，作为另两级的正交覆盖。
+
 ## 2026-11-20 · 判据 3 的 `../../` 打不中 realpath 检查
 
 **症状**：把 `files.rs` 里两处 `resolved.starts_with(&real_root)` 改成 `if false && …`，

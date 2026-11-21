@@ -86,6 +86,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
+        .route("/v1/extensions/reload", post(reload_extensions))
         .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
@@ -457,7 +458,18 @@ async fn extensions(
     if query.requested() {
         return Ok(Json(state.source().usage("extensions")?));
     }
-    Ok(Json(crate::meta::extensions()))
+    let items = state.ext().map(|runtime| runtime.items());
+    Ok(Json(crate::meta::extensions(items.as_deref())))
+}
+
+/// `POST /v1/extensions/reload`：按盘上现状重装所有已装载扩展（#81）。
+/// 返回 `{ reloaded: [name...] }`；失败的保留旧进程，错误进扩展自己的诊断。
+async fn reload_extensions(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let runtime = state.ext().ok_or_else(|| {
+        crate::error::ServerError::Conflict("extensions runtime not configured".to_string())
+    })?;
+    let reloaded = runtime.reload_all();
+    Ok(Json(json!({ "reloaded": reloaded })))
 }
 
 /// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。

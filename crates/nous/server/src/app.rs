@@ -45,6 +45,8 @@ pub struct AppState {
     presets: Option<crate::presets::SharedStore>,
     /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
     stats: Option<crate::stats::StatsRuntime>,
+    /// #81：扩展运行时。只有一个入口可 spawn 扩展子进程，装配一次后由端点读观测。
+    ext: Option<Arc<nous_ext::Runtime>>,
     /// #61：组合名册的盘面根 + 触发器名册根。未装配的测试路由回 409（不是空 200）。
     combos: Option<crate::combos::ComboStore>,
 }
@@ -77,6 +79,7 @@ impl AppState {
             variant_tables: crate::repos::variant_tables_from_env(),
             presets: None,
             stats: None,
+            ext: None,
             combos: None,
         })
     }
@@ -97,6 +100,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            ext: self.ext.clone(),
             repos: self.repos.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: Some(store),
@@ -148,6 +152,7 @@ impl AppState {
             variant_tables: crate::repos::variant_tables_from_env(),
             presets: None,
             stats: None,
+            ext: None,
             combos: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
@@ -196,6 +201,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            ext: self.ext.clone(),
             repos: self.repos.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
@@ -246,6 +252,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            ext: self.ext.clone(),
             repos: self.repos.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
@@ -283,6 +290,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin,
             triggers: self.triggers.clone(),
+            ext: self.ext.clone(),
             repos: self.repos.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
@@ -351,6 +359,7 @@ impl AppState {
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            ext: self.ext.clone(),
             combos: self.combos.clone(),
         })
     }
@@ -371,7 +380,7 @@ impl AppState {
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), variant_tables: tables,
-            presets: self.presets.clone(), stats: self.stats.clone(), combos: self.combos.clone(),
+            presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(), combos: self.combos.clone(),
         })
     }
 
@@ -398,6 +407,7 @@ impl AppState {
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            ext: self.ext.clone(),
             combos: self.combos.clone(),
         })
     }
@@ -430,6 +440,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: Some(crate::combos::ComboStore::new(root, triggers)),
+            ext: self.ext.clone(),
         })
     }
 
@@ -439,6 +450,37 @@ impl AppState {
 
     pub fn stats(&self) -> Option<&crate::stats::StatsRuntime> {
         self.stats.as_ref()
+    }
+
+    /// #81：把扩展运行时接到端点层（生产入口只调一次）。
+    pub fn with_ext(self: Arc<Self>, runtime: Arc<nous_ext::Runtime>) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            refreshed: std::sync::Mutex::new(
+                self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            presets: self.presets.clone(),
+            stats: self.stats.clone(),
+            repos: self.repos.clone(),
+            variant_tables: self.variant_tables.clone(),
+            ext: Some(runtime),
+            combos: self.combos.clone(),
+        })
+    }
+
+    pub fn ext(&self) -> Option<&Arc<nous_ext::Runtime>> {
+        self.ext.as_ref()
     }
 
     /// 装上 stats 的只读句柄（生产装配只调一次；测试用它打真 Router）。
@@ -459,6 +501,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            ext: self.ext.clone(),
             repos: self.repos.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
@@ -489,6 +532,7 @@ impl AppState {
             )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            ext: self.ext.clone(),
             repos: self.repos.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),

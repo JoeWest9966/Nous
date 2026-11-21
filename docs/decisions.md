@@ -841,3 +841,22 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **为什么**：TS 时代就是这个形状与位置；绑定是本地状态，不应进私库发布，也不该散在 `~` 里。
 **反悔点**：若要把本地状态集中进 `/var/lib/nous/`，改 `repos::variant_tables_from_env` 一处即可；
 现有表的 `root` 是绝对路径，搬家后要么迁移路径、要么重绑。
+
+## 2026-11-21 · ext 运行时解冻：观测走运行时自己，不另造注册中心（#81）
+
+**决定**：`GET /v1/extensions` 的清单直接投影 `nous_ext::Runtime` 持有的事实（清单、
+进程 pid、状态机、错误），失败项也留一行；`POST /v1/extensions/reload` 打同一个实例的
+`reload_all()`（扩展级 `reload` 的唯一入口）。server 只装配一次并读观测，不维护第二张表。
+装配入口在 `main.rs`：源码根走 `nous_env::EXTEND`（#63 的四根之一），产物固定在根下
+`artifacts/`，句柄只给 skills / prompts 的值（扩展拿到的是代读后的内容，不是路径）。
+
+**为什么**：清单里的 `ext` 曾经 `frozen` 而代码完整在 —— 能力被藏起来不是没做。
+再起一张 "extensions registry" 会跟运行时的状态机分叉（谁先看到崩溃、谁记 pid），
+而且客户端会拿两张真相吵起来。`ext-probe` 的沙盒已经是同一形状（exts/ + artifacts/ +
+句柄目录），照它装配比新发明一个数据目录安全。父进程退出兜底用 `PR_SET_PDEATHSIG`
+（pre_exec 里装，另看一眼 ppid 关掉 spawn 竞态），与 kill/Drop 构成三级。
+
+**反悔点**：若 #84 的管理面需要「装了但没启用 / 被禁用」这种配置态，不要往这个清单里塞
+第二份状态：给 `Runtime` 加配置态并让 `state` 成为它的投影，先改 wire.md 再改代码。
+若产物不放在源码根下（例如统一发行到 `/opt/nous-ext/`），只改 `assemble_extensions`
+的 `artifacts_dir` 推导，不动清单形状。

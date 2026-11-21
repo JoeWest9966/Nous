@@ -120,9 +120,9 @@ pub fn presets_root() -> std::path::PathBuf {
     PRESETS.resolve()
 }
 
-/// `GET /v1/extensions`：扩展运行时冻结，清单为空。
-pub fn extensions() -> Value {
-    json!({ "items": [] })
+/// `GET /v1/extensions`：#81 真清单投影。没装配运行时就诚实回空数组。
+pub fn extensions(items: Option<&[Value]>) -> Value {
+    json!({ "items": items.unwrap_or(&[]) })
 }
 
 /// `GET /v1/triggers` 的投影（真行由路由从 store 读；无装配时回空表）。
@@ -203,6 +203,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
+    // #81：热重载按盘上现状重装（不是原地假装修）。
+    RegisteredRoute { method: "POST", path: "/v1/extensions/reload", module: "ext" },
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
     RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
@@ -256,7 +258,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
 ///
 /// `modules` 覆盖全部清单行（含未实现的，便于 desk 调试），`routes` 只列清单开着且
 /// 代码注册了的端点——和 enabled 模块的 `endpoints` 多重集相等（不声明不存在的端点，
-/// 冻结的 `ext` 物理路由仍在但不声明；`GET /v1/extensions` 照旧 200 空清单）。
+/// 未装配运行时的 `ext` 端点仍回 200 空清单，但真路径永远来自同一张表）。
 pub fn routes_view() -> Value {
     json!({
         "routes": enabled_routes()
@@ -373,7 +375,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "stats", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-stats`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
     ManifestEntry { name: "device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "今天 `prompts/index.js`" },
-    ManifestEntry { name: "ext", reason: Some(ReasonCode::Frozen), layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37）；`ext-host` 行是它后续的重划" },
+    ManifestEntry { name: "ext", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载）；`ext-host` 行是它后续的重划" },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

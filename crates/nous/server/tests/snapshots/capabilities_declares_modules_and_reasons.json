@@ -242,12 +242,12 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-ext`",
-      "description": "已落地（#17–#37）；`ext-host` 行是它后续的重划",
-      "enabled": false,
-      "reason": {
-        "code": "frozen",
-        "message": "扩展运行时已冻结，这里只返回空清单"
-      }
+      "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载）；`ext-host` 行是它后续的重划",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/extensions",
+        "POST /v1/extensions/reload"
+      ]
     }
   ],
   "runtime": {

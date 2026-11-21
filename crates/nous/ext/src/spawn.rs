@@ -101,6 +101,7 @@ impl ProcExt {
 
         let isolation = spec.isolation.clone();
         let uid = spec.uid;
+        let parent_pid = std::process::id() as libc::pid_t;
         unsafe {
             command.pre_exec(move || {
                 // 3 = 读管道，4 = 写管道。
@@ -110,6 +111,19 @@ impl ProcExt {
                 // dup 出来的 fd 不许带 CLOEXEC，否则 exec 之后管道就没了。
                 libc::fcntl(3, libc::F_SETFD, 0);
                 libc::fcntl(4, libc::F_SETFD, 0);
+                // 三级兜底之三：父进程死了，内核给子进程发 SIGTERM。
+                // 另两级是：ProcExt::kill（熔断/卸载）与 Drop（运行时卸载）。
+                // 竞态：spawn 到 pre_exec 之间父进程可能已经死了 —— 看一眼 ppid，
+                // 变了就自己退，别等一个永远不会来的信号。
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != parent_pid {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "parent exited during spawn",
+                    ));
+                }
                 if let Some(uid) = uid {
                     // 隔离只有三种可验证的形式：uid / fd 表 / errno（spec 7.1）。
                     if libc::setgroups(0, std::ptr::null()) != 0 {
