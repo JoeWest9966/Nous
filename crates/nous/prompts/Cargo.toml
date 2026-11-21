@@ -1,0 +1,14 @@
+[package]
+name = "nous-prompts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "提示词目录只读扫描与纯 render()（#72）"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

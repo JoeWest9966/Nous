@@ -33,6 +33,7 @@
 mod error;
 pub mod fires;
 mod migrations;
+pub mod presets;
 pub mod trigger;
 pub mod triggers;
 
@@ -41,13 +42,14 @@ use std::path::Path;
 use rusqlite::Connection;
 
 pub use error::{Result, StoreError};
+pub use presets::PresetRevision;
 pub use fires::{
     reclaim, request_id, scheduler_lag, Action, Fire, FireCounts, FireState, Inserted,
     SCHEDULER_TICK_MS, GRACE_MS,
 };
 pub use migrations::{CURRENT_VERSION, VERSION_TABLE};
 pub use trigger::{
-    ensure_code_immutable, fire_due, parse_five_field_cron, DueFire, FireActor, NewTrigger as NewTriggerDefinition,
+    ensure_code_immutable, fire_due, parse_five_field_cron, validate_on, DueFire, FireActor, NewTrigger as NewTriggerDefinition,
     Policy, Spec, Target, TemplateRef, Trigger, TriggerError,
 };
 pub use triggers::NewTrigger;

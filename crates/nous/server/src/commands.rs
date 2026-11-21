@@ -13,9 +13,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use nous_durable::actor::Actor;
 use nous_durable::session::commands::{
-    abort, fork, mark_read, rename_session, scan_orphans, set_pin, submit_message, unread_map,
-    CommandError, ForkRequest, PinOutcome, PinRequest, SubmitRequest,
+    abort, configure_session, fork, mark_read, purge_session, read_selection, rename_session,
+    scan_orphans, set_pin, set_selection, submit_message, unread_map, CommandError,
+    ConfigResult, ForkRequest, PinOutcome, PinRequest, PurgeResult, SelectionResult,
+    SubmitRequest,
+    archive_conversation, list_archives, restore_conversation, ArchiveResult, RestoreResult,
 };
+use nous_durable::storage::archive::Generation;
 use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
 use serde_json::{json, Value};
@@ -62,6 +66,9 @@ pub type PinResult = PinOutcome;
 
 #[async_trait]
 pub trait CommandSource: Send + Sync {
+    /// 真写后端的同一条 `Session`（只读投影用）；只读装配没有，`None`。
+    fn session(&self) -> Option<Arc<Session>> { None }
+
     /// 建会话：经 `Session::create_conversation`，和别的写共享一把锁并广播帧。
     async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession>;
 
@@ -73,6 +80,20 @@ pub trait CommandSource: Send + Sync {
     ) -> Result<SubmitResult>;
 
     async fn abort(&self, session: i64) -> Result<()>;
+
+    /// #70：会话有没有未收敛的轮次（`whenBusy=interrupt` 用）。
+    async fn busy(&self, session: i64) -> Result<bool> { let _ = session; Ok(false) }
+
+    /// #70：轮次失败时把 submission 收敛到 `unanswered`，不许停在 queued。
+    async fn fail_submission(
+        &self,
+        session: i64,
+        submission: i64,
+        reason: &str,
+    ) -> Result<()> {
+        let _ = (session, submission, reason);
+        Ok(())
+    }
 
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
 
@@ -87,6 +108,41 @@ pub trait CommandSource: Send + Sync {
 
     /// 置顶/取消置顶：走 `Session` 写者并广播。
     async fn pin(&self, session: i64, pinned: bool, request_id: String) -> Result<PinResult>;
+
+    /// 当前选中的会话：读走同一个 durable 源，不存在则清掉死指针。
+    async fn selection(&self) -> Result<SelectionResult>;
+
+    /// 写选中的会话：`None` 表示清空，落 durable 文档、经 `Session` 写者广播。
+    async fn select(&self, session: Option<i64>) -> Result<SelectionResult>;
+
+    /// 逐键覆盖会话配置：只改传进来的键，回包是生效值。
+    async fn configure(&self, session: i64, patch: Value) -> Result<ConfigResult>;
+
+    /// 真删一条会话并写墓碑；已有墓碑 → 409。
+    async fn purge(&self, session: i64) -> Result<PurgeResult>;
+
+    /// #67：归档（闭包复印进 gen 文件 + 墓碑）；忙 / 活后代 → 409。
+    async fn archive(&self, session: i64, at: i64, gen: Option<String>) -> Result<ArchiveResult> {
+        let _ = (session, at, gen);
+        Err(read_only())
+    }
+
+    /// #67：世代列表 + 墓碑 + live。
+    async fn archives(&self) -> Result<Vec<Generation>> {
+        Err(read_only())
+    }
+
+    /// #67：从 gen 文件打捞回活库并抹墓碑；原件还在 → 409。
+    async fn restore(&self, session: i64, gen: String, at: i64) -> Result<RestoreResult> {
+        let _ = (session, gen, at);
+        Err(read_only())
+    }
+
+    /// #72：一条会话挂的 template 名（durable 的 session 作用域文档，重启后仍在）。
+    async fn template(&self, session: i64) -> Result<Option<String>> { let _ = session; Ok(None) }
+
+    /// #83：一条会话选中的技能名，**按选中顺序**（pi.agent 文档）。
+    async fn skills(&self, session: i64) -> Result<Vec<String>> { let _ = session; Ok(Vec::new()) }
 
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
@@ -144,6 +200,10 @@ impl DurableCommands {
 
 #[async_trait]
 impl CommandSource for DurableCommands {
+    fn session(&self) -> Option<Arc<Session>> {
+        Some(self.session.clone())
+    }
+
     async fn create(&self, request: CreateSessionRequest) -> Result<CreatedSession> {
         let config = request.into_config();
         let value = self.session.create_conversation(config).await.map_err(|error| match error {
@@ -183,6 +243,38 @@ impl CommandSource for DurableCommands {
     async fn abort(&self, session: i64) -> Result<()> {
         abort(&self.session, session).await.map_err(command_error)?;
         Ok(())
+    }
+
+    async fn busy(&self, session: i64) -> Result<bool> {
+        nous_durable::session::commands::has_pending_submission(&self.session, session)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn fail_submission(
+        &self,
+        _session: i64,
+        submission: i64,
+        reason: &str,
+    ) -> Result<()> {
+        nous_durable::session::commands::fail_submission(
+            &self.session,
+            submission,
+            reason,
+            None,
+        )
+        .await
+        .map_err(command_error)
+    }
+
+    async fn template(&self, session: i64) -> Result<Option<String>> {
+        nous_durable::session::commands::session_template(&self.session, session)
+            .await.map_err(command_error)
+    }
+
+    async fn skills(&self, session: i64) -> Result<Vec<String>> {
+        nous_durable::session::commands::session_skills(&self.session, session)
+            .await.map_err(command_error)
     }
 
     async fn reclaim_orphans(&self) -> Result<usize> {
@@ -243,10 +335,56 @@ impl CommandSource for DurableCommands {
         .await
         .map_err(command_error)
     }
+
+    async fn selection(&self) -> Result<SelectionResult> {
+        read_selection(&self.session).await.map_err(command_error)
+    }
+
+    async fn select(&self, session: Option<i64>) -> Result<SelectionResult> {
+        set_selection(&self.session, session)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn configure(&self, session: i64, patch: Value) -> Result<ConfigResult> {
+        configure_session(&self.session, session, patch)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn purge(&self, session: i64) -> Result<PurgeResult> {
+        purge_session(&self.session, session, self.actor.clone())
+            .await
+            .map_err(command_error)
+    }
+
+    async fn archive(&self, session: i64, at: i64, gen: Option<String>) -> Result<ArchiveResult> {
+        archive_conversation(&self.session, session, at, gen)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn archives(&self) -> Result<Vec<Generation>> {
+        list_archives(&self.session).map_err(command_error)
+    }
+
+    async fn restore(&self, session: i64, gen: String, at: i64) -> Result<RestoreResult> {
+        restore_conversation(&self.session, session, gen, at)
+            .await
+            .map_err(command_error)
+    }
 }
 
-/// 只读装配：写请求一律 409。
-pub struct ReadOnlyCommands;
+/// 只读装配：写请求一律 409；读投影（unread）从注入的只读数据源出处，形状与写装配一致。
+pub struct ReadOnlyCommands {
+    source: Arc<dyn crate::source::SessionSource>,
+}
+
+impl ReadOnlyCommands {
+    pub fn new(source: Arc<dyn crate::source::SessionSource>) -> Arc<Self> {
+        Arc::new(Self { source })
+    }
+}
 
 #[async_trait]
 impl CommandSource for ReadOnlyCommands {
@@ -267,7 +405,11 @@ impl CommandSource for ReadOnlyCommands {
     }
 
     async fn unread(&self) -> Result<Value> {
-        Ok(json!({}))
+        let mut map = serde_json::Map::new();
+        for session in self.source.sessions()? {
+            map.insert(session.id.to_string(), json!({ "unread": 0, "readAt": Value::Null }));
+        }
+        Ok(Value::Object(map))
     }
 
     async fn read(&self, _: i64) -> Result<ReadResult> {
@@ -279,6 +421,35 @@ impl CommandSource for ReadOnlyCommands {
     }
 
     async fn pin(&self, _: i64, _: bool, _: String) -> Result<PinResult> {
+        Err(read_only())
+    }
+
+    async fn selection(&self) -> Result<SelectionResult> {
+        // 只读装配没有 durable 源，selection 的契约形状必须是 `{id:null}`，不是 409。
+        Ok(SelectionResult { id: None })
+    }
+
+    async fn select(&self, _: Option<i64>) -> Result<SelectionResult> {
+        Err(read_only())
+    }
+
+    async fn configure(&self, _: i64, _: Value) -> Result<ConfigResult> {
+        Err(read_only())
+    }
+
+    async fn purge(&self, _: i64) -> Result<PurgeResult> {
+        Err(read_only())
+    }
+
+    async fn archive(&self, _: i64, _: i64, _: Option<String>) -> Result<ArchiveResult> {
+        Err(read_only())
+    }
+
+    async fn archives(&self) -> Result<Vec<Generation>> {
+        Err(read_only())
+    }
+
+    async fn restore(&self, _: i64, _: String, _: i64) -> Result<RestoreResult> {
         Err(read_only())
     }
 

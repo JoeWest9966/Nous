@@ -51,6 +51,9 @@ nous-telemetry = { path = "crates/nous/telemetry", version = "0.1.0" }
 nous-chord = { path = "crates/nous/chord", version = "0.1.0" }
 nous-wire = { path = "crates/nous/wire", version = "0.1.0" }
 nous-env = { path = "crates/nous/env", version = "0.1.0" }
+nous-repo = { path = "crates/nous/repo", version = "0.1.0" }
+nous-prompts = { path = "crates/nous/prompts", version = "0.1.0" }
+nous-env-ssh = { path = "crates/nous/env-ssh", version = "0.1.0" }
 nous-durable = { path = "crates/nous/durable", version = "0.1.0" }
 nous-documents = { path = "crates/nous/documents", version = "0.1.0" }
 nous-ai-types = { path = "crates/nous/ai-types", version = "0.1.0" }
@@ -60,6 +63,10 @@ nous-runtime = { path = "crates/nous/runtime", version = "0.1.0" }
 nous-ext = { path = "crates/nous/ext", version = "0.1.0" }
 nous-ext-probe = { path = "crates/nous/ext-probe", version = "0.1.0" }
 nous-server = { path = "crates/nous/server", version = "0.1.0" }
+nous-device = { path = "crates/nous/device", version = "0.1.0" }
+nous-skills = { path = "crates/nous/skills", version = "0.1.0" }
 nous-sessions = { path = "crates/nous/sessions", version = "0.1.0" }
 nous-fixture = { path = "crates/nous/fixture", version = "0.1.0" }
+nous-stats = { path = "crates/nous/stats", version = "0.1.0" }
 nous-store = { path = "crates/nous/store", version = "0.1.0" }
+nous-dispatcher = { path = "crates/nous/dispatcher", version = "0.1.0" }

@@ -6,6 +6,8 @@
 //! |---|---|---|
 //! | `NOUS_LISTEN` | `127.0.0.1:4789` | 监听地址。端口给 0 时由内核选，实际地址打到 stdout |
 //! | `NOUS_DB` | `./nous.db` | 库路径（**本库自己写的 v1 库**） |
+//! | `NOUS_START_DIRS` | 进程 cwd | `GET /v1/fs/dirs` 的默认起点（冒号分隔，取第一条） |
+//! | `NOUS_EXTEND` | `/opt/Nous-extend` | 扩展源码根（#63）；产物在根下 `artifacts/` |
 //! | `NOUS_ADOPT_LEGACY` | 不设 | `1` = 把一份**上游 v2 副本**领养成本库可写库（见下） |
 //!
 //! ## 启动行是给脚本抓的
@@ -28,6 +30,7 @@ use std::process::ExitCode;
 use axum::Router;
 use nous_durable::storage::{adopt_legacy_copy, SqliteStore};
 use nous_durable::StorageError;
+use nous_env::EXTEND;
 use nous_server::{auth, refusal, router, AppState, DurableCommands, SessionObserver};
 use nous_server::refusal::{decide_refusal, EXIT_ERROR, EXIT_REFUSED};
 #[allow(unused_imports)]
@@ -53,6 +56,33 @@ fn plugins_db_path(db: &str) -> String {
             .to_string_lossy()
             .into_owned()
     })
+}
+
+/// #81: 扩展运行时装配。源码根走 #63 的 NOUS_EXTEND (一处解析),
+/// 产物根与源码根并列 (ext-probe 沙盒形状: exts/ 与 artifacts/ 同级).
+/// 源码根名不是 exts 时退化为根下 artifacts/ (兼容简单布局).
+fn assemble_extensions(state: Arc<AppState>) -> Arc<AppState> {
+    let root = EXTEND.resolve();
+    let artifacts = root
+        .parent()
+        .filter(|_| root.file_name().is_some_and(|name| name == "exts"))
+        .map(|parent| parent.join("artifacts"))
+        .unwrap_or_else(|| root.join("artifacts"));
+    let mut config = nous_ext::RuntimeConfig::new(root.clone(), artifacts);
+    config.handles.insert(
+        "skills".to_string(),
+        nous_ext::HandleValue::dir(nous_env::SKILLS.resolve()),
+    );
+    config.handles.insert(
+        "prompts".to_string(),
+        nous_ext::HandleValue::dir(nous_env::PROMPTS.resolve()),
+    );
+    let runtime = nous_ext::Runtime::new(config);
+    // 一个扩展坏了只记诊断, 主进程照常监听 (EX-66).
+    runtime.start_all();
+    // #84：管理面的垃圾站住在进程 workdir/data 下，不在私库里（不随发布走）。
+    let trash = std::path::PathBuf::from("data").join("extend-trash");
+    state.with_ext(runtime).with_ext_admin(root.clone(), trash)
 }
 
 /// epoch 毫秒（fire 与观测的时钟入口；store 层零时钟，时间都由这里传入）。
@@ -296,12 +326,21 @@ async fn run() -> Result<(), RunError> {
     // 的轮次由各自的生成路径负责，这里拿 faux Model 硬跑一轮会产出一条假回复）。
     let trigger_driver = if faux { Some(assembled.driver.clone()) } else { None };
     let state = state.with_runtime(Arc::new(assembled));
+    // faux 验收模式保留自己的固定编目（原来由 assemble 注入），它优先于文件编目。
+    // 真 provider 走 `nous_device` 的文件/内联来源。
+    let state = if faux {
+        state.with_models(nous_server::runtime::faux_catalog())
+    } else {
+        state
+    };
     // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
     // 不另开第二个 Storage。
     let state = state.with_documents_backend(
         std::path::PathBuf::from(&db),
         commands.session().clone(),
     );
+    // #81: 扩展运行时在监听之前装配完; 后续观测/重载都打同一个实例.
+    let state = assemble_extensions(state);
 
     // #57：Nous 自己的库（`nous-plugins.db`：triggers/fires，往后是审计与别的插件数据），
     // 点火走的是上面那条同一个 Session。路径推导和 `--triggers` 共用一个函数
@@ -310,6 +349,18 @@ async fn run() -> Result<(), RunError> {
     let plugins_db = plugins_db_path(&db);
     let trigger_store = nous_store::Store::open(&plugins_db)
         .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
+    // #60：presets 写者 = 模板私库根（NOUS_PRESETS）+ 同一份插件库（修订表）。
+    // 路径解析只走 env 插件，不在这里自己读环境变量。
+    let preset_store = Arc::new(nous_server::presets::PresetStore::new(
+        nous_env::PRESETS.resolve(),
+        std::path::PathBuf::from(&plugins_db),
+    ));
+    let state = state.with_presets(preset_store);
+    // #61：combos 复用同一份模板私库根；触发器名册从 NOUS_TRIGGER 读（两个根都只在这里解析一次）。
+    let state = state.with_combos_roots(
+        nous_env::PRESETS.resolve(),
+        nous_server::combos::triggers_root(),
+    );
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
     let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
         let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
@@ -338,7 +389,40 @@ async fn run() -> Result<(), RunError> {
         None,
         std::path::PathBuf::from(&db),
     )?;
+    // #82：试跑判定复用 #73 的 evaluate —— 时钟由这里注入一次，许可名单看当前触发器定义。
+    let clock_allowed = {
+        let store = trigger_runtime.store.lock().await;
+        nous_server::triggers::TriggerRuntime::open_definitions_only(&store)
+            .map(|definitions| definitions.iter().any(|definition| {
+                definition.spec().on.as_deref().is_some_and(|on| on == "cron" || on == "clock")
+                    || definition.spec().schedule.is_some()
+            }))
+            .unwrap_or(false)
+    };
     let state = state.with_triggers(trigger_runtime);
+    let state = state.with_combos_action_clock(nous_server::clock::system_clock(), clock_allowed);
+
+    // #73：常驻调度节拍在 app 的唯一装配处起。真实 Clock 由 dispatcher 提供，
+    // 这里只注入它；间隔从 NOUS_DISPATCHER_INTERVAL_MS 读（默认 60s）。
+    // 心跳推进 durable 的 sleeping 任务与 tick 记录；点火仍走 TriggerRuntime::fire。
+    let dispatcher_cancel = tokio_util::sync::CancellationToken::new();
+    let dispatcher_session = commands.session().clone();
+    let dispatcher_clock: Arc<dyn nous_durable::harness::clock::Clock> =
+        nous_server::clock::system_clock();
+    let dispatcher_interval = nous_dispatcher::interval_from_env();
+    let dispatcher_task = tokio::spawn(nous_dispatcher::run_dispatcher(
+        dispatcher_session.clone(),
+        dispatcher_clock,
+        dispatcher_interval,
+        dispatcher_cancel.clone(),
+    ));
+
+    // #62：stats 的只读句柄。库路径与启动/`--check`/`--triggers` 共用 `db` 与
+    // `plugins_db_path()` 的推导，不让三条端点读另一份库。
+    let state = state.with_stats(nous_server::stats::StatsRuntime {
+        durable_db: std::path::PathBuf::from(&db),
+        plugins_db: std::path::PathBuf::from(&plugins_db),
+    });
 
     // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
     // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。
@@ -399,7 +483,11 @@ async fn run() -> Result<(), RunError> {
         })),
         None => router(state),
     };
-    axum::serve(listener, app).await?;
+    let served = axum::serve(listener, app).await;
+    // 进程退出（含 serve 失败）都收节拍：不留下继续写库的孤儿任务。
+    dispatcher_cancel.cancel();
+    let _ = dispatcher_task.await;
+    served?;
     Ok(())
 }
 

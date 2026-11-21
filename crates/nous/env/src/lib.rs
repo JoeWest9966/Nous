@@ -1,4 +1,4 @@
-//! `ExecutionEnv` 契约层：`FileSystem` + `Shell` 两张 trait 面。
+//! `ExecutionEnv` 契约层：`FileSystem` + `Shell` 两张 trait 面 + 四处私库路径。
 //!
 //! ## 权威
 //!
@@ -11,7 +11,8 @@
 //! ## 这一层不认识的东西
 //!
 //! - **没有 IO 实现**。本地实现、SSH / 远端实现、测试用的 InMemory 都在这个 trait 之下
-//!   （AGENTS.md §二：`ExecutionEnv` 只有一份）。
+//!   （AGENTS.md §二：`ExecutionEnv` 只有一份）。私库路径的解析同样是纯的：只查进程
+//!   环境并给默认值，不碰盘（[`content`]）。
 //! - **只有一个内部依赖：`nous-chord`**，而且只为 [`Context`]（取消 + 作用域值）。
 //!   `cargo tree -p nous-env` 里出现 `nous-ai` / `nous-durable` / `nous-tools` /
 //!   `reqwest` / `rusqlite` 就是契约图破了。
@@ -45,14 +46,21 @@
 //! }
 //! ```
 
+pub mod content;
 pub mod context;
+pub mod dirs;
 pub mod error;
 pub mod fs;
 pub mod shell;
 pub mod types;
 
+pub use content::{ContentPath, ALL, EXTEND, PRESETS, PROMPTS, SKILLS};
 pub use context::{
     Context, ContextExt, ContextKey, Progress, ProgressSink, PROGRESS_KEY,
+};
+pub use dirs::{
+    is_local_machine, list_subdirs, local_machine_name, start_dir, BrowseDir, BrowseDirs,
+    BrowseError,
 };
 pub use error::{
     io_to_file_code, io_to_file_error, ExecutionError, ExecutionErrorCode, FileError,

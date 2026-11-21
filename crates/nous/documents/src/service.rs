@@ -45,23 +45,51 @@ pub trait DocumentWriter: Send + Sync {
 pub struct DocumentService {
     reader: Arc<dyn DocumentReader>,
     writer: Option<Arc<dyn DocumentWriter>>,
+    /// 文档根的真实绝对路径。只用于回报 `dir`，不读盘、不 spawn git。
+    root: String,
 }
 
 impl DocumentService {
     pub fn new(reader: Arc<dyn DocumentReader>, writer: Option<Arc<dyn DocumentWriter>>) -> Self {
-        Self { reader, writer }
+        Self {
+            reader,
+            writer,
+            root: std::env::current_dir()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "/".to_string()),
+        }
+    }
+
+    /// 显式指定文档根（生产由装配方给出）；`dir` 回报的是这个根下的 kind/section。
+    pub fn with_root(mut self, root: impl Into<String>) -> Self {
+        self.root = root.into();
+        self
     }
 
     /// 列表：`{ kind, section, items[], resolved }`。
     pub fn list<K: DocumentKind>(&self, section: &str) -> Result<Value, String> {
         let names = self.reader.names(K::KIND, section)?;
+        let dir = format!("{}/{}/{}", self.root.trim_end_matches('/'), K::KIND, section);
         let mut items = Vec::new();
         for name in &names {
             if let Some((fields, etag)) = self.reader.get(K::KIND, section, name)? {
+                // 形状校验：typed 反序列化失败直接报字段；成功但 validate 有 error 就报
+                // 第一条 error 的 path（与 `validate` 端点的口径一致）。
+                let spec_error = match K::from_value(fields.clone()) {
+                    Err(error) => Some(error),
+                    Ok(typed) => {
+                        let ctx = ValidationCtx { names: names.iter().cloned().collect() };
+                        ValidationReport::of::<K>(&typed, &ctx)
+                            .errors
+                            .first()
+                            .map(|issue| format!("{}: {}", issue.path, issue.message))
+                    }
+                };
                 items.push(json!({
                     "name": name, "kind": K::KIND, "section": section,
                     "fields": fields, "etag": etag,
-                    "tracked": true, "dir": "", "specError": null,
+                    // 不 spawn git：无从判「仓里有没有」，诚实回 null，不拿 true 冒充。
+                    "tracked": Value::Null, "dir": dir, "specError": spec_error,
                 }));
             }
         }
@@ -171,5 +199,9 @@ impl DocumentService {
 
     pub fn writer(&self) -> Option<Arc<dyn DocumentWriter>> {
         self.writer.clone()
+    }
+
+    pub fn reader(&self) -> Arc<dyn DocumentReader> {
+        self.reader.clone()
     }
 }

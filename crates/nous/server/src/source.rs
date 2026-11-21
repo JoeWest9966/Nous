@@ -12,15 +12,17 @@
 //! 再造一个失效管理：写进去的会话在 `/v1/sessions` 里看不见，测试就会去测缓存而不是测库。
 //! 189 条会话的全量读是毫秒级；真到了量级瓶颈，那时候已经有提交信号可以用来失效。
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
 use nous_durable::storage::import::ImportedStore;
 use nous_durable::storage::sessions::{
-    render_entries_page, render_live_message, render_sessions, SessionItem,
+    render_entries_page, render_live_message, SessionItem,
 };
-use serde_json::Value;
+pub use nous_durable::SearchItem;
+use serde_json::{json, Value};
 
 use crate::error::{Result, ServerError};
 
@@ -28,6 +30,10 @@ use crate::error::{Result, ServerError};
 pub trait SessionSource: Send + Sync {
     /// 会话树，新的在前（`GET /v1/sessions`）。
     fn sessions(&self) -> Result<Vec<SessionItem>>;
+
+    /// 把 `device` 编目的档位表交给投影层。默认什么都不做：假源不关心档位，
+    /// 真源覆写它，在装配期把编目折成纯数据（kernel 不依赖 app 层的编目 crate）。
+    fn set_model_levels(&self, _models: &nous_device::ModelsResponse) {}
 
     /// 一个会话的 entry 历史，新的在前（`snapshot.entries` 用它）。
     fn entries(&self, session: i64) -> Result<Vec<Value>>;
@@ -67,11 +73,24 @@ pub trait SessionSource: Send + Sync {
     fn exists(&self, session: i64) -> Result<bool> {
         Ok(self.sessions()?.iter().any(|item| item.id == session))
     }
+
+    /// #85：一次性搜索投影。服务端扫一次库，不让客户端逐会话拉历史。
+    fn search(&self, query: &str, kind: &str) -> Result<Vec<SearchItem>> {
+        let _ = (query, kind);
+        Err(ServerError::Conflict("search not configured".into()))
+    }
+
+    /// #85：谁在用某个扩展 / 技能。读会话记录的对应字段。
+    fn usage(&self, field: &str) -> Result<Value> {
+        let _ = field;
+        Ok(json!({}))
+    }
 }
 
 /// 只读打开一份库（上游 v2 或本库自己的都行）。**永远不写回去**。
 pub struct ImportedSource {
     path: PathBuf,
+    model_levels: std::sync::Mutex<BTreeMap<String, Vec<String>>>,
 }
 
 impl ImportedSource {
@@ -80,7 +99,25 @@ impl ImportedSource {
         // 开库时就试读一次：路径错了要在装配期报，不要等第一个请求。
         ImportedStore::read(&path)
             .map_err(|error| ServerError::Internal(format!("open {}: {error}", path.display())))?;
-        Ok(Arc::new(Self { path }))
+        Ok(Arc::new(Self {
+            path,
+            model_levels: std::sync::Mutex::new(BTreeMap::new()),
+        }))
+    }
+
+    /// 把 `device` 编目折成 `"provider/modelId" → thinkingLevels`。
+    /// 只在装配期算一次；端点层不理解模型语义。
+    fn fold_levels(models: &nous_device::ModelsResponse) -> BTreeMap<String, Vec<String>> {
+        models
+            .items
+            .iter()
+            .map(|item| {
+                (
+                    format!("{}/{}", item.provider, item.model_id),
+                    item.thinking_levels.clone(),
+                )
+            })
+            .collect()
     }
 
     fn store(&self) -> Result<ImportedStore> {
@@ -91,9 +128,15 @@ impl ImportedSource {
 }
 
 impl SessionSource for ImportedSource {
+    fn set_model_levels(&self, models: &nous_device::ModelsResponse) {
+        *self.model_levels.lock().unwrap_or_else(|e| e.into_inner()) =
+            Self::fold_levels(models);
+    }
+
     fn sessions(&self) -> Result<Vec<SessionItem>> {
-        render_sessions(&self.store()?)
-            .map_err(|error| ServerError::Internal(format!("render /v1/sessions: {error}")))
+        let levels = self.model_levels.lock().unwrap_or_else(|e| e.into_inner());
+        nous_durable::storage::sessions::render_sessions_with_levels(&self.store()?, &levels)
+        .map_err(|error| ServerError::Internal(format!("render /v1/sessions: {error}")))
     }
 
     fn entries(&self, session: i64) -> Result<Vec<Value>> {
@@ -114,5 +157,39 @@ impl SessionSource for ImportedSource {
     fn live_message(&self, session: i64) -> Result<Option<Value>> {
         render_live_message(&self.store()?, session)
             .map_err(|error| ServerError::Internal(format!("render live message: {error}")))
+    }
+
+    fn search(&self, query: &str, kind: &str) -> Result<Vec<SearchItem>> {
+        let store = self.store()?;
+        let map_err = |error| ServerError::Internal(format!("search {kind}: {error}"));
+        let mut items = match kind {
+            "sessions" => nous_durable::search_sessions(&store, query).map_err(map_err)?,
+            "documents" => nous_durable::search_documents(&store, query).map_err(map_err)?,
+            _ => {
+                let mut items = nous_durable::search_sessions(&store, query).map_err(map_err)?;
+                items.extend(nous_durable::search_documents(&store, query).map_err(map_err)?);
+                items
+            }
+        };
+        // `all` 是两类命中的合并：会话 id 是数字（新的在前），文档地址是字符串，
+        // 两者没有同一条时间轴。按 kind 分组 + 组内降序，顺序稳定可断言。
+        items.sort_by(|a, b| {
+            b.kind
+                .cmp(&a.kind)
+                .then_with(|| match (a.kind, b.kind) {
+                    ("sessions", "sessions") => {
+                        let left = a.id.parse::<i64>().unwrap_or(0);
+                        let right = b.id.parse::<i64>().unwrap_or(0);
+                        right.cmp(&left)
+                    }
+                    _ => b.id.cmp(&a.id),
+                })
+        });
+        Ok(items)
+    }
+
+    fn usage(&self, field: &str) -> Result<Value> {
+        nous_durable::usage(&self.store()?, field)
+            .map_err(|error| ServerError::Internal(format!("usage {field}: {error}")))
     }
 }

@@ -38,6 +38,30 @@ async fn seed(path: &Path, task: Option<Value>) {
     session.close().await.unwrap();
 }
 
+/// #70：messages 现在要求模型来源；给旧判据注入一个最小 catalog，不改变它们原本的断言对象。
+fn durable_with_test_models(path: &Path) -> std::sync::Arc<AppState> {
+    use nous_device::{CatalogDiagnostics, ModelItem, ModelRef, ModelsResponse};
+    let models = ModelsResponse {
+        default: Some(ModelRef { provider: "test".into(), model_id: "test-model".into() }),
+        items: vec![ModelItem {
+            provider: "test".into(),
+            model_id: "test-model".into(),
+            name: "Test Model".into(),
+            thinking_levels: vec![],
+            context_window: None,
+            max_tokens: None,
+        }],
+        catalog: CatalogDiagnostics {
+            state: "inline",
+            source: Some("test"),
+            path: PathBuf::from("test"),
+            fetched_at: None,
+            error: None,
+        },
+    };
+    AppState::durable(path).unwrap().with_models(models)
+}
+
 async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let request = Request::builder()
         .method(method)
@@ -65,7 +89,7 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 async fn the_same_request_id_returns_the_same_submission_and_stores_one_row() {
     let path = temp_db("idempotent");
     seed(&path, None).await;
-    let app = AppState::durable(&path).unwrap();
+    let app = durable_with_test_models(&path);
     let routes = router(app.clone());
 
     let first = call(
@@ -104,7 +128,7 @@ async fn the_same_request_id_returns_the_same_submission_and_stores_one_row() {
 async fn the_first_frame_after_posting_is_message_start_not_message_update() {
     let path = temp_db("message-start");
     seed(&path, None).await;
-    let app = AppState::durable(&path).unwrap();
+    let app = durable_with_test_models(&path);
     let routes = router(app.clone());
 
     // 先连上 SSE（拿 snapshot），再发消息 —— 判据看的是「响应发出后」。
@@ -239,7 +263,7 @@ async fn fork_returns_201_and_only_names_when_a_name_was_given() {
 }
 
 #[tokio::test]
-async fn fork_while_busy_is_409_and_wait_ms_is_400() {
+async fn fork_while_busy_is_409_and_wait_ms_reports_running() {
     let path = temp_db("fork-busy");
     seed(
         &path,
@@ -255,7 +279,7 @@ async fn fork_while_busy_is_409_and_wait_ms_is_400() {
         })),
     )
     .await;
-    let app = AppState::durable(&path).unwrap();
+    let app = durable_with_test_models(&path);
     let routes = router(app.clone());
 
     let (status, body) = call(&routes, "POST", "/v1/sessions/1/fork", None).await;
@@ -269,7 +293,8 @@ async fn fork_while_busy_is_409_and_wait_ms_is_400() {
         Some(json!({ "content": "hi", "waitMs": 500 })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "waitMs 没实现就不许假装，实测 {body}");
+    assert_eq!(status, StatusCode::ACCEPTED, "#70 的 waitMs=500 在没轮次装配时应 202 running，实测 {body}");
+    assert_eq!(body["status"], json!("running"));
 
     drop(routes);
     drop(app);
@@ -368,4 +393,23 @@ fn request_clone() -> Request<Body> {
         .uri("/v1/sessions/1/abort")
         .body(Body::empty())
         .unwrap()
+}
+
+#[tokio::test]
+async fn unread_has_the_same_object_shape_in_read_only_and_durable_assemblies() {
+    let read_only = router(AppState::read_only(common::FakeSource::two_sessions()));
+    let (status, body) = call(&read_only, "GET", "/v1/unread", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.is_object(), "只读装配的 unread 必须是平铺 map，不是 {body}");
+    assert!(body.as_object().unwrap().keys().all(|key| key.parse::<i64>().is_ok()), "key 必须是会话 id：{body}");
+    assert!(body.get("1").is_some() && body.get("2").is_some(), "只读装配也要按会话 id 给条目：{body}");
+
+    let path = temp_db("unread-shape");
+    seed(&path, None).await;
+    let durable = router(AppState::durable(&path).unwrap());
+    let (status, body) = call(&durable, "GET", "/v1/unread", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.is_object(), "正常装配的 unread 也必须是平铺 map：{body}");
+    assert!(body.get("1").is_some_and(|value| value.get("unread").is_some()), "id 是字符串键的会话条目：{body}");
+    let _ = std::fs::remove_file(&path);
 }

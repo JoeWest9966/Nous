@@ -43,14 +43,17 @@ fn pragma_text(store: &Store, pragma: &str) -> String {
 }
 
 #[test]
-fn a_fresh_file_lands_on_version_1_with_exactly_the_two_tables() {
+fn a_fresh_file_lands_on_current_version_with_exactly_the_plugin_tables() {
     let dir = temp();
     let store = Store::open(nous_db(&dir)).expect("open");
 
-    assert_eq!(CURRENT_VERSION, 1, "第一版就是 1；升版本是改表结构，得先改票面");
+    assert_eq!(CURRENT_VERSION, 5, "review #11 追加 pre_archive_enabled：第五版（#80 是第四版）");
     assert_eq!(store.schema_version().expect("schema_version"), CURRENT_VERSION);
-    // 两张表 + 我们自己的版本表。多一张就是有人偷偷加了列/表而没走迁移。
-    assert_eq!(tables(&store), vec!["fires", "schema_version", "triggers"]);
+    // 每张表都在册。多一张就是有人偷偷加了列/表而没走迁移。
+    assert_eq!(tables(&store), vec![
+        "fires", "preset_write_receipts", "presets_revisions", "schema_version",
+        "trigger_categories", "trigger_patch_receipts", "triggers",
+    ]);
 }
 
 #[test]
@@ -71,7 +74,7 @@ fn a_database_that_never_saw_durable_still_opens_and_migrates() {
     assert!(!dir.path().join("durable.db").exists());
 
     let store = Store::open(nous_db(&dir)).expect("open");
-    assert_eq!(store.schema_version().expect("version"), 1);
+    assert_eq!(store.schema_version().expect("version"), CURRENT_VERSION);
     assert!(!dir.path().join("durable.db").exists(), "store 不许顺手建 durable 的库");
     assert!(nous_db(&dir).exists());
 }
@@ -96,7 +99,7 @@ fn a_durable_side_version_table_is_left_alone_and_never_reads_as_ours() {
     }
 
     let store = Store::open(&path).expect("durable 的版本表不该拦我们");
-    assert_eq!(store.schema_version().expect("version"), 1);
+    assert_eq!(store.schema_version().expect("version"), CURRENT_VERSION);
     let durable_version: i64 = store
         .conn()
         .query_row("SELECT version FROM durable_schema WHERE singleton = 1", [], |row| row.get(0))
@@ -143,9 +146,9 @@ fn deleting_one_file_leaves_the_other_library_alone() {
         assert_eq!(version, 2, "store 的迁移没碰过 durable 的版本号");
     }
 
-    // nous.db 不见了 → 重开到 1；durable.db 的名字与内容都不受影响。
+    // nous.db 不见了 → 重开到 CURRENT_VERSION；durable.db 的名字与内容都不受影响。
     let store = Store::open(&nous).expect("重新建库");
-    assert_eq!(store.schema_version().expect("version"), 1);
+    assert_eq!(store.schema_version().expect("version"), CURRENT_VERSION);
     assert!(store.triggers().expect("triggers").is_empty(), "删掉的是库，不是「变成了永久墓碑」");
     let conn = rusqlite::Connection::open(&durable).expect("durable 仍在");
     let left: i64 = conn
@@ -204,7 +207,7 @@ fn reopening_is_idempotent() {
             .expect("create");
     }
     let again = Store::open(&path).expect("reopen");
-    assert_eq!(again.schema_version().expect("version"), 1);
+    assert_eq!(again.schema_version().expect("version"), CURRENT_VERSION);
     assert_eq!(again.triggers().expect("triggers").len(), 1, "重开不许重跑迁移/重插");
 }
 

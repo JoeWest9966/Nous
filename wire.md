@@ -21,11 +21,94 @@
 
 ## 通用
 
+### 配置：四条私库路径（#63）
+
+服务端按 TS 版 `server.js:77-83` 解析下面四个变量，变量名与默认值**只有这一份真相**
+（代码落在 `crates/nous/env/src/content.rs`，别在各端点里自己 `std::env::var`）：
+
+| 变量 | 默认值 | 指向 |
+|---|---|---|
+| `NOUS_SKILLS` | `/opt/Nous-skills` | 技能条目 |
+| `NOUS_PROMPTS` | `/opt/Nous-prompts` | 提示词条目 |
+| `NOUS_PRESETS` | `/opt/Nous-Template` | 模板条目（#60 的数据根；不得写死别的目录） |
+| `NOUS_EXTEND` | `/opt/Nous-extend` | 自研扩展源码（`ext` 仍 `frozen`，只登记路径） |
+
+**部署时 unit 里不写这四个变量**：默认值就够，写了就成了两份真相。旧的
+移植期的旧变量名已删除，不做双名兼容。
+
 - 会话 id 是 **数字**（不是字符串）。`GET /v1/sessions/:id/...` 里的 `:id` 是数字。
 - 列表里 `busy` 是 `"queued" | "running" | <task state kind> | null`，不是布尔。
 - 错误形状统一 `{ error: string }`，状态码跟着语义走（400 / 404 / 409 / 500…）。
 
 ## 我们用到的端点
+
+### 调度节拍（#73）
+
+生产进程在 app 装配处起一条常驻节拍：默认 60s 一拍，每拍写一条 durable tick 记录；
+`scheduler.lastTickAt` 从库里的 tick 记录读，不从内存读。测试可用
+`NOUS_DISPATCHER_INTERVAL_MS` 缩短间隔（默认 60000，毫秒），不改产品默认值。
+进程退出时节拍任务随 Tokio runtime 收敛，不留下孤儿 tick。
+
+## 幂等回执的提交边界（review #10）
+
+`requestId` 的回执必须与它描述的变更在**同一提交 / 同一临界区**：
+- 库上（trigger PATCH）：定义变更与 receipt 行同一 `BEGIN IMMEDIATE`；回执写失败 → 整批回滚，`version` 不涨。
+- 盘上（combos PATCH）：回执先原子写就位，再改 `preset.json`；后者失败 → 删回执，盘面不变。
+
+**选定语义：重放回第一次回执；若第一次整体失败，则盘/库未变，重放当作全新请求执行。**
+不许出现「变更落了、回执没落 → 重放 412」或「回执落了、变更没落 → 重放假成功」。
+反悔点见 `docs/decisions.md` 2026-11-24 条。
+
+### PATCH /v1/triggers/{code}
+
+#73：改触发器自己的 `schedule` / `params` / `enabled`。`code` 是不可变 slug（`nous-store`
+的库级触发器挡着），请求体里出现 `code` 就 400。
+
+- body 是逐键覆盖的稀疏对象：出现的键才改，未出现的键不动。`schedule` 是五段 cron 字符串
+  或 `null`（取消定时），`params` 是字符串/数字/布尔组成的对象，`enabled` 是布尔。
+  `schedule`/`params` 归 `spec` 管，`enabled` 是触发器行上的列，不是 `spec` 里的一个键。
+- `version` 是触发器行上的 ETag（整数），改动一次加 1；请求体必带当前 `version`（字符串
+  形式也认），不匹配 → 412。请求另带 `If-Match` 时，它也必须和 `version` 一致。
+  回包是改后的生效定义 + 新 `version`。
+- `requestId` 是可选幂等锚：重放回第一次回执，`version` 不涨、库不再改。回包里的
+  `definition` 是从库里读回的生效值，不是把请求体原样吐回来。
+- 不存在 / 已墓碑的 `code` → 404；坏 body（未知键、错类型、坏 cron、空对象、改 `code`）→ 400。
+
+### 触发器管理面（#80：trigger-catalog）
+
+`PATCH /v1/triggers/{code}` 见上（#73，本票不重做）。#80 补新建 / 整份改定义 / 归档 / 捞回 / 真删 / 类别。
+实现仍在 `nous-server` 的 `triggers` 面，定义与账仍只在 `nous-store` 的 `triggers` / `fires` 两张表；
+不新增 crates、不新增数据目录、不另开写通道。
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `POST /v1/triggers` | 新建。201 回 `{code, name, category, spec, version, enabled, definition}`。 |
+| `PUT /v1/triggers/{code}` | 整份改定义：稀疏覆盖 `schedule` / `on` / `params` / `session` / `enabled`。 |
+| `POST /v1/triggers/{code}/archive` | 归档墓碑；账不动。回 `{code, archivedAt}`。 |
+| `POST /v1/triggers/{code}/restore` | 抹掉归档墓碑；回 `{code, restoredAt}`。 |
+| `POST /v1/triggers/{code}/purge` | 真删：先归档才能 purge。回 `{code, purgedAt, fires}`（`fires` 是删掉的账行数）。 |
+| `GET /v1/triggers/categories` | 类别词表：`{categories: [...]}`（词表 ∪ 在用的，排序）。 |
+| `POST /v1/triggers/category` | body `{code, category}`；`null` 清除。回 `{code, category}`。 |
+
+- `code` 必须匹配 `^[a-z][a-z0-9_]{2,63}$`，且创建后不可变。**写死**：改端点（PUT）
+  body 里出现 `code` 键一律 **400**（不是忽略）—— 静默忽略会让人以为改名成功。
+  POST 用 body 的 `code` 建、路径不带 `code`；重名 / 墓碑占用的 `code` 回 409。
+- `schedule` 是五段 cron（`分 时 日 月 周`，数字或 `*` / `*/n`）或 `null`。`on` 是 `null`
+  或 `kind` / `kind:ref` 形式的 slug（`kind ∈ cron|clock|event|agent|human|ext`）。
+  **发布闸**：两者在写入时校验，坏定义 → 400 且库里一行都不写（负向哨兵见票面判据 4）。
+- `params` 是字符串 / 数字 / 布尔组成的对象；`session`（整数字节 id 或 `null`）是落点简写，
+  `null` = 新会话；也接受显式 `target: {kind:"new"|"conversation", id?}`。两者同时出现 → 400。
+- PUT 是**逐键覆盖**：出现的键才改，未出现的键不动；显式 `null` 能清掉 `schedule` / `on` /
+  `session`。`version` 是 ETag：出现必须与当前一致（不一致 412），每次有效写入 +1。
+  改定义 / 归档 / 捞回 / 真删都由 `version` 守着；归档与捞回不改 `version`（ETag 只描述定义）。
+- `GET /v1/triggers` 的 `triggers[]` **不含**已归档 / 已真删的触发器，但 `fires` 账仍在；
+  每条多一个 `category`（字符串或 `null`）。archive → restore → 原样回来。
+- **purge 的账怎么处理（拍板）**：真删该 `code` 的**全部 `fires` 行**（账随触发器一起销毁，
+  不留在孤儿表里），触发器行留墓碑并带 `purgedAt`，`code` 永不复用；对已真删的行再 purge → 409。
+  未归档先 purge → 409（与会话归档同规矩）。这与会话「撕原件」不同：会话的 gen 复印件是
+  独立文件，触发器的定义只有 `triggers` 一行，留行只为占住 `code`。
+- 类别词表是字符串数组，**没有 id**。`POST category` 给一个触发器挂单值类别；类别不在词表里
+  时自动登记（与 skills 的「词表 ∪ 在用」同规矩），`null` 只清该行的挂值、不删词表条目。
 
 ### GET /v1/sessions
 
@@ -56,6 +139,31 @@
 - `skills` / `template` / `thinkingLevels` / `extensions` 是**生效值**，不是请求值 —— 拿来画勾，
   别自己猜。引擎改这些字段，列表预览不受影响，只有详情面板受影响。
 
+### GET /v1/stats/usage?from=&to=&group_by=day|model|conversation
+
+用量与账本。`totals` 与 `rows[]` 的四元组完全相同：`totalTokens` / `costTotal` /
+`requests` / `errors`；额外 `rows[].key`（桶名）与 `rows[].label`（可直接上屏）。
+`group_by=day` 用 UTC 日期 `YYYY-MM-DD`（按 entry 的 `model[].timestamp` 归桶）；
+`model` 用 `provider/modelId`（缺失记 `unknown`）；`conversation` 用会话 id 字符串。
+- `from` / `to` 都是 **epoch 毫秒**，闭开区间 `[from, to)` —— `from` 命中、`to` 不命中。
+  缺省 `from` = 全量起点、缺省 `to` = 全量终点；无时间戳的 entry 不进任何桶、也不进 totals。
+- `requests` 计有时间戳的 `pi.assistant` entry，`errors` 计 `model[].stopReason == "error"`。
+- 只聚合 durable 库里现存 entry；归档/fixture 副本不在内。只读，无分页。
+
+### GET /v1/stats/tasks
+
+任务计数：`{byState, active}`。`byState` 的键全集是 `pending` / `running` / `waiting` /
+`sleeping` / `completing` / `terminal`，值从 `tasks` 表 `GROUP BY status` 现算（与 triggers 的
+`counts` 同规矩，**不许内存计数器**）；`active = byState` 中除 `terminal` 外之和。
+
+### GET /v1/stats/db
+
+两个库各一份读数：`{ durable: {...}, plugins: {...} }`，每份含 `bytes`（主文件长度）、
+`rows`（关键表计数对象）、`quickCheck`（`"ok"` 或诊断串）、`schema`（整数版本）。
+durable 这一份与 `nous-app --check` 共用 `nous_durable::ops::check` 的读口；
+plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store` 的只读读口。
+`nous-plugins.db` 不存在时按空插件库读（schema/rows 为 0），不 404/500。
+
 ### GET /v1/sessions/:id/entries
 
 历史。返回 `{ items: [{id, kind, text, parent}], next }`，**新的在前**，客户端要翻正。
@@ -64,6 +172,9 @@
   `pi.user`（右气泡）和 `pi.assistant`（左气泡），其余降级显示，别崩。
 - `parent` 是 entry 的父指针，和会话树的 `parent` 不是一回事。
 - `next` 是分页游标，`?limit=` 上限 1000。
+- `?system=1` 是回放开关：额外回 `system`（回放全部 `pi.system` 后**当前生效**的提示词，
+  可能为空串），并给每条 `pi.system` 的 `items[]` 补 `delta`（它自己带来的文本）。
+  不传时仍过滤 `pi.system`，且**没有** `system` 键。
 
 ### POST /v1/sessions/:id/messages
 
@@ -73,6 +184,13 @@
 - `requestId` 是幂等锚：重连重发同一句拿到同一次提交，不会答两遍。**桌面端一定要传**。
 - 不传 `waitMs` 时立即回 `202 { submissionId, status: "queued" }`，真正的流走 SSE。
   桌面端就按这条来：发消息 → 拿 202 → 靠 SSE 收内容。别用 `waitMs` 等同步。
+- #70：任何 202 之后都会起一轮（真 provider 与 faux 一样），submission 必须离开 `queued`
+  并收敛到 `done` 或 `unanswered`。模型解析顺序写死：请求体 `model` → 会话当前的
+  `model` → 编目 `default` → 都没有就 **503 `{error:"没有可用模型"}`**，不许静默受理。
+- `waitMs`：`0`（或省略）回 202；`>0` 最多等这么久，轮次完成回 **200 且带答案 entry**，
+  超时回 202（答案仍走 SSE）。真实等待绑在轮次完成信号上，不是 sleep 轮询。
+- `whenBusy`：`queue`（默认，忙时排队）或 `interrupt`（先停当前轮次再受理）；
+  非法值 400。忙时判定以服务端会话状态为准，客户端不自己猜。
 
 ### GET /v1/sessions/:id/events —— SSE
 
@@ -88,7 +206,7 @@
 | `message_end` | `entry.kind === "pi.assistant"` 时收尾 | 助手气泡结束，把攒的字定稿 |
 | `entry_appended` | `entry.kind` | 别的标签页 / 客户端加的东西；`pi.user` `pi.tool-result` 才补 |
 | `submission` | `record.status === "unanswered"` 时弹错误 | `record.reason` / `record.detail` 是「没答上来」的原因 |
-| `task_failed` | `message` | 任务挂了，弹一句 |
+| `task_failed` | `message` `taskId` | 只在任务进入终态且 `outcome.status == "failed"` 时发；中途状态与成功的终态都不发 |
 | `tool_execution_start` | `toolCallId` `toolName` | 开一个工具卡片 |
 | `tool_execution_update` | `toolCallId` `output` | `output.append` / `output.set` 追加 / 覆盖 |
 
@@ -124,10 +242,24 @@
 
 我们依赖：`model`（默认模型）+ `faux`（假 provider 标志，本地验流式时用）。About 面板显示引擎版本用 `node`。
 
+#79：`catalog` 现在是 device 自己那份诊断对象（`state` / `source` / `path` / `fetchedAt` / `error`），
+不是 `null`。`fetchedAt` 是最近一次成功刷新的时刻，`error` 是最近一次失败的原因；
+两者都可能为 `null`（缺席）。字段形状以 `crates/nous/server/tests/catalog_refresh.rs` 为准。
+
 ### GET /v1/selection · POST /v1/selection
 
 `{ id }` 或 `{ id: null }` —— 「现在盯着哪个对话」。桌面端三栏同屏时，左栏高亮当前会话就用它，
 **别为左栏开 N 条 SSE**。SSE 只连当前会话，其余靠 `GET /v1/sessions` 低频轮询。
+
+本库把这两条归到 `sessions` 模块（selection 是两行状态，不是独立能力面）。状态落 durable
+会话库（`qrd3wh.sessions` 文档），重启后还在；指向已删会话时 `GET` 回 `null` 并清掉死指针。
+
+### POST /v1/sessions/:id/config
+
+逐键覆盖会话配置：`readOnly` / `model`（`provider/modelId`）/ `thinkingLevel` / `skills` /
+`extensions` / `template`（单值或 `null`）/ `machine` / `cwd`。**未出现的键不动**；
+`skills` / `extensions` 是相对增删，不是整份覆盖。换模型按新模型的 `thinkingLevels` 重新夹
+档位（`off` 一定要在表里，没有就退成 `off`）。回包是生效值。
 
 ### GET /v1/unread
 
@@ -145,6 +277,14 @@
   `null` 不是「读到过」，只是一个还没被 `POST /v1/read/:id` 推进过的水位。
 - 覆盖**所有**会话；没有水位的会话给 `{ unread: 0, readAt: null }`。
 - 跟 `GET /v1/sessions` **一起拉**（同一帧并发），别一会拉一个。
+
+### GET /v1/origins
+
+会话血缘反查：`{ items: [{ id, ultimate, trigger, at, forced }] }`。
+`id` 是会话 id（数字），`ultimate` 是终极模板/模板 ref 名，`trigger` 是点火的触发器 slug，
+`at` 是点火时刻（epoch 毫秒），`forced` 只给手动 launch —— 触发器点起来的恒 `false`。
+`?trigger=<code>` 按键过滤；手动建的会话**没有**条目。
+状态与 `names` / `pins` 同住 `qrd3wh.sessions` 文档的 `origins` 键，不建表；重启后仍可反查。
 
 ### POST /v1/read/:id
 
@@ -175,9 +315,29 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 ### 会话归档：`archive` / `purge` / 归档库 / `restore`
 
 **这一版引擎起有**：内核 2026-11-10 起（ADR 0001）；客户端 v0.4.0 起接。
-归档 = 把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
-撕原件 = 真删（活库那行 + 那份复印件）。四个方法在 `crates/nous-engine` 里都有
-（`archive` / `purge` / `archive_list` / `restore`），UI 层一行 HTTP 都不碰。
+旧引擎把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
+撕原件 = 真删（活库那行 + 那份复印件）。本库同语义，但 gen 文件后缀是 `.db`
+（`archives/gen-YYYYMMDD.db`，见 `docs/decisions.md` 的 #67 决策）；四个方法在本库
+分别是 session 命令 `archive_conversation` / `purge_session` / `list_archives` /
+`restore_conversation`，UI 层一行 HTTP 都不碰。
+
+#### GET /v1/openapi.json
+
+只读机读视图：从 `meta::ROUTES` 生成 OpenAPI `paths`，与 `/v1/capabilities` / `/v1/_routes`
+三处同源。加端点先改 `meta::ROUTES`，这里自动跟着变；不手抄第二份路径清单。
+
+#### GET /v1/capabilities
+
+一个发行版一张清单：`modules[]` 每个模块声明 `name` / `enabled` 与 `endpoints` 或 `reason`，
+顶层给 `contract` / `server` / `runtime` / `services`。字段形状以
+`crates/nous/server/tests/capabilities_shapes.rs::capabilities_declares_modules_and_reasons` 为准。
+
+- #88：`modules[]` 每个模块（含未启用的）另带版本、类型、层、必需、来源 crate、说明六列，
+  取自 `docs/plugins.md` 同一张表；判据 `capabilities_manifest.rs::manifest_metadata_matches_the_plugins_table_cell_by_cell`
+  逐格比对编译后的清单与文档表。`crate` 可能是 `—` 或 `(待建) xxx`，不可当成可运行的包名。
+- `layer` 四值封闭、`kind` 三值封闭；`enabled:false` 的模块用 `reason.code` 四值封闭解释原因。
+- 六列是加法：老引擎没有这些字段时，桌面端降级成「版本 = server.version，类型 / 层 = —」，
+  不据此判模块不存在。新字段一律只读，`endpoints` / `reason` 的既有语义不变。
 
 #### POST /v1/sessions/:id/archive
 
@@ -185,9 +345,10 @@ body 空。回 200 `{"gen":"20261113","ids":[699],"rows":17}`。
 
 - `gen` 是 8 位 `YYYYMMDD`，`rows` 是复印进去的条数。**客户端不读回包**（`Value` 收着），
   刷新靠重拉 `/v1/sessions` 和 `/v1/archive` —— 别拿回包自己改本地列表。
-- 归档后 `/v1/sessions` **默认不返回**该会话（那一行自己消失）；`?archived=1` 才给全量，
-  每条带 `archived` 墓碑。「归档后行消失」只有这一个来源，客户端不许自己滤。
-- 失败：忙 / 分支里还有活后代 → 409 `{error}`，正文会列出活分支。原样显示，别改写。
+- **本库口径（#67）**：归档后 `/v1/sessions` **仍返回该会话**，带 `archived` 墓碑
+  `{at, gen, purged:false}`；捞回后墓碑回到 `null`。旧引擎的「默认隐藏 + `?archived=1`」
+  在本库不实现 —— 墓碑是事实源，显示/隐藏由客户端按墓碑决定，别在这里悄悄滤行。
+- 失败：忙（会话有非终态任务）/ 有活后代 → 409 `{error}`，正文列出活分支。原样显示，别改写。
 
 #### POST /v1/sessions/:id/purge
 
@@ -196,10 +357,15 @@ body 空。回 200 `{"purged":[699],"gen":"20261113","rows":6}`。**真删**，�
 - **必须先归档**；会话闲置、分支里没有活后代也是引擎的前置条件。不满足返回 409 / 400，
   形状还是 `{error}`，照原文显示。
 
+本库口径（#64 + #67）：**必须先归档**（有 `archived[id]` 墓碑，否则 409）。一次事务删干净
+conversations / entries / tasks / submissions / documents / document_revisions 与该会话的
+pins / unread 条目，墓碑改写成 `archived[id]={at, gen, purged:true}`；`record_ids` 不删（id
+永不复用，见 `docs/decisions.md`）。会话不存在 → 404，已 purged → 409。
+
 #### GET /v1/archive
 
-回 `{"gens":[{"gen":"YYYYMMDD","items":[…]}]}`，一个 `gen` = 一份 `gen-YYYYMMDD.sqlite`，
-组标题就写 `11月10日 · gen-20261110.sqlite`。item 形状：
+回 `{"gens":[{"gen":"YYYYMMDD","items":[…]}]}`，一个 `gen` = 一份 `gen-YYYYMMDD.db`，
+组标题就写 `11月10日 · gen-20261110.db`。item 形状：
 
 ```
 { id, parent: {id, at} | null, entries: number, last: {id, kind, text} | null,
@@ -234,7 +400,51 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
   这个约束是引擎强制的，不是产品挑的。
 - 四个动作的回包都是同一形状 `{<动作过去分词>: [ids], gen, rows}`，客户端一律不读。
 
-### GET /v1/presets/:section
+### presets：模板 / 预设（#60）
+
+`presets` 是资源化的端点族（13 条 + 生成式 OpenAPI），**盘是唯一真相**，文件住在模板私库
+（`NOUS_PRESETS`，默认 `/opt/Nous-Template`）：`<root>/<section>/<name>/preset.json`。
+段只有两个：`Session-Template`、`Ultimate-Template`，**没有第三种**。没有进程内常驻的
+`name → preset` map —— roster 由扫目录得出，盘上有目录 = 这条存在。
+
+端点表（OpenAPI 生成物 `/v1/openapi.json` 是它的机器可读版本，字段形状以
+`crates/nous/server/tests/presets_endpoints.rs` 为准）：
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `GET /v1/presets` | 段清单，每段带 `count` |
+| `GET /v1/presets/:section` | roster：`name` / `sha` / `version` / `category` / `order` / `archived` / `problem`（**清单即详情**） |
+| `GET /v1/presets/model` | 预设能引用的模型清单（只读，沿用原状） |
+| `GET /v1/presets/:section/categories` | 段内类别名册 |
+| `PUT /v1/presets/:section/order` | 整段顺序，一次写全（幂等） |
+| `GET /v1/presets/:section/:name` | 单条原文 + `ETag`（= `version`） |
+| `PUT /v1/presets/:section/:name` | 建或覆盖；`If-Match` 缺失=新建、匹配=覆盖、不匹配=412；`?dry_run=1` 校验不落盘（validate 走同一条路） |
+| `PATCH /v1/presets/:section/:name` | 只改元数据位：`{archived}` / `{name}` / `{category}` / `{order}` |
+| `DELETE /v1/presets/:section/:name` | 删（软删即 `archived`） |
+| `POST /v1/presets/:section/:name/copy` | 复制成新名，body `{name, requestId}` |
+| `GET /v1/presets/:section/:name/revisions` | 修订清单：`n` / 时间 / `actor` / `sha` / 摘要 |
+| `GET /v1/presets/:section/:name/revisions/:n` | 某一版原文（diff 由 Desk 算，无状态） |
+| `POST /v1/presets/Ultimate-Template/launch` | #82：手动起一条终极模板（跳过触发器判定，`forced:true`） |
+| `POST /v1/presets/:section/:name/rollback` | 回到第 `n` 版，原子写一次修订，body `{n, requestId}` |
+| `GET /v1/openapi.json` | 从路由注册表生成的机器可读契约（presets 第一个接入方） |
+
+- `sha` 是 `preset.json` **文件字节**的 sha256（不是清单里某个字段），roster 的 sha 必须
+  等于读文件算出的值。
+- `version` 是乐观锁的 ETag；`If-Match` 不匹配 → 412 且磁盘字节不变。
+- `?dry_run=1` 与真 PUT 共用同一份校验：坏 JSON 都是 400，区别只在 dry_run 不写盘。
+- 写端点整段串行锁；`requestId` 是幂等锚：重放回第一次的回执，`version` 不涨，
+  幂等证据看 `version` 与磁盘，不看 `changed`。
+- 修订落在 `nous-plugins.db` 的 `presets_revisions` 表（`section` / `name` / `n` / `sha` /
+  `body` / `actor` / `at` / `request_id`），**不是私库 git 历史**（那个是 #75 的 `history`）。
+  不 spawn `git`；`rollback` 替代 `git revert`。
+- 人手 `scp` 改文件仍可行：那条路走内部重扫，下一版 PUT 看到新盘面。
+- `publish` 不在这里：`POST /v1/repos/presets/commit` 是 #75。
+- 字段形状以 `crates/nous/server/tests/presets_endpoints.rs::put_writes_real_file_and_roster_sha_matches_file_bytes` 为准（本文件只索引端点与约束）。
+
+下面这段是 2026-11-19 前的旧形状，留作迁移背景；**新契约以上表为准**，
+旧 `files` / `pending` / `history` / `POST rename` / `GET|POST order` 已删：
+
+### 旧 GET /v1/presets/:section（存档）
 
 模板（通讯录）那一页的数据。**段（section）不是只有一个**：同一个私仓按段放，
 `Session-Template`（会话模板）和 `Ultimate-Template`（终极模板）各自一套端点、一套数据、
@@ -256,7 +466,9 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - `category` 是字符串数组，`/` 表示层级：`写作/周报` 自动蕴含父级 `写作`。一条可以挂多个。
 - `repo` 是**这一段的**仓状态 `{ head, dirty, ahead, behind, error }`；`dirty` 按段算，
   `ahead`/`behind` 是整仓的。`head` 可能是 `null`（仓读不了）—— 别拿它当字符串硬切。
-- `specError` → 这条自己写坏了，红。
+- `specError` → 这条自己写坏了，红（字段名 + 一句原因）。本库按形状校验填，不 spawn git。
+- `tracked` 在本库恒 `null`：不 spawn git，无从判「仓里有没有」；`null` 不是 `false`。
+  `dir` 是文档根下的真实绝对路径（`<root>/<kind>/<section>`）。
 - `resolved.*.state === "invalid"` → 引用失效，现在开不了。
 - `tracked === false` → 盘上有、仓里没。
 - **能否启动的判据全是引擎算好的**，客户端不自己拼规则。加了规则就等于可以跟引擎吵起来。
@@ -289,6 +501,8 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 回包 `{ ok, commit, pushed, name, to, refs }`，`refs` 是**被动到的终极模板名**（连带改的）。
 界面要把 `refs` 说出来 —— 改名顺手动了别人的东西，不说一声就是偷偷改。
+**本库不 spawn git**：`commit` 与 `pushed` 一律 `null`，不拿 `{}` 冒充「有一笔提交」。
+单条文档不存在与不认识的 kind 一律 `404`，body 带可用值清单，不许 `500`。
 
 - 只有 POST；`to` 走和新建同一套名字规则（`400`）、目标已存在 `409`、源不存在 `404`。
 #### GET / POST /v1/presets/:section/order
@@ -312,6 +526,44 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ---
 
+### GET /v1/combos/:section · PATCH /v1/combos/:section/:name
+
+组合（终极模板里「触发器 + 会话模板」那一条）的开关面。段与 `presets` 同两个值：
+`Session-Template` / `Ultimate-Template`。名册由扫 `<root>/<section>/<name>/preset.json`
+得出（`<root>` 是 `NOUS_PRESETS`，与 `presets` 共用数据根），进程内不留常驻名单。
+
+`GET` 回 `{ combos: [...] }`，每条：
+
+```
+{ name, trigger, params, session, enabled, problem }
+```
+
+未知字段原样透传（`serde_json::Value` 收着，不 `deny_unknown_fields`）。
+
+- `enabled` 是**引擎算的**：`spec.enabled !== false`（缺省 true）**且**引用的 trigger /
+  preset 存在可用；算不出来则 `enabled=false` 且 `problem` 写人话。客户端只显示 + 写穿，
+  不自己拼规则。
+- `params` 是对象（字符串 / 数字 / 布尔）；`session` 指向 `Session-Template` 段的名字。
+- `problem` 是字符串：写坏 / 引用没了都在这里说清楚，页面照原文显示。
+
+`PATCH` 只改 `{ enabled: true|false }`，不碰别的字段、别的组合。必带 `If-Match`
+（版本不匹配 → 412）与 `requestId`（幂等锚：重放回第一次回执，`version` 不涨）。
+回包 `{ name, trigger, params, session, enabled, problem, version, requestId }`；
+写的是 `spec.enabled` 那一位，不是新增一份开关表。
+
+> 旧版 `POST /v1/combos/:name/enable` 与 `/disable` 已取消：`enabled` 是一个字段，不是
+> 两个动作，两条路径等于给同一个位开两个入口。只留一条 `PATCH {enabled}`。
+
+### POST /v1/combos/:section/:name/fire（#82）
+
+试跑一次组合：用 `#73` 的 `evaluate` **问一次触发器**，判定 `fire:true` 才建会话；
+不 fire 就不建会话（`sessions` 条数不变），也不写血缘。只在 `Ultimate-Template` 段上成立。
+body 必带幂等锚 `requestId`。回包给判定结果 `fired`、人话 `reason` 和可选 `sessionId`；
+不 fire 时 `sessionId` 为 `null`。
+
+起会话时写血缘 `origins`：`{ultimate, trigger, at, forced:false}`（#74，与点火路径同一条
+`record_origin`）。`requestId` 重放回第一次回执，不新建会话、不追加血缘。
+
 ### GET /v1/models
 
 返回默认模型 + 模型列表。
@@ -322,10 +574,35 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - `thinkingLevels` 从少想到多（`off` … `max`），**每个模型不一样**。换模型必须按新模型的表
   重新夹档位（`off` 一定要在表里，没有就退成 `off`）。
 - 242 个模型是常态 —— 模型那一列必须能滚，别想着一次画完。
+- #65：多一个 `catalog` 诊断块（字段形状见 `crates/nous/server/tests/device_endpoints.rs`）。
+  `missing` + `items: []` 是**诚实空表**（没有编目来源），客户端别把它当成「加载中」无限重试；
+  `ok` 时 `source` 指明是内联（`NOUS_MODELS`）、文件（`NOUS_MODELS_FILE`）还是远端（`remote`）。
+- #79：远端刷新成功后内存里的编目优先于文件来源；`fetchedAt` / `error` 由刷新写入。
+
+### POST /v1/catalog/refresh
+
+拉一次远端编目写进本地缓存，回 `{ default, items, fetchedAt, error? }`。
+远端入口是 `NOUS_CATALOG_BASE`（`{base}/models.json`）+ `NOUS_CATALOG_TOKEN`（Bearer）。
+字段形状以 `crates/nous/server/tests/catalog_refresh.rs` 为准（本文件只索引端点与约束）。
+
+- 成功：远端三条就回三条，`fetchedAt` 非空，`error` 缺席；`/v1/models` 立即换成新表。
+- 失败（含 HTTP 500）：**回 200 但带 `error`**，`items` 仍是旧表，绝不把模型表清空。
+- 密钥只在内存的请求头里过一手：不落盘、不进日志、不进响应、不进会话记录。换密钥刷新即可。
+
+### PUT /v1/default
+
+body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `{ default, wrote: true }`。
+
+- 模型不在 `items` 里 → 400（`{ error: string }`），不许写一个不存在的模型。
+- 写是原子的（临时文件 + rename）：写入过程中断，旧文件与 mtime 不变。
+- 内联编目（`NOUS_MODELS`）没有文件路径可写 → 400，改用 `NOUS_MODELS_FILE`。
 
 ### GET /v1/skills
 
-`{ root, categories: string[], repo, skills: [...] }`。技能那条：
+`{ root: string, present: boolean, missing: string | null, categories: string[], repo, skills: [...] }`。
+`root` 永远是解析后的路径（未显式要求「不要数据根」时不会是 `null`）；目录不存在时
+`present=false` 且 `missing` 给一句人话，`skills=[]`。服务端只读，不建目录、不写私库。
+技能那条：
 
 ```
 { name, path, description, dir, file, hidden, category: string[], tracked, load: { state } }
@@ -334,11 +611,130 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 - **只列 `load.state == "ok" && !hidden`**。`hidden` 是 `disable-model-invocation`，
   勾上也不会动；`state != ok` 的加载不出来。
 - `categories` 只是词表，和技能身上挂的 `category` 取并集才是栏里该有的那些。
+- `?usage=1`（#85）：反查模式，回 `{ <技能名>: [<会话 id>, ...] }` —— 谁在用这个技能。
+  没人用就回 `{}`（空映射，**不是 404**）。不带该参数仍是上面的技能目录形状。
+
+### GET /v1/extensions
+
+正常回真装载清单（#81 解冻，不再是 `{ items: [] }` 的冻结占位）：
+
+```
+{ items: [{ name, version, kind, loaded, pid, state, error? }] }
+```
+
+- `name` / `version` / `kind` 来自扩展自己的 `nous.json`（`kind` 是 `category`，缺席给 `native`）。
+- `loaded` = 清单 + 握手都过；装载失败也留一项（`loaded:false` + `error`），不静默消失。
+- `pid` 是扩展子进程 pid（`u32`，没进程时 `null`）；`state` 是五态之一，进程死了但状态机
+  还没推进时如实给 `crashed`（不是 `normal`）。`error` 只在失败/崩溃时有值。
+- 源码根走 `NOUS_EXTEND`（默认 `/opt/Nous-extend`），产物在根下 `artifacts/`。
+  没装配运行时（测试路由）仍回 `{ items: [] }`，不伪造内容。
+- `?usage=1`（#85）回 `{ <扩展名>: [<会话 id>, ...] }` —— 扫会话记录里的 `extensions` 字段；
+  没人用回 `{}`，不因为一个可选参数把端点判死。
+
+### POST /v1/extensions/reload
+
+按盘上现状重装所有已装载扩展（真起新进程，pid 会变），回 `{ reloaded: [name, ...] }`。
+失败的那一项保留旧进程与旧状态，错误进扩展自己的诊断；不返回假成功。
+文件管理面（`{file,files,publish,create}`）由 #75 的 repo 层提供，不在这里重复实现。
+
+### 扩展管理面（#84）：create / duplicate / install / uninstall / 类别 / usage / pending
+
+人手动作都写在 `NOUS_EXTEND` 这份私库里，git 发布与 pending 一律复用 #75 的
+`/v1/repos/extend/*`，这里不重复实现。写端点都不自动 commit。
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `POST /v1/extensions/create` | body `{name, category?}`。生成 `<name>/` 下三个文件：`nous.json` / `README.md` / `main.rs`。201 回 `{name, dir, files}`。名字已存在 409，非法名字 400。 |
+| `POST /v1/extensions/duplicate` | body `{name, to, unbind?}`。整目录复制，只改 `nous.json` 的 `name`（`unbind=true` 时连 `file`/`entry` 一起改成 `to`）。其余文件字节不变。201 回 `{name, to, files}`。 |
+| `POST /v1/extensions/uninstall` | body `{name}`。源码移到 `<data>/extend-trash/<name>-<epochms>/`，并把名字写进私库根的 `deleted-extensions.json`（防 git pull 复活）。运行时同步卸载。核心扩展 `nous`/`skills`/`prompts` → 400。回 `{name, trashed, deleted}`。 |
+| `POST /v1/extensions/install` | body `{name}`。从垃圾站最新一份（没有就从 HEAD）装回 `<name>/`，经 #81 的装载入口起进程。回 `{name, state, from}`，`state` 是装载后的真状态。 |
+| `GET /v1/extensions/categories` | 回 `{categories:[...]}`，读私库根的 `categories.json`（在私库里，随发布进历史）。文件不存在回空表。 |
+| `POST /v1/extensions/categories` | body `{op:"add"\|"rename"\|"remove", name, to?}`。`rename` 同时改写所有挂它的扩展的 `nous.json.category`。回 `{categories, affected}`。 |
+| `POST /v1/extensions/category` | body `{name, category}`。给一个扩展挂/改单值类别（`null` 清除），写 `nous.json`。回 `{name, category}`。 |
+| pending 三件 | **没有** `/v1/extensions/pending` 端点：**直接复用** `/v1/repos/extend/pending` / `/pending/diff` / `/pending/commit`，不另开实现。 |
+
+- `deleted-extensions.json` 是删除名单而不是墓碑表：名字在里面，扫描就跳过这个扩展，
+  即使 `git pull` 把目录带回来也不会复活。名单随私库发布，重启后仍生效。
+- `categories.json` 是字符串数组；`nous.json` 的 `category` 是单值字符串（见 SDK 清单），
+  不是 skills 那种数组。词表与扩展字段共用同一套字符串，不另造 id。
+- 判据见 `crates/nous/server/tests/extension_admin_endpoints.rs`。
+
+### GET /v1/search
+
+`GET /v1/search?q=&kind=&limit=`（#85）：服务端一次扫描完成，**客户端不许逐会话拉正文**。
+
+- `kind=sessions` 搜会话名 + entry 正文；`kind=documents` 搜文档名（`kind/section/name`）
+  与正文；`kind=all`（默认）两者合并，新的在前。
+- 回 `{ items: [{kind, id, title, snippet, at}], total, truncated }`。`kind` 是
+  `"sessions" | "documents"`；`id` 是会话 id 的字符串 / 文档地址 `kind/name`；
+  `snippet` 带命中上下文（前后各 40 字符），`at` 是 epoch 毫秒，来源不明给 `null`。
+- `total` 是**命中总数**（不受 `limit` 影响）；`truncated = total > items.len()`。
+- `limit` 默认 20、上限 100、最小 1（越界夹到边界）。大小写不敏感；`q` 先 `trim`，
+  少于两个字符回 `400 {error}`（不许全表扫）。
+
+#71 把「盘上真相」补上（只解析 `SKILL.md` 的 frontmatter，不碰 git）：
+
+- `name` 缺省用目录名；`description` 可为 `null`；`category` 是字符串数组；
+  `hidden` 来自 `disable-model-invocation: true`（条目仍全部返回，隐藏是渲染层的事）。
+- `attachments` 是目录内除正文外的文件数，跳过点开头、`node_modules`、`test`。
+- `load.state` 为 `problem` 时带 `detail` 原文 —— 缺正文或 frontmatter 坏都不能恒报 ok。
+- `tracked` **可空，当前不提供（恒 null）**。判定要问 git，而本引擎不 spawn git；
+  填 `false` 是撒谎。
+- `repo` 块只给 `root` 与 `present`（#63 形状），**没有 git 状态字段**。
+- `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
+- 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
+
+#83：建会话 / `POST /v1/sessions/:id/config` 选的 `skills` 落在会话的 `pi.agent` 文档里，
+起轮时按**选中顺序**读 `<skill>/SKILL.md` 正文（去掉 frontmatter）拼进 `pi.system` 的
+`model[0].sections.prompts`。技能缺失 / frontmatter 坏只留 `skill: missing` / `skill: problem`
+诊断，轮次照跑；只读会话照样注入。判据见 `crates/nous/server/tests/skill_injection.rs`。
+
+### documents 的盘面树（kind `tree`，#87）
+
+沿用 `documents` 的 12 条端点族（不新增写通道）：`GET /v1/documents/tree` 列段，
+`GET`/`PUT /v1/documents/tree/{section}/board` 读写一棵盘面树，其余端点（create / rename /
+history / diff / validate / pending）语义不变。一个 `section` = 一个盘面；每一盘面在库里
+只有一份 `tree.board` 文档，整棵树是它的字段。建节点、挂到父下、移动/重排、回收、恢复、
+清除都是对这一份文档的一次写（一次 durable 提交），没有 `tree.json` / `map/<node>/*.md`
+文件形态，也没有 `.trash/`。
+
+字段形状以 `crates/nous/server/tests/documents_tree.rs::tree_lifecycle_has_http_and_db_rows_on_every_step`
+为准（本文件只索引端点与约束）。
+
+- 节点形状是 `{id, title, kind, parent, children, order, trashedAt}`，字段含义由测试指针固定；
+  这里只写约束：`kind` 只能是 `folder` 或 `doc`；`parent` 是父节点 id 或空；`children` 按
+  `order` 升序；`trashedAt` 是回收墓碑（毫秒或空），空 = 在世。
+- 移动/重排必须原子：一次 `move` 写同时改源父的 `children`、目标父的 `children`、节点自身的
+  `parent/order`；库里不存在「孩子搬走了但旧父还挂着」的中间态。
+- 环和自引用写不进库：目标等于自身或自己的后代时回 400 或 409，`{ error }` 点出命中节点；
+  旧树原样留在库里。找不到父/节点回 404。
+- 回收站是同一份树文档里的墓碑，不是另一张表也不是目录：`trashedAt` 非空即从正常树隐藏；
+  `restore` 回空；`purge` 是显式动作，清除节点及其后代，不可撤销。
+- 乐观锁：`PUT` 建/整份重置一盘面的树；后续的 `move` / `trash` / `restore` / `purge`
+  必须带从响应拿到的 `etag`，与当前文档 etag 不一致回 409 —— 单用户边界由修订版本
+  承担，不靠锁文件。
+- 迁移走 `POST /v1/documents/tree/{section}/{name}/import`：入参只是旧 `tree.json` 的值
+  和可选的 `mapDirs` / `goneDirs` 目录名清单（由外部只读读出归档 tar 后送入），服务不读盘、
+  不写盘，解析出的树经同一写端落 `nous.db`；目标库仍只有 `nous.db` / `nous-plugins.db`，
+  跨库顺序不变。字段形状以
+  `crates/nous/server/tests/documents_tree.rs::archived_tree_imports_into_the_same_document_store`
+  为准。
 
 ### GET /v1/prompts
 
-`{ default: string | null, categories: string[], prompts: [...] }`。模板那条至少有
+`{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
+`root` / `present` / `missing` 与 skills 同义：有路径但没目录是正常状态，不是 `null`。
+模板那条至少有
 `{ name, description?, category?, load: { state } }`。
+字段形状以 `crates/nous/server/tests/prompts_endpoints.rs::prompts_lists_real_directories_and_names_an_unconfigured_default` 为准。
+
+- 真读 `NOUS_PROMPTS`：每个子目录一条 `path`，至少要有 `PROMPT.md` + `nous.json`；
+  缺哪份就在 `problem` 里点名，不许把坏目录从列表里抹掉。
+- `settings.json` 的 `default` 指向不存在的模板时照样回那个名字（不变成 null），
+  并在 `problem` 里说清“不存在”。
+- `prompt:<名>` 会话模板在起轮时把 `PROMPT.md` 正文放进 `pi.system` 的
+  `model[0].sections.prompts`（见 `crates/nous/server/tests/prompt_injection.rs`）；
+  模板缺失时轮次照跑，诊断以 `template: missing` 写进同一段。
 
 - 和技能不是一回事：**模板是单值**（每轮都带的那份规则），技能是集合。所以列表里
   模板用单选框、技能用复选框 —— 形状本身在说能选几个。
@@ -348,13 +744,89 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 `{ at, machines: [{ name, user, port, ips: [{addr,label}], addr, note, tags }] }`。
 
+- #65：机器编目优先读 `NOUS_MACHINES_FILE` 给的 JSON；没有就用内置两台（形状不变）。
+
 - 没有 `machine` 字段 = **本机**。名字要和创建请求里的 `machine` 对得上。
+- 本库的静态编目不知道具体 `user` / `port` / `ips` / `addr`，就回 `null` / `[]` / `""` ——
+  不编造地址。旧字段（`hostname` / `os` / `arch` / `triples` / `rustc` / `roles` /
+  `annotations` / `items`）保留一版，客户端按任一套都能读到。
 
-### GET /v1/fs/dirs?path=
+## 私库读写与发布（#75）
 
-`{ path, dirs: [{ name, path }] }`。**列的是 qrd3wh 那台机器上的目录。**
+四套私库（`:repo` ∈ `presets | skills | prompts | extend`）共用一套端点；文件 CRUD
+在 `nous-repo` 的公共 API，HTTP 只暴露发布与读视图。字段形状以
+`crates/nous/server/tests/repos_endpoints.rs` 为准（本文件只索引端点与约束）。
 
-- 不带 `path` = 引擎给的起点（board 的 map 根）；`path: ""` 是起点，不是「没有路径」。
+- `GET /v1/repos/:repo/status` → `{root, head, branch, ahead, behind, dirty, locked}`。
+- `GET /v1/repos/:repo/pending` → `{units:[{name, state, aheadCommits, paths[]}]}`，按目录单元分组。
+- `GET /v1/repos/:repo/pending/diff?path=` / `history/diff?name=&hash=&path=` → `{before, after}`（全文，不是 git patch）。
+- `GET /v1/repos/:repo/pending/commit?hash=` → `{hash, message, files[]}`。
+- `POST /v1/repos/:repo/commit` `{paths[], message, requestId}` → `{commit, pushed, refs}`。
+  `pushed` 三态 `true | false | null`，推送失败不能报 true；pathspec 防搭车。
+- `GET /v1/repos/:repo/history?name=&limit=` → `{items:[{hash, at, actor, message}]}`，是私库 git 历史，
+  与 `#60` 的引擎内 `revisions` 不同，不许混。
+- `POST /v1/repos/:repo/{archive,restore,purge}` `{name, requestId}` → `{commit, pushed}`。
+
+#### 变体（#76，只给 `skills` / `extend`）
+
+绑定表是数据文件 `data/skills.local.json` / `data/extensions.local.json`：
+`{v:1, variants:{family:{id:{root,branch}}}}`，本地状态，不进私库发布。变体是仓库自己的
+worktree + 分支：主干（main/master/HEAD）永远不许变。
+
+- `GET /v1/repos/:repo/variants` → `{v, variants}` 原样回绑定表（缺文件回 `{v:1, variants:{}}`）。
+- `POST /v1/repos/:repo/variants/bind` `{id, paths?}` → `{id, root, branch}`。分支存在就 checkout，
+  不存在就 `-b`；未提交的改动从工作区拷到 worktree 并在变体分支提交。
+- `POST /v1/repos/:repo/variants/unbind` `{id}` → `{id, removed:true}`；只解绑定，树还在。
+- `POST /v1/repos/:repo/variants/branch` `{id, branch}` → `{id, branch, root}`；
+  `main` / `master` / `HEAD` → 400。
+- `POST /v1/repos/:repo/variants/publish` `{id, message, requestId?}` → `{commit, pushed, branch}`；
+  只 commit/push 变体分支，主干不动。
+- `POST /v1/repos/:repo/variants/prune` `{id, force?}` → `{unmerged, remoteBranch, removed:true}`；
+  未合并且不带 `force:true` → 409，确认后删 worktree + 本地分支 + 远端分支。
+- `GET /v1/repos/:repo/variants/usage?id=` → `[会话 id...]`：扫会话 `skills` / `extensions` 字段
+  反查谁在用这个变体；没人用回空数组，不 404。
+
+#### 上游追踪（#77，`:repo` 恒为 `skills`）
+
+镜像是 `data/upstream/<name>/` 缓存（不进内核库），订阅清单 `sources.json` 在技能私库里，
+`{v, sources:[{name,url,branch?,prefix?,version?}]}`，整份替换后走 `/commit` 才进历史。
+`version` 只由 `pin` / `sync` 与首拉基线写，其余动作一律不改。
+
+- `GET/POST /v1/repos/:repo/sources` → `{v, sources:[...]}`；GET 只读盘上正文，POST 整份替换（写盘不提交）。
+- `GET /v1/repos/:repo/upstream` → `{sources:[{...,mirror,mirrorHead,pinned,newer,drift,bytes,entries}], errors}`。
+  `pinned` 是认的 commit；`newer` = 远端 HEAD ≠ `pinned`（上次 check 的缓存）；
+  `drift` = 镜像 HEAD ≠ `pinned`，或镜像工作区有手改（认的版本与看到的不是一版）。
+  没有 check 过就 `newer:false`，打开面板不联网。
+- `POST /v1/repos/:repo/upstream/{refresh,pin,check,sync}`：
+  `refresh` 只拉不改 `pinned`；`pin {name,commit?,requestId}` 是日常唯一写 `version` 的入口；
+  `check {name?}` 只 `ls-remote` 问 refs，写 `.git/nous-check.json` 缓存，不下载对象；
+  `sync {name}` = refresh + pin 到远端 HEAD。首拉自动记基线是唯一一次非 pin 写入。
+- `GET /v1/repos/:repo/upstream/tree?name=&path=` → `{items:[{path,sha,mode,size}]}`（只读上游 tree）。
+- `GET /v1/repos/:repo/upstream/file?name=&path=` → `{path,text}`（只读 upstream blob）。
+- `GET /v1/repos/:repo/upstream/files?name=&path=` → `{files:[{path,state,size}]}`；
+  `state ∈ same|diff|missing`，按 git blob sha 比本地正文。
+- `POST /v1/repos/:repo/upstream/{copy,adopt}` `{name,path,to?,requestId}`：
+  抄一条上游技能（整目录 + 附件）；`adopt` 在 `nous.json` 写 `upstream` foot 标记
+  `<source>/<path>@<sha>`，`copy` 只写 `copiedFrom` 便条、不写 foot。目标已存在 → 409，
+  源不存在 → 400；写盘不提交，发布走 `/commit`。
+
+- `:repo` 不在四值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
+  且 `{field, problem}`，不 commit 不 push。推送失败不改盘上文件。
+
+### GET /v1/fs/dirs?path=&machine=&hidden=
+
+`{ path, dirs: [{ name, path, hidden }], truncated }`。**列的是引擎那台机器上的目录。**
+
+- 不带 `path` = 引擎给的起点：`NOUS_START_DIRS` 的第一条（冒号分隔）或进程 cwd；
+  `path: ""` 是起点，不是「没有路径」。**不做 home 展开**：`~` 由客户端展开，
+  引擎只认绝对路径。
+- 只列子目录（符号链接不算目录），按名字稳定排序；点开头的目录默认跳过，
+  `?hidden=1` 时收录并标 `hidden: true`。最多 500 条，超出时 `truncated: true`。
+- `machine` 省略 / 空 = 本机。远端机器（`machine` 不等于本机主机名）回 **501**
+  `{ "error": "ssh 未实现" }`，**不许静默退回本机目录**（SSH 远端由 env-ssh 另票）。
+- 错误：相对路径 / `~` 开头 **400**，绝对路径不存在 **404**，权限不足 **403**，
+  路径指向文件 **400**，其余读失败 500；错误体统一 `{ error: string }`。
+- 只读：这个端点不改目标目录（mtime 与内容都不变）。
 - 浏览发生在引擎进程里：引擎以后跑在远程机器上，这一页一行都不用改。
 
 ### POST /v1/sessions —— 建会话
@@ -410,6 +882,9 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 | `archived.purged` 改名 / 换语义 | 撕过的显示成「原件在」，会让人重复撕 |
 | `live` 没了 / 恒为 true | 「已捞回」和「无墓碑」颠倒，该给「打捞」的不给 |
 | `restore` 收 `gen` 改成收别的 | 打捞 400，归档库页点了没反应 |
+| `combos[].enabled` 改成客户端自己算 | 开关状态跟引擎分叉，Desk 灰掉的页会误亮 |
+| `combos` 的 `problem` 不再是人话 / 恒空 | 引用失效的组合看着像能用，点了才报错 |
+| `PATCH /v1/combos` 丢了 `If-Match` 或 `requestId` | 并发覆盖 / 重放翻两次开关，version 与盘面分叉 |
 
 所以：启动时打 `GET /v1/device` 记引擎版本，About 里显示，出问题先对版本。
 

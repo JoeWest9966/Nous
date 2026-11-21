@@ -18,6 +18,7 @@
 //! 接再自己 parse —— 让 axum 的 `Path<i64>` 拒掉会吐一段纯文本，破坏 `{error}`。
 
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures::{Stream, StreamExt};
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
@@ -41,7 +42,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::app::AppState;
 use crate::coalesce::{self, Framing};
 use crate::error::{Result, ServerError};
-use crate::models::ModelsResponse;
+use nous_device::ModelsResponse;
 use crate::records::CreateSessionRequest;
 use crate::source::SessionSource;
 
@@ -57,6 +58,10 @@ fn now_ms() -> i64 {
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
     let router = Router::new()
+        .route("/v1/combos/{section}", get(crate::combos::list))
+        .route("/v1/combos/{section}/{name}", axum::routing::patch(crate::combos::patch))
+        .route("/v1/combos/{section}/{name}/fire", post(crate::combos_actions::fire))
+        .route("/v1/presets/Ultimate-Template/launch", post(crate::combos_actions::launch_handler))
         .route("/v1/sessions", get(sessions).post(create_session))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))
@@ -64,27 +69,141 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/abort", post(abort))
         .route("/v1/sessions/{id}/fork", post(fork))
         .route("/v1/machines", get(machines))
+        .route("/v1/fs/dirs", get(fs_dirs))
         .route("/v1/models", get(models))
+        .route("/v1/default", put(put_default))
+        .route("/v1/catalog/refresh", post(catalog_refresh))
         .route("/v1/device", get(device))
-        .route("/v1/selection", get(selection))
         .route("/v1/unread", get(unread))
+        .route("/v1/origins", get(origins))
         .route("/v1/read/{id}", post(mark_read))
         .route("/v1/sessions/{id}/rename", post(rename))
         .route("/v1/sessions/{id}/pin", post(pin))
+        .route("/v1/sessions/{id}/config", post(config))
+        .route("/v1/sessions/{id}/purge", post(purge))
+        .route("/v1/sessions/{id}/archive", post(archive))
+        .route("/v1/archive", get(archive_index))
+        .route("/v1/archive/{id}/restore", post(restore))
+        .route("/v1/selection", get(selection).post(write_selection))
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
-        .route("/v1/triggers", get(triggers))
+        .route("/v1/extensions/reload", post(reload_extensions))
+        .route("/v1/extensions/create", post(crate::ext_admin::create))
+        .route("/v1/extensions/duplicate", post(crate::ext_admin::duplicate))
+        .route("/v1/extensions/install", post(crate::ext_admin::install))
+        .route("/v1/extensions/uninstall", post(crate::ext_admin::uninstall))
+        .route("/v1/extensions/categories", get(crate::ext_admin::get_categories).post(crate::ext_admin::post_categories))
+        .route("/v1/extensions/category", post(crate::ext_admin::category))
+        .route("/v1/search", get(search))
+        .route("/v1/triggers", get(triggers).post(crate::triggers::create_trigger))
+        .route("/v1/triggers/categories", get(crate::triggers::categories))
+        .route("/v1/triggers/category", axum::routing::post(crate::triggers::set_category))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/triggers/{code}/fires", get(trigger_fires))
-        .route("/v1/capabilities", get(capabilities));
+        .route("/v1/triggers/{code}/archive", axum::routing::post(crate::triggers::archive_trigger))
+        .route("/v1/triggers/{code}/restore", axum::routing::post(crate::triggers::restore_trigger))
+        .route("/v1/triggers/{code}/purge", axum::routing::post(crate::triggers::purge_trigger))
+        .route("/v1/triggers/{code}", axum::routing::patch(crate::triggers::patch_trigger).put(crate::triggers::put_trigger))
+        .route("/v1/capabilities", get(capabilities))
+        .route("/v1/stats/usage", get(crate::stats::usage))
+        .route("/v1/stats/tasks", get(crate::stats::tasks))
+        .route("/v1/stats/db", get(crate::stats::db))
+        .route("/v1/openapi.json", get(crate::stats::openapi));
+    // #75：repo 路由与 documents 路由都在同一份 state 上；documents::attach 统一应用 state。
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
-    crate::documents::attach(state, router)
+    // #75：repo 路由先挂在带 state 的 Router 上（与 #48 documents 同一份 state）。
+    let router = crate::repos::attach(router);
+    // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。
+    let router = crate::upstream::attach(router);
+    let router = crate::documents::attach(state.clone(), router);
+    // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
+    let router = match state.presets() {
+        Some(store) => crate::presets::attach(store.clone(), router),
+        None => router,
+    };
+    router
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
 async fn machines() -> Json<Value> {
-    Json(crate::machines::catalog())
+    let file = std::env::var("NOUS_MACHINES_FILE")
+        .ok()
+        .filter(|text| !text.trim().is_empty())
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    Json(nous_device::machines(file.as_deref()))
+}
+
+/// `GET /v1/fs/dirs` 的查询参数。未知字段由 axum 忽略，协议保持哑的。
+#[derive(Debug, Deserialize)]
+struct FsDirsQuery {
+    path: Option<String>,
+    machine: Option<String>,
+    hidden: Option<String>,
+}
+
+/// 目录浏览上限。超出的项不计入 `dirs`，只把 `truncated` 翻成 true。
+const FS_DIRS_LIMIT: usize = 500;
+
+/// `GET /v1/fs/dirs`：只读列子目录。
+///
+/// 路径规则与本机判定都在 `nous_env::dirs`；显式远端 `machine` 走 env-ssh，
+/// 编目里没有 → 404，连不上 → 502，绝不静默退回本机。
+async fn fs_dirs(Query(query): Query<FsDirsQuery>) -> Result<Json<Value>> {
+    let hidden = query.hidden.as_deref() == Some("1");
+    if let Some(machine) = query.machine.as_deref().filter(|name| !name.is_empty()) {
+        if !nous_env::is_local_machine(Some(machine)) {
+            let result = nous_env_ssh::remote_subdirs(
+                machine,
+                query.path.as_deref().unwrap_or(""),
+                hidden,
+                FS_DIRS_LIMIT,
+            )
+            .await
+            .map_err(fs_remote_error)?;
+            return Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)));
+        }
+    }
+    let result = nous_env::list_subdirs(
+        query.path.as_deref().unwrap_or(""),
+        hidden,
+        FS_DIRS_LIMIT,
+    )
+    .map_err(fs_dirs_error)?;
+    Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
+}
+
+fn fs_remote_error(error: nous_env_ssh::RemoteDirsError) -> ServerError {
+    use nous_env_ssh::RemoteDirsError;
+    match error {
+        RemoteDirsError::MachineNotFound => ServerError::NotFound("机器不在编目里".to_string()),
+        RemoteDirsError::Unreachable(message) => ServerError::BadGateway(message),
+        RemoteDirsError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        RemoteDirsError::NotFound => ServerError::NotFound("远端目录不存在".to_string()),
+        RemoteDirsError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个远端目录".to_string())
+        }
+        RemoteDirsError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        RemoteDirsError::Other => ServerError::Internal("远端目录读不出来".to_string()),
+    }
+}
+
+fn fs_dirs_error(error: nous_env::BrowseError) -> ServerError {
+    use nous_env::BrowseError;
+    match error {
+        BrowseError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        BrowseError::NotFound => ServerError::NotFound("目录不存在".to_string()),
+        BrowseError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个目录".to_string())
+        }
+        BrowseError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        BrowseError::Other => ServerError::Internal("目录读不出来".to_string()),
+    }
 }
 
 /// `GET /v1/sessions`：`{ items: [...] }`，新的在前（排序在 `nous-durable` 的投影里）。
@@ -105,6 +224,24 @@ async fn create_session(
 /// `GET /v1/unread`：平铺 map（`{"id": {unread, readAt}}`），覆盖所有会话。
 async fn unread(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     Ok(Json(state.commands().unread().await?))
+}
+
+/// `GET /v1/origins`：会话血缘反查，`?trigger=<code>` 按触发器过滤。
+/// 数据在 durable 的 session 作用域文档里（与 names / pins 同一份），只读。
+async fn origins(State(state): State<Arc<AppState>>, Query(query): Query<OriginsQuery>) -> Result<Json<Value>> {
+    // 没有 durable 写后端的只读装配：诚实回空表，不 409（与其它只读列表端点一致）。
+    let Some(session) = state.durable_session() else {
+        return Ok(Json(json!({ "items": [] })));
+    };
+    Ok(Json(nous_durable::session::commands::origins_map(
+        &session,
+        query.trigger.as_deref(),
+    ).await.map_err(|error| ServerError::Internal(error.to_string()))?))
+}
+
+#[derive(Debug, Deserialize)]
+struct OriginsQuery {
+    trigger: Option<String>,
 }
 
 /// `POST /v1/read/:id`：把水位推到最新，回 `{id, readAt, unread: 0}`。
@@ -175,19 +312,154 @@ async fn pin(
     })?))
 }
 
+
 /// `GET /v1/device`：进程/宿主配置，About 面板读它。
 async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(crate::meta::device(state.models()))
+    let models = state.models();
+    Json(crate::meta::device(&models))
 }
 
-/// `GET /v1/selection`：当前选中的会话（配置里没有就 null）。
-async fn selection() -> Json<Value> {
-    Json(crate::meta::selection())
+/// `GET /v1/selection`：当前选中的会话，落库、重启后仍在。
+async fn selection(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let result = state.commands().selection().await?;
+    Ok(Json(json!({ "id": result.id })))
 }
 
-/// `GET /v1/skills`：空目录就是空表。
-async fn skills() -> Json<Value> {
-    Json(crate::meta::skills())
+/// `POST /v1/selection {id}`：写选中的会话；`{id:null}` 清空。
+async fn write_selection(
+    State(state): State<Arc<AppState>>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let body: SelectionBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("id is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("selection body: {error}")))?
+    };
+    let result = state.commands().select(body.id).await?;
+    Ok(Json(json!({ "id": result.id })))
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectionBody {
+    id: Option<i64>,
+}
+
+/// `POST /v1/sessions/{id}/config`：逐键覆盖，回生效值。
+async fn config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let patch: Value = if body.is_empty() {
+        return Err(ServerError::BadRequest("config patch is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("config body: {error}")))?
+    };
+    // 档位表来自 /v1/models 的编目，不是请求体：换模型时按新模型的表夹档位。
+    let mut patch = patch;
+    if let Some(model) = patch.get("model") {
+        let wanted = model
+            .get("provider")
+            .and_then(Value::as_str)
+            .zip(model.get("modelId").and_then(Value::as_str));
+        if let Some((provider, model_id)) = wanted {
+            if let Some(item) = state
+                .assembled_models()
+                .unwrap_or_else(|| state.models().clone())
+                .items
+                .iter()
+                .find(|item| item.provider == provider && item.model_id == model_id)
+            {
+                patch["thinkingLevels"] = json!(item.thinking_levels);
+            }
+        }
+    }
+    let result = state.commands().configure(id, patch).await?;
+    Ok(Json(result.value))
+}
+
+/// `POST /v1/sessions/{id}/purge`：真删 + 墓碑；第二次 409。
+async fn purge(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().purge(id).await?;
+    Ok(Json(json!({
+        "id": result.id,
+        "purged": true,
+        "at": result.at,
+    })))
+}
+
+/// `POST /v1/sessions/{id}/archive`：闭包复印到 gen 文件 + 墓碑（#67）。
+async fn archive(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().archive(id, now_ms(), None).await?;
+    Ok(Json(json!({
+        "gen": result.gen,
+        "ids": result.ids,
+        "rows": result.rows,
+    })))
+}
+
+/// `GET /v1/archive`：世代列表 + 墓碑 + live（#67）。
+async fn archive_index(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let gens = state.commands().archives().await?;
+    let items = gens.into_iter().map(|generation| {
+        let items = generation.items.into_iter().map(|item| {
+            let parent = item.parent.map(|(id, at)| json!({ "id": id, "at": at }))
+                .unwrap_or(Value::Null);
+            let last = item.last.map(|(id, kind, text)| json!({ "id": id, "kind": kind, "text": text }))
+                .unwrap_or(Value::Null);
+            let archived = item.archived.map(|tomb| json!({
+                "at": tomb.at, "gen": tomb.gen, "purged": tomb.purged,
+            })).unwrap_or(Value::Null);
+            json!({
+                "id": item.id,
+                "parent": parent,
+                "entries": item.entries,
+                "last": last,
+                "name": item.name,
+                "archived": archived,
+                "live": item.live,
+            })
+        }).collect::<Vec<_>>();
+        json!({ "gen": generation.gen, "items": items })
+    }).collect::<Vec<_>>();
+    Ok(Json(json!({ "gens": items })))
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreBody {
+    gen: String,
+}
+
+/// `POST /v1/archive/{id}/restore`：从 gen 文件打捞回活库并抹墓碑（#67）。
+async fn restore(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let body: RestoreBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("gen is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("restore body: {error}")))?
+    };
+    let result = state.commands().restore(id, body.gen, now_ms()).await?;
+    Ok(Json(json!({
+        "restored": result.restored,
+        "gen": result.gen,
+        "rows": result.rows,
+    })))
 }
 
 /// `GET /v1/prompts`：A 阶段空表。
@@ -195,9 +467,83 @@ async fn prompts() -> Json<Value> {
     Json(crate::meta::prompts())
 }
 
-/// `GET /v1/extensions`：ext 冻结，空清单。
-async fn extensions() -> Json<Value> {
-    Json(crate::meta::extensions())
+/// `GET /v1/extensions`：ext 冻结，空清单。`?usage=1` 时回答「谁在用」（#85）。
+async fn extensions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("extensions")?));
+    }
+    let items = state.ext().map(|runtime| runtime.items());
+    Ok(Json(crate::meta::extensions(items.as_deref())))
+}
+
+/// `POST /v1/extensions/reload`：按盘上现状重装所有已装载扩展（#81）。
+/// 返回 `{ reloaded: [name...] }`；失败的保留旧进程，错误进扩展自己的诊断。
+async fn reload_extensions(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let runtime = state.ext().ok_or_else(|| {
+        crate::error::ServerError::Conflict("extensions runtime not configured".to_string())
+    })?;
+    let reloaded = runtime.reload_all();
+    Ok(Json(json!({ "reloaded": reloaded })))
+}
+
+/// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。
+async fn skills(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("skills")?));
+    }
+    Ok(Json(crate::meta::skills()))
+}
+
+/// `?usage=1`：反查模式开关。缺席 / 0 / false / 其它值都不是反查，
+/// 不因为一个可选参数让整个端点 400（serde 的 `bool` 会把 `1` 判成非法）。
+#[derive(Debug, Deserialize)]
+struct UsageQuery {
+    usage: Option<String>,
+}
+
+impl UsageQuery {
+    fn requested(&self) -> bool {
+        matches!(self.usage.as_deref(), Some("1" | "true"))
+    }
+}
+
+/// `GET /v1/search?q=&kind=&limit=`（#85）：服务端扫一次会话正文 / 文档，
+/// `q` 少于两个字符 → 400，`limit` 上限 100 且 `truncated` 明确。
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    kind: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>> {
+    let q = query.q.unwrap_or_default().trim().to_string();
+    if q.chars().count() < 2 {
+        return Err(ServerError::BadRequest("q must be at least 2 characters".into()));
+    }
+    let kind = query.kind.as_deref().unwrap_or("all");
+    if !matches!(kind, "all" | "sessions" | "documents") {
+        return Err(ServerError::BadRequest("kind must be all/sessions/documents".into()));
+    }
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let all = state.source().search(&q, kind)?;
+    let total = all.len();
+    let truncated = total > limit;
+    let items: Vec<Value> = all
+        .into_iter()
+        .take(limit)
+        .map(|item| serde_json::to_value(item).expect("SearchItem is serializable"))
+        .collect();
+    Ok(Json(json!({ "items": items, "total": total, "truncated": truncated })))
 }
 
 /// `GET /v1/triggers`：观测清单 + 调度健康（#58）。装配了 store 就读真行；
@@ -216,10 +562,13 @@ async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
         return Ok(Json(report));
     };
     let store = runtime.store.lock().await;
+    // #73 / wire.md：心跳只读 durable 的 tick 记录。内存里有什么都不算，
+    // 没库、没行就是 null（CLI 更是直接传 None，不走内存兜底）。
+    let last_tick = runtime.load_last_tick_at();
     let report = crate::triggers::observation_report(
         &store,
         &runtime.definitions(),
-        runtime.last_tick_at(),
+        last_tick,
         now_ms(),
     )?;
     Ok(Json(report))
@@ -290,11 +639,80 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(body)
 }
 
-/// `GET /v1/models`：默认模型 + 列表。字段形状由 `tests/wire_shapes.rs` 钉住。
+/// `POST /v1/catalog/refresh`：拉一次远端编目，成功写缓存并换入内存；失败留旧表带 error。
+/// 响应形状 `{default, items, fetchedAt, error?}`：token 只经内存请求头，不进响应/日志。
+async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    match nous_device::refresh_remote_catalog(state.catalog_env()).await {
+        Ok(models) => {
+            state.set_models(models.clone());
+            let mut body = serde_json::to_value(&models).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = models.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            Ok(Json(body))
+        }
+        Err(error) => {
+            // 失败保留旧编目：内存里最近一次刷新的那份优先；否则从本地缓存/文件读回。
+            let mut old = state.refreshed_models().unwrap_or_else(|| {
+                nous_device::load_models(state.catalog_env()).unwrap_or_default()
+            });
+            old.catalog.error = Some(error);
+            state.set_models(old.clone());
+            let top_error = old.catalog.error.clone().unwrap_or_default();
+            let mut body = serde_json::to_value(&old).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = old.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            body["error"] = Value::String(top_error);
+            Ok(Json(body))
+        }
+    }
+}
+
+/// `GET /v1/models`：默认模型 + 列表 + 来源诊断块。
 ///
-/// 本层不认识 provider，空目录是诚实的「不知道」；宿主可换入带 catalog 的 `AppState`。
-async fn models(State(state): State<Arc<AppState>>) -> Json<ModelsResponse> {
-    Json(state.assembled_models().unwrap_or_else(|| state.models().clone()))
+/// 编目来源由 `nous-device` 收口：内联（`NOUS_MODELS`）> 文件 > 诚实空表；
+/// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
+/// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
+async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
+    // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
+    if state.injected_models() {
+        if let Some(catalog) = state.assembled_models() {
+            return Ok(Json(catalog));
+        }
+        return Ok(Json(state.models()));
+    }
+    if let Some(refreshed) = state.refreshed_models() {
+        return Ok(Json(refreshed));
+    }
+    let response = nous_device::load_models(state.catalog_env())
+        .map_err(ServerError::Internal)?;
+    Ok(Json(response))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DefaultBody {
+    provider: String,
+    #[serde(rename = "modelId")]
+    model_id: String,
+}
+
+/// `PUT /v1/default`：把默认模型原子写回同一份编目；模型不在 items 里 → 400。
+async fn put_default(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<DefaultBody>,
+) -> Result<Json<Value>> {
+    let env = state.catalog_env();
+    if env.inline.is_some() {
+        return Err(ServerError::BadRequest(
+            "NOUS_MODELS 是内联编目，不能写回 default；请用 NOUS_MODELS_FILE".to_string(),
+        ));
+    }
+    let path = &env.file_path;
+    let model = nous_device::ModelRef {
+        provider: body.provider,
+        model_id: body.model_id,
+    };
+    nous_device::save_default(path, &model)
+        .map_err(|error| ServerError::BadRequest(error))?;
+    Ok(Json(json!({ "default": model, "wrote": true })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -303,6 +721,8 @@ struct EntriesQuery {
     cursor: Option<String>,
     /// 按 entry 的 `kind` 过滤（审计可见性靠它，不加新端点，spec 8.5）。
     kind: Option<String>,
+    /// `system=1` 时额外回 `items[].delta` 与回放后的 `system`，且不过滤 `pi.system`。
+    system: Option<String>,
 }
 
 /// `GET /v1/sessions/:id/entries`：`{ items, next }`，新的在前。
@@ -351,10 +771,57 @@ async fn entries(
     if let Some(kind) = query.kind.as_deref() {
         items.retain(|entry| entry.get("kind").and_then(Value::as_str) == Some(kind));
     }
-    Ok(Json(json!({
+    let with_system = query.system.as_deref() == Some("1");
+    if with_system {
+        for item in &mut items {
+            if item.get("kind").and_then(Value::as_str) == Some("pi.system") {
+                item["delta"] = json!(system_entry_text(item));
+            }
+        }
+    } else {
+        items.retain(|entry| entry.get("kind").and_then(Value::as_str) != Some("pi.system"));
+    }
+    let mut response = json!({
         "items": items,
         "next": next.map(|cursor| cursor.encode()),
-    })))
+    });
+    if with_system {
+        // 回放：按 entry id 升序遍历全部 pi.system，最后一条生效的提示词为当前 system。
+        let mut all = state.source().entries(session)?;
+        all.sort_by_key(|entry| entry.get("id").and_then(Value::as_i64).unwrap_or(0));
+        let effective = all
+            .iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("pi.system"))
+            .filter_map(system_entry_text)
+            .last()
+            .unwrap_or_default();
+        response["system"] = json!(effective);
+    }
+    Ok(Json(response))
+}
+
+/// 一条 `pi.system` entry 自己带来的提示词文本。`model[]` 里 system 消息的 content
+/// 可能是字符串，也可能是 `[{type:"text",text}]` 块。
+fn system_entry_text(entry: &Value) -> Option<String> {
+    let message = entry
+        .get("model")?
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("system"))?;
+    let content = message.get("content")?;
+    match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(blocks) => {
+            let text = blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("");
+            Some(text)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -363,12 +830,65 @@ struct SubmitBody {
     content: Value,
     #[serde(default)]
     request_id: Option<String>,
-    /// 只要出现就拒绝：本库只实现「立即 202 + 靠 SSE 收内容」这条路径。
+    /// #70：请求体显式指定的模型（优先级最高）。
+    #[serde(default)]
+    model: Option<nous_device::ModelRef>,
+    /// `0`/省略 = 立即 202；`>0` = 最多等这么久，拿到答案回 200，超时回 202。
     #[serde(default)]
     wait_ms: Option<Value>,
-    /// 受理时忙不忙的处理。当前只有一种行为（照样排队），所以显式收下、显式忽略。
+    /// `queue`（默认）/ `interrupt`。忙时排队或先停当前轮次。
     #[serde(default)]
     when_busy: Option<Value>,
+}
+
+/// 把会话 template 正文 + 选中的技能正文写进一条 `pi.system` entry，并回一条 message 给本轮
+/// provider。
+///
+/// 正文进 `sections.prompts`（不是 `content`）：#74 的 `?system=1` 回放按 sections 合并，
+/// 后续系统消息能按名字覆盖这一段；名字本身就是诊断位（`template: missing` /
+/// `skill: missing` / `skill: problem`）。
+/// #83：技能是提示词不是工具，所以这里不查 `readOnly` —— 只读会话照样注入技能。
+async fn inject_prompt_section(
+    state: &Arc<AppState>,
+    session_id: i64,
+    submitted: &crate::commands::SubmitResult,
+) -> Option<nous_ai::Message> {
+    let template_name = state.commands().template(session_id).await.ok().flatten();
+    let prompts_root = nous_env::PROMPTS.resolve();
+    let template_text = template_name.map(|template_name| {
+        if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
+            nous_prompts::render(&template.body, &Default::default())
+        } else {
+            format!("template: missing ({template_name})")
+        }
+    });
+    let selected = state.commands().skills(session_id).await.ok().unwrap_or_default();
+    let skills_text = nous_skills::assemble_prompts(&nous_env::SKILLS.resolve(), &selected);
+    let text = match (template_text, skills_text.is_empty()) {
+        (Some(head), false) => format!("{head}\n\n{skills_text}"),
+        (Some(head), true) => head,
+        (None, skills) if !skills => skills_text,
+        _ => return None,
+    };
+    let actor = "prompts".to_string();
+    let message_value = serde_json::to_value(nous_ai::transform::system::section_patch(
+        &[("prompts", Some(text.as_str()))], 0,
+    )).ok()?;
+    let durable = state.durable_session()?;
+    let entry = serde_json::json!({
+        "id": submitted.entry_id + 4,
+        "conversationId": session_id,
+        "kind": "pi.system",
+        "model": [message_value],
+        "actor": { "kind": "system", "id": actor },
+    });
+    let _ = durable.commit(
+        vec![nous_durable::StorageWrite::Entry(entry)],
+        nous_durable::session::CommitOptions::default(),
+    ).await;
+    Some(nous_ai::Message::System(Box::new(
+        nous_ai::transform::system::section_patch(&[("prompts", Some(text.as_str()))], 0),
+    )))
 }
 
 /// `POST /v1/sessions/:id/messages`：不传 `waitMs` 时立即 202。
@@ -381,48 +901,135 @@ async fn messages(
     Json(body): Json<SubmitBody>,
 ) -> Result<impl IntoResponse> {
     let session = parse_session(&id)?;
-    if body.wait_ms.is_some() {
-        return Err(ServerError::BadRequest(
-            "waitMs is not supported; listen on /events for the answer".to_string(),
-        ));
+    let wait_ms = match &body.wait_ms {
+        None | Some(Value::Null) => 0u64,
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| ServerError::BadRequest("waitMs must be a non-negative integer".to_string()))?,
+    };
+    let when_busy = match &body.when_busy {
+        None | Some(Value::Null) => "queue",
+        Some(Value::String(value)) if value == "queue" || value == "interrupt" => value.as_str(),
+        _ => {
+            return Err(ServerError::BadRequest(
+                "whenBusy must be queue or interrupt".to_string(),
+            ))
+        }
+    };
+    if when_busy == "interrupt" && state.commands().busy(session).await? {
+        // #70：先停当前轮次（abort 会 cancel 同一个 token、写 user_cancel 终态），
+        // 再受理新的一条。停不掉就报错，不许「假装打断」。
+        state.commands().abort(session).await?;
     }
-    let _ = body.when_busy;
     let faux = state.provider_kind() == "faux";
+    // #70：模型解析在**受理之前**。没有来源就 503，不许先 202 再沉默。
+    let catalog = if state.injected_models() {
+        state.models().clone()
+    } else {
+        nous_device::load_models(state.catalog_env()).map_err(ServerError::ServiceUnavailable)?
+    };
+    let session_model = state
+        .source()
+        .sessions()?
+        .into_iter()
+        .find(|item| item.id == session)
+        .and_then(|item| item.model);
+    let reference = crate::runtime::resolve_model_ref(
+        body.model.as_ref(),
+        session_model.as_deref(),
+        &catalog,
+    )
+    .ok_or_else(|| ServerError::ServiceUnavailable("没有可用模型".to_string()))?;
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
         .await?;
 
-    // #51：只有显式 faux 装配才在受理后跑一轮。真 provider 的解析/503 语义不在本票改；
-    // 没有装配时保持原行为（只受理）。
+    // #70：受理后一律起一轮。faux 只决定模型来源，不决定「跑不跑」。
     // 事件只用 wire 已有的类型：user entry 的 message_start/entry_appended 由
     // durable 的 CommitObserver → project 投影发出，assistant 由轮次的投影发；
     // 这里不再手工补帧（之前补的假 entry 是重复且形状不对的）。
-    if faux {
-        if let Some(runtime) = state.runtime() {
-            let submitted = result.clone();
-            let driver = runtime.driver.clone();
-            let model = nous_ai::Model::new(
+    let completion_rx = if wait_ms > 0 {
+        state.runtime().map(|runtime| runtime.completions.subscribe())
+    } else {
+        None
+    };
+    if let Some(runtime) = state.runtime() {
+        let submitted = result.clone();
+        let driver = runtime.driver.clone();
+        let completions = runtime.completions.clone();
+        let commands = state.commands().clone();
+        // #51：faux 验收模式没显式指定模型时仍用固定 echo 模型；否则用解析出的引用构造。
+        let model = if faux && body.model.is_none() {
+            nous_ai::Model::new(
                 crate::runtime::FAUX_MODEL_ID,
                 "Faux Echo",
                 nous_ai::Api::Faux,
                 "faux",
                 "http://localhost:0",
-            );
-            tokio::spawn(async move {
-                let _ = driver
-                    .run(TurnRequest {
-                        conversation: session,
-                        submission: submitted.submission_id,
-                        entry_id: submitted.assistant_entry_id,
-                        live: submitted.live_id,
-                        model,
-                        context: nous_ai::Context::new(Vec::new()),
-                        attempt: 1,
-                    })
-                    .await;
-            });
+            )
+        } else {
+            crate::runtime::model_from_ref(&reference)
+        };
+        // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
+        // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
+        let system_message = inject_prompt_section(&state, session, &submitted).await;
+        let mut turn_context = nous_ai::Context::new(Vec::new());
+        if let Some(message) = system_message {
+            turn_context.messages.push(message);
         }
+        tokio::spawn(async move {
+            let outcome = driver
+                .run(TurnRequest {
+                    conversation: session,
+                    submission: submitted.submission_id,
+                    entry_id: submitted.assistant_entry_id,
+                    live: submitted.live_id,
+                    model,
+                    context: turn_context,
+                    attempt: 1,
+                })
+                .await;
+            match outcome {
+                Ok(outcome) => {
+                    let _ = completions.send((submitted.submission_id, outcome.entry));
+                }
+                Err(error) => {
+                    // #70：失败也必须收敛 submission，不能停在 queued 假装受理。
+                    eprintln!("nous-server: 轮次失败：{error}");
+                    if let Err(fail_error) = commands
+                        .fail_submission(session, submitted.submission_id, "model_error")
+                        .await
+                    {
+                        eprintln!("nous-server: submission 收敛失败：{fail_error}");
+                    }
+                }
+            }
+        });
+    }
+
+    if wait_ms > 0 {
+        if let Some(mut rx) = completion_rx {
+            let deadline = tokio::time::Duration::from_millis(wait_ms);
+            loop {
+                match tokio::time::timeout(deadline, rx.recv()).await {
+                    Ok(Ok((id, answer))) if id == result.submission_id => {
+                        return Ok((StatusCode::OK, Json(answer)));
+                    }
+                    Ok(Ok(_)) => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed))
+                    | Err(_) => break,
+                }
+            }
+        }
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({
+                "submissionId": result.submission_id,
+                "status": "running",
+            })),
+        ));
     }
 
     Ok((

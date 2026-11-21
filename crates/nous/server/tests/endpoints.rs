@@ -351,3 +351,47 @@ async fn internal_errors_are_500_with_the_error_shape() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(body["error"], json!("boom"));
 }
+
+#[tokio::test]
+async fn system_switch_adds_system_entries_and_replays_the_effective_prompt() {
+    let source = common::FakeSource::two_sessions();
+    // FakeSource 是 Arc，重新造一份带 system entry 的源（id 1）。
+    let mut entries = source.entries.clone();
+    entries.entry(1).or_default().insert(0, json!({
+        "id": 10,
+        "kind": "pi.system",
+        "text": "you are helpful",
+        "parent": null,
+        "model": [{"role": "system", "timestamp": 1, "content": "you are helpful"}]
+    }));
+    entries.entry(1).or_default().insert(1, json!({
+        "id": 12,
+        "kind": "pi.system",
+        "text": "new persona",
+        "parent": null,
+        "model": [{"role": "system", "timestamp": 2, "content": "new persona"}]
+    }));
+    let source = Arc::new(common::FakeSource {
+        sessions: source.sessions.clone(),
+        entries,
+        live: source.live.clone(),
+    });
+    let app = router(AppState::with_source(source));
+    let response = app.clone().oneshot(
+        Request::builder().uri("/v1/sessions/1/entries").body(Body::empty()).unwrap()
+    ).await.unwrap();
+    let default: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert!(default.get("system").is_none(), "不传 system=1 时不能出现 system 字段：{default}");
+    let default_items = default["items"].as_array().unwrap();
+    assert!(!default_items.iter().any(|item| item["kind"] == json!("pi.system")), "默认要过滤 pi.system");
+
+    let response = app.clone().oneshot(
+        Request::builder().uri("/v1/sessions/1/entries?system=1").body(Body::empty()).unwrap()
+    ).await.unwrap();
+    let system: Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    let items = system["items"].as_array().unwrap();
+    assert!(items.len() > default_items.len(), "system=1 的 items 应包括 pi.system：{system}");
+    assert!(items.iter().any(|item| item["kind"] == json!("pi.system") && item["delta"].is_string()), "system entry 要带 delta：{system}");
+    let replay = system["system"].as_str().unwrap_or_default();
+    assert!(replay.contains("new persona") && !replay.contains("you are helpful"), "system 是回放后生效的提示词：{system}");
+}

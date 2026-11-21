@@ -238,7 +238,7 @@ impl Runtime {
     /// 装载所有扩展。**一个扩展坏了不许把宿主拖死**（EX-66）：其余照常，进程不退。
     pub fn start_all(&self) -> BTreeMap<String, ExtResult<()>> {
         let mut results = BTreeMap::new();
-        for (dir, loaded) in manifest::scan(&self.config.exts_root) {
+        for (dir, loaded) in crate::admin::scan_active(&self.config.exts_root) {
             let loaded = match loaded {
                 Ok(loaded) => loaded,
                 Err(error) => {
@@ -1005,6 +1005,82 @@ impl Runtime {
     pub fn gate_stats(&self) -> (usize, usize, Option<String>) {
         let gate = self.gate.lock().expect("gate");
         (gate.inflight, gate.queued, gate.last_queue_message.clone())
+    }
+
+    /// `GET /v1/extensions` 的真清单投影（#81）。
+    ///
+    /// 观测只来自运行时自己持有的事实：清单、进程 pid、状态机、最近一次错误。
+    /// 装载失败的那一项也留在这里（`loaded=false` + `error`），不许静默消失。
+    pub fn items(&self) -> Vec<Value> {
+        let mut items = Vec::new();
+        for (dir, loaded) in crate::admin::scan_active(&self.config.exts_root) {
+            let dirname = dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| dir.display().to_string());
+            let load_error = loaded.as_ref().err().map(|error| error.to_string());
+            let loaded_manifest = loaded.ok();
+            let name = loaded_manifest
+                .as_ref()
+                .map(|loaded| loaded.manifest.name.clone())
+                .unwrap_or_else(|| dirname.clone());
+            let version = loaded_manifest
+                .as_ref()
+                .map(|loaded| loaded.manifest.version.clone())
+                .unwrap_or_default();
+            let (pid, state, error) = match self.extension(&name) {
+                Some(arc) => {
+                    let ext = arc.lock().expect("ext");
+                    let pid = ext.process.as_ref().map(|process| process.pid);
+                    let crashed = ext
+                        .process
+                        .as_ref()
+                        .is_some_and(|process| process.flags.crashed.load(Ordering::SeqCst));
+                    let state = if crashed {
+                        // 进程死了但状态机还没推进：wire 层如实说崩了。
+                        "crashed".to_string()
+                    } else if ext.state == ExtState::Normal {
+                        // 五态的 normal 在 wire 上叫 running（票面 #81 的判据名）。
+                        "running".to_string()
+                    } else {
+                        ext.state.as_str().to_string()
+                    };
+                    let error = if crashed {
+                        Some(format!("extension process {pid:?} exited"))
+                    } else if ext.state == ExtState::Normal && pid.is_none() {
+                        Some(format!("extension {name} has no process"))
+                    } else {
+                        None
+                    };
+                    (pid, state, error)
+                }
+                None => {
+                    let error = load_error
+                        .or_else(|| Some(format!("extension {name} is not running")));
+                    (None, "crashed".to_string(), error)
+                }
+            };
+            items.push(json!({
+                "name": name,
+                "version": version,
+                "kind": loaded_manifest.as_ref().map(|loaded| loaded.manifest.category.clone().unwrap_or_else(|| "native".to_string())).unwrap_or_else(|| "unknown".to_string()),
+                "loaded": loaded_manifest.is_some(),
+                "pid": pid,
+                "state": state,
+                "error": error,
+            }));
+        }
+        items
+    }
+
+    /// 一次「按盘上现状重装」（#81）：每个已装载的扩展打一次真重载。
+    ///
+    /// 返回真重载成功的扩展名；失败的保留旧进程与旧状态，错误进诊断。
+    pub fn reload_all(&self) -> Vec<String> {
+        self.names()
+            .into_iter()
+            .filter(|name| self.reload(name).is_ok())
+            .collect()
     }
 
     /// 禁用 / 取消禁用（配置，不是崩溃；下游必须显式失败，EX-76）。

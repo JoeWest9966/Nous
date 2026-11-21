@@ -308,7 +308,7 @@ impl Session {
         &self,
         config: serde_json::Value,
     ) -> Result<serde_json::Value, SessionError> {
-        use serde_json::json;
+        use serde_json::{json, Value};
 
         let mut guard = self.storage.lock().await;
         let storage = guard.as_mut().ok_or(SessionError::Closed)?;
@@ -318,15 +318,47 @@ impl Session {
         // `qrd3wh.sessions` 是 session 作用域的单例：第二、第三条会话都合并进同一份文档，
         // 绝不再次 DocumentCreate（地址唯一，第二次会被 storage 拒绝）。本次只补 names 的
         // 一个新键，不改 pins/archived 等别人管的字段；config 没有任何读者，不再写进去。
-        let mut document_writes = session_document::merge_session_document(
-            storage,
-            "qrd3wh.sessions",
-            "names",
-            |names| {
-                names[id.to_string()] = name;
-            },
-        )?;
+        let template = config.get("template").cloned().unwrap_or(Value::Null);
+        // #72：names 与 templates 住在同一份单例文档，必须一次读改写；
+        // 分两次 merge 第二次会撞地址（docs/pitfalls.md 的 DocumentCreate 坑）。
+        let (document_id, existing) = session_document::session_scope_document(storage, "qrd3wh.sessions")?;
+        let mut document = existing.unwrap_or_else(|| json!({}));
+        if !document.is_object() {
+            document = json!({});
+        }
+        let mut names = document.get("names").cloned().unwrap_or_else(|| json!({}));
+        if !names.is_object() {
+            names = json!({});
+        }
+        names[id.to_string()] = name;
+        document["names"] = names;
+        let mut templates = document.get("templates").cloned().unwrap_or_else(|| json!({}));
+        if !templates.is_object() {
+            templates = json!({});
+        }
+        templates[id.to_string()] = template;
+        document["templates"] = templates;
+        let mut document_writes = session_document::upsert_session_document(storage, "qrd3wh.sessions", document_id, document)?;
         let mut writes = vec![StorageWrite::Conversation(json!({ "id": id }))];
+        // #83：建会话选的 skills 落在 conversation 作用域的 pi.agent 文档，
+        // 和 #64 的 config 同源；没有选就不造文档（未选 = 不挂技能）。
+        let skills = config.get("skills").cloned().unwrap_or(json!([]));
+        if skills.as_array().is_some_and(|items| !items.is_empty()) {
+            let agent_id = storage.mint_id()?;
+            writes.push(StorageWrite::DocumentCreate {
+                id: agent_id,
+                record: json!({
+                    "id": agent_id,
+                    "kind": "pi.agent",
+                    "scope": { "kind": "conversation", "conversationId": id },
+                    "history": "latest", "fork": "current",
+                }),
+                content: crate::DocumentContent::Base {
+                    version: 1,
+                    value: json!({ "skills": skills }),
+                },
+            });
+        }
         writes.append(&mut document_writes);
         let committed = storage.commit(&[writes], |_, _| {})?;
         if let Some(refusal) = committed.refused {

@@ -14,7 +14,9 @@
 //! | [`runtime`] | 监管：装配、调用、熔断、重载、禁用 |
 //! | [`audit`] | 四种事件落提交、结果与 mutation 同一次提交 |
 //! | [`install`] | 原子切换与产物来源 |
+//! | [`admin`] | 扩展源码的管理动作（create / duplicate / trash / 类别词表，#84） |
 
+pub mod admin;
 pub mod audit;
 pub mod config;
 pub mod error;
@@ -27,6 +29,7 @@ pub mod sha256;
 pub mod spawn;
 pub mod state;
 
+pub use admin::{AdminStore, CreateOptions, DuplicateOptions, HeadRestore, REPO_DELETED_FILE};
 pub use config::{HandleValue, Isolation, Limits, RuntimeConfig};
 pub use error::{ExtError, ExtResult, FailureClass};
 pub use install::Installer;

@@ -376,3 +376,34 @@ op 就发一帧" → 0 帧负向红。
      `StreamingJsonParser` / `ToolCallArgumentsStream`），提货是新东西，不是重写旧的。
 
 3. **3 条 delta 变体用构造数据**（§2.3）—— 认还是不认？不认的话这 3 行就永远没人验。
+
+---
+
+## 7. 依赖契约图（#89 收口：判据 4e 的单一真相）
+
+`scripts/verify.sh` §4e 对 `cargo metadata` 里每个 `nous-*` 依赖做同一件事：
+**若目标包名不在下表的 `allow` 集合里，就报「依赖边不在契约图表里」并判红。**
+这张表的机器版是 `docs/dependency-graph.toml`（判据直接读它）；下表是给人看的同一份。
+两处必须逐行相等；只改一处 = 空跑的绿。
+
+| 包 | 允许的 `nous-*` 直接依赖 | 出处 |
+|---|---|---|
+| `nous-telemetry` `nous-chord` `nous-wire` `nous-store` | 无 | 契约 / 语义 / 第二个库，零内部依赖（#56） |
+| `nous-env` | `nous-chord` | 路径与 shell 契约 |
+| `nous-ai` | `nous-telemetry` `nous-ai-types` | provider trait 与纯类型 |
+| `nous-tools` | `nous-ai` `nous-env` | 第一方工具 |
+| `nous-runtime` | `nous-ai` | 执行绑定 |
+| `nous-durable` | `nous-chord` `nous-ai` `nous-wire` `nous-telemetry` `nous-env` `nous-ai-types` | 语义层；永久禁 HTTP（判据另有断言） |
+| `nous-dispatcher` | `nous-chord` `nous-durable` `nous-store` | #73 注入 Clock + durable sleeping 任务的节拍：chord 处理增量、durable 落 tick、store 读写账本 |
+| `nous-server` | `nous-durable` `nous-wire` `nous-telemetry` `nous-ai` `nous-runtime` `nous-sessions` `nous-tools` `nous-documents` `nous-store` `nous-env` · **#65** `nous-device` · **#78** `nous-env-ssh` · **#81** `nous-ext` · **#72/#71/#83** `nous-prompts` `nous-skills` · **#75/#76/#77** `nous-repo` · **#62** `nous-stats` · **#73** `nous-dispatcher` | 组装根：拼 HTTP 面就要摸到这些插件（#44/#47/#48/#49/#51/#57 原始边；#89 补齐 7 条实际边；#73 补 dispatcher 边） |
+| `nous-store` | 无 | 独立迁移链；多一条边（尤其 `nous-durable`）就是判据 1 破 |
+
+**这张表不是许可证**：它只回答「这条边有没有人签字」，不替代判据 2（内核层不许依赖应用层）
+或判据 §1.1（`nous-app` 的 normal 依赖里不许有 `rusqlite` / `nous-chord`）。扩边只在实现真的
+需要该能力时做，并在上表标出票号；判据脚本里的阈值与断言不动。
+
+### #89 为什么改读表方式
+
+原表内嵌在 `verify.sh` 里，而票面要求「补 `docs/harness.md` 的图表并让判据读到」——内嵌表
+使文档永远追不上判据。现在判据读 `docs/dependency-graph.toml`，文档 §7 是同一张表的说明；
+新增“表为空即 RED”的哨兵，防止把表清空获得空跑的绿。断言循环逐字未变。

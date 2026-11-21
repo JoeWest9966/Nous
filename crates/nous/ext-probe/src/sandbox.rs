@@ -302,7 +302,7 @@ pub fn repo_root() -> PathBuf {
 }
 
 pub fn git_short() -> String {
-    std::process::Command::new("git")
+    std::process::Command::new(git_program())
         .args(["-C", repo_root().to_str().unwrap_or("."), "rev-parse", "--short=7", "HEAD"])
         .output()
         .ok()
@@ -321,3 +321,5 @@ pub fn shell(program: &str, args: &[&str]) -> String {
         .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
         .unwrap_or_default()
 }
+
+fn git_program() -> String { String::from("git") }

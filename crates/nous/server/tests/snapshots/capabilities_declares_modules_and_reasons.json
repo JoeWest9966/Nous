@@ -7,10 +7,17 @@
   "modules": [
     {
       "name": "sessions",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-sessions`",
+      "description": "**pi 本体**（#44 落地），承载最小轮次与取消收敛",
       "enabled": true,
       "endpoints": [
         "GET /v1/sessions",
         "GET /v1/unread",
+        "GET /v1/origins",
         "POST /v1/read/:id",
         "POST /v1/sessions",
         "GET /v1/sessions/:id/entries",
@@ -19,11 +26,76 @@
         "POST /v1/sessions/:id/abort",
         "POST /v1/sessions/:id/fork",
         "POST /v1/sessions/:id/rename",
-        "POST /v1/sessions/:id/pin"
+        "POST /v1/sessions/:id/pin",
+        "POST /v1/sessions/:id/config",
+        "POST /v1/sessions/:id/purge",
+        "GET /v1/selection",
+        "POST /v1/selection",
+        "GET /v1/search"
+      ]
+    },
+    {
+      "name": "env",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "platform",
+      "required": true,
+      "crate": "`nous-env`",
+      "description": "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/fs/dirs"
+      ]
+    },
+    {
+      "name": "repo",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "platform",
+      "required": true,
+      "crate": "`nous-repo`",
+      "description": "唯一的 git 进程调用面；四条私库路径解析沿用 `env`",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/repos/:repo/status",
+        "GET /v1/repos/:repo/pending",
+        "GET /v1/repos/:repo/pending/diff",
+        "GET /v1/repos/:repo/pending/commit",
+        "GET /v1/repos/:repo/history",
+        "GET /v1/repos/:repo/history/diff",
+        "POST /v1/repos/:repo/commit",
+        "POST /v1/repos/:repo/archive",
+        "POST /v1/repos/:repo/restore",
+        "POST /v1/repos/:repo/purge",
+        "GET /v1/repos/:repo/variants",
+        "POST /v1/repos/:repo/variants/bind",
+        "POST /v1/repos/:repo/variants/unbind",
+        "POST /v1/repos/:repo/variants/branch",
+        "POST /v1/repos/:repo/variants/publish",
+        "POST /v1/repos/:repo/variants/prune",
+        "GET /v1/repos/:repo/variants/usage",
+        "GET /v1/repos/:repo/sources",
+        "POST /v1/repos/:repo/sources",
+        "GET /v1/repos/:repo/upstream",
+        "POST /v1/repos/:repo/upstream/refresh",
+        "POST /v1/repos/:repo/upstream/pin",
+        "POST /v1/repos/:repo/upstream/check",
+        "POST /v1/repos/:repo/upstream/sync",
+        "GET /v1/repos/:repo/upstream/tree",
+        "GET /v1/repos/:repo/upstream/file",
+        "GET /v1/repos/:repo/upstream/files",
+        "POST /v1/repos/:repo/upstream/copy",
+        "POST /v1/repos/:repo/upstream/adopt"
       ]
     },
     {
       "name": "documents",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-documents`",
+      "description": "#48：一个实现生成 presets / prompts 两套端点",
       "enabled": true,
       "endpoints": [
         "GET /v1/documents/{kind}",
@@ -37,19 +109,47 @@
         "GET /v1/documents/{kind}/{section}/{name}/history",
         "GET /v1/documents/{kind}/{section}/{name}/history/diff",
         "GET /v1/documents/{kind}/{section}/{name}/pending",
-        "GET /v1/documents/{kind}/{section}/{name}/pending/diff"
+        "GET /v1/documents/{kind}/{section}/{name}/pending/diff",
+        "POST /v1/documents/tree/{section}/{name}/move",
+        "POST /v1/documents/tree/{section}/{name}/trash",
+        "POST /v1/documents/tree/{section}/{name}/restore",
+        "POST /v1/documents/tree/{section}/{name}/purge",
+        "POST /v1/documents/tree/{section}/{name}/import"
       ]
     },
     {
       "name": "presets",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "presets 模块尚未落地"
-      }
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/presets",
+        "GET /v1/presets/model",
+        "GET /v1/presets/{section}",
+        "PUT /v1/presets/{section}/order",
+        "GET /v1/presets/{section}/categories",
+        "GET /v1/presets/{section}/{name}",
+        "PUT /v1/presets/{section}/{name}",
+        "PATCH /v1/presets/{section}/{name}",
+        "DELETE /v1/presets/{section}/{name}",
+        "POST /v1/presets/{section}/{name}/copy",
+        "GET /v1/presets/{section}/{name}/revisions",
+        "GET /v1/presets/{section}/{name}/revisions/{n}",
+        "POST /v1/presets/{section}/{name}/rollback"
+      ]
     },
     {
       "name": "skills",
+      "version": "0.1.3",
+      "kind": "声明式",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-skills`",
+      "description": "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行",
       "enabled": true,
       "endpoints": [
         "GET /v1/skills"
@@ -57,49 +157,101 @@
     },
     {
       "name": "archive",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "archive 模块尚未落地"
-      }
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票",
+      "enabled": true,
+      "endpoints": [
+        "POST /v1/sessions/:id/archive",
+        "GET /v1/archive",
+        "POST /v1/archive/{id}/restore"
+      ]
     },
     {
       "name": "combos",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "combos 模块尚未落地"
-      }
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/combos/:section",
+        "PATCH /v1/combos/:section/:name",
+        "POST /v1/combos/{section}/{name}/fire",
+        "POST /v1/presets/Ultimate-Template/launch"
+      ]
     },
     {
       "name": "triggers",
+      "version": "0.1.3",
+      "kind": "运行时外挂",
+      "layer": "app",
+      "required": false,
+      "crate": "—",
+      "description": "#57/#58 落地；调度节拍归 `dispatcher`",
       "enabled": true,
       "endpoints": [
         "GET /v1/triggers",
+        "POST /v1/triggers",
+        "GET /v1/triggers/categories",
+        "POST /v1/triggers/category",
+        "POST /v1/triggers/{code}/archive",
+        "POST /v1/triggers/{code}/restore",
+        "POST /v1/triggers/{code}/purge",
         "POST /v1/triggers/{code}/fire",
-        "GET /v1/triggers/{code}/fires"
+        "GET /v1/triggers/{code}/fires",
+        "PATCH /v1/triggers/{code}",
+        "PUT /v1/triggers/{code}"
+      ]
+    },
+    {
+      "name": "stats",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-stats`",
+      "description": "归口监控六屏；与 `--check` 共读口，tasks 现算",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/stats/usage",
+        "GET /v1/stats/tasks",
+        "GET /v1/stats/db"
       ]
     },
     {
       "name": "device",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-device`",
+      "description": "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写",
       "enabled": true,
       "endpoints": [
         "GET /v1/machines",
         "GET /v1/models",
+        "PUT /v1/default",
+        "POST /v1/catalog/refresh",
         "GET /v1/device",
         "GET /v1/capabilities",
+        "GET /v1/openapi.json",
         "GET /v1/_routes"
       ]
     },
     {
-      "name": "selection",
-      "enabled": true,
-      "endpoints": [
-        "GET /v1/selection"
-      ]
-    },
-    {
       "name": "prompts",
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": true,
+      "crate": "`nous-prompts`",
+      "description": "今天 `prompts/index.js`",
       "enabled": true,
       "endpoints": [
         "GET /v1/prompts"
@@ -107,11 +259,24 @@
     },
     {
       "name": "ext",
-      "enabled": false,
-      "reason": {
-        "code": "frozen",
-        "message": "扩展运行时已冻结，这里只返回空清单"
-      }
+      "version": "0.1.3",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-ext`",
+      "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/extensions",
+        "POST /v1/extensions/reload",
+        "POST /v1/extensions/create",
+        "POST /v1/extensions/duplicate",
+        "POST /v1/extensions/install",
+        "POST /v1/extensions/uninstall",
+        "GET /v1/extensions/categories",
+        "POST /v1/extensions/categories",
+        "POST /v1/extensions/category"
+      ]
     }
   ],
   "runtime": {

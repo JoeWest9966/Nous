@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use crate::actor::Actor;
 use crate::harness::generation::LIVE_KIND;
 use crate::storage::writes::StorageWrite;
-use crate::types::{DocumentScope, EntryRecord, TerminalReason};
+use crate::types::{EntryRecord, TerminalReason};
 use crate::{DocumentContent, DocumentPoint, Id, Storage, StorageError};
 
 use super::session_document::{merge_session_document, session_scope_document, upsert_session_document};
@@ -226,11 +226,30 @@ pub async fn cancel(
         }
 
         let tasks = live_task_ids(storage, request.conversation)?;
-        if tasks.is_empty() {
-            return Err(CommandError::Conflict(
-                "session has no running task to abort".to_string(),
-            ));
-        }
+        // #70：真 provider 的轮次不建 task（它只在 durable 的 live 文档里留痕），
+        // 所以「没有 task」不等于「没有正在跑的轮次」——有未收敛的 input submission
+        // 就说明有一轮还活着，abort 必须停 token 并落终态，不能回 409 假装没事。
+        let live_submissions = if tasks.is_empty() {
+            let pending: Vec<Value> = storage
+                .submissions(request.conversation)?
+                .into_iter()
+                .filter(|record| {
+                    record.get("type").and_then(Value::as_str) == Some("input")
+                        && matches!(
+                            record.get("status").and_then(Value::as_str),
+                            Some("queued") | Some("placed")
+                        )
+                })
+                .collect();
+            if pending.is_empty() {
+                return Err(CommandError::Conflict(
+                    "session has no running task to abort".to_string(),
+                ));
+            }
+            pending
+        } else {
+            Vec::new()
+        };
         let entry_id = storage.mint_id()?;
         // 终态与正文同一条 entry、同一次提交。若 pi.live 里已有落库的 partial，
         // 把它搬进来（并清 generation）—— 重连看到的是「有结局的一段文本」。
@@ -251,6 +270,13 @@ pub async fn cancel(
             };
             mark_abort_requested(&mut task);
             writes.push(StorageWrite::Task(task));
+        }
+        // #70：submission 也必须跟着收敛，不能停在 queued。
+        for record in &live_submissions {
+            let mut record = record.clone();
+            record["status"] = Value::String("unanswered".to_string());
+            record["reason"] = Value::String(request.reason.as_str().to_string());
+            writes.push(StorageWrite::Submission(record));
         }
         (
             CancelOutcome {
@@ -509,7 +535,7 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
         let mut writes = vec![StorageWrite::Conversation(record)];
         let name = request.name.unwrap_or_default();
         if !name.is_empty() {
-            // 同 create/rename：改单例文档的 names 一个键，pins 等别的键原样留着。
+            // 同 create/rename：改单例文档的 names 一个键，pins / origins 等别的键原样留着。
             let mut document_writes =
                 merge_session_document(storage, NAMES_KIND, "names", |names| {
                     names[id.to_string()] = json!(name);
@@ -524,10 +550,10 @@ pub async fn fork(session: &Session, request: ForkRequest) -> Result<ForkOutcome
 }
 
 // ---------------------------------------------------------------------------
-// #47：rename / read / unread
+// #47：rename / read / unread；#74：origins
 //
-// 三种写都走 `commit_and_publish`（同一把锁、同一个事务、同一份广播）；读走同一 Session
-// 的存储引用（只读扫描），不另开第二条 Storage。名字/水位住在本库自己的文档里，键是会话 id。
+// 四种读写都走 `commit_and_publish` / 同一 Session 的存储引用（只读扫描），不另开第二条
+// Storage。名字 / 置顶 / 血缘住在同一份 `qrd3wh.sessions` 文档里，水位单独一份；键是会话 id。
 // ---------------------------------------------------------------------------
 
 const NAMES_KIND: &str = "qrd3wh.sessions";
@@ -697,6 +723,99 @@ pub async fn rename_session(
     Ok(RenamedOutcome { id, name })
 }
 
+/// 一次触发器点火的血缘。住在 `qrd3wh.sessions` 的 `origins` 键里，键是会话 id
+/// （与 names / pins 同一份文档，同一条写者）。`forced` 只记手动 launch —— 本库不写它。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OriginRecord {
+    pub id: Id,
+    pub ultimate: String,
+    pub trigger: String,
+    pub at: i64,
+    pub forced: bool,
+}
+
+/// 记一次点火的血缘：**与点火时的 conversation 创建 / submit 经同一个 `Session`**，
+/// 这里只产出一批写；调用方把它并进同一批提交（跨库补偿由应用层负责顺序）。
+pub fn origin_writes(storage: &mut Storage, origin: &OriginRecord) -> Result<Vec<crate::StorageWrite>, CommandError> {
+    let value = json!({
+        "id": origin.id,
+        "ultimate": origin.ultimate,
+        "trigger": origin.trigger,
+        "at": origin.at,
+        "forced": origin.forced,
+    });
+    Ok(merge_session_document(storage, NAMES_KIND, "origins", |origins| {
+        origins[origin.id.to_string()] = value;
+    })?)
+}
+
+/// 经同一个 `Session` 记一次血缘（独立提交；点火已经成功落账，这一步只是补投影）。
+pub async fn record_origin(session: &Session, origin: OriginRecord) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let writes = origin_writes(storage_mut(&mut guard)?, &origin)?;
+    drop(guard);
+    commit_and_publish_with_new_guard(session, writes).await?;
+    Ok(())
+}
+
+/// 一条会话当前挂的模板名（#72：建会话时记下的单值，重启后仍在）。
+/// 放在 commands 面而不是 `Session`：后者的 async 公共面被 A3 判据钉死六条。
+pub async fn session_template(session: &Session, id: Id) -> Result<Option<String>, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let Some(value) = session_scope_document(storage, NAMES_KIND)?.1 else {
+        return Ok(None);
+    };
+    Ok(value.get("templates")
+        .and_then(|map| map.get(id.to_string()))
+        .and_then(Value::as_str)
+        .map(str::to_string))
+}
+
+/// 一条会话选中的技能名（#83：conversation 作用域的 `pi.agent` 文档，顺序即选中顺序）。
+/// 和 template 一样放在 commands 面，不动 `Session` 的 A3 六方法表。
+pub async fn session_skills(session: &Session, id: Id) -> Result<Vec<String>, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let Some(document_id) = storage.find_document(
+        &json!({
+            "kind": "pi.agent",
+            "scope": { "kind": "conversation", "conversationId": id },
+        }),
+        DocumentPoint::Current,
+    )?.and_then(|record| record.get("id").and_then(Value::as_i64)) else {
+        return Ok(Vec::new());
+    };
+    let Some(document) = storage.materialize(document_id, DocumentPoint::Current)? else {
+        return Ok(Vec::new());
+    };
+    Ok(document.value.get("skills")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect())
+}
+
+/// 血缘反查：`{items: [...]}`，按 `trigger` 过滤（`None` = 不过滤）。只读扫描，不另开写者。
+pub async fn origins_map(session: &Session, trigger: Option<&str>) -> Result<Value, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let origins = session_scope_document(storage, NAMES_KIND)?
+        .1
+        .and_then(|value| value.get("origins").cloned())
+        .unwrap_or_else(|| json!({}));
+    let mut items = origins
+        .as_object()
+        .map(|map| map.values().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    if let Some(trigger) = trigger {
+        items.retain(|item| item.get("trigger").and_then(Value::as_str) == Some(trigger));
+    }
+    Ok(json!({ "items": items }))
+}
+
 /// 全部会话的未读状态：`{"id": {"unread": N, "readAt": ms|null}}`。
 ///
 /// `unread` = 「水位 entry id 之后还有几条 entry」；水位文档缺席给 `{0, null}`。
@@ -850,6 +969,245 @@ async fn commit_and_publish(
     Ok(publication)
 }
 
+// ---------------------------------------------------------------------------
+// #64：selection / config / purge
+//
+// 三条都走 `commit_and_publish`：同一把写锁、同一个事务、同一份广播。
+// ---------------------------------------------------------------------------
+
+/// `POST /v1/selection` 的入参语义：`None` 表示清空（文档里记 `null`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionRequest {
+    pub id: Option<Id>,
+}
+
+/// selection 的回包：`{id}`，和 `wire.md` 一条字段。
+pub type SelectionResult = SelectionRequest;
+
+/// 读 selection：不存在就是 `null`；指向已删会话时顺手清掉死指针（同一条 `Session` 写者）。
+pub async fn read_selection(session: &Session) -> Result<SelectionResult, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    let (_, value) = session_scope_document(storage, NAMES_KIND)?;
+    let id = value
+        .as_ref()
+        .and_then(|value| value.get("selection"))
+        .and_then(Value::as_i64)
+        .filter(|id| storage.conversation(*id).ok().flatten().is_some());
+    let alive = id.is_some();
+    let stale = value
+        .as_ref()
+        .and_then(|value| value.get("selection"))
+        .and_then(Value::as_i64)
+        .is_some()
+        && !alive;
+    drop(guard);
+    if stale {
+        let mut guard = session.storage.lock().await;
+        let storage = storage_mut(&mut guard)?;
+        let (existing, value) = session_scope_document(storage, NAMES_KIND)?;
+        let mut value = value.unwrap_or_else(|| json!({}));
+        if !value.is_object() {
+            value = json!({});
+        }
+        value["selection"] = Value::Null;
+        let writes = upsert_session_document(storage, NAMES_KIND, existing, value)?;
+        commit_and_publish(session, &mut guard, writes).await?;
+    }
+    Ok(SelectionResult { id })
+}
+
+/// 写 selection：非空 id 必须存在，否则 404；写进 `qrd3wh.sessions.selection`，经同一写者广播。
+pub async fn set_selection(
+    session: &Session,
+    id: Option<Id>,
+) -> Result<SelectionResult, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if let Some(id) = id {
+        if storage.conversation(id)?.is_none() {
+            return Err(CommandError::NotFound(format!("session {id} not found")));
+        }
+    }
+    let (existing, value) = session_scope_document(storage, NAMES_KIND)?;
+    let mut value = value.unwrap_or_else(|| json!({}));
+    if !value.is_object() {
+        value = json!({});
+    }
+    value["selection"] = id.map(Value::from).unwrap_or(Value::Null);
+    let writes = upsert_session_document(storage, NAMES_KIND, existing, value)?;
+    commit_and_publish(session, &mut guard, writes).await?;
+    Ok(SelectionResult { id })
+}
+
+/// `POST /v1/sessions/:id/config` 的结果：生效值逐键回包。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigResult {
+    pub id: Id,
+    pub value: Value,
+}
+
+/// 逐键覆盖会话配置。只改请求里出现的键：`readOnly` / `model` / `thinkingLevel` /
+/// `skills` / `extensions` / `template` / `machine` / `cwd`；`skills` / `extensions`
+/// 是相对增删（patch 里的 `add` / `remove` 数组）。换模型后按新模型的档位表夹档位，
+/// 应用层填的 `thinkingLevels` 随配置一起落库（durable 不认识模型目录，只执行规则）。
+pub async fn configure_session(
+    session: &Session,
+    id: Id,
+    patch: Value,
+) -> Result<ConfigResult, CommandError> {
+    let patch = patch.as_object().cloned().unwrap_or_default();
+    if patch.is_empty() {
+        return Err(CommandError::BadRequest("config patch is empty".to_string()));
+    }
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    let agent_id = storage
+        .find_document(
+            &json!({
+                "kind": "pi.agent",
+                "scope": { "kind": "conversation", "conversationId": id },
+            }),
+            DocumentPoint::Current,
+        )?
+        .and_then(|record| record.get("id").and_then(Value::as_i64));
+    let mut value = agent_id
+        .and_then(|agent_id| storage.materialize(agent_id, DocumentPoint::Current).ok().flatten())
+        .map(|document| document.value)
+        .unwrap_or_else(|| json!({}));
+    if !value.is_object() {
+        value = json!({});
+    }
+    for key in [
+        "readOnly",
+        "model",
+        "thinkingLevel",
+        "thinkingLevels",
+        "skills",
+        "extensions",
+        "template",
+        "machine",
+        "cwd",
+    ] {
+        // #83：`skills` / `extensions` 的请求值是 {add,remove} patch，不是生效值本身；
+        // 必须在下面单独做相对增删，不能被这一段整份覆盖掉（否则第二次 config 只剩 add 项）。
+        if key == "skills" || key == "extensions" {
+            continue;
+        }
+        if let Some(next) = patch.get(key) {
+            value[key] = next.clone();
+        }
+    }
+    // `skills` / `extensions` 是相对增删：{add:[...], remove:[...]}，从当前集合出发。
+    for key in ["skills", "extensions"] {
+        if let Some(change) = patch.get(key).filter(|value| value.is_object()) {
+            let mut current = value[key].as_array().cloned().unwrap_or_default();
+            if let Some(add) = change.get("add").and_then(Value::as_array) {
+                for item in add {
+                    if !current.contains(item) {
+                        current.push(item.clone());
+                    }
+                }
+            }
+            if let Some(remove) = change.get("remove").and_then(Value::as_array) {
+                current.retain(|item| !remove.contains(item));
+            }
+            value[key] = Value::Array(current);
+        }
+    }
+    // 换模型：档位表随之换。请求没带 thinkingLevel 就取新表的第二档（off 之后第一档），
+    // 带了就按新表夹；没有表就退成 off。
+    if patch.contains_key("model") {
+        let levels = value
+            .get("thinkingLevels")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| vec![json!("off")]);
+        let fallback = json!("off");
+        let level = value.get("thinkingLevel").cloned().unwrap_or(fallback.clone());
+        let effective = levels
+            .iter()
+            .find(|candidate| **candidate == level)
+            .cloned()
+            .or_else(|| levels.get(1).cloned())
+            .or_else(|| levels.first().cloned())
+            .unwrap_or(fallback);
+        value["thinkingLevel"] = effective;
+    }
+    let writes = match agent_id {
+        Some(id) => vec![StorageWrite::DocumentChange {
+            id,
+            content: DocumentContent::Base {
+                version: 1,
+                value: value.clone(),
+            },
+        }],
+        None => {
+            let document_id = storage.mint_id()?;
+            vec![StorageWrite::DocumentCreate {
+                id: document_id,
+                record: json!({
+                    "id": document_id,
+                    "kind": "pi.agent",
+                    "scope": { "kind": "conversation", "conversationId": id },
+                    "history": "latest", "fork": "current",
+                }),
+                content: DocumentContent::Base {
+                    version: 1,
+                    value: value.clone(),
+                },
+            }]
+        }
+    };
+    commit_and_publish(session, &mut guard, writes).await?;
+    Ok(ConfigResult { id, value })
+}
+
+/// `POST /v1/sessions/:id/purge` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PurgeResult {
+    pub id: Id,
+    pub at: i64,
+}
+
+/// 真删一条会话：一次事务删干净九张表里属于它的行，墓碑翻 purged=true。
+/// 会话不存在 → 404；未归档 / 已 purged → 409（#67：purge 必须先有墓碑）。
+pub async fn purge_session(
+    session: &Session,
+    id: Id,
+    _actor: Actor,
+) -> Result<PurgeResult, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    let (_, value) = session_scope_document(storage, NAMES_KIND)?;
+    let tomb = generations::tombstone(value.as_ref().unwrap_or(&json!({})), id);
+    // 顺序要紧：已撕过的第二次永远 409（不是因为会话没了的 404）；
+    // 从没归档过的活会话也想撕 → 409；不存在的 id → 404。
+    if tomb.as_ref().is_some_and(|t| t.purged) {
+        return Err(CommandError::Conflict(format!("session {id} already purged")));
+    }
+    if storage.conversation(id)?.is_none() {
+        return Err(CommandError::NotFound(format!("session {id} not found")));
+    }
+    if tomb.is_none() {
+        return Err(CommandError::Conflict(format!(
+            "session {id} 还没有归档墓碑，先 archive 再 purge"
+        )));
+    }
+    let gen = tomb.map(|t| t.gen).unwrap_or_default();
+    let at = now_ms();
+    storage.purge_conversation(id, at, &gen)?;
+    drop(guard);
+    session.observers.publish(
+        &CommitPublication::new(at, vec![]),
+        &Context::new(),
+    );
+    Ok(PurgeResult { id, at })
+}
+
 /// 一次通用的文档写入。应用层（#48 的 `documents`）用它写任何 kind 的文档：
 /// durable 只认 `StorageWrite`，产品词只留在应用层。
 ///
@@ -963,4 +1321,183 @@ fn now_ms() -> i64 {
 /// 应用层停 provider 流时用它；落库终态仍只走 [`cancel`]。
 pub fn cancel_token(session: &Session) -> tokio_util::sync::CancellationToken {
     session.cancellation.token().clone()
+}
+
+/// #70：把一条 `input/queued` 或 `input/placed` 的 submission 推到 `done`。
+///
+/// 只改 `status` 与 `answer` 两个键，其余字段（requestId / actor / trace）原样保留；
+/// 与 assistant entry 分开提交（entry 提交成功才算答上）。重复调用是幂等的：
+/// 已经是 `done` 就直接返回。
+pub async fn settle_submission(
+    session: &Session,
+    submission: Id,
+    answer: Id,
+) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let record = {
+        let storage = storage_mut(&mut guard)?;
+        storage
+            .submission(submission)?
+            .ok_or_else(|| CommandError::NotFound(format!("submission {submission} not found")))?
+    };
+    let mut record = record;
+    let status = record.get("status").and_then(Value::as_str).unwrap_or_default();
+    if status == "done" || status == "unanswered" {
+        return Ok(());
+    }
+    record["status"] = Value::String("done".to_string());
+    record["answer"] = json!(answer);
+    record["entry"] = json!(answer);
+    commit_and_publish(session, &mut guard, vec![StorageWrite::Submission(record)]).await?;
+    Ok(())
+}
+
+/// #70：轮次失败（没有可用模型 / provider 出错 / 用户取消）时把 submission 收敛到
+/// `unanswered`，让 `queued` 不留在库里。reason 是五值终态的语义串。
+pub async fn fail_submission(
+    session: &Session,
+    submission: Id,
+    reason: &str,
+    detail: Option<Value>,
+) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let record = {
+        let storage = storage_mut(&mut guard)?;
+        storage
+            .submission(submission)?
+            .ok_or_else(|| CommandError::NotFound(format!("submission {submission} not found")))?
+    };
+    let mut record = record;
+    let status = record.get("status").and_then(Value::as_str).unwrap_or_default();
+    if status == "done" || status == "unanswered" {
+        return Ok(());
+    }
+    record["status"] = Value::String("unanswered".to_string());
+    record["reason"] = Value::String(reason.to_string());
+    if let Some(detail) = detail {
+        record["detail"] = detail;
+    }
+    commit_and_publish(session, &mut guard, vec![StorageWrite::Submission(record)]).await?;
+    Ok(())
+}
+
+/// #70：这个会话有没有未收敛的 input submission（= 还有一轮在跑）。
+/// 只读，不另开写者；`whenBusy=interrupt` 用它判定是否需要先停当前轮次。
+pub async fn has_pending_submission(session: &Session, conversation: Id) -> Result<bool, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    Ok(storage.submissions(conversation)?.into_iter().any(|record| {
+        record.get("type").and_then(Value::as_str) == Some("input")
+            && matches!(
+                record.get("status").and_then(Value::as_str),
+                Some("queued") | Some("placed")
+            )
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// #67：世代归档（archive / archive_list / restore）
+//
+// 与 rename / pin / purge 同一条写者：墓碑经 `commit_and_publish` 落库并广播；
+// generation 文件的读写是 storage 的能力，调用方只拿写锁串行化。
+// ---------------------------------------------------------------------------
+
+use crate::storage::archive as generations;
+
+fn archive_error(error: generations::ArchiveError) -> CommandError {
+    match error {
+        generations::ArchiveError::NotFound(id) => CommandError::NotFound(format!("session {id} not found")),
+        generations::ArchiveError::Busy(_) | generations::ArchiveError::LiveDescendants(..)
+        | generations::ArchiveError::AlreadyLive(_) => CommandError::Conflict(error.to_string()),
+        generations::ArchiveError::MissingGeneration { .. } => CommandError::NotFound(error.to_string()),
+        generations::ArchiveError::Storage(storage) => CommandError::Session(SessionError::Storage(storage)),
+    }
+}
+
+/// `POST /v1/sessions/:id/archive` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveResult {
+    pub gen: String,
+    pub ids: Vec<i64>,
+    pub rows: usize,
+}
+
+/// `POST /v1/archive/:id/restore` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreResult {
+    pub restored: Vec<i64>,
+    pub gen: String,
+    pub rows: usize,
+}
+
+/// 归档：闭包复印进 gen 文件 + 写墓碑。忙/活后代冲突 → 409。
+pub async fn archive_conversation(
+    session: &Session,
+    id: Id,
+    at: i64,
+    gen: Option<String>,
+) -> Result<ArchiveResult, CommandError> {
+    let gen = gen.unwrap_or_else(|| generations::gen_for(at));
+    generations::read_gen(&gen).map_err(archive_error)?;
+    let db_path = {
+        let guard = session.storage.lock().await;
+        guard.as_ref().ok_or(CommandError::Conflict("session is closed".into()))?.db_path()
+    };
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    generations::check_archive(storage, id).map_err(archive_error)?;
+    let closure = generations::read_live_closure(storage, id).map_err(archive_error)?;
+    let rows = closure.rows;
+    // gen 文件在活库写锁下写：同日二次归档不会和别的会话写撞在一起。
+    generations::write_generation(&db_path, &gen, &closure).map_err(archive_error)?;
+    let write = generations::tombstone_write(storage, id, at, &gen, false, false).map_err(archive_error)?;
+    if std::env::var("NOUS_TEST_ARCHIVE_FAIL_BEFORE_TOMBSTONE").as_deref() == Ok(gen.as_str()) {
+        let _ = std::fs::remove_file(generations::generation_path(&db_path, &gen));
+        return Err(CommandError::Conflict("injected tombstone failure".into()));
+    }
+    if let Err(error) = commit_and_publish(session, &mut guard, vec![write]).await {
+        // 墓碑提交失败 → 抹掉刚写的 generation，绝不留「有复印件、没墓碑」的孤儿。
+        let _ = std::fs::remove_file(generations::generation_path(&db_path, &gen));
+        return Err(error);
+    }
+    Ok(ArchiveResult { gen, ids: vec![id], rows })
+}
+
+/// `GET /v1/archive`：世代列表 + 墓碑 + live。
+pub fn list_archives(session: &Session) -> Result<Vec<generations::Generation>, CommandError> {
+    // 只读快路径：拿不到写锁就返回 409，而不是在 async 上下文里阻塞等待。
+    let guard = session.storage.try_lock().map_err(|_| {
+        CommandError::Conflict("session is busy".to_string())
+    })?;
+    let storage = guard.as_ref().ok_or(CommandError::Conflict("session is closed".into()))?;
+    generations::list(storage).map_err(archive_error)
+}
+
+/// 打捞：从 gen 文件读回闭包、写进活库、抹墓碑。原件还在 → 409。
+pub async fn restore_conversation(
+    session: &Session,
+    id: Id,
+    gen: String,
+    at: i64,
+) -> Result<RestoreResult, CommandError> {
+    generations::read_gen(&gen).map_err(archive_error)?;
+    let db_path = {
+        let guard = session.storage.lock().await;
+        guard.as_ref().ok_or(CommandError::Conflict("session is closed".into()))?.db_path()
+    };
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_some() {
+        return Err(archive_error(generations::ArchiveError::AlreadyLive(id)));
+    }
+    let closure = generations::read_generation_closure(&db_path, id, &gen).map_err(archive_error)?;
+    let rows = closure.rows;
+    generations::restore_into(storage, &closure).map_err(archive_error)?;
+    let write = generations::tombstone_write(storage, id, at, &gen, false, true).map_err(archive_error)?;
+    if let Err(error) = commit_and_publish(session, &mut guard, vec![write]).await {
+        // 抹墓碑失败 → 库里行已写回、墓碑还在（下次可重试）；generation 文件是恢复的
+        // 唯一来源，**必须保留**，不能删 —— 与 archive 的补偿方向相反。
+        return Err(error);
+    }
+    Ok(RestoreResult { restored: vec![id], gen, rows })
 }

@@ -16,12 +16,19 @@
 #   数的是**构造点**（谁建了进程），不是 `.spawn()`：`os_env.rs:443` 的 `cmd.status()`
 #   也在创建进程，`\.spawn\(\)` 数不到它。判据 12 用同一条 pattern（同一个概念不许两种写法）。
 #   判定口径变更（2026-11-17，集合成员不变、仍是 2 个）：`.spawn\(` → 构造点；
-spawn_files=2
-#   crates/nous/tools/src/os_env.rs   为什么留着：终端会话的唯一执行面（shell 与 taskkill）
-#   crates/nous/ext/src/spawn.rs      为什么留着：扩展子进程的唯一创建处（S1 白名单第二个位置）
+spawn_files=5
+#   crates/nous/tools/src/os_env.rs      为什么留着：终端会话的唯一执行面（shell 与 taskkill）
+#   crates/nous/ext/src/spawn.rs         为什么留着：扩展子进程的唯一创建处（S1 白名单第二个位置）
+#   crates/nous/env-ssh/src/mux.rs       为什么留着：#78 的 ssh ControlMaster 多路复用建进程（platform 层）
+#   crates/nous/env-ssh/src/remote.rs    为什么留着：#78 的 ssh/scp 远端执行建进程（platform 层）
+#   crates/nous/repo/src/git.rs          为什么留着：#75 私库 git 发布/归档/variant/upstream 的唯一 git 调用面（platform 层）
 # 成员变更（2026-11-17 签字）：
 #   - crates/nous/tools/src/utils/open_browser.rs  上一轮判定无调用方，已删
 #   + crates/nous/ext/src/spawn.rs                 扩展运行时落地（#17–#37）
+# 成员变更（#89 签字，2026-11-21）：+3 个 platform 层进程调用面（2→5）。
+#   + crates/nous/env-ssh/src/mux.rs / remote.rs   #78 的 ExecutionEnv 远端实现；platform 层允许进程，判据 6 的内核层零进程与判据 12 的 app 唯一 spawn 都没动。
+#   + crates/nous/repo/src/git.rs                  #75 私库 git 调用面；docs/plugins.md 明写“唯一的 git 进程调用面”。
+#   三条都是判据原先漏收的真实 platform 构造点，不是给 app 开第二 spawn 口；不删断言、不减检查范围。
 
 # 排除项（不数；逐行写理由。判据 6 会从集合里减掉这些路径）
 #   crates/nous/tools/src/output_decode.rs:198   为什么排除：在 `#[cfg(windows)] fn console_code_page` **整块**里（Linux 不编）。
@@ -144,3 +151,30 @@ crates/nous/wire/tests/event_json.rs:                     assert_eq!(block["text
 crates/nous/wire/tests/event_json.rs:         {"type":"block","contentIndex":0,"block":{"type":"text","text":"superseded"}},  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
 crates/nous/wire/tests/event_json.rs:                 MessageChange::Block { content_index: 0, block } if block["text"] == "superseded"  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
 crates/nous/wire/tests/event_json.rs:             block: json!({"type":"toolCall"})  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+
+# ── #89 收口追加（逐行判定，2026-11-21）──────────────────────────────────
+# 以下 15 行是 #72（会话 template 单值持久化）与 #83（选中 skills 的会话写面）
+# 落进 kernel 后 S8 的真实新增；`template` / `skill` 在此处是会话配置字段名 / 测试文件名，
+# 不是 discovery 语义。原样存取、不解释、不扩散到新模块，逐行附票号。
+#
+# #89 票面写「S8 基线新增 13 行」，此处实际收口 15 行（逐行统计：#72 ×13、#83 ×2）。
+# 13 → 15 的差是 #72/#83 的正当写面，不是放宽判据：#89 的 13 是票面预估数，
+# 逐行判定把 #72 的 commands/会话文档/测试三处读口共 13 行与 #83 的 2 行都认作正当写面，
+# 各行的票号与理由写在行尾 `# #72:` / `# #83:`，不按预估数反推删除任何一行。
+# 其中 #72 的 13 行 = commands.rs 2 + session/mod.rs 2 + storage/sessions.rs 4
+#   + tests/session_template.rs 5；#83 的 2 行 = commands.rs 1 + tests/session_skills.rs 1。
+crates/nous/durable/src/session/commands.rs: /// 和 template 一样放在 commands 面，不动 `Session` 的 A3 六方法表。  # #72：注释指明 template 读口的落点，不是 discovery
+crates/nous/durable/src/session/commands.rs: /// `skills` / `extensions` / `template` / `machine` / `cwd`；`skills` / `extensions`  # #83：会话配置字段原样列出（skills 按选中顺序写入 pi.agent）
+crates/nous/durable/src/session/commands.rs:         "template",  # #72：commands 面读 session 模板字段的键名
+crates/nous/durable/src/session/mod.rs:         let template = config.get("template").cloned().unwrap_or(Value::Null);  # #72：config 里 template 单值原样取出
+crates/nous/durable/src/session/mod.rs:         templates[id.to_string()] = template;  # #72：template 单值写入会话作用域 map
+crates/nous/durable/src/storage/sessions.rs:             template: templates.get(&id).cloned(),  # #72：旧库列 template 原样读出（Q19）
+crates/nous/durable/src/storage/sessions.rs:         // #72：template 是单值，和 names / archived 住同一份文档。  # #72：注释说明存储形状（单值文档，不是 entry）
+crates/nous/durable/src/storage/sessions.rs:                 if let (Ok(id), Some(template)) = (key.parse::<i64>(), value.as_str()) {  # #72：从会话文档读 template 字段
+crates/nous/durable/src/storage/sessions.rs:                     templates.insert(id, template.to_string());  # #72：template 值入 map 供会话读口用
+crates/nous/durable/tests/session_skills.rs:     let path = std::env::temp_dir().join(format!("nous-skill-config-{tag}-{}-{:?}.sqlite", std::process::id(), std::thread::current().id()));  # #83：测试文件名含 skill 词根；临时库路径，不是 discovery
+crates/nous/durable/tests/session_template.rs: //! #72：会话 template 落进 session 作用域单例文档，重启后仍读得出。  # #72：测试文件头说明 template 持久化语义
+crates/nous/durable/tests/session_template.rs:     let path = std::env::temp_dir().join(format!("nous-template-{tag}-{}.sqlite", std::process::id()));  # #72：测试库文件名含 template 词根，不是 discovery
+crates/nous/durable/tests/session_template.rs:         "name": "tpl-session", "template": "alpha"  # #72：测试输入里 template 字段名
+crates/nous/durable/tests/session_template.rs:     assert_eq!(rows.items.len(), 0, "template 不该写成 entry");  # #72：断言 template 不落 entry（单值文档）
+crates/nous/durable/tests/session_template.rs:     assert_eq!(items[0].template.as_deref(), Some("alpha"));  # #72：断言 template 读回原值

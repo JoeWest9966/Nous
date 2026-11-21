@@ -16,14 +16,14 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use crate::error::{Result, StoreError};
 
 /// 这一版支持的 schema 版本 = 迁移链最后一条。
-pub const CURRENT_VERSION: u32 = 1;
+pub const CURRENT_VERSION: u32 = 5;
 
 /// 我们的版本表。**不许**改成 `durable_schema`（那是别人家的）。
 pub const VERSION_TABLE: &str = "schema_version";
 
 /// 迁移链。版本号必须从 1 连续排到 [`CURRENT_VERSION`]，跳号就是改坏了。
 pub fn steps() -> Vec<(u32, &'static str)> {
-    vec![(1, V1)]
+    vec![(1, V1), (2, V2), (3, V3), (4, V4), (5, V5)]
 }
 
 /// 第一版的两张表 + 三条库级规矩。
@@ -66,6 +66,64 @@ CREATE TABLE fires (
   note         TEXT,
   PRIMARY KEY (trigger_code, fire_at)      -- 幂等的物理保证：同一次触发只记一行
 ) STRICT;
+"#;
+
+/// #60：模板引擎内修订。盘上的 `preset.json` 是内容真相，这里是每次 PUT / rollback
+/// 的原文与来路；`UNIQUE(section, name, n)` 是「第 n 版只有一份」的物理保证，
+/// `request_id` 给幂等回执留锚（同一 requestId 重放不增 n）。跟私库 git 历史（#75）无关。
+const V2: &str = r#"
+CREATE TABLE presets_revisions (
+  section    TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  n          INTEGER NOT NULL,
+  sha        TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  actor      TEXT NOT NULL,
+  at         INTEGER NOT NULL,
+  request_id TEXT NOT NULL,
+  PRIMARY KEY (section, name, n)
+) STRICT;
+CREATE INDEX presets_revisions_by_request ON presets_revisions (section, name, request_id);
+
+
+-- 写端点的幂等回执：同一 requestId 重放必须吐回第一次的回执（version 不涨）。
+CREATE TABLE preset_write_receipts (
+  section    TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  PRIMARY KEY (section, name, kind, request_id)
+) STRICT;
+"#;
+
+/// #73：`triggers.version` + PATCH 幂等回执。ALTER 只加列，不动已有数据：
+/// 老触发器从 version=1 起（本来就没被 PATCH 过）。
+const V3: &str = r#"
+ALTER TABLE triggers ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE trigger_patch_receipts (
+  code       TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  PRIMARY KEY (code, request_id)
+) STRICT;
+"#;
+
+/// #80：归档 / 真删的两位墓碑与类别挂值。archive 不动 definition，version 只描述定义。
+const V4: &str = r#"
+ALTER TABLE triggers ADD COLUMN archived_at INTEGER;
+ALTER TABLE triggers ADD COLUMN purged_at  INTEGER;
+ALTER TABLE triggers ADD COLUMN category   TEXT;
+
+-- 类别词表：只有字符串，没有 id（与 skills 的 categories.json 同规矩）。
+CREATE TABLE trigger_categories (
+  name TEXT NOT NULL PRIMARY KEY
+) STRICT;
+"#;
+
+/// #review 11：归档前 enabled 的快照。老行没有快照时按启用态处理（与旧 restore 行为一致）。
+const V5: &str = r#"
+ALTER TABLE triggers ADD COLUMN pre_archive_enabled INTEGER;
 "#;
 
 /// 建版本表 → 读版本 → 按链推进。可重复调用（第二次什么都不做）。

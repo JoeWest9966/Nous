@@ -675,3 +675,278 @@ systemd unit 拉起，`NOUS_HOST` 全仓 0 处读取。这些文件不参与 car
 `git show abf1c0a^:server/api.ts` 之类内容寻址的写法，不要用会随提交漂移的 `HEAD~1`）。
 真要恢复之前先回答一个问题：
 恢复的是面板本身，还是只是想找某个旧实现做参照？后者直接从历史读，不用把壳子请回来。
+
+## 2026-11-20（票 #65）· device 从 server 里长成插件：编目有来源，默认模型有写者
+
+**决定**：把 `meta.rs` 的 device/machines/models 段和 `machines.rs` / `models.rs` 搬进新插件
+`crates/nous/device`（app 层，`nous-device`）；`server → device` 单向依赖，device 不认识 server。
+`/v1/models` 的来源优先级是「装配注入的编目（faux 验收 / 快照测试）> `NOUS_MODELS` 内联 >
+`NOUS_MODELS_FILE` 文件 > 诚实空表 + `catalog.state="missing"`」。
+`PUT /v1/default` 只写文件编目（临时文件 + rename，先校验模型在 items 里），内联编目没有可写路径 → 400。
+
+**为什么**：旧 `/v1/models` 永远 `{default:null, items:[]}` 而 `models.rs` 注释说「宿主会填」——
+本仓里没有宿主，空表是死的。给它文件与内联两个来源 + 可诊断的 `catalog` 块，才让「没编目」
+从「忘了填」变成一条能贴进 issue 的事实。默认模型必须能写回，且不许写一个 items 之外的
+模型（写假模型比不写更坏）。机器编目同样：`NOUS_MACHINES_FILE` 优先，内置两台只是退化兜底。
+
+**反悔点**：真接上远端 provider 编目（Anthropic/OpenAI）时，把来源换成「远端拉取 + 本地缓存」，
+`catalog.source` 加一个 `"remote"` 值、`PUT /v1/default` 改为写缓存那一份；`state/source/path`
+三字段的形状和「missing 就是诚实空表」不改。faux 注入优先是验收模式的特例，真 provider
+装配不该再注入 catalog —— 否则 `NOUS_MODELS_FILE` 会被静默吞掉。
+
+## 2026-11-20 · 四条私库路径的默认值回到 TS 版，缺目录不等于不知道在哪（#63）
+
+**症状**：Desk 的资源页三处全 0；`/v1/skills` / `/v1/prompts` 回 `root: null`，
+j1900 上其实还留着 940K 的技能副本。插件机制在跑，内容进不来 —— null 把
+"没装" 和 "不知道数据根在哪" 混成同一个形状。
+
+**决定**：变量名和默认值照 `Nous-ts` `server.js:77-83` 净移植，四个入口收进
+`crates/nous/env/src/content.rs` 一处解析；旧变量名删除、不做兼容（查过没有任何
+部署设过）。`root` 从此恒为字符串，目录在不在由 `present` 说；`missing` 只在
+`present=false` 给一句人话。服务只读：不建目录、不写、不 spawn —— 写回是
+`skills-admin` / `presets-admin` 的事。模板数据根走 `NOUS_PRESETS`，与 #60 的
+端点实现共用，不再写死别的目录。
+
+**为什么不做双名兼容**：一个路径只能有一个来源。同时认新旧两个名字，迟早会出现
+"unit 设了旧的、代码读新的"却都显示绿的假象；而迁移成本此刻为零。
+
+**反悔点**：只有在确认有部署真的设了旧变量名时才加兼容层 —— 那时候必须让两个
+变量同时可读、且有一处判据断言"两者同时给出时谁赢"，不许默默 fallback。
+
+## 2026-11-20 · 远端编目刷新失败留旧表，密钥只在内存（#79）
+
+**症状**：TS 版靠 `NW_BASE/NW_TOKEN` 自动拉编目，Rust 侧 `/v1/models` 靠手填文件；
+模型表要么空、要么是人肉维护的过期副本。`POST /v1/catalog/refresh` 缺失意味着密钥轮换后
+只能重启进程。
+
+**决定**：`NOUS_CATALOG_BASE` + `NOUS_CATALOG_TOKEN` 拉 `{base}/models.json`，成功原子写
+`NOUS_MODELS_FILE`（无该变量则默认路径），回 `{default, items, fetchedAt}`；失败回 200 +
+`error`，items 保持上一份（内存优先、否则从文件读回），不清空。token 只以 Bearer 头在内存里
+过一手，不进缓存文件、不进日志、不进 HTTP 响应。诊断块从 `catalog: null` 变成 device 自己
+交代的 `{state, source, path, fetchedAt, error}`。
+
+**为什么**：失败时清空表等于把「这次没拉到」误报成「上游一个模型都没有」——客户端会据此
+把模型选择整个抹掉，比旧表过期更坏。token 落盘一次就再也不能靠「别看那个文件」收回。
+
+**反悔点**：若远端返回的是 TS 版 `/api/model?models=full` 的 envelope（`{ok, data.models}`），
+在 `refresh_with_client` 里加一层展开即可；当前票面写的是 `models.json` 一类结构，不在这里
+猜方言。若将来要支持多远端源，`source` 要从 `Option<&'static str>` 换成枚举/字符串，
+判据要跟着加一条并列来源优先级。
+## 2026-11-20 · #86 盘面形态：文档真相留在 `documents`，树语义另立实现票
+
+**决定**：v1 的文档真相继续是数据库里的 `documents`（`kind` / `section` / `name` + base/delta
+修订），**不复活** `content/<board>/tree.json` 与 `content/<board>/map/<node>/*.md` 这套文件形态，
+回收站也进数据库而不是 `.trash/`。TS 时代的「一个节点 = 一个文件夹」在 v1 里没有对应物：
+`GLOSSARY.md` 已写明「块」这个概念消失，一个块要么是扩展、要么是内容、要么被删；
+`#59` 又把 `content/` 移出仓库并归档，旧面板已停用（unit 留在 j1900 可回）。
+
+**为什么**：`content/` 是旧面板自己读的那一层，引擎早已换成 `nous-app` + `/var/lib/nous/nous.db`。
+再建第二套文件形态会让同一条文档有两个真相：一边是数据库文档（`#48` 的 12 条泛型端点，
+`Desk#16` 已接），一边是盘上目录；而 `docs/decisions.md` 的两库分离已经把「谁是写者」钉死，
+绑定资料只许有一处。树形结构不是非得用文件表达 —— 用 `documents` 的 `kind` 表达即可，
+这只是投影形状的变化，不需要第二写通道。
+
+**反悔点**：若出现下面任一事实，重开文件形态并先改 `wire.md` 与 `docs/plugins.md`：
+① 用户要求文档能脱离 `nous-app` 直接用编辑器/git 管理、且必须看到真实目录；
+② 需要把旧 `content/<board>/map/` 的文件夹结构原样迁进来（从 2026-11-18 的归档 tar 取）；
+③ 数据库文档承受不了某个具体需求（如单文档 >512KB、需要 git diff/逐文件提交）。
+反悔时先回答「数据库文档那 12 条端点怎么办」——过渡期只能双读单写，不许两个写者。
+
+**后续开发票**：树 / 文件夹语义的契约、端点与迁移由 GitHub issue **#87**
+（`documents`：盘面树/文件夹语义）实现，正文写明 `blocked_by #86`、与 Desk#16 / #69 的关系；
+本票不写实现。
+
+## 2026-11-20 · #86 节点锁：单用户场景不复活服务端锁
+
+**决定**：v1 **不复活** `.nous/locks.json` + `audit.log` 的服务端节点锁，也不在 `/v1/*` 加
+lock/unlock 端点。单用户桌面端的替代是**单用户 + 无并发写**：同一时刻只有一个客户端写
+盘面，冲突交给文档修订（`base` / `delta` + 版本号）与 `409` 自然拒绝，不另起一套锁文件。
+
+**为什么**：锁解决的是「多人同盘编辑防手滑」。v1 没有多人盘面：`nous-app` 是单用户进程，
+`Desk#16` 接的是数据库文档，修订本身已有单写者边界；再加一套 `.nous/locks.json` 会多出
+一个必须和数据库同事务的写者，违反「不为过判据开第二条写通道」。锁文件还不是租约 ——
+进程崩了会留下陈旧锁，反而增加恢复路径。
+
+**反悔点**：一旦出现**多人同盘编辑**（两个客户端同时改同一份盘面、或一台机器上多个用户
+共享同一 `NOUS_DB`），或出现「合并冲突把用户内容弄丢」的具体事故，就必须重开：
+届时加的是**带租约与心跳的服务端锁**（不是把 `locks.json` 搬回来），锁状态进 `decisions.md`
+的新条目并配过期回收判据。
+
+## 2026-11-20 · #86 反代：块进程的路由由 `ext` 承担，不另起 `/p/:board/:id/*`
+
+**决定**：v1 **不复活** `/p/:board/:id/<任意>` 这条按 board/node 反代到块进程的 Node 宿主路由，
+也不在 `nous-app` 里加第二套「按盘面节点路由到子进程」的实现。需要挂进程时走 `ext` 插件：
+扩展由清单装载，按 `名牌`（`skill:<名>` / `prompt:<名>`）加入会话，通过 `接缝` 帧协议调用；
+`#81` 负责把这条运行时解冻（真清单 / 装载 / 熔断 / 热重载）。
+
+**为什么**：TS 的反代绑在「块 = 目录兼进程单位」上，而 `GLOSSARY.md` 已定 v1 没有块的概念：
+一个块要么是扩展、要么是内容、要么被删。反代同时引入未经鉴权的任意路径转发面（`/p/*`
+不在 `wire.md` 的 `/v1/*` 契约里），与「客户端只转发 `/v1/*`」和 token 中间件覆盖全部端点的
+现状冲突。`ext` 已经提供进程监管、熔断、帧协议与可观测状态，再起一条按 node 的路由就是
+第二个进程面。
+
+**反悔点**：若某个扩展确实需要 HTTP 入口（而不是帧协议），或出现必须按盘面节点寻址的
+运行时（例如远端块进程、Desk 直接渲染块页面），重开时只能是 **`ext` 内部的一种传输适配**：
+在 `/v1/extensions/{name}/proxy/*` 下按扩展名转发，沿用 token 与熔断、带路径白名单，
+并先改 `wire.md`；不许恢复 `/p/:board/:id/*` 的裸反代。
+
+## 2026-11-20 · #86 总账：恢复的是语义，不是旧宿主的形态
+
+**决定**：`#69` 的恢复总账以「语义等价」判完成：盘面树 / 文件夹语义（**#87**）走 documents
+的 `kind`，锁与反代的反悔条件分别写在上面三条里，`#81` 管扩展运行时。
+`#86` 自身只产出决策与后续票号，不改 `.rs`、不改 `wire.md` 的端点形状。
+
+**为什么**：TS 宿主是 Node 时代的形态（文件树 + 锁文件 + 反代），Rust 侧已经有数据库文档、
+两库分离、`ext` 帧协议三个更窄的对应物。照搬形态会同时引入两套真相与第二个进程面，
+照搬「不用」又会把能力从总账里抹掉。写成「语义在 #87/#81，形态不复活」两边都不丢。
+
+**反悔点**：若 `#87` 的实现票证明 `documents` 的 `kind` 无法表达树（引用完整性、循环、
+移动原子性三者有一样落不下去），就按上面第一条的反悔点重开文件形态，并同步改 `wire.md`、
+`docs/plugins.md` 与 `GLOSSARY.md` 的「块」词条。
+
+## 2026-11-20 · #64 purge 不删 record_ids（id 永不复用）
+
+**决定**：`POST /v1/sessions/:id/purge` 的一次事务里删 conversations / entries / tasks /
+submissions / documents / document_revisions 与该会话的 pins / unread 条目；**不删
+`record_ids` 里这些 id 的行**，只写墓碑到 `qrd3wh.sessions`。
+
+**为什么**：`record_ids` 是全库单调 id 的注册表（`storage/commit.rs` 用它拒绝重复铸造），
+删掉这些行会让 `next_id` 下一次铸出同一个 id，撞上其它会话/文档里还活着的旧引用。票面列了
+`record_ids`，但删它会破坏「id 一旦铸出永不复用」的硬规矩；墓碑让派生视图认得这条会话已死。
+
+**反悔点**：若另票引入 id 命名空间（每段 id 带会话前缀，重铸不撞旧引用），可改成连
+`record_ids` 一起删；那时必须同时改 `commit.rs` 的重复检查与本票的 purge 事务。
+
+## 2026-11-21 · #73 的 PATCH 用 version 乐观锁，dispatcher 不自己起异步循环
+
+**决定**：`PATCH /v1/triggers/{code}` 是稀疏覆盖（`schedule`/`params`/`enabled`），
+请求体带当前 `version`，每次成功改动原子 `version+1`；可选 `requestId` 只回第一次回执。
+调度侧只提供 `arm_next_tick(session, clock, …)`：把下一拍写成 durable 的 `sleeping` 任务行，
+等待交给注入的 `Clock`。**现状（review #12 校正）**：`main.rs` 的 app 装配处已
+`tokio::spawn(nous_dispatcher::run_dispatcher(...))` 常驻这条节拍（详见 2026-11-23 条）；
+「生产进程何时拉起这条循环不在本票常驻产物里」是 #73 当时的范围说明，不是今天的进程形态。
+
+**为什么**：`code` 是触发器身份，改它相当于把历史账本改挂到另一个商品上；库里的物理
+触发器已经挡住，HTTP 不能留第二个入口。`version` 让 PATCH 和既有 `If-Match` PATCH 端点
+同一口径；`requestId` 让网络重放不产生第二次定义变更。durable 的 `tasks` 表只存不跑，
+把待办写成任务行而不是内存计时器，重启后才读得回「下一拍」；不自己写循环是 AGENTS.md
+的铁律，也避免 app 层出现第二个时间源。
+
+**反悔点**：若将来要在进程里常驻节拍，必须由新的装配票显式调用 `arm_next_tick` 并注入
+生产 `Clock`，不得在 dispatcher 里藏 `tokio::time::interval`；若发现客户端需要整份替换
+触发器定义，另开带 `If-Match` 的 PUT，不把 PATCH 悄悄改成覆盖语义。
+## 2026-11-20 · #67 世代归档：独立 SQLite 文件（选项甲），不进 active 库
+
+**决定**：`archive` 把会话闭包复印到活库同目录下的
+`archives/gen-YYYYMMDD.db`（可配置目录由装配注入；测试走临时目录），源文件用 durable
+自己的迁移链初始化并以**只读**方式取行；活库只写一个墓碑 `archived[id] =
+{at,gen,purged:false}`。`restore{gen}` 从那份文件读回并写活库，抹掉墓碑；`purge`
+必须先有墓碑。归档库**不进** durable 的迁移链、备份/`--check` 只认 `NOUS_DB` 那一份。
+同日重复归档按会话 id 先清后写，不产生重复行。
+
+**为什么**：归档的价值是「原件被撕了也能回来」；选项乙把复印件放在活库里，会跟活库
+一起滚进备份、一起丢，正好丢掉这份价值。甲把 durable 的建表语句与读法复用为生成物
+（`migrations()` 是唯一真相），代价只是一次按会话的闭包复制；不新增第二写者。
+
+**反悔点**：若出现「归档库与活库 schema 分叉导致恢复失败」的实证（具体：同一份 generation
+在新版 durable 的迁移链下打不开或丢行），或备份策略改成整目录快照且要求单文件可恢复，
+就翻到选项乙（活库 `archived` 表 + generation 列，一次 v3 迁移）；翻的时候改本段、
+`docs/storage.md`、`wire.md` 的 generation 语义与三条端点的存储实现，保留墓碑对外形状不变。
+## 2026-11-20 · 变体绑定表落在私库根的 `data/` 下，不另设全局目录
+
+**决定**：`skills` 用 `<NOUS_SKILLS>/data/skills.local.json`，`extend` 用
+`<NOUS_EXTEND>/data/extensions.local.json`；表里只有 `{v:1, variants:{family:{id:{root,branch}}}}`。
+**为什么**：TS 时代就是这个形状与位置；绑定是本地状态，不应进私库发布，也不该散在 `~` 里。
+**反悔点**：若要把本地状态集中进 `/var/lib/nous/`，改 `repos::variant_tables_from_env` 一处即可；
+现有表的 `root` 是绝对路径，搬家后要么迁移路径、要么重绑。
+
+## 2026-11-21 · ext 运行时解冻：观测走运行时自己，不另造注册中心（#81）
+
+**决定**：`GET /v1/extensions` 的清单直接投影 `nous_ext::Runtime` 持有的事实（清单、
+进程 pid、状态机、错误），失败项也留一行；`POST /v1/extensions/reload` 打同一个实例的
+`reload_all()`（扩展级 `reload` 的唯一入口）。server 只装配一次并读观测，不维护第二张表。
+装配入口在 `main.rs`：源码根走 `nous_env::EXTEND`（#63 的四根之一），产物固定在根下
+`artifacts/`，句柄只给 skills / prompts 的值（扩展拿到的是代读后的内容，不是路径）。
+
+**为什么**：清单里的 `ext` 曾经 `frozen` 而代码完整在 —— 能力被藏起来不是没做。
+再起一张 "extensions registry" 会跟运行时的状态机分叉（谁先看到崩溃、谁记 pid），
+而且客户端会拿两张真相吵起来。`ext-probe` 的沙盒已经是同一形状（exts/ + artifacts/ +
+句柄目录），照它装配比新发明一个数据目录安全。父进程退出兜底用 `PR_SET_PDEATHSIG`
+（pre_exec 里装，另看一眼 ppid 关掉 spawn 竞态），与 kill/Drop 构成三级。
+
+**反悔点**：若 #84 的管理面需要「装了但没启用 / 被禁用」这种配置态，不要往这个清单里塞
+第二份状态：给 `Runtime` 加配置态并让 `state` 成为它的投影，先改 wire.md 再改代码。
+若产物不放在源码根下（例如统一发行到 `/opt/nous-ext/`），只改 `assemble_extensions`
+的 `artifacts_dir` 推导，不动清单形状。
+
+## 2026-11-22 · 卸载是移动到垃圾站 + 删除名单，不是 git rm
+
+**决定**：`POST /v1/extensions/uninstall` 把源码 `rename` 到 `data/extend-trash/<name>-<ms>/`，并在私库根写 `deleted-extensions.json`；scan 认名单跳过，install 从垃圾站最新一份装回。核心 `nous`/`skills`/`prompts` 一律 400。
+**理由**：私库是 git pull 的；只删本地目录，下一次 pull 会把扩展复活。名单随私库发布，重启后仍生效；垃圾站在 data 下不随发布走，是 install 的回退来源。核心扩展是引擎自己装配的，删掉等于自残。
+**反悔点**：若将来引入真正的包管理器（带 lockfile 与远端 registry），删除名单应当退役，改由 registry 声明已删除；那时 `deleted-extensions.json` 与 scan 的跳过分支一起删。
+## 2026-11-22 · 触发器真删：账随定义一起销毁，行留 purged 墓碑占 code（#80）
+
+**决定**：`POST /v1/triggers/{code}/purge` 先要求归档态，然后在一个事务里删光该 code 的
+全部 `fires` 行，把 `triggers` 行标 `purged_at`（`deleted_at` 也填上），`code` 永不复用。
+归档 / 捞回只翻墓碑、`version` 不动；整份改定义（PUT）才 +1。
+**为什么**：触发器的定义只有 `triggers` 一行，不像会话另有 `gen-*.db` 复印件；留行只为
+占住 code（requestId / actor.id / 审计都挂着它），账留成孤儿表没有任何读口。
+**反悔点**：若将来要给已删触发器出审计报告，不能靠留 `fires`（它已删），得另开不可变
+事件表并经签字 —— 那会是第二条写通道，先改 wire.md 再动库。
+
+## 2026-11-23 · #73 常驻节拍在 app 装配处 spawn，零时钟判据限定调度逻辑
+
+**决定**：`main.rs` 的 app 装配处 `tokio::spawn(nous_dispatcher::run_dispatcher(...))`，
+注入 dispatcher 的 `RealClock` 与 `NOUS_DISPATCHER_INTERVAL_MS`（默认 60000）；令牌和
+`Session::closed()` 都能让它收敛。dispatcher 暴露的 `RealClock` 是唯一的真实时钟实现，
+`run_dispatcher` / `evaluate` / `arm_next_tick` 一律只认注入的 `Clock`，判据用 `ManualClock`。
+
+**为什么**：#69 要「真实恢复」，只提供函数没人调用等于能力被藏起来。生产时钟总要有
+一个地方实现；放在 dispatcher 的具名 `RealClock` 而不是让 server 自己读 `SystemTime`，
+保持「调度逻辑零直接时钟」的判据能精确打在注入路径上，也让进程级判据真起 nous-app
+就能验到 60s 节拍的可配置短间隔。
+
+**反悔点**：若将来把节拍挪进专门的 daemon，不能复制一份时钟实现或再起第二条任务循环；
+只把这一处 spawn 移到新入口，仍用同一个 `run_dispatcher`，并保留进程级判据。
+## 2026-11-21 · #89 边界判据归位：搬 SQL，补基线，不放松判据
+
+**决定**：presets 的回执/修订 SQL 与 stats 的插件库体检收进 `nous-store`
+（`preset_receipt` / `append_preset_revision` / `quick_check`），app 层只调 API；
+`rusqlite` 只留在 server / stats 的 dev-dependencies（判据自己开独立连接做正向哨兵）。
+S8 词表 15 行逐行判定为 #72 template 与 #83 skills 的正当写面，按行附票号补基线；
+spawn 集合 2→5，补 #78 的 env-ssh mux/remote 与 #75 的 repo git（都是 platform 层）。
+§4e 图表改为脚本读 `docs/dependency-graph.toml`；阈值和断言未动。
+**理由**：判据是唯一真相；红要么来自越界实现（搬走），要么来自基线漏收（补基线并写明票号），
+不能靠放宽断言消红。`use rusqlite` 本身不改变 Cargo 依赖图——§1.1 看 normal 依赖、
+§1.5 看源码，两条从不同源取数，哨兵要分别注入。
+**反悔点**：若 #73 dispatcher / #84 ext-admin 之后又引入新的 `nous-*` 直接依赖，
+只在 `docs/dependency-graph.toml` 与 `docs/harness.md` §7 两处同步补边并重跑全量判据；
+不许把新边塞进「排除项」或关掉 §4e。
+
+## 2026-11-24 · review #10：幂等回执与变更同提交，失败整体回滚
+
+**决定**：`PATCH /v1/triggers/{code}` 的定义变更与 `trigger_patch_receipts` 行放进
+`Store::patch_with_receipt` 的同一 `BEGIN IMMEDIATE`；`PATCH /v1/combos` 先把回执原子写就位、
+再替换 `preset.json`，任一步失败就删回执，盘面回到变更前的字节。**重放回第一次回执；
+第一次整体失败时盘/库未变，重放按全新请求执行**（已写进 `wire.md`）。
+
+**为什么**：旧顺序先改盘/库再记回执，回执写失败会让重放拿到 412（改已发生却说没发生），
+或反过来留下假回执。把两件事绑成一个提交边界，不需要第二写者，也不改两库分离的顺序。
+
+**反悔点**：若将来某个端点的变更跨库（durable + store）无法同提交，必须先在 `wire.md`
+定义「变更与回执分离」的补偿协议（重放语义、412/200 的判定），再动代码；
+不许用「先写回执」的盘上技巧掩盖跨库不一致。
+
+## 2026-11-24 · review #4：归档的 generation 与墓碑不是同一次 durable 提交，用补偿代替
+
+**决定**：generation 是独立 SQLite 文件、墓碑是活库里的文档写，两者**不在同一个 durable 事务**；
+用严格的顺序 + 补偿达到"失败不留半截状态"：先写 `gen-*.db.tmp` → rename 就位 → 写墓碑提交；
+generation 写失败就删临时文件（库未动），墓碑提交失败就删已就位的 generation。
+restore 方向相反：闭包先写回活库，抹墓碑失败时**保留 generation**（那是恢复的唯一来源）。
+
+**为什么**：durable 的提交框架（`StorageWrite` / seq / 文档 revision / 观察者广播）只认活库事务，
+把跨文件的 generation 字节搬进同一事务要给 `Storage::commit` 开专门的 hook，等于为归档造第二套提交边界。
+判据按"外部可见状态"判定：注入失败后库里 generations / archived 标记都不变、盘上无孤儿文件。
+
+**反悔点**：若将来 generation 改成活库里的表（不再是独立文件），必须把复制闭包与墓碑并进
+`Storage::commit` 的同一批写，并删掉这里的补偿分支；那时 `docs/storage.md` 的表数与迁移链一起改。

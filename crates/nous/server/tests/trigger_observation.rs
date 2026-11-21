@@ -306,28 +306,39 @@ async fn observation_endpoints_pass_bearer_auth_and_show_up_in_routes() {
     }
 }
 
-// ── 判据 3 的 server 半边：心跳停摆时 lagMs 必须变正 ────────────────────────
+// ── review 2：HTTP 观测只读库里的 tick，内存里有什么都不算 ─────────────────
 
+/// 真哨兵：HTTP `/v1/triggers` 的 `lastTickAt` 必须来自 durable 的 tick 行；
+/// 哪怕内存快照里有值、库里没有，也必须是 null（把内存兜底加回来这条会红）。
 #[tokio::test]
-async fn lag_reports_stall_only_after_a_tick_is_recorded() {
-    let fixture = fixture("lag");
-    create(&fixture, definition("nightly_digest", "nightly")).await;
+async fn http_last_tick_at_comes_only_from_the_durable_ledger() {
+    let fixture = fixture("http-last-tick");
     let runtime = clone_runtime(&fixture);
-    // 没有任何心跳：诚实 null + lag 0（不是无限大）。
-    assert_eq!(runtime.last_tick_at(), None);
-
-    // 心跳停在 5_000（tick=5000），时钟走到 20_000：lag = 20_000 - 5_000 - 5_000 = 10_000
-    // （判据 3：停摆必须变正）。
+    // 内存里故意记一拍，库里一行 tick 都没有 —— 旧实现会把它兜出来。
     runtime.record_tick(5_000);
-    let store = TriggerStore::open(&fixture.trigger_db).unwrap();
-    let definitions = runtime.definitions();
-    let body = nous_server::triggers::observation_report(&store, &definitions, runtime.last_tick_at(), 20_000).unwrap();
-    assert_eq!(body["scheduler"]["lastTickAt"], json!(5_000));
-    assert_eq!(body["scheduler"]["lagMs"], json!(10_000), "心跳停摆 3 拍，lag 必须为正");
+    let app = router(fixture.state.clone().with_triggers(runtime.clone()));
+    let (_, body) = get_json(&app, "/v1/triggers").await;
+    assert_eq!(body["scheduler"]["lastTickAt"], Value::Null,
+        "内存里的心跳不许冒充库里的 tick：{body}");
+    assert_eq!(body["scheduler"]["lagMs"], json!(0));
 
-    // 手动不推进 tick：时钟继续走，lag 继续长（封顶不存在 —— 卡死的信号要一直亮着）。
-    let body = nous_server::triggers::observation_report(&store, &definitions, runtime.last_tick_at(), 600_000).unwrap();
-    assert_eq!(body["scheduler"]["lagMs"], json!(590_000));
+    // 现在把一拍真写进 durable 的 sleeping tick 行，HTTP 必须报库里的 wakeAt。
+    let session = nous_durable::session::Session::open(&fixture.durable_db).unwrap();
+    nous_dispatcher::arm_next_tick(&session, &(Arc::new(nous_durable::harness::clock::ManualClock::new(1_760_000_000_000))
+        as Arc<dyn nous_durable::harness::clock::Clock>), 1, 1_000).await.unwrap();
+    let expected = runtime.load_last_tick_at().expect("库里已有 tick 行");
+    let (_, body) = get_json(&app, "/v1/triggers").await;
+    assert_eq!(body["scheduler"]["lastTickAt"], json!(expected),
+        "HTTP 必须报库里 tick 记录的 wakeAt：{body}");
+}
+
+/// 纯函数的 lag 语义独立钉住：不经过内存快照，也不靠 HTTP 的时区/时钟漂移。
+#[test]
+fn lag_reports_stall_only_after_a_tick_is_recorded() {
+    let store_lag = nous_store::scheduler_lag;
+    assert_eq!(store_lag(20_000, None, 5_000), 0);
+    assert_eq!(store_lag(20_000, Some(5_000), 5_000), 10_000);
+    assert_eq!(store_lag(600_000, Some(5_000), 5_000), 590_000);
 }
 
 // 一条没落进账本的 pending 不算 lastFire（读口不许替账本撒谎）。

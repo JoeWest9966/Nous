@@ -186,3 +186,157 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 `cargo clean -p <那个 crate>` 不够 —— 只要有一条还指着，红的就换一条（本例先红 durable，clean 后红 store）。
 **解**：worktree 里跑判据一律用自己的 target（`CARGO_TARGET_DIR=./target` 或干脆不设）；
 串了就这么收拾：`cargo clean` 全量重编（`clean -p` 会留下别的）。判据红的时候先看**报错里的路径**是谁的。
+
+## 2026-11-20 · `/v1/models` 空表注释说「宿主会填」，但仓里没有宿主
+
+**症状**：真机上 `/v1/models` 永远 `{"default":null,"items":[]}`，客户端模型栏空白；`models.rs`
+开头写着「编目由宿主进程填进来」，顺着调用链找不到任何填的地方。
+**根因**：一份「谁都会填」的契约没有指名填的人；空表既可能是「没配编目」也可能是「加载失败」，
+客户端和运维都分不出来。
+**解**：#65 给空表加 `catalog: {state, source, path}` 诊断块，编目来源落成两个明确的入口
+（`NOUS_MODELS` 内联 / `NOUS_MODELS_FILE` 文件），默认模型写回同一份文件（临时文件 + rename）。
+**推广**：凡是注释写「由上层填进来」的地方，都要能回答「哪一层的哪个函数填」，否则它就是没实现。
+
+## 2026-11-20 · `root: null` 把「私库没装」说成「不知道在哪」
+
+**症状**：三个资源端点全 200，Desk 却显示 0 条；从响应里读不出是机子上没副本，
+还是服务端压根没配数据根。
+**根因**：移植时把 TS 版的四条默认路径丢成 `null`，变量名还从 `NOUS_SKILLS`
+变量名也漂了（多了 `_ROOT` 后缀），unit 一个都没设。
+**解**：默认值回到 TS 版原值，`root` 恒为解析后的字符串；另给 `present` 与
+`missing` 说"在不在"。只读，不因为缺目录就建一个空目录掩盖事实（#63）。
+
+## 2026-11-20 · 给公开结构体加字段，把别人的测试字面量全打红了
+
+**症状**：给 `CatalogEnvironment` 加三个远端字段后，`cargo test --workspace` 在
+`nous-device/tests/catalog.rs` 和 `server/tests/device_endpoints.rs` 报五处
+`E0063 missing fields ... in initializer`，跟业务行为无关。
+**根因**：多个测试用结构体字面量构造环境快照（这是好事：不依赖全局 env），
+但 Rust 没有「字面量自动补默认值」这回事。
+**解**：每个字面量显式写 `remote_base: None, remote_token: None, cache_path: None`,
+让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
+**推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
+再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
+
+## 2026-11-21 · 冻结的解法不是空数组，是把运行时的脸露出来
+
+**症状**：`GET /v1/extensions` 恒 `{items:[]}`，`capabilities.ext` 写着 frozen，
+可 `ext/src/spawn.rs` 里 `Command::new` 早在、六个样例扩展也都在仓里 —— 客户端显示「没有扩展」。
+**根因**：声明关着、代码开着，观测面没有读运行时的事实，两张真相分叉。
+**解**：清单改回 enabled；`items` 直接由 Runtime 的清单/进程/状态机投影，失败项也留一行带 error；
+reload 走同一个实例的唯一入口。别在 server 里再存一张注册表。
+
+## 2026-11-21 · 命中行里出现字符串不等于打中了执行路径
+
+**症状**：`if false && libc::prctl(libc::PR_SET_PDEATHSIG, …)` 让父死收割彻底失效，
+只查 `source.contains("PR_SET_PDEATHSIG")` 的静态判据照样绿——哨兵在空转。
+**根因**：字符串命中不区分注释、短路和被包在 `cfg!` 里的死分支；进程级测试又被
+管道 EOF / `Runtime::drop` 两级兜底盖住，单独关掉第三级也看不出差别。
+**解**：静态判据只读含 prctl 的那一行，要求它恰是 `if libc::prctl(...) != 0` 的真执行条件；
+负向哨兵用 `false &&` 短路验红。进程级判据保留，作为另两级的正交覆盖。
+
+## 2026-11-20 · 判据 3 的 `../../` 打不中 realpath 检查
+
+**症状**：把 `files.rs` 里两处 `resolved.starts_with(&real_root)` 改成 `if false && …`，
+`path_escape_is_rejected_without_creating_any_file` 照样绿——负向哨兵没变红，判据在空转。
+**根因**：`../../etc/passwd` 被 `Component::ParentDir` 词法检查挡在 realpath 之前；真正需要
+realpath 的是「路径片段全合法、但目录是仓内指向仓外的符号链接」。
+**解**：补 `symlink_escape_is_rejected_by_realpath_check`（仓内 `link` → 仓外，写 `link/escaped.txt`），
+关掉 realpath 检查时它在 `仓外不许出现文件` 断言红；同一招也用于 `git add .` 哨兵
+（加 `git diff --cached --name-only` 空断言，`commit -- pathspec` 挡不住误 staged 的搭车文件）。
+
+## 2026-11-21 · 加路由忘了更新能力快照，全 workspace 红在看起来无关的测试
+
+**症状**：#77 加了 12 条 `/v1/repos/skills/sources|upstream/*` 路由后，单个 crate 测试全绿，
+全 workspace 挂在 `capabilities_shapes::capabilities_declares_modules_and_reasons` 的 JSON 快照漂移。
+**根因**：`meta.rs` 的 `ROUTES` 和 `tests/snapshots/capabilities_declares_modules_and_reasons.json`
+是同一份路由表的两个副本；单 crate 迭代只跑 `nous-repo` / `nous-server` 的目标测试，不比快照。
+**解**：任何加路由的票，收尾前必须跑一次全 workspace；快照漂移时从失败输出里取 `actual`
+写回去（不要手敲），再复跑确认绿。
+## 2026-11-20 · abort 测试里两个 Session 指向同一份库，取消信号却到不了 provider
+
+**症状**：`POST /abort` 落了 `user_cancel` 终态、submission 也变 `unanswered`，但慢 provider
+没停；断言「取消信号到达 provider」的红/绿随 `Session` 实例数量漂移。
+**根因**：`Session` 的取消 token 是**实例字段**，不是库级状态。测试用 `AppState::durable()`
+自己开一个 `Session`，driver 用另一个 `Session`，两者写同一份 sqlite 却各拿一个 token。
+**解**：测试按生产形状装配——`DurableCommands::with_session(session.clone(), registry)` 与
+driver 共用同一个 `Session`，再断言 provider 见过取消信号；负向哨兵去掉 `cancel()` 才会真红。
+
+## 2026-11-21 · ManualClock 的 wait_until 在 set_ms 之后会丢唤醒
+
+**症状**：测试先把假 Clock 跳到目标时刻，再调带 `wait_until` 的节拍函数，线程永久挂住；
+去掉等待才过，判据不再覆盖「等待由注入时钟完成」。
+**根因**：`Notify::notified()` 是先注册再检查的实现，单次 `notify_waiters()` 没有持久许可；
+先 set 再 wait 时，唤醒已经过去，wait 侧看不到它。
+**解**：`wait_until` 里先读时钟，再注册 `notified()`，注册后再读一次并 `tokio::pin!` 住 future
+才 await；这样先跳时段也只做一次布尔检查，不依赖通知时序。
+## 2026-11-22 · 运行时的五态名和 wire 的清单状态不是一套词
+
+**症状**：install 回包写 `state:"normal"`（Runtime 内部状态），判据和 `/v1/extensions` 的 `items[]` 都要 `running`。
+**根因**：`ExtState::Normal` 是状态机内部名，`/v1/extensions` 的投影在 `runtime::items` 里翻成 wire 的 `running`，install 是新路径，容易漏翻。
+**解**：所有出 HTTP 的状态都过一次 `normal → running` 映射；实现写在端点翻译层，不在 CLI/AdminStore 里。
+**推广**：新写端点回 state 时先看 `runtime::items()` 的同一段映射，别直出 `ExtState::as_str()`。
+## 2026-11-21 · 归档墓碑有两套形状，四态判据会悄悄退化
+
+**症状**：#64 的 purge 把墓碑写成 `purged:{id,at}`，#67 的 `/v1/sessions` / `/v1/archive`
+读的是 `archived[id]={at,gen,purged}`；两边各自测试都绿，合起来时「已销毁」永远显示成
+「无墓碑」，purge 也过不了「先归档」的前置。
+**根因**：两张票分头落，墓碑是同一份 `qrd3wh.sessions` 文档的两个键，没有单一真相。
+**解**：#67 收口为唯一形状 `archived[id]={at,gen,purged}`；archive 写 `purged:false`、
+purge 只翻这一位且必须先有墓碑、restore 抹掉整个键；wire.md 同步改口径。
+
+## 2026-11-20 · 变体分支没有 upstream，裸 `git push` 报假失败
+
+**症状**：`publish` 在变体 worktree 里 commit 成功，但 `pushed=false`，远端根本没有变体分支。
+**根因**：`git push --porcelain` 在 `push.default=simple` 下要求当前分支有 upstream；
+worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
+**解**：显式 `git push origin HEAD:refs/heads/<branch>`；没有远端才回 `Unknown`（wire null），
+推送失败仍回 `false`，绝不冒成功。哨兵：把 refspec 改成 `main` → 判据 2 的远端主干不变断言红。
+
+## 2026-11-21 · #88 的清单快照判据是「备注」列当「API 面」用
+
+**症状**：合并 #88 后给 `docs/plugins.md` 的 `repo` 行加说明文字，
+`capabilities_manifest::manifest_metadata_matches_the_plugins_table_cell_by_cell` 变红，
+报「六列一行都对不上」，但六列肉眼看全对。
+**根因**：该测试把 `cells[8]`（备注）与 `ManifestEntry.description` 比，而行里 `cells[6]`（API 面）
+才是描述列；集成前两格恰好相同，所以空转地绿。
+**解**：改清单表格时若撞上这条红，先逐列打印 `cells[i]` 与 entry 字段确认索引；
+保持 `cells[8]` 与 `MANIFEST.description` 逐字相同，#77 的上游追踪说明放 `cells[6]`。
+## 2026-11-22 · 发布闸有两层，负向哨兵只拆 HTTP 那层不会红
+
+**症状**：#80 做「坏 schedule → 400」的哨兵时，把 HTTP 层的 `validate_rules` 拆掉，
+判据仍然绿 —— 坏定义在 `Trigger::new` 里又被 `parse_five_field_cron` 拒了一次。
+**根因**：闸被写了两遍（HTTP 翻译层 + 定义层 conformance），只拆外层时内层还在守门，
+判据测的是「有没有被拒」，不是「哪一层拒的」。
+**解**：哨兵要拆到**唯一真正的写入闸**（这里是 `Trigger::new` 的 cron 校验）；两层都保留，
+外层给好人话 400、内层是 conformance 的物理保证。判据注释里写清哨兵该拆哪一层。
+
+## 2026-11-23 · sleeping 任务里的 kind 在库里是编码字符串，不是原文
+
+**症状**：进程级判据 `SELECT count(*) FROM tasks WHERE kind='nous.dispatcher.tick'` 恒为 0，
+但 durable 的 record JSON 里明明有这条任务；误以为节拍没跑。
+**根因**：durable 按 `docs/storage.md` 的索引列规矩写 `kind`，`task_row` 用
+`encode_indexed_string` 编码（带引号），字面量匹配不上；`record` 才是原文真相。
+**解**：判据改成 `WHERE record LIKE '%nous.dispatcher.tick%'`，或先经 dispatcher 的
+`read_sleeping_ticks` 解析 record；不要拿索引列的字面量当 JSON 里那个字符串。
+
+## 2026-11-22 · 试跑的「问触发器」与手动 launch 不能共用判定入口
+
+**症状**：#82 两个动作看起来都是「起一条会话」，把 launch 也接到 `evaluate` 后，
+不命中的 cron 让手动 launch 变成 `{fired:false}`，会话和血缘都不写。
+**根因**：`forced` 不是回包上的一个词，它是「有没有经过触发器」这件事本身；
+判定一旦共用，跳过判定的入口就不存在了，只能靠回包自说自话。
+**解**：`fire` 单独持有判定与「不 fire 就不建会话」的早退，`launch` 只进共用的 launch
+路径（建会话 → 血缘 → 回执），判定不参与；哨兵分别弄坏两处，各有对应判据变红。
+## 2026-11-21 · 契约图表内嵌在判据脚本里，文档补图追不上
+
+**症状**：#89 按票面在 `docs/harness.md` 补了 7 条 `nous-server` 依赖边，
+`verify.sh` §4e 仍红，且脚本里那份 allow 表与文档是两份真相。
+**根因**：判据读的是内嵌 dict，不是它声称要读的契约文档；改文档对判据没有任何影响。
+**解**：机器版图表移进 `docs/dependency-graph.toml` 由脚本直接读，文档 §7 是同一张表；
+补“空表 = RED”哨兵。断言循环逐字未变；哨兵：从表里删一条边 → §4e 红。
+## 2026-11-24 · 归档的 generation 文件与墓碑库写不是同一事务，失败会留孤儿
+
+**症状**：generation 已写好但墓碑提交失败 → 盘上有 `gen-*.db`，库里没墓碑；restore 反向失败 → 行已写回但墓碑还在。
+**根因**：generation 是独立 SQLite 文件，墓碑是活库文档写，`Storage::commit` 的事务只覆盖后者。
+**解**：按顺序写（临时文件 → rename → 墓碑），失败补偿反向删除；restore 失败保留 generation。注入哨兵验盘/库都不留半截。

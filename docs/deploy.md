@@ -5,6 +5,12 @@
 旧面板 `nous-panel`（4790）已于 2026-11-18 停用并 disable，`content/` 已归档到 j1900 的
 `/var/backups/nous-panel/` 并从仓里移除。
 
+**四条私库路径不进 unit**（#63）：`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` /
+`NOUS_EXTEND` 的默认值分别是 `/opt/Nous-skills` / `/opt/Nous-prompts` /
+`/opt/Nous-Template` / `/opt/Nous-extend`，在 `crates/nous/env/src/content.rs` 一处解析。
+unit 里写这四个变量就会变成两份真相 —— 要换路径只在环境里改一处；缺目录是正常状态，
+`/v1/skills` / `/v1/prompts` 仍回 `root` 字符串 + `present=false`，不会回 `null`。
+
 ## 0 · 一次性准备（人做，脚本不代劳）
 
 j1900（`root` 登录一次）：

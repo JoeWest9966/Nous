@@ -15,6 +15,7 @@ use axum::{Json, Router};
 use nous_documents::routes::DOCUMENT_ROUTES;
 use nous_documents::service::{DocumentService, DocumentWriter};
 use nous_documents::store::DocumentReader;
+use nous_documents::kinds::tree::{BoardTree, TreeError, TreeNode};
 use nous_documents::DocumentKind;
 use nous_durable::session::commands::{write_document, DocumentMutation};
 use nous_durable::session::Session;
@@ -115,7 +116,9 @@ impl DocumentReader for DurableDocumentBackend {
     }
 
     fn get(&self, kind: &'static str, section: &str, name: &str) -> std::result::Result<Option<(Value, String)>, String> {
-        let (_, doc) = self.find(kind, section, name).map_err(|e| e.to_string())?.ok_or("missing")?;
+        let Some((_, doc)) = self.find(kind, section, name).map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
         Ok(Some((doc.value.clone(), format!("v{}:{}", doc.version, doc.deltas_since_base))))
     }
 
@@ -205,6 +208,11 @@ fn handler_for(method: &'static str, path: &'static str) -> axum::routing::Metho
     if path.ends_with("/history") && is_get { return get(history) }
     if path.ends_with("/pending") && is_get { return get(pending) }
     if path.ends_with("/validate") && is_get { return get(validate) }
+    if path.ends_with("/move") { return post(tree_move) }
+    if path.ends_with("/trash") { return post(tree_trash) }
+    if path.ends_with("/restore") { return post(tree_restore) }
+    if path.ends_with("/purge") { return post(tree_purge) }
+    if path.ends_with("/import") { return post(tree_import) }
     if path.ends_with("/rename") { return post(rename) }
     if path.ends_with("/publish") { return post(action_publish) }
     if path.ends_with("/reload") { return post(action_reload) }
@@ -244,10 +252,40 @@ const fn of<K: DocumentKind>() -> KindAdapter {
 static KIND_ADAPTERS: &[KindAdapter] = &[
     of::<nous_documents::kinds::presets::PresetFields>(),
     of::<nous_documents::kinds::prompts::PromptFields>(),
+    of::<TreeFields>(),
 ];
+
+/// #87：盘面树的 kind 适配器。树本身是整份文档字段；这里只负责泛型读取/校验转发。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct TreeFields {
+    #[serde(default)]
+    nodes: serde_json::Map<String, Value>,
+    #[serde(default)]
+    roots: Vec<String>,
+}
+
+impl DocumentKind for TreeFields {
+    const KIND: &'static str = "tree";
+    const SECTIONS: &'static [&'static str] = &[];
+    fn validate(&self, _ctx: &nous_documents::ValidationCtx) -> Vec<nous_documents::Issue> {
+        match BoardTree::from_value(serde_json::to_value(self).unwrap()) {
+            Ok(tree) => match tree.check_integrity() {
+                Ok(()) => vec![],
+                Err(error) => vec![nous_documents::Issue::error("nodes", error.message())],
+            },
+            Err(error) => vec![nous_documents::Issue::error("nodes", error)],
+        }
+    }
+}
 
 fn adapter(kind: &str) -> Option<&'static KindAdapter> {
     KIND_ADAPTERS.iter().find(|adapter| adapter.kind == kind)
+}
+
+/// 404 的 body 必须带可用值清单（kind 或 section 名），别让客户端猜。
+fn kind_not_found(kind: &str) -> ServerError {
+    let available = KIND_ADAPTERS.iter().map(|adapter| adapter.kind).collect::<Vec<_>>().join(", ");
+    ServerError::NotFound(format!("unknown kind {kind}; available kinds: {available}"))
 }
 
 fn service(state: &Arc<AppState>) -> Result<DocumentService> {
@@ -282,7 +320,7 @@ impl PutBody {
 }
 
 async fn list(State(state): State<Arc<AppState>>, AxumPath((kind,)): AxumPath<(String,)>) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     let section = "Session-Template".to_string();
     Ok(Json((a.list)(&service(&state)?, &section).map_err(bad)?))
 }
@@ -291,16 +329,21 @@ async fn get_one(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     (a.get)(&service(&state)?, &section, &name).map_err(bad)?
-        .map(Json).ok_or_else(|| ServerError::NotFound(format!("document {name} not found")))
+        .map(Json).ok_or_else(|| ServerError::NotFound(format!("document {name} not found; available kinds: {}", KIND_ADAPTERS.iter().map(|a| a.kind).collect::<Vec<_>>().join(", "))))
 }
 
 async fn put_one(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
-    Json(body): Json<PutBody>,
+    body: axum::body::Bytes,
 ) -> Result<Json<Value>> {
+    if kind == "tree" {
+        return put_tree(&state, &section, &name, &body).await;
+    }
+    let body: PutBody = serde_json::from_slice(&body)
+        .map_err(|e| ServerError::BadRequest(format!("document body: {e}")))?;
     let svc = service(&state)?;
     let writer = svc.writer().ok_or_else(|| ServerError::Conflict("no document writer".into()))?;
     let etag = writer.write(&kind, &section, &name, body.fields(), None).await.map_err(bad)?;
@@ -325,7 +368,7 @@ async fn validate(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     Ok(Json((a.validate)(&service(&state)?, &section, &name).map_err(bad)?))
 }
 
@@ -333,7 +376,7 @@ async fn history(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     Ok(Json((a.history)(&service(&state)?, &section, &name).map_err(bad)?))
 }
 
@@ -351,7 +394,7 @@ async fn history_diff(
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
     axum::extract::Query(query): axum::extract::Query<DiffQuery>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     let diff = (a.diff)(&service(&state)?, &section, &name, query.hash.as_deref(), false).map_err(bad)?;
     diff.map(Json).ok_or_else(|| ServerError::NotFound("revision not found".into()))
 }
@@ -360,7 +403,7 @@ async fn pending(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     Ok(Json((a.pending)(&service(&state)?, &section, &name).map_err(bad)?))
 }
 
@@ -368,7 +411,7 @@ async fn pending_diff(
     State(state): State<Arc<AppState>>,
     AxumPath((kind, section, name)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
-    let a = adapter(&kind).ok_or_else(|| ServerError::NotFound(format!("unknown kind {kind}")))?;
+    let a = adapter(&kind).ok_or_else(|| kind_not_found(&kind))?;
     let diff = (a.diff)(&service(&state)?, &section, &name, None, true).map_err(bad)?;
     diff.map(Json).ok_or_else(|| ServerError::NotFound("no pending diff".into()))
 }
@@ -393,7 +436,7 @@ async fn rename(
     let to = body.to.unwrap_or_default();
     let writer = svc.writer().ok_or_else(|| ServerError::Conflict("no document writer".into()))?;
     let refs = writer.rename(&kind, &section, &name, &to).await.map_err(bad)?;
-    Ok(Json(json!({ "ok": true, "kind": kind, "section": section, "name": name, "to": to, "refs": refs, "pushed": null, "commit": {} })))
+    Ok(Json(json!({ "ok": true, "kind": kind, "section": section, "name": name, "to": to, "refs": refs, "pushed": Value::Null, "commit": Value::Null })))
 }
 
 async fn action_publish(
@@ -427,6 +470,178 @@ async fn action_with_op(
     };
     writer.action(&kind, &section, &name, op, payload).await.map_err(bad)?;
     Ok(Json(json!({ "ok": true, "kind": kind, "section": section, "name": name, "action": op })))
+}
+
+// ── #87 盘面树动作 ────────────────────────────────────────────────────────────
+// 每一次动作 = 读当前树 → 校验 etag + 领域不变量 → 一次 `write_document` 提交。
+// 校验全在 mutate 之前，非法环/旧版本绝不会走到写端。
+
+#[derive(serde::Deserialize)]
+struct TreeBody {
+    #[serde(default)]
+    etag: Option<String>,
+    #[serde(default)]
+    nodes: Option<Vec<Value>>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    parent: Option<String>,
+    #[serde(default)]
+    order: Option<i64>,
+}
+
+fn tree_error(error: TreeError) -> ServerError {
+    match error {
+        TreeError::NotFound(_) => ServerError::NotFound(error.message()),
+        TreeError::Cycle(_) | TreeError::CycleEdge(_, _) | TreeError::Invalid(_) => {
+            ServerError::BadRequest(error.message())
+        }
+        TreeError::Conflict(_) => ServerError::Conflict(error.message()),
+    }
+}
+
+/// 读取一盘面的当前树和 etag。库里还没有时返回空树。
+fn load_tree(state: &Arc<AppState>, section: &str, name: &str) -> Result<(BoardTree, String)> {
+    let svc = service(state)?;
+    let Some((value, etag)) = svc.reader().get("tree", section, name).map_err(bad)? else {
+        return Ok((BoardTree::default(), String::new()));
+    };
+    let tree = BoardTree::from_value(value).map_err(|e| ServerError::Internal(format!("stored tree: {e}")))?;
+    Ok((tree, etag))
+}
+
+fn check_etag(current: &str, expected: Option<&str>) -> Result<()> {
+    match expected {
+        None => Err(ServerError::BadRequest("etag is required for tree writes".into())),
+        Some(given) if given != current => Err(ServerError::Conflict(format!(
+            "tree version changed: expected {given}, found {current}"
+        ))),
+        Some(_) => Ok(()),
+    }
+}
+
+async fn commit_tree(
+    state: &Arc<AppState>, section: &str, name: &str, tree: &BoardTree,
+    is_create: bool,
+) -> Result<Value> {
+    let svc = service(state)?;
+    let writer = svc.writer().ok_or_else(|| ServerError::Conflict("no document writer".into()))?;
+    let value = tree.to_value();
+    // 写端接缝只暴露 write：整份 base 一次覆盖，etag 与领域不变量已在调用前校验。
+    let _ = is_create;
+    writer.write("tree", section, name, value, None).await.map_err(bad)?;
+    let etag = svc.reader().get("tree", section, name).map_err(bad)?
+        .map(|(_, etag)| etag).unwrap_or_default();
+    Ok(json!({ "ok": true, "kind": "tree", "section": section, "name": name,
+               "etag": etag, "tree": tree.to_value() }))
+}
+
+/// PUT 整棵树：只接受节点数组，整份 base 一次写入。
+async fn put_tree(state: &Arc<AppState>, section: &str, name: &str, raw: &[u8]) -> Result<Json<Value>> {
+    let body: TreeBody = serde_json::from_slice(raw)
+        .map_err(|e| ServerError::BadRequest(format!("tree body: {e}")))?;
+    let Some(nodes) = body.nodes else {
+        return Err(ServerError::BadRequest("tree body needs nodes".into()));
+    };
+    let mut tree = BoardTree::default();
+    for item in nodes {
+        let node: TreeNode = serde_json::from_value(item)
+            .map_err(|e| ServerError::BadRequest(format!("tree node: {e}")))?;
+        tree.create(node).map_err(tree_error)?;
+    }
+    tree.check_integrity().map_err(tree_error)?;
+    let result = commit_tree(state, section, name, &tree, true).await?;
+    Ok(Json(result))
+}
+
+async fn tree_action(
+    state: &Arc<AppState>, section: &str, name: &str, raw: &[u8],
+    apply: impl FnOnce(&mut BoardTree, &TreeBody) -> std::result::Result<Vec<String>, TreeError>,
+) -> Result<Json<Value>> {
+    let body: TreeBody = serde_json::from_slice(raw)
+        .map_err(|e| ServerError::BadRequest(format!("tree action body: {e}")))?;
+    let (mut tree, etag) = load_tree(state, section, name)?;
+    check_etag(&etag, body.etag.as_deref())?;
+    let affected = apply(&mut tree, &body).map_err(tree_error)?;
+    tree.check_integrity().map_err(tree_error)?;
+    let mut result = commit_tree(state, section, name, &tree, false).await?;
+    result["affected"] = json!(affected);
+    Ok(Json(result))
+}
+
+async fn tree_move(
+    State(state): State<Arc<AppState>>,
+    AxumPath((section, name)): AxumPath<(String, String)>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    tree_action(&state, &section, &name, &body, |tree, body| {
+        let id = body.id.clone().ok_or_else(|| TreeError::Invalid("id is required".into()))?;
+        tree.move_to(&id, body.parent.clone(), body.order.unwrap_or(0))?;
+        Ok(vec![id])
+    }).await
+}
+
+async fn tree_trash(
+    State(state): State<Arc<AppState>>,
+    AxumPath((section, name)): AxumPath<(String, String)>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64).unwrap_or(0);
+    tree_action(&state, &section, &name, &body, |tree, body| {
+        let id = body.id.clone().ok_or_else(|| TreeError::Invalid("id is required".into()))?;
+        tree.trash(&id, at)
+    }).await
+}
+
+async fn tree_restore(
+    State(state): State<Arc<AppState>>,
+    AxumPath((section, name)): AxumPath<(String, String)>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    tree_action(&state, &section, &name, &body, |tree, body| {
+        let id = body.id.clone().ok_or_else(|| TreeError::Invalid("id is required".into()))?;
+        tree.restore(&id, body.parent.clone())
+    }).await
+}
+
+async fn tree_purge(
+    State(state): State<Arc<AppState>>,
+    AxumPath((section, name)): AxumPath<(String, String)>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    tree_action(&state, &section, &name, &body, |tree, body| {
+        let id = body.id.clone().ok_or_else(|| TreeError::Invalid("id is required".into()))?;
+        tree.purge(&id)
+    }).await
+}
+
+/// 归档迁移：入参只是旧 `tree.json` 的值 + （可选的）`mapDirs` / `goneDirs` 目录名清单。
+/// 不读盘、不写盘、不碰第二库；解析出的树经同一写端落 `nous.db`。
+async fn tree_import(
+    State(state): State<Arc<AppState>>,
+    AxumPath((section, name)): AxumPath<(String, String)>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    #[derive(serde::Deserialize)]
+    struct ImportBody {
+        #[serde(rename = "tree.json")]
+        tree: Value,
+        #[serde(default, rename = "mapDirs")]
+        map_dirs: Vec<String>,
+        #[serde(default, rename = "goneDirs")]
+        gone_dirs: Vec<String>,
+    }
+    let body: ImportBody = serde_json::from_slice(&body)
+        .map_err(|e| ServerError::BadRequest(format!("import body: {e}")))?;
+    let map = body.map_dirs.into_iter().collect();
+    let gone = body.gone_dirs.into_iter().collect();
+    let (tree, report) = nous_documents::kinds::tree_migrate::import_tree_json(&body.tree, &map, &gone)
+        .map_err(ServerError::BadRequest)?;
+    let mut result = commit_tree(&state, &section, &name, &tree, true).await?;
+    result["migration"] = json!({ "nodes": report.nodes, "folders": report.folders,
+                                  "trashed": report.trashed, "skipped": report.skipped });
+    Ok(Json(result))
 }
 
 /// `GET /v1/_routes`：注册表在 `meta.rs`，与 capabilities 同源（唯一真相）。

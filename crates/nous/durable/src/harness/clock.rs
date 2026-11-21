@@ -76,7 +76,12 @@ impl Clock for ManualClock {
             if self.now_ms() >= at_ms {
                 return;
             }
-            self.notify.notified().await;
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            if self.now_ms() >= at_ms {
+                return;
+            }
+            notified.await;
         }
     }
 }

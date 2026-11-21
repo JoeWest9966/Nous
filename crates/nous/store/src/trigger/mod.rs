@@ -5,6 +5,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::Store;
 
@@ -59,6 +60,9 @@ pub struct Spec {
     pub spec_version: u32,
     pub schedule: Option<String>,
     pub on: Option<String>,
+    /// #73：点火参数（字符串 / 数字 / 布尔），只随定义透传，不被判定解释。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Value>,
 }
 
 /// 点火许可里的一类人（Actor 的最小投影：durable 的三值语义不进本 crate）。
@@ -167,6 +171,7 @@ pub struct Trigger {
     policy: Policy,
     enabled: bool,
     next_fire_at: Option<i64>,
+    version: i64,
     created_at: i64,
     deleted_at: Option<i64>,
 }
@@ -229,6 +234,7 @@ impl Trigger {
             policy: if new.policy == "serial" { Policy::Serial } else { Policy::Queue },
             enabled: true,
             next_fire_at: None,
+            version: 1,
             created_at: now_ms,
             deleted_at: None,
         })
@@ -244,12 +250,39 @@ impl Trigger {
     pub fn policy(&self) -> Policy { self.policy }
     pub fn enabled(&self) -> bool { self.enabled }
     pub fn next_fire_at(&self) -> Option<i64> { self.next_fire_at }
+    pub fn version(&self) -> i64 { self.version }
     pub fn created_at(&self) -> i64 { self.created_at }
     pub fn deleted_at(&self) -> Option<i64> { self.deleted_at }
 
     /// 点火许可：`fired_by` 必须在名单里。
     pub fn permits(&self, fired_by: &FireActor) -> bool {
         self.fires_allowed_by.iter().any(|allowed| allowed.matches(fired_by))
+    }
+
+    /// #73：在**不经过 `Trigger::new` 的库级约束**（code 不可变）下改自己的规则。
+    /// `schedule` / `params` 属于 `spec`，`enabled` 属于行上的列，不能塞进 spec。
+    /// 只改这三项，未知键 fail-fast；坏 cron 在这里就拒，不落半份定义。
+    pub fn patch(&self, schedule: Option<Option<String>>, params: Option<Value>, enabled: Option<bool>) -> std::result::Result<Self, TriggerError> {
+        let mut spec = self.spec.clone();
+        if let Some(schedule) = schedule {
+            if let Some(cron) = schedule.as_deref() {
+                parse_five_field_cron(cron).map_err(|_| TriggerError::SpecScheduleInvalid)?;
+            }
+            spec.schedule = schedule;
+        }
+        if let Some(params) = params {
+            let object = params.as_object().ok_or(TriggerError::UnknownSpecKey)?;
+            if !object.values().all(|value| value.is_string() || value.is_number() || value.is_boolean() || value.is_null()) {
+                return Err(TriggerError::UnknownSpecKey);
+            }
+            spec.params = Some(params);
+        }
+        Ok(Self {
+            spec,
+            enabled: enabled.unwrap_or(self.enabled),
+            version: self.version + 1,
+            ..self.clone()
+        })
     }
 
     /// 把完整定义写回 `triggers.spec`（建完即可改 state，定义自身不在库里另开列）。
@@ -264,13 +297,19 @@ impl Trigger {
             id: row.id,
             code: row.code.clone(),
             name: row.name.clone(),
-            spec: Spec { spec_version: definition.spec.spec_version, schedule: definition.spec.schedule, on: definition.spec.on },
+            spec: Spec {
+                spec_version: definition.spec.spec_version,
+                schedule: definition.spec.schedule,
+                on: definition.spec.on,
+                params: definition.spec.params,
+            },
             template_ref: definition.template_ref,
             fires_allowed_by: definition.fires_allowed_by,
             target: definition.target,
             policy: definition.policy,
             enabled: row.enabled,
             next_fire_at: row.next_fire_at,
+            version: row.version,
             created_at: row.created_at,
             deleted_at: row.deleted_at,
         })
@@ -282,6 +321,8 @@ struct SpecInner {
     spec_version: u32,
     schedule: Option<String>,
     on: Option<String>,
+    #[serde(default)]
+    params: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -346,7 +387,7 @@ fn parse_spec(raw: &str) -> std::result::Result<Spec, TriggerError> {
     if let Some(map) = value.as_object() {
         for key in map.keys() {
             match key.as_str() {
-                "spec_version" | "schedule" | "on" => {}
+                "spec_version" | "schedule" | "on" | "params" => {}
                 "orchestration" | "trigger" | "triggers" | "chain" | "next" => {
                     return Err(TriggerError::OrchestrationNotATrigger)
                 }
@@ -547,4 +588,15 @@ pub fn fire_due(triggers: &[Trigger], now_ms: i64) -> Vec<DueFire> {
         }
     }
     due
+}
+
+/// #80：发布闸 —— `on` 是点火源的 slug（`kind` 或 `kind:ref`），封闭的 kind 集合。
+/// `trigger:*` / `chain:*` 是编排，明确拒绝；坏形状一律 `NoFiringSource`。
+pub fn validate_on(on: Option<&str>) -> std::result::Result<(), TriggerError> {
+    let Some(on) = on else { return Ok(()) };
+    let kind = on.split_once(':').map(|(kind, _)| kind).unwrap_or(on);
+    match kind {
+        "cron" | "clock" | "event" | "agent" | "human" | "ext" => Ok(()),
+        _ => Err(TriggerError::NoFiringSource),
+    }
 }
