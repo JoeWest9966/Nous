@@ -9,12 +9,14 @@ mod error;
 mod files;
 mod git;
 mod publish;
+mod upstream;
 mod variants;
 mod views;
 
 pub use error::{RepoError, Result};
 pub use files::{WriteFile, WrittenFile};
 pub use publish::{CommitDetail, CommitResult, CommitFile, LifecycleResult, Pushed};
+pub use upstream::{AdoptResult, CheckCache, ComparedFile, Source, SourceVersion, TreeItem, Upstream, UpstreamFile, UpstreamStatus};
 pub use variants::{
     variants, BindVariant, BoundVariant, PruneVariant, PrunedVariant, PublishedVariant, VariantFamily,
 };

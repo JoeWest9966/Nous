@@ -73,7 +73,19 @@
         "POST /v1/repos/:repo/variants/branch",
         "POST /v1/repos/:repo/variants/publish",
         "POST /v1/repos/:repo/variants/prune",
-        "GET /v1/repos/:repo/variants/usage"
+        "GET /v1/repos/:repo/variants/usage",
+        "GET /v1/repos/:repo/sources",
+        "POST /v1/repos/:repo/sources",
+        "GET /v1/repos/:repo/upstream",
+        "POST /v1/repos/:repo/upstream/refresh",
+        "POST /v1/repos/:repo/upstream/pin",
+        "POST /v1/repos/:repo/upstream/check",
+        "POST /v1/repos/:repo/upstream/sync",
+        "GET /v1/repos/:repo/upstream/tree",
+        "GET /v1/repos/:repo/upstream/file",
+        "GET /v1/repos/:repo/upstream/files",
+        "POST /v1/repos/:repo/upstream/copy",
+        "POST /v1/repos/:repo/upstream/adopt"
       ]
     },
     {

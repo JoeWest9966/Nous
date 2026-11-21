@@ -95,7 +95,7 @@ pub struct VariantUsageQuery {
 }
 
 /// 把私库错误映射成 wire 的 `{error}`；409 额外带磁盘当前正文（票面要求）。
-fn repo_error(error: RepoError) -> ServerError {
+pub(crate) fn repo_error(error: RepoError) -> ServerError {
     match error {
         RepoError::BadRequest(m) | RepoError::InvalidPath(m) => ServerError::BadRequest(m),
         RepoError::Validation { field, problem } => ServerError::Validation { field, problem },
@@ -115,7 +115,7 @@ fn repo_error(error: RepoError) -> ServerError {
     }
 }
 
-fn select(state: &AppState, kind: &str) -> std::result::Result<Arc<Repo>, ServerError> {
+pub(crate) fn select(state: &AppState, kind: &str) -> std::result::Result<Arc<Repo>, ServerError> {
     if !REPO_KINDS.contains(&kind) {
         return Err(ServerError::BadRequest(format!("未知私库：{kind}")));
     }
