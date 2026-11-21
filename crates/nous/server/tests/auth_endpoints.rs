@@ -131,7 +131,13 @@ async fn every_v1_route_is_protected_including_capabilities_and_sse() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    // #70：无模型来源时 503 是新契约；这里只验「token 挡不住这条路由」，
+    // 所以 202/503 都算过，401/403 才算红。
+    assert!(
+        matches!(response.status(), StatusCode::ACCEPTED | StatusCode::SERVICE_UNAVAILABLE),
+        "带 token 的 messages 不该被鉴权挡掉：{}",
+        response.status()
+    );
 
     // SSE 用假源（真库空快照没有 live 文档会 500，那是 #47 前的行为，不是本票要改的）。
     let response = fake_app()

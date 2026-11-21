@@ -98,7 +98,9 @@ fn read_rows(path: &PathBuf, table: &str) -> Vec<Value> {
 }
 
 async fn wait_for(path: &PathBuf, table: &str, predicate: impl Fn(&Value) -> bool) -> Vec<Value> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    // 自然完成要 8 秒以上；abort 必须在 3 秒内收敛，才算「真的停了轮次」。
+    let started = tokio::time::Instant::now();
+    let deadline = started + Duration::from_secs(3);
     loop {
         let rows = read_rows(path, table);
         if rows.iter().any(&predicate) {
@@ -209,6 +211,8 @@ fn catalog_with_default(provider: &str, id: &str) -> nous_device::ModelsResponse
             state: "ok",
             source: Some("file"),
             path: PathBuf::from("/tmp/models.json"),
+            fetched_at: None,
+            error: None,
         },
     }
 }
@@ -280,12 +284,49 @@ async fn with_no_model_anywhere_the_request_is_503_not_202() {
     assert!(read_rows(&path, "entries").is_empty(), "503 之前不许写 user entry");
 }
 
-/// 慢 provider：每 5 秒吐一段文本，给 abort 留窗口。
+/// 慢 provider：每 20 秒吐一段文本，给 abort 留窗口；同时记录取消信号有没有真的传到 provider。
+#[derive(Clone)]
+struct WatchingProvider {
+    inner: Arc<dyn nous_ai::Provider>,
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl nous_ai::provider::Provider for WatchingProvider {
+    fn id(&self) -> &str { self.inner.id() }
+    fn models(&self) -> &[nous_ai::Model] { self.inner.models() }
+    async fn stream_simple(
+        &self,
+        model: &nous_ai::Model,
+        ctx: &nous_ai::Context,
+        opts: &nous_ai::provider::SimpleStreamOptions,
+    ) -> nous_ai::event_stream::AssistantMessageEventStream {
+        let signal = opts.signal.clone();
+        let flag = self.cancelled.clone();
+        tokio::spawn(async move {
+            signal.cancelled().await;
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        self.inner.stream_simple(model, ctx, opts).await
+    }
+}
+
 fn slow_provider() -> Arc<dyn nous_ai::Provider> {
     nous_ai::providers::faux::FauxProvider::new(
         nous_ai::providers::faux::FauxScript::new()
             .with_text("a slow answer that should be interrupted")
-            .with_tokens_per_second(0.2),
+            .with_tokens_per_second(0.05),
+    )
+}
+
+fn watched_slow_provider() -> (Arc<dyn nous_ai::Provider>, Arc<std::sync::atomic::AtomicBool>) {
+    let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    (
+        Arc::new(WatchingProvider {
+            inner: slow_provider(),
+            cancelled: cancelled.clone(),
+        }),
+        cancelled,
     )
 }
 
@@ -294,16 +335,24 @@ async fn abort_settles_the_submission_with_user_cancel_and_an_aborted_entry() {
     let path = temp_db("abort");
     seed(&path, Some("catalog/slow-model")).await;
     let session = Arc::new(Session::open(&path).unwrap());
+    let (provider, saw_cancel) = watched_slow_provider();
+    // 生产形状：driver 与 commands 共用同一个 Session / 同一个取消 token。
+    let commands = nous_server::DurableCommands::with_session(
+        session.clone(),
+        nous_durable::session::ObserverRegistry::new(),
+    );
     let mut assembled = nous_server::runtime::assemble_with_provider(
-        slow_provider(),
+        provider,
         Arc::new(BTreeMap::new()),
         session,
     );
     assembled.provider_kind = "real";
-    let state = AppState::durable(&path)
-        .unwrap()
-        .with_runtime(Arc::new(assembled))
-        .with_models(catalog_with_default("catalog", "slow-model"));
+    let state = AppState::durable_with_commands(
+        nous_server::ImportedSource::open(&path).unwrap(),
+        commands,
+    )
+    .with_runtime(Arc::new(assembled))
+    .with_models(catalog_with_default("catalog", "slow-model"));
     let app = router(state);
 
     let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping"}))).await;
@@ -331,6 +380,14 @@ async fn abort_settles_the_submission_with_user_cancel_and_an_aborted_entry() {
         .find(|entry| entry["kind"] == json!("pi.assistant") && entry["reason"] == json!("user_cancel"))
         .expect("abort 应落一条 user_cancel 的 assistant entry");
     assert_eq!(terminal["model"][0]["stopReason"], json!("aborted"));
+    // 真停 = 取消信号到过 provider；只写标志不会让这里为真。
+    // watcher 任务可能比落库慢一个调度点；给 1 秒，仍远小于 provider 的 20 秒自然完成。
+    let mut saw = false;
+    for _ in 0..50 {
+        if saw_cancel.load(std::sync::atomic::Ordering::SeqCst) { saw = true; break; }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(saw, "abort 必须真的停掉 provider 轮次");
 }
 
 #[tokio::test]
