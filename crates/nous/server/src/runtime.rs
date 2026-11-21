@@ -75,6 +75,13 @@ fn faux_provider() -> Arc<dyn nous_ai::Provider> {
     FauxProvider::with_models(script, vec![model])
 }
 
+/// 一条 driver 的工厂：接 SSE sink，造一条新 driver（每条消息一条）。
+pub type DriverFactory = Arc<
+    dyn Fn(Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>) -> Arc<dyn TurnDriver>
+        + Send
+        + Sync,
+>;
+
 /// server 构造好的轮次驱动器，备给路由/命令层使用。
 pub struct AssembledRuntime {
     /// 这一台组装根写进 entry / submission 的 actor。
@@ -88,6 +95,11 @@ pub struct AssembledRuntime {
     /// #51：只影响 `/v1/models` 与 capabilities，不参与轮次语义。
     pub models: ModelsResponse,
     pub provider_kind: &'static str,
+    /// provider id → 驱动工厂。真装配时每个有凭证的 provider 一条；
+    /// faux / 离线只有一条。`POST /messages` 按解析出的模型选工厂。
+    pub drivers: BTreeMap<String, DriverFactory>,
+    /// provider id → 它服务的模型（带 `api` / `base_url`，起轮时原样用）。
+    pub models_by_provider: BTreeMap<String, Vec<Model>>,
 }
 
 /// 从宿主配置和环境变量构造注册表。
@@ -166,33 +178,36 @@ pub fn assemble(
     );
     let actor = Actor::system("nous-app");
     let tool_names: Vec<String> = tools.keys().cloned().collect();
-    let driver_session = session.clone();
     let driver_tools = Arc::new(tools);
-    let faux_or_offline: Arc<dyn nous_ai::Provider> = if kind == "faux" {
-        faux_provider()
+    // 每个 provider 一个实例：faux 一个；真装配按编目里出现过的 provider 逐个解析凭证。
+    // 解析失败的 provider 打一行诊断、不进池子（模型在 /v1/models 里仍是「待凭证」）。
+    let mut providers: Vec<Arc<dyn nous_ai::Provider>> = Vec::new();
+    if kind == "faux" {
+        providers.push(faux_provider());
     } else {
-        crate::runtime::offline_provider()
-    };
-    // #54：actor 从组装根显式传进每一条 driver（包括带 SSE sink 的那条），
-    // 不经全局/线程局部。#51 的 provider 工厂语义原样保留：factory 每次现造脚本，
-    // 连发多条消息都是同一句固定回复，不是一次性队列。
-    let driver_actor = actor.clone();
-    let make_driver = Arc::new({
-        let providers = faux_or_offline.clone();
-        move |sink: Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>| {
-            Arc::new(
-                HarnessTurnDriver::new(
-                    driver_session.clone(),
-                    TurnRuntime {
-                        providers: providers.clone(),
-                        tools: driver_tools.clone(),
-                    },
-                )
-                .with_actor(driver_actor.clone())
-                .with_event_sink(sink),
-            ) as Arc<dyn TurnDriver>
+        let ids: std::collections::BTreeSet<String> =
+            models.iter().map(|model| model.provider.clone()).collect();
+        for id in ids {
+            let request = nous_runtime::ModelRequest {
+                provider: Some(id.as_str()),
+                ..Default::default()
+            };
+            match config.resolve(&request, &registry, values) {
+                Ok(resolved) => providers.push(resolved.provider.clone()),
+                Err(error) => {
+                    eprintln!("nous-server: provider {id} 未装配（{error}）");
+                }
+            }
         }
-    }) as Arc<dyn Fn(Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>) -> Arc<dyn TurnDriver> + Send + Sync>;
+    }
+    let (drivers, models_by_provider) =
+        build_drivers(&providers, &driver_tools, &session, &actor);
+    // 默认工厂：faux 就一条；真装配取字典序第一个（触发器点火等老路径照旧用它）。
+    let make_driver = drivers
+        .values()
+        .next()
+        .cloned()
+        .unwrap_or_else(|| offline_driver_factory(&driver_tools, &session, &actor));
     let driver = make_driver(Arc::new(|_| {}));
     Ok(AssembledRuntime {
         actor,
@@ -203,6 +218,75 @@ pub fn assemble(
         tool_names,
         models: catalog,
         provider_kind: kind,
+        drivers,
+        models_by_provider,
+    })
+}
+
+/// 每个 provider 一条 driver 工厂 + 它服务的模型表。
+///
+/// #54 的规矩不变：actor 从组装根显式传进每一条 driver（包括带 SSE sink 的那条），
+/// 不经全局/线程局部。
+fn build_drivers(
+    providers: &[Arc<dyn nous_ai::Provider>],
+    tools: &Arc<BTreeMap<String, Arc<dyn AgentTool>>>,
+    session: &Arc<nous_durable::session::Session>,
+    actor: &Actor,
+) -> (BTreeMap<String, DriverFactory>, BTreeMap<String, Vec<Model>>) {
+    let mut drivers: BTreeMap<String, DriverFactory> = BTreeMap::new();
+    let mut models_by_provider: BTreeMap<String, Vec<Model>> = BTreeMap::new();
+    for provider in providers {
+        let id = provider.id().to_string();
+        models_by_provider.insert(id.clone(), provider.models().to_vec());
+        let provider = provider.clone();
+        let tools = tools.clone();
+        let session = session.clone();
+        let actor = actor.clone();
+        drivers.insert(
+            id,
+            Arc::new(
+                move |sink: Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>| {
+                    Arc::new(
+                        HarnessTurnDriver::new(
+                            session.clone(),
+                            TurnRuntime {
+                                providers: provider.clone(),
+                                tools: tools.clone(),
+                            },
+                        )
+                        .with_actor(actor.clone())
+                        .with_event_sink(sink),
+                    ) as Arc<dyn TurnDriver>
+                },
+            ),
+        );
+    }
+    (drivers, models_by_provider)
+}
+
+/// 一个 provider 都没解析出来时的兜底工厂：照旧接离线 provider，
+/// 让「没有凭证」表现为一次失败的轮次，而不是「路由 500」。
+fn offline_driver_factory(
+    tools: &Arc<BTreeMap<String, Arc<dyn AgentTool>>>,
+    session: &Arc<nous_durable::session::Session>,
+    actor: &Actor,
+) -> DriverFactory {
+    let providers = offline_provider();
+    let tools = tools.clone();
+    let session = session.clone();
+    let actor = actor.clone();
+    Arc::new(move |sink: Arc<dyn Fn(&nous_wire::RemoteEvent) + Send + Sync>| {
+        Arc::new(
+            HarnessTurnDriver::new(
+                session.clone(),
+                TurnRuntime {
+                    providers: providers.clone(),
+                    tools: tools.clone(),
+                },
+            )
+            .with_actor(actor.clone())
+            .with_event_sink(sink),
+        ) as Arc<dyn TurnDriver>
     })
 }
 
@@ -212,7 +296,56 @@ pub fn assemble_with_provider(
     tools: Arc<BTreeMap<String, Arc<dyn AgentTool>>>,
     session: Arc<nous_durable::session::Session>,
 ) -> AssembledRuntime {
+    assemble_with_provider_kind(providers, tools, session, "faux")
+}
+
+/// 同 [`assemble_with_provider`]，但显式给 `provider_kind`。
+///
+/// #70 的判据要能覆盖「真 provider 装配」这条分支：生产里 `kind` 由 `NOUS_PROVIDER` 决定，
+/// 测试里必须能造出 `"real"`，否则那条分支永远只有生产才走到。
+pub fn assemble_with_provider_kind(
+    providers: Arc<dyn nous_ai::Provider>,
+    tools: Arc<BTreeMap<String, Arc<dyn AgentTool>>>,
+    session: Arc<nous_durable::session::Session>,
+    kind: &'static str,
+) -> AssembledRuntime {
     let registry = ProviderRegistry::default();
+    let registry_models = providers.models().to_vec();
+    let (drivers, models_by_provider) = build_drivers(
+        std::slice::from_ref(&providers),
+        &tools,
+        &session,
+        &Actor::system("nous-app"),
+    );
+    let catalog = if kind == "faux" {
+        faux_catalog()
+    } else {
+        let items: Vec<ModelItem> = registry_models
+            .iter()
+            .map(|model| ModelItem {
+                provider: model.provider.clone(),
+                model_id: model.id.clone(),
+                name: model.name.clone(),
+                thinking_levels: Vec::new(),
+                context_window: None,
+                max_tokens: None,
+            })
+            .collect();
+        ModelsResponse {
+            default: items.first().map(|item| ModelRef {
+                provider: item.provider.clone(),
+                model_id: item.model_id.clone(),
+            }),
+            items,
+            catalog: nous_device::CatalogDiagnostics {
+                state: "ok",
+                source: Some("test".into()),
+                path: PathBuf::from(nous_device::DEFAULT_MODELS_FILE),
+                fetched_at: None,
+                error: None,
+            },
+        }
+    };
     let runtime = TurnRuntime { providers, tools };
     let tool_names = runtime.tools.keys().cloned().collect();
     let watcher = Arc::new(AbortWatcher::new(nous_sessions::turn::abort_token(&session)));
@@ -227,8 +360,11 @@ pub fn assemble_with_provider(
         provider_registry: registry,
         watcher,
         tool_names,
-        models: faux_catalog(),
-        provider_kind: "faux",
+        models: catalog,
+        // 测试用的装配：一条 provider、一条 driver（跟真装配同一套建法）。
+        drivers,
+        models_by_provider,
+        provider_kind: kind,
     }
 }
 

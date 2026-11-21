@@ -726,9 +726,13 @@ struct SubmitBody {
     /// 只要出现就拒绝：本库只实现「立即 202 + 靠 SSE 收内容」这条路径。
     #[serde(default)]
     wait_ms: Option<Value>,
-    /// 受理时忙不忙的处理。当前只有一种行为（照样排队），所以显式收下、显式忽略。
+    /// 受理时忙不忙的处理：`queue`（默认，照样排队）/ `interrupt`（先停当前这一轮）。
+    /// 别的值一律 400 —— 不许静默当成 queue（客户端以为打断了，实际排在了后面）。
     #[serde(default)]
     when_busy: Option<Value>,
+    /// 这一轮用哪个模型（`{provider, modelId}`，可省）。缺省依次退到会话的模型、编目默认。
+    #[serde(default)]
+    model: Option<Value>,
 }
 
 /// 把会话 template 的正文写进一条 `pi.system` entry，并回一条 message 给本轮 provider。
@@ -777,64 +781,200 @@ async fn messages(
     Json(body): Json<SubmitBody>,
 ) -> Result<impl IntoResponse> {
     let session = parse_session(&id)?;
-    if body.wait_ms.is_some() {
-        return Err(ServerError::BadRequest(
-            "waitMs is not supported; listen on /events for the answer".to_string(),
-        ));
+    let when_busy = parse_when_busy(body.when_busy.as_ref())?;
+    if when_busy == WhenBusy::Interrupt {
+        // 没在跑时 abort 会 409 —— 那正是「没什么可打断」，不是错误，忽略。
+        let _ = state.commands().abort(session).await;
     }
-    let _ = body.when_busy;
-    let faux = state.provider_kind() == "faux";
+    let runtime = state
+        .runtime()
+        .ok_or_else(|| ServerError::Unavailable("没有装配轮次运行时".into()))?;
+    // 模型解析：请求体 → 会话当前模型 → 编目默认。一条都落不到 → 503，不是 202。
+    let model = resolve_turn_model(&state, &runtime, session, body.model.as_ref())?;
+    let driver = runtime
+        .drivers
+        .get(&model.provider)
+        .cloned()
+        .ok_or_else(|| {
+            ServerError::Unavailable(format!("provider {} 没有可用的运行时", model.provider))
+        })?;
+
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
         .await?;
 
-    // #51：只有显式 faux 装配才在受理后跑一轮。真 provider 的解析/503 语义不在本票改；
-    // 没有装配时保持原行为（只受理）。
-    // 事件只用 wire 已有的类型：user entry 的 message_start/entry_appended 由
-    // durable 的 CommitObserver → project 投影发出，assistant 由轮次的投影发；
-    // 这里不再手工补帧（之前补的假 entry 是重复且形状不对的）。
-    if faux {
-        if let Some(runtime) = state.runtime() {
-            let submitted = result.clone();
-            let driver = runtime.driver.clone();
-            // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
-            // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
-            let system_message = inject_prompt_section(&state, session, &submitted).await;
-            let mut turn_context = nous_ai::Context::new(Vec::new());
-            if let Some(message) = system_message {
-                turn_context.messages.push(message);
+    // #70：**一律起轮次**。`faux` 只决定模型来源，不决定「跑不跑」——
+    // 之前 `if faux` 让真 provider 只受理不跑，用户发消息永远等不到回答。
+    // 事件只用 wire 已有的类型：user entry 的帧由 durable 的 CommitObserver → project 发，
+    // assistant 由轮次的投影发；这里不再手工补帧。
+    let submitted = result.clone();
+    // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
+    let system_message = inject_prompt_section(&state, session, &submitted).await;
+    let mut turn_context = nous_ai::Context::new(Vec::new());
+    if let Some(message) = system_message {
+        turn_context.messages.push(message);
+    }
+    let request = TurnRequest {
+        conversation: session,
+        submission: submitted.submission_id,
+        entry_id: submitted.assistant_entry_id,
+        live: submitted.live_id,
+        model: model.clone(),
+        context: turn_context,
+        attempt: 1,
+    };
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let outcome = driver(Arc::new(|_| {})).run(request).await;
+        let _ = done_tx.send(outcome);
+    });
+
+    // `waitMs`：TS 语义 —— 0 立即 202；>0 最多等这么久，拿到答案回 200 + entry，超时回 202。
+    // 等待接在轮次完成信号上，不是 sleep 轮询。
+    match parse_wait_ms(body.wait_ms.as_ref())? {
+        Some(ms) if ms > 0 => {
+            let waited =
+                tokio::time::timeout(std::time::Duration::from_millis(ms), done_rx).await;
+            if let Ok(Ok(Ok(outcome))) = waited {
+                return Ok((
+                    StatusCode::OK,
+                    Json(json!({
+                        "submissionId": submitted.submission_id,
+                        "status": "done",
+                        "entryId": submitted.assistant_entry_id,
+                        "entry": entry_of(&state, session, submitted.assistant_entry_id),
+                        "terminal": format!("{:?}", outcome.terminal).to_lowercase(),
+                    })),
+                ));
             }
-            let model = nous_ai::Model::new(
-                crate::runtime::FAUX_MODEL_ID,
-                "Faux Echo",
-                nous_ai::Api::Faux,
-                "faux",
-                "http://localhost:0",
-            );
-            tokio::spawn(async move {
-                let _ = driver
-                    .run(TurnRequest {
-                        conversation: session,
-                        submission: submitted.submission_id,
-                        entry_id: submitted.assistant_entry_id,
-                        live: submitted.live_id,
-                        model,
-                        context: turn_context,
-                        attempt: 1,
-                    })
-                    .await;
-            });
+            if let Ok(Ok(Err(error))) = waited {
+                return Err(ServerError::Internal(error));
+            }
+            return Ok((
+                StatusCode::ACCEPTED,
+                Json(json!({
+                    "submissionId": submitted.submission_id,
+                    "status": "running",
+                    "entryId": submitted.assistant_entry_id,
+                })),
+            ));
         }
+        _ => {}
     }
 
     Ok((
         StatusCode::ACCEPTED,
         Json(json!({
-            "submissionId": result.submission_id,
+            "submissionId": submitted.submission_id,
             "status": result.status,
+            "entryId": submitted.assistant_entry_id,
         })),
     ))
+}
+
+/// `whenBusy`：只有 `queue` / `interrupt` 两个值；缺省 queue，别的值 400。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WhenBusy {
+    Queue,
+    Interrupt,
+}
+
+fn parse_when_busy(value: Option<&Value>) -> Result<WhenBusy> {
+    match value {
+        None | Some(Value::Null) => Ok(WhenBusy::Queue),
+        Some(Value::String(text)) if text == "queue" => Ok(WhenBusy::Queue),
+        Some(Value::String(text)) if text == "interrupt" => Ok(WhenBusy::Interrupt),
+        Some(other) => Err(ServerError::BadRequest(format!(
+            "whenBusy: 只认 \"queue\" / \"interrupt\"，收到 {other}"
+        ))),
+    }
+}
+
+/// `waitMs`：缺省 / 0 = 立即 202；正整数 = 最多等这么多毫秒。别的形状 400。
+fn parse_wait_ms(value: Option<&Value>) -> Result<Option<u64>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| ServerError::BadRequest(format!("waitMs: 需要非负整数，收到 {number}"))),
+        Some(other) => Err(ServerError::BadRequest(format!(
+            "waitMs: 需要非负整数，收到 {other}"
+        ))),
+    }
+}
+
+/// 一条 entry 的 wire 形状（`waitMs` 的 200 回包里带它）；取不到就是 `null`，不编造。
+fn entry_of(state: &Arc<AppState>, session: i64, entry_id: i64) -> Value {
+    state
+        .source()
+        .entries(session)
+        .ok()
+        .and_then(|items| {
+            items
+                .into_iter()
+                .find(|item| item.get("id").and_then(Value::as_i64) == Some(entry_id))
+        })
+        .unwrap_or(Value::Null)
+}
+
+/// 模型解析顺序（写死，别在别处再算一次）：
+/// 1. 请求体 `model`（`{provider, modelId}` 或 `"provider/modelId"`）；
+/// 2. 会话当前的 `model`；
+/// 3. 编目的 `default`。
+/// 落不到任何一个真实 model → 503（不是 202，也不是随便挑第一个）。
+fn resolve_turn_model(
+    state: &Arc<AppState>,
+    runtime: &crate::runtime::AssembledRuntime,
+    session: i64,
+    body_model: Option<&Value>,
+) -> Result<nous_ai::Model> {
+    let want = body_model
+        .and_then(parse_model_ref)
+        .or_else(|| {
+            state
+                .source()
+                .sessions()
+                .ok()?
+                .into_iter()
+                .find(|item| item.id == session)
+                .and_then(|item| item.model)
+                .and_then(|model| parse_model_ref(&Value::String(model)))
+        })
+        .or_else(|| {
+            state.models().default.as_ref().map(|model| {
+                (model.provider.clone(), model.model_id.clone())
+            })
+        });
+    let Some((provider, model_id)) = want else {
+        return Err(ServerError::Unavailable(
+            "没有可用模型：请求体、会话、编目默认都没有".into(),
+        ));
+    };
+    runtime
+        .models_by_provider
+        .get(&provider)
+        .and_then(|models| models.iter().find(|model| model.id == model_id).cloned())
+        .ok_or_else(|| {
+            ServerError::Unavailable(format!("模型 {provider}/{model_id} 不在编目里"))
+        })
+}
+
+/// `{provider, modelId}` 或 `"provider/modelId"` → `(provider, modelId)`。
+fn parse_model_ref(value: &Value) -> Option<(String, String)> {
+    match value {
+        Value::String(text) => {
+            let (provider, model) = text.split_once('/')?;
+            Some((provider.to_string(), model.to_string()))
+        }
+        Value::Object(_) => {
+            let provider = value.get("provider")?.as_str()?.to_string();
+            let model = value.get("modelId").or_else(|| value.get("model"))?.as_str()?;
+            Some((provider, model.to_string()))
+        }
+        _ => None,
+    }
 }
 
 /// `POST /v1/sessions/:id/abort`：没有活跃任务时 409（不是 200「假装停了」）。

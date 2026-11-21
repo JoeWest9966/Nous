@@ -131,7 +131,17 @@ async fn every_v1_route_is_protected_including_capabilities_and_sse() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    // 有 token 就一定不是 401；这条测试只管鉴权。受理之后跑不跑得起轮次取决于
+    // 有没有可用模型（#70）：没有模型是 503，不是 401，也不是 202。
+    assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        matches!(
+            response.status(),
+            StatusCode::ACCEPTED | StatusCode::SERVICE_UNAVAILABLE
+        ),
+        "实测 {}",
+        response.status()
+    );
 
     // SSE 用假源（真库空快照没有 live 文档会 500，那是 #47 前的行为，不是本票要改的）。
     let response = fake_app()
