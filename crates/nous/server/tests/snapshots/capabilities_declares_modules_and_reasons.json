@@ -234,11 +234,18 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-ext`",
-      "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载）；`ext-host` 行是它后续的重划",
+      "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划",
       "enabled": true,
       "endpoints": [
         "GET /v1/extensions",
-        "POST /v1/extensions/reload"
+        "POST /v1/extensions/reload",
+        "POST /v1/extensions/create",
+        "POST /v1/extensions/duplicate",
+        "POST /v1/extensions/install",
+        "POST /v1/extensions/uninstall",
+        "GET /v1/extensions/categories",
+        "POST /v1/extensions/categories",
+        "POST /v1/extensions/category"
       ]
     }
   ],

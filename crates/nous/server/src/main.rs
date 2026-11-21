@@ -80,7 +80,9 @@ fn assemble_extensions(state: Arc<AppState>) -> Arc<AppState> {
     let runtime = nous_ext::Runtime::new(config);
     // 一个扩展坏了只记诊断, 主进程照常监听 (EX-66).
     runtime.start_all();
-    state.with_ext(runtime)
+    // #84：管理面的垃圾站住在进程 workdir/data 下，不在私库里（不随发布走）。
+    let trash = std::path::PathBuf::from("data").join("extend-trash");
+    state.with_ext(runtime).with_ext_admin(root.clone(), trash)
 }
 
 /// epoch 毫秒（fire 与观测的时钟入口；store 层零时钟，时间都由这里传入）。

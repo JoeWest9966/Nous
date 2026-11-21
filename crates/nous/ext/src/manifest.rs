@@ -84,6 +84,8 @@ pub fn scan(root: &Path) -> Vec<(PathBuf, ExtResult<LoadedManifest>)> {
         .flatten()
         .filter_map(|entry| entry.ok().map(|item| item.path()))
         .filter(|path| path.is_dir())
+        // 私库根的 .git（以及其它点开头目录）不是扩展，不许当装载失败项上报。
+        .filter(|path| !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')))
         .collect();
     dirs.sort();
     dirs.into_iter()

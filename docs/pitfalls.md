@@ -253,3 +253,10 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 自己开一个 `Session`，driver 用另一个 `Session`，两者写同一份 sqlite 却各拿一个 token。
 **解**：测试按生产形状装配——`DurableCommands::with_session(session.clone(), registry)` 与
 driver 共用同一个 `Session`，再断言 provider 见过取消信号；负向哨兵去掉 `cancel()` 才会真红。
+
+## 2026-11-22 · 运行时的五态名和 wire 的清单状态不是一套词
+
+**症状**：install 回包写 `state:"normal"`（Runtime 内部状态），判据和 `/v1/extensions` 的 `items[]` 都要 `running`。
+**根因**：`ExtState::Normal` 是状态机内部名，`/v1/extensions` 的投影在 `runtime::items` 里翻成 wire 的 `running`，install 是新路径，容易漏翻。
+**解**：所有出 HTTP 的状态都过一次 `normal → running` 映射；实现写在端点翻译层，不在 CLI/AdminStore 里。
+**推广**：新写端点回 state 时先看 `runtime::items()` 的同一段映射，别直出 `ExtState::as_str()`。

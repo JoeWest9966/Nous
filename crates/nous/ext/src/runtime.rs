@@ -238,7 +238,7 @@ impl Runtime {
     /// 装载所有扩展。**一个扩展坏了不许把宿主拖死**（EX-66）：其余照常，进程不退。
     pub fn start_all(&self) -> BTreeMap<String, ExtResult<()>> {
         let mut results = BTreeMap::new();
-        for (dir, loaded) in manifest::scan(&self.config.exts_root) {
+        for (dir, loaded) in crate::admin::scan_active(&self.config.exts_root) {
             let loaded = match loaded {
                 Ok(loaded) => loaded,
                 Err(error) => {
@@ -1013,7 +1013,7 @@ impl Runtime {
     /// 装载失败的那一项也留在这里（`loaded=false` + `error`），不许静默消失。
     pub fn items(&self) -> Vec<Value> {
         let mut items = Vec::new();
-        for (dir, loaded) in manifest::scan(&self.config.exts_root) {
+        for (dir, loaded) in crate::admin::scan_active(&self.config.exts_root) {
             let dirname = dir
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())

@@ -45,10 +45,11 @@
 | `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
 | `documents` | nous | `nous-documents` | app | 编译期 | `DocumentKind` + 泛型文档端点 + 路由注册表 | 是 | #48：一个实现生成 presets / prompts 两套端点 |
 | `prompts` | nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
-| `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载）；`ext-host` 行是它后续的重划 |
+| `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 / 管理面（create / duplicate / install / uninstall / categories / category / usage，#84） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划 |
 | `archive` | nous | — | app | 编译期 | `archive` / `purge` / `archive_list` / `restore` | 否 | 面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票 |
 | `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
 | `ext-sdk` | nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
+| `extend-trash` | nous | — | app | 数据目录 | 卸载源码的垃圾站 + `deleted-extensions.json` 删除名单（#84） | 否 | 位于 `data/extend-trash/`，install 的回退来源；名单随私库发布，防 git pull 复活 |
 | `ext-host` | nous | (待建) `nous-ext-host` | app | 编译期 | 帧协议 + 进程监管 + 熔断 + 热加载 | 是 | slice 1（`#20`） |
 | `server` | nous | `nous-server` | app | 编译期 | `/v1/*` 端点 + SSE | 是 | 唯一监听处；bin 叫 `nous-app` |
 | `fixture` | nous | `nous-fixture` | dev | 编译期 | fixture 库 → `/v1/sessions` 同形 JSON | 否 | 测试夹具 binary（`dev`：不进 systemd、不进发布包） |
