@@ -240,9 +240,11 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 ### 会话归档：`archive` / `purge` / 归档库 / `restore`
 
 **这一版引擎起有**：内核 2026-11-10 起（ADR 0001）；客户端 v0.4.0 起接。
-归档 = 把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
-撕原件 = 真删（活库那行 + 那份复印件）。四个方法在 `crates/nous-engine` 里都有
-（`archive` / `purge` / `archive_list` / `restore`），UI 层一行 HTTP 都不碰。
+旧引擎把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
+撕原件 = 真删（活库那行 + 那份复印件）。本库同语义，但 gen 文件后缀是 `.db`
+（`archives/gen-YYYYMMDD.db`，见 `docs/decisions.md` 的 #67 决策）；四个方法在本库
+分别是 session 命令 `archive_conversation` / `purge_session` / `list_archives` /
+`restore_conversation`，UI 层一行 HTTP 都不碰。
 
 #### GET /v1/openapi.json
 
