@@ -20,6 +20,7 @@ pub mod app;
 pub mod auth;
 pub mod coalesce;
 pub mod commands;
+pub mod combos;
 pub mod documents;
 pub mod error;
 pub mod hub;

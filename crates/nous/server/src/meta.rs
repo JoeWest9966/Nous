@@ -150,6 +150,9 @@ pub struct RegisteredRoute {
 /// documents 一族既在 `documents::DOCUMENT_ROUTES`（泛型 handler 的注册源），也在这里
 /// 逐条登记；`documents_routes.rs` 的判据守住两张表不漂移。
 pub const ROUTES: &[RegisteredRoute] = &[
+    // #61：combos 两条端点（开关是引擎算出来的，Desk 只显示 + 写穿）。
+    RegisteredRoute { method: "GET", path: "/v1/combos/:section", module: "combos" },
+    RegisteredRoute { method: "PATCH", path: "/v1/combos/:section/:name", module: "combos" },
     RegisteredRoute { method: "GET", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/origins", module: "sessions" },
@@ -346,7 +349,8 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
     ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行" },
     ManifestEntry { name: "archive", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
-    ManifestEntry { name: "combos", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "—", description: "旧面板概念，Rust 版尚未落地" },
+    // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
+    ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读" },
     ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57 落地；调度循环不在本票" },
     ManifestEntry { name: "stats", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-stats`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
     ManifestEntry { name: "device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },

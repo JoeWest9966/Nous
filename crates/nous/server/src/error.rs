@@ -23,7 +23,7 @@ pub enum ServerError {
     Conflict(String),
     /// 内容闸未过：400 + `{field, problem}`（私库发布前校验）。
     Validation { field: String, problem: String },
-    /// HTTP 412：If-Match 乐观锁不匹配（#60）。409 是「现在不行」，412 是「你手里的版本过期了」。
+    /// HTTP 412：If-Match 乐观锁不匹配（#60 / #61）。409 是「现在不行」，412 是「你手里的版本过期了」。
     PreconditionFailed(String),
     Internal(String),
 }
