@@ -21,7 +21,13 @@ impl CommitObserver for Counter {
 }
 
 fn temp_db() -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("nous-documents-e2e-{}.sqlite", std::process::id()));
+    // 多个 worktree / 测试进程可能同时跑这一族测试：路径必须带线程 id，
+    // 否则大家抢同一个 sqlite 文件，出现 readonly / disk I/O error 的假红。
+    let path = std::env::temp_dir().join(format!(
+        "nous-documents-e2e-{}-{:?}.sqlite",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));

@@ -68,22 +68,35 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/fs/dirs", get(fs_dirs))
         .route("/v1/models", get(models))
         .route("/v1/default", put(put_default))
+        .route("/v1/catalog/refresh", post(catalog_refresh))
         .route("/v1/device", get(device))
-        .route("/v1/selection", get(selection))
         .route("/v1/unread", get(unread))
         .route("/v1/origins", get(origins))
         .route("/v1/read/{id}", post(mark_read))
         .route("/v1/sessions/{id}/rename", post(rename))
         .route("/v1/sessions/{id}/pin", post(pin))
+        .route("/v1/sessions/{id}/config", post(config))
+        .route("/v1/sessions/{id}/purge", post(purge))
+        .route("/v1/selection", get(selection).post(write_selection))
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
+        .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/triggers/{code}/fires", get(trigger_fires))
-        .route("/v1/capabilities", get(capabilities));
+        .route("/v1/capabilities", get(capabilities))
+        .route("/v1/stats/usage", get(crate::stats::usage))
+        .route("/v1/stats/tasks", get(crate::stats::tasks))
+        .route("/v1/stats/db", get(crate::stats::db))
+        .route("/v1/openapi.json", get(crate::stats::openapi));
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
-    crate::documents::attach(state, router)
+    let router = crate::documents::attach(state.clone(), router);
+    // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
+    match state.presets() {
+        Some(store) => crate::presets::attach(store.clone(), router),
+        None => router,
+    }
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
@@ -109,19 +122,47 @@ const FS_DIRS_LIMIT: usize = 500;
 
 /// `GET /v1/fs/dirs`：只读列子目录。
 ///
-/// 路径规则与本机判定都在 `nous_env::dirs`（env 插件读唯一一次环境变量）；
-/// 远端 `machine` 明确 501，不静默退回本机。
+/// 路径规则与本机判定都在 `nous_env::dirs`；显式远端 `machine` 走 env-ssh，
+/// 编目里没有 → 404，连不上 → 502，绝不静默退回本机。
 async fn fs_dirs(Query(query): Query<FsDirsQuery>) -> Result<Json<Value>> {
-    if !nous_env::is_local_machine(query.machine.as_deref()) {
-        return Err(ServerError::NotImplemented("ssh 未实现".to_string()));
+    let hidden = query.hidden.as_deref() == Some("1");
+    if let Some(machine) = query.machine.as_deref().filter(|name| !name.is_empty()) {
+        if !nous_env::is_local_machine(Some(machine)) {
+            let result = nous_env_ssh::remote_subdirs(
+                machine,
+                query.path.as_deref().unwrap_or(""),
+                hidden,
+                FS_DIRS_LIMIT,
+            )
+            .await
+            .map_err(fs_remote_error)?;
+            return Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)));
+        }
     }
     let result = nous_env::list_subdirs(
         query.path.as_deref().unwrap_or(""),
-        query.hidden.as_deref() == Some("1"),
+        hidden,
         FS_DIRS_LIMIT,
     )
     .map_err(fs_dirs_error)?;
     Ok(Json(serde_json::to_value(result).unwrap_or(Value::Null)))
+}
+
+fn fs_remote_error(error: nous_env_ssh::RemoteDirsError) -> ServerError {
+    use nous_env_ssh::RemoteDirsError;
+    match error {
+        RemoteDirsError::MachineNotFound => ServerError::NotFound("机器不在编目里".to_string()),
+        RemoteDirsError::Unreachable(message) => ServerError::BadGateway(message),
+        RemoteDirsError::RelativePath => {
+            ServerError::BadRequest("path 必须是绝对路径".to_string())
+        }
+        RemoteDirsError::NotFound => ServerError::NotFound("远端目录不存在".to_string()),
+        RemoteDirsError::PermissionDenied => {
+            ServerError::Forbidden("没有权限读这个远端目录".to_string())
+        }
+        RemoteDirsError::NotDirectory => ServerError::BadRequest("path 不是目录".to_string()),
+        RemoteDirsError::Other => ServerError::Internal("远端目录读不出来".to_string()),
+    }
 }
 
 fn fs_dirs_error(error: nous_env::BrowseError) -> ServerError {
@@ -245,19 +286,87 @@ async fn pin(
     })?))
 }
 
+
 /// `GET /v1/device`：进程/宿主配置，About 面板读它。
 async fn device(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(crate::meta::device(state.models()))
+    let models = state.models();
+    Json(crate::meta::device(&models))
 }
 
-/// `GET /v1/selection`：当前选中的会话（配置里没有就 null）。
-async fn selection() -> Json<Value> {
-    Json(crate::meta::selection())
+/// `GET /v1/selection`：当前选中的会话，落库、重启后仍在。
+async fn selection(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let result = state.commands().selection().await?;
+    Ok(Json(json!({ "id": result.id })))
 }
 
-/// `GET /v1/skills`：空目录就是空表。
-async fn skills() -> Json<Value> {
-    Json(crate::meta::skills())
+/// `POST /v1/selection {id}`：写选中的会话；`{id:null}` 清空。
+async fn write_selection(
+    State(state): State<Arc<AppState>>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let body: SelectionBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("id is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("selection body: {error}")))?
+    };
+    let result = state.commands().select(body.id).await?;
+    Ok(Json(json!({ "id": result.id })))
+}
+
+#[derive(Debug, Deserialize)]
+struct SelectionBody {
+    id: Option<i64>,
+}
+
+/// `POST /v1/sessions/{id}/config`：逐键覆盖，回生效值。
+async fn config(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let patch: Value = if body.is_empty() {
+        return Err(ServerError::BadRequest("config patch is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("config body: {error}")))?
+    };
+    // 档位表来自 /v1/models 的编目，不是请求体：换模型时按新模型的表夹档位。
+    let mut patch = patch;
+    if let Some(model) = patch.get("model") {
+        let wanted = model
+            .get("provider")
+            .and_then(Value::as_str)
+            .zip(model.get("modelId").and_then(Value::as_str));
+        if let Some((provider, model_id)) = wanted {
+            if let Some(item) = state
+                .assembled_models()
+                .unwrap_or_else(|| state.models().clone())
+                .items
+                .iter()
+                .find(|item| item.provider == provider && item.model_id == model_id)
+            {
+                patch["thinkingLevels"] = json!(item.thinking_levels);
+            }
+        }
+    }
+    let result = state.commands().configure(id, patch).await?;
+    Ok(Json(result.value))
+}
+
+/// `POST /v1/sessions/{id}/purge`：真删 + 墓碑；第二次 409。
+async fn purge(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().purge(id).await?;
+    Ok(Json(json!({
+        "id": result.id,
+        "purged": true,
+        "at": result.at,
+    })))
 }
 
 /// `GET /v1/prompts`：A 阶段空表。
@@ -265,9 +374,72 @@ async fn prompts() -> Json<Value> {
     Json(crate::meta::prompts())
 }
 
-/// `GET /v1/extensions`：ext 冻结，空清单。
-async fn extensions() -> Json<Value> {
-    Json(crate::meta::extensions())
+/// `GET /v1/extensions`：ext 冻结，空清单。`?usage=1` 时回答「谁在用」（#85）。
+async fn extensions(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("extensions")?));
+    }
+    Ok(Json(crate::meta::extensions()))
+}
+
+/// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。
+async fn skills(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<UsageQuery>,
+) -> Result<Json<Value>> {
+    if query.requested() {
+        return Ok(Json(state.source().usage("skills")?));
+    }
+    Ok(Json(crate::meta::skills()))
+}
+
+/// `?usage=1`：反查模式开关。缺席 / 0 / false / 其它值都不是反查，
+/// 不因为一个可选参数让整个端点 400（serde 的 `bool` 会把 `1` 判成非法）。
+#[derive(Debug, Deserialize)]
+struct UsageQuery {
+    usage: Option<String>,
+}
+
+impl UsageQuery {
+    fn requested(&self) -> bool {
+        matches!(self.usage.as_deref(), Some("1" | "true"))
+    }
+}
+
+/// `GET /v1/search?q=&kind=&limit=`（#85）：服务端扫一次会话正文 / 文档，
+/// `q` 少于两个字符 → 400，`limit` 上限 100 且 `truncated` 明确。
+#[derive(Debug, Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    kind: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn search(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>> {
+    let q = query.q.unwrap_or_default().trim().to_string();
+    if q.chars().count() < 2 {
+        return Err(ServerError::BadRequest("q must be at least 2 characters".into()));
+    }
+    let kind = query.kind.as_deref().unwrap_or("all");
+    if !matches!(kind, "all" | "sessions" | "documents") {
+        return Err(ServerError::BadRequest("kind must be all/sessions/documents".into()));
+    }
+    let limit = query.limit.unwrap_or(20).clamp(1, 100);
+    let all = state.source().search(&q, kind)?;
+    let total = all.len();
+    let truncated = total > limit;
+    let items: Vec<Value> = all
+        .into_iter()
+        .take(limit)
+        .map(|item| serde_json::to_value(item).expect("SearchItem is serializable"))
+        .collect();
+    Ok(Json(json!({ "items": items, "total": total, "truncated": truncated })))
 }
 
 /// `GET /v1/triggers`：观测清单 + 调度健康（#58）。装配了 store 就读真行；
@@ -360,17 +532,47 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(body)
 }
 
+/// `POST /v1/catalog/refresh`：拉一次远端编目，成功写缓存并换入内存；失败留旧表带 error。
+/// 响应形状 `{default, items, fetchedAt, error?}`：token 只经内存请求头，不进响应/日志。
+async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    match nous_device::refresh_remote_catalog(state.catalog_env()).await {
+        Ok(models) => {
+            state.set_models(models.clone());
+            let mut body = serde_json::to_value(&models).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = models.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            Ok(Json(body))
+        }
+        Err(error) => {
+            // 失败保留旧编目：内存里最近一次刷新的那份优先；否则从本地缓存/文件读回。
+            let mut old = state.refreshed_models().unwrap_or_else(|| {
+                nous_device::load_models(state.catalog_env()).unwrap_or_default()
+            });
+            old.catalog.error = Some(error);
+            state.set_models(old.clone());
+            let top_error = old.catalog.error.clone().unwrap_or_default();
+            let mut body = serde_json::to_value(&old).map_err(|error| ServerError::Internal(error.to_string()))?;
+            body["fetchedAt"] = old.catalog.fetched_at.clone().map(Value::String).unwrap_or(Value::Null);
+            body["error"] = Value::String(top_error);
+            Ok(Json(body))
+        }
+    }
+}
+
 /// `GET /v1/models`：默认模型 + 列表 + 来源诊断块。
 ///
 /// 编目来源由 `nous-device` 收口：内联（`NOUS_MODELS`）> 文件 > 诚实空表；
 /// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
+/// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
 async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
     // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
     if state.injected_models() {
         if let Some(catalog) = state.assembled_models() {
             return Ok(Json(catalog));
         }
-        return Ok(Json(state.models().clone()));
+        return Ok(Json(state.models()));
+    }
+    if let Some(refreshed) = state.refreshed_models() {
+        return Ok(Json(refreshed));
     }
     let response = nous_device::load_models(state.catalog_env())
         .map_err(ServerError::Internal)?;
@@ -532,6 +734,42 @@ struct SubmitBody {
     when_busy: Option<Value>,
 }
 
+/// 把会话 template 的正文写进一条 `pi.system` entry，并回一条 message 给本轮 provider。
+///
+/// 正文进 `sections.prompts`（不是 `content`）：#74 的 `?system=1` 回放按 sections 合并，
+/// 后续系统消息能按名字覆盖这一段；名字本身就是诊断位（`template: missing`）。
+async fn inject_prompt_section(
+    state: &Arc<AppState>,
+    session_id: i64,
+    submitted: &crate::commands::SubmitResult,
+) -> Option<nous_ai::Message> {
+    let template_name = state.commands().template(session_id).await.ok().flatten()?;
+    let prompts_root = nous_env::PROMPTS.resolve();
+    let (text, actor) = if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
+        (nous_prompts::render(&template.body, &Default::default()), "prompts".to_string())
+    } else {
+        (format!("template: missing ({template_name})"), "prompts".to_string())
+    };
+    let message_value = serde_json::to_value(nous_ai::transform::system::section_patch(
+        &[("prompts", Some(text.as_str()))], 0,
+    )).ok()?;
+    let durable = state.durable_session()?;
+    let entry = serde_json::json!({
+        "id": submitted.entry_id + 4,
+        "conversationId": session_id,
+        "kind": "pi.system",
+        "model": [message_value],
+        "actor": { "kind": "system", "id": actor },
+    });
+    let _ = durable.commit(
+        vec![nous_durable::StorageWrite::Entry(entry)],
+        nous_durable::session::CommitOptions::default(),
+    ).await;
+    Some(nous_ai::Message::System(Box::new(
+        nous_ai::transform::system::section_patch(&[("prompts", Some(text.as_str()))], 0),
+    )))
+}
+
 /// `POST /v1/sessions/:id/messages`：不传 `waitMs` 时立即 202。
 ///
 /// `requestId` 是幂等锚：同一个值打两次返回同一个 `submissionId`，库里也只多一条 submission
@@ -600,8 +838,8 @@ async fn messages(
         let driver = runtime.driver.clone();
         let completions = runtime.completions.clone();
         let commands = state.commands().clone();
+        // #51：faux 验收模式没显式指定模型时仍用固定 echo 模型；否则用解析出的引用构造。
         let model = if faux && body.model.is_none() {
-            // #51 的 faux 验收模式没有显式指定模型时，仍用固定 echo 模型。
             nous_ai::Model::new(
                 crate::runtime::FAUX_MODEL_ID,
                 "Faux Echo",
@@ -612,6 +850,13 @@ async fn messages(
         } else {
             crate::runtime::model_from_ref(&reference)
         };
+        // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
+        // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
+        let system_message = inject_prompt_section(&state, session, &submitted).await;
+        let mut turn_context = nous_ai::Context::new(Vec::new());
+        if let Some(message) = system_message {
+            turn_context.messages.push(message);
+        }
         tokio::spawn(async move {
             let outcome = driver
                 .run(TurnRequest {
@@ -620,7 +865,7 @@ async fn messages(
                     entry_id: submitted.assistant_entry_id,
                     live: submitted.live_id,
                     model,
-                    context: nous_ai::Context::new(Vec::new()),
+                    context: turn_context,
                     attempt: 1,
                 })
                 .await;
@@ -642,17 +887,19 @@ async fn messages(
         });
     }
 
-    if let (Some(mut rx), true) = (completion_rx, wait_ms > 0) {
-        let deadline = tokio::time::Duration::from_millis(wait_ms);
-        loop {
-            match tokio::time::timeout(deadline, rx.recv()).await {
-                Ok(Ok((id, answer))) if id == result.submission_id => {
-                    return Ok((StatusCode::OK, Json(answer)));
+    if wait_ms > 0 {
+        if let Some(mut rx) = completion_rx {
+            let deadline = tokio::time::Duration::from_millis(wait_ms);
+            loop {
+                match tokio::time::timeout(deadline, rx.recv()).await {
+                    Ok(Ok((id, answer))) if id == result.submission_id => {
+                        return Ok((StatusCode::OK, Json(answer)));
+                    }
+                    Ok(Ok(_)) => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed))
+                    | Err(_) => break,
                 }
-                Ok(Ok(_)) => continue,
-                Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
-                Ok(Err(tokio::sync::broadcast::error::RecvError::Closed))
-                | Err(_) => break,
             }
         }
         return Ok((

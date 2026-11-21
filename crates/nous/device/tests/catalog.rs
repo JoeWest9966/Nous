@@ -25,6 +25,9 @@ fn catalog_environment() -> nous_device::CatalogEnvironment {
         ),
         file: None,
         file_path: "/var/lib/nous/models.json".into(),
+        remote_base: None,
+        remote_token: None,
+        cache_path: None,
     }
 }
 
@@ -44,6 +47,9 @@ fn missing_models_catalog_is_honest_and_points_at_default_path() {
         inline: None,
         file: None,
         file_path: "/var/lib/nous/models.json".into(),
+        remote_base: None,
+        remote_token: None,
+        cache_path: None,
     };
     let response = load_models(&env).expect("没有编目不是错误");
     assert!(response.items.is_empty(), "诚实空表");
@@ -72,6 +78,9 @@ fn file_catalog_is_used_when_inline_is_absent() {
         inline: None,
         file: Some(path.clone()),
         file_path: path.clone(),
+        remote_base: None,
+        remote_token: None,
+        cache_path: None,
     };
     let response = load_models(&env).unwrap();
     assert_eq!(response.items.len(), 1);
@@ -103,6 +112,9 @@ fn writing_an_existing_default_survives_a_reload() {
         inline: None,
         file: Some(path),
         file_path: dir.path().join("models.json"),
+        remote_base: None,
+        remote_token: None,
+        cache_path: None,
     };
     let reloaded = load_models(&env).unwrap();
     assert_eq!(reloaded.default, Some(chosen));
@@ -160,6 +172,9 @@ fn atomic_write_keeps_original_bytes_and_mtime_without_rename() {
         inline: None,
         file: Some(path.clone()),
         file_path: path,
+        remote_base: None,
+        remote_token: None,
+        cache_path: None,
     };
     let response = load_models(&env).unwrap();
     assert!(response.items[0].model_id == "file/one");

@@ -318,6 +318,13 @@ async fn run() -> Result<(), RunError> {
     let plugins_db = plugins_db_path(&db);
     let trigger_store = nous_store::Store::open(&plugins_db)
         .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
+    // #60：presets 写者 = 模板私库根（NOUS_PRESETS）+ 同一份插件库（修订表）。
+    // 路径解析只走 env 插件，不在这里自己读环境变量。
+    let preset_store = Arc::new(nous_server::presets::PresetStore::new(
+        nous_env::PRESETS.resolve(),
+        std::path::PathBuf::from(&plugins_db),
+    ));
+    let state = state.with_presets(preset_store);
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
     let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
         let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
@@ -347,6 +354,13 @@ async fn run() -> Result<(), RunError> {
         std::path::PathBuf::from(&db),
     )?;
     let state = state.with_triggers(trigger_runtime);
+
+    // #62：stats 的只读句柄。库路径与启动/`--check`/`--triggers` 共用 `db` 与
+    // `plugins_db_path()` 的推导，不让三条端点读另一份库。
+    let state = state.with_stats(nous_server::stats::StatsRuntime {
+        durable_db: std::path::PathBuf::from(&db),
+        plugins_db: std::path::PathBuf::from(&plugins_db),
+    });
 
     // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，
     // 判据 4「无 token 照常可用」）。绑非回环必须有 token，否则拒绝启动。

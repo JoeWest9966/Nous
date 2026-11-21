@@ -13,14 +13,16 @@ use serde_json::json;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerError {
     BadRequest(String),
-    /// 能力未实现（远端机器）：501，不是退回本机的 200。
-    NotImplemented(String),
+    /// 远端机器不可达（ssh 连不上 / 超时）：502，不是退回本机的 200。
+    BadGateway(String),
     /// 没有权限读目标资源：403，不是 500。
     Forbidden(String),
     NotFound(String),
     /// 状态冲突：会话已关闭、正在跑、没有可中止的任务。**不许降级成 400** ——
     /// 400 是「参数这么写不行」，409 是「现在不行」。
     Conflict(String),
+    /// HTTP 412：If-Match 乐观锁不匹配（#60）。409 是「现在不行」，412 是「你手里的版本过期了」。
+    PreconditionFailed(String),
     /// 没有任何可用资源（#70：一个模型来源都没有），503。
     ServiceUnavailable(String),
     Internal(String),
@@ -30,10 +32,11 @@ impl ServerError {
     pub fn status(&self) -> StatusCode {
         match self {
             ServerError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            ServerError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
+            ServerError::BadGateway(_) => StatusCode::BAD_GATEWAY,
             ServerError::Forbidden(_) => StatusCode::FORBIDDEN,
             ServerError::NotFound(_) => StatusCode::NOT_FOUND,
             ServerError::Conflict(_) => StatusCode::CONFLICT,
+            ServerError::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
             ServerError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ServerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -42,10 +45,11 @@ impl ServerError {
     pub fn message(&self) -> &str {
         match self {
             ServerError::BadRequest(message)
-            | ServerError::NotImplemented(message)
+            | ServerError::BadGateway(message)
             | ServerError::Forbidden(message)
             | ServerError::NotFound(message)
             | ServerError::Conflict(message)
+            | ServerError::PreconditionFailed(message)
             | ServerError::ServiceUnavailable(message)
             | ServerError::Internal(message) => message,
         }

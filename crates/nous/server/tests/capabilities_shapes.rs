@@ -242,12 +242,18 @@ async fn skills_response_pins_client_shape() {
             ("missing", |v| v.is_string() || v.is_null()),
             ("categories", is_array),
             ("skills", is_array),
+            ("repo", |v| v.is_object()),
         ],
     );
     assert!(body["categories"].as_array().unwrap().iter().all(Value::is_string));
+    // #71：repo 块只给 root + present（#63 形状），没有 git 状态字段。
+    let mut repo_keys: Vec<_> = body["repo"].as_object().unwrap().keys().cloned().collect();
+    repo_keys.sort();
+    assert_eq!(repo_keys, ["present", "root"]);
     let mut stable = body.clone();
     stable["root"] = json!("<root>");
     stable["missing"] = json!("<missing>");
+    stable["repo"]["root"] = json!("<root>");
     snapshot("skills_response_pins_client_shape", &stable);
 }
 
@@ -420,7 +426,6 @@ async fn capabilities_declares_modules_and_reasons() {
         "extensions",
         "skills",
         "prompts",
-        "selection",
         "device",
         "ext",
     ] {
@@ -467,6 +472,9 @@ async fn capabilities_declares_modules_and_reasons() {
     }
     assert!(by_name.get("extensions").is_none(), "模块名是 ext，不是 extensions");
     assert_eq!(by_name["sessions"]["enabled"], json!(true));
+    // #60：presets 不再是 not_implemented，Desk「模板」页的 gate 才能打开。
+    assert_eq!(by_name["presets"]["enabled"], json!(true));
+    assert!(by_name["presets"].get("reason").is_none(), "enabled:true 不该带 reason");
     assert_eq!(by_name["ext"]["enabled"], json!(false));
     assert_eq!(by_name["ext"]["reason"]["code"], json!("frozen"));
     snapshot("capabilities_declares_modules_and_reasons", &body);

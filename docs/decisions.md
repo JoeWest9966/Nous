@@ -713,8 +713,25 @@ j1900 上其实还留着 940K 的技能副本。插件机制在跑，内容进�
 **反悔点**：只有在确认有部署真的设了旧变量名时才加兼容层 —— 那时候必须让两个
 变量同时可读、且有一处判据断言"两者同时给出时谁赢"，不许默默 fallback。
 
----
+## 2026-11-20 · 远端编目刷新失败留旧表，密钥只在内存（#79）
 
+**症状**：TS 版靠 `NW_BASE/NW_TOKEN` 自动拉编目，Rust 侧 `/v1/models` 靠手填文件；
+模型表要么空、要么是人肉维护的过期副本。`POST /v1/catalog/refresh` 缺失意味着密钥轮换后
+只能重启进程。
+
+**决定**：`NOUS_CATALOG_BASE` + `NOUS_CATALOG_TOKEN` 拉 `{base}/models.json`，成功原子写
+`NOUS_MODELS_FILE`（无该变量则默认路径），回 `{default, items, fetchedAt}`；失败回 200 +
+`error`，items 保持上一份（内存优先、否则从文件读回），不清空。token 只以 Bearer 头在内存里
+过一手，不进缓存文件、不进日志、不进 HTTP 响应。诊断块从 `catalog: null` 变成 device 自己
+交代的 `{state, source, path, fetchedAt, error}`。
+
+**为什么**：失败时清空表等于把「这次没拉到」误报成「上游一个模型都没有」——客户端会据此
+把模型选择整个抹掉，比旧表过期更坏。token 落盘一次就再也不能靠「别看那个文件」收回。
+
+**反悔点**：若远端返回的是 TS 版 `/api/model?models=full` 的 envelope（`{ok, data.models}`），
+在 `refresh_with_client` 里加一层展开即可；当前票面写的是 `models.json` 一类结构，不在这里
+猜方言。若将来要支持多远端源，`source` 要从 `Option<&'static str>` 换成枚举/字符串，
+判据要跟着加一条并列来源优先级。
 ## 2026-11-20 · #86 盘面形态：文档真相留在 `documents`，树语义另立实现票
 
 **决定**：v1 的文档真相继续是数据库里的 `documents`（`kind` / `section` / `name` + base/delta
@@ -786,3 +803,16 @@ lock/unlock 端点。单用户桌面端的替代是**单用户 + 无并发写**�
 **反悔点**：若 `#87` 的实现票证明 `documents` 的 `kind` 无法表达树（引用完整性、循环、
 移动原子性三者有一样落不下去），就按上面第一条的反悔点重开文件形态，并同步改 `wire.md`、
 `docs/plugins.md` 与 `GLOSSARY.md` 的「块」词条。
+
+## 2026-11-20 · #64 purge 不删 record_ids（id 永不复用）
+
+**决定**：`POST /v1/sessions/:id/purge` 的一次事务里删 conversations / entries / tasks /
+submissions / documents / document_revisions 与该会话的 pins / unread 条目；**不删
+`record_ids` 里这些 id 的行**，只写墓碑到 `qrd3wh.sessions`。
+
+**为什么**：`record_ids` 是全库单调 id 的注册表（`storage/commit.rs` 用它拒绝重复铸造），
+删掉这些行会让 `next_id` 下一次铸出同一个 id，撞上其它会话/文档里还活着的旧引用。票面列了
+`record_ids`，但删它会破坏「id 一旦铸出永不复用」的硬规矩；墓碑让派生视图认得这条会话已死。
+
+**反悔点**：若另票引入 id 命名空间（每段 id 带会话前缀，重铸不撞旧引用），可改成连
+`record_ids` 一起删；那时必须同时改 `commit.rs` 的重复检查与本票的 purge 事务。
