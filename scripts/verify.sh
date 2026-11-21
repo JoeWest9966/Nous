@@ -561,38 +561,36 @@ PY
 		skip "没有 docs/not-ported.md（决定不做的上游东西记在哪里？）"
 	fi
 
-	# 4e 依赖边：只许契约图里那几条（机器版在这条命令旁边，改表同时改这里）
-	ALLOWED=$(python3 - <<'PY'
-import json,subprocess
-allow={
- 'nous-telemetry': set(),
- 'nous-chord': set(),
- 'nous-wire': set(),
- 'nous-env': {'nous-chord'},
- 'nous-ai': {'nous-telemetry','nous-ai-types'},
- 'nous-tools': {'nous-ai','nous-env'},
- 'nous-runtime': {'nous-ai'},
- 'nous-durable': {'nous-chord','nous-ai','nous-wire','nous-telemetry','nous-env','nous-ai-types'},
- # nous-server 是**组装根**：它必须摸到这些层才能把 HTTP 面拼起来（#44/#47/#48/#49/#51/#57）。
- # 这一节扩边不等于放宽「内核层不依赖应用层」——那条是判据 2，另有人在守。
- 'nous-server': {'nous-durable','nous-wire','nous-telemetry',
-                 'nous-ai','nous-runtime','nous-sessions','nous-tools','nous-documents',
-                 'nous-store','nous-env'},
- # #56：Nous 自己的库。**没有内部依赖**（尤其没有 nous-durable）—— 多一条边就是判据 1 破了。
- 'nous-store': set(),
-}
-meta=json.loads(subprocess.run(['cargo','metadata','--no-deps','--format-version','1'],
-                               capture_output=True,text=True).stdout)
-bad=[]
+	# 4e 依赖边：只许契约图里那几条（机器版是 docs/dependency-graph.toml，
+	# 人读版在 docs/harness.md §7；#89 把读表改成单一真相，断言口径未变）。
+	ALLOWED=$(python3 - <<'PYEOF'
+import json, subprocess, sys
+try:
+    import tomllib
+except ImportError:
+    print('READ-FAIL: python3 缺 tomllib，无法读 docs/dependency-graph.toml'); sys.exit(1)
+try:
+    with open('docs/dependency-graph.toml', 'rb') as f:
+        allow = {k: set(v) for k, v in tomllib.load(f)['allow'].items()}
+except Exception as e:
+    print(f'READ-FAIL: docs/dependency-graph.toml 不可解析: {e}'); sys.exit(1)
+if not allow:
+    print('READ-FAIL: 契约图表 allow 表为空 —— 空表会让判据静默失效'); sys.exit(1)
+meta = json.loads(subprocess.run(['cargo', 'metadata', '--no-deps', '--format-version', '1'],
+                                 capture_output=True, text=True).stdout)
+bad = []
 for pkg in meta['packages']:
-    name=pkg['name']
-    if name not in allow: continue
+    name = pkg['name']
+    if name not in allow:
+        continue
     for dep in pkg['dependencies']:
-        d=dep['name']
-        if not d.startswith('nous-') or d==name: continue
-        if d not in allow[name]: bad.append(f'{name} → {d}')
+        d = dep['name']
+        if not d.startswith('nous-') or d == name:
+            continue
+        if d not in allow[name]:
+            bad.append(f'{name} → {d}')
 print('\n'.join(bad))
-PY
+PYEOF
 )
 	# durable 是语义层，永久不许绑传输
 	if cargo tree -p nous-durable -e normal 2>/dev/null | grep -qE '\b(axum|hyper|tower-http|actix\w*|warp)\b'; then

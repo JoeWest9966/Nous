@@ -33,6 +33,7 @@
 mod error;
 pub mod fires;
 mod migrations;
+pub mod presets;
 pub mod trigger;
 pub mod triggers;
 
@@ -41,6 +42,7 @@ use std::path::Path;
 use rusqlite::Connection;
 
 pub use error::{Result, StoreError};
+pub use presets::PresetRevision;
 pub use fires::{
     reclaim, request_id, scheduler_lag, Action, Fire, FireCounts, FireState, Inserted,
     SCHEDULER_TICK_MS, GRACE_MS,

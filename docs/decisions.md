@@ -866,3 +866,18 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **决定**：`POST /v1/extensions/uninstall` 把源码 `rename` 到 `data/extend-trash/<name>-<ms>/`，并在私库根写 `deleted-extensions.json`；scan 认名单跳过，install 从垃圾站最新一份装回。核心 `nous`/`skills`/`prompts` 一律 400。
 **理由**：私库是 git pull 的；只删本地目录，下一次 pull 会把扩展复活。名单随私库发布，重启后仍生效；垃圾站在 data 下不随发布走，是 install 的回退来源。核心扩展是引擎自己装配的，删掉等于自残。
 **反悔点**：若将来引入真正的包管理器（带 lockfile 与远端 registry），删除名单应当退役，改由 registry 声明已删除；那时 `deleted-extensions.json` 与 scan 的跳过分支一起删。
+
+## 2026-11-21 · #89 边界判据归位：搬 SQL，补基线，不放松判据
+
+**决定**：presets 的回执/修订 SQL 与 stats 的插件库体检收进 `nous-store`
+（`preset_receipt` / `append_preset_revision` / `quick_check`），app 层只调 API；
+`rusqlite` 只留在 server / stats 的 dev-dependencies（判据自己开独立连接做正向哨兵）。
+S8 词表 15 行逐行判定为 #72 template 与 #83 skills 的正当写面，按行附票号补基线；
+spawn 集合 2→5，补 #78 的 env-ssh mux/remote 与 #75 的 repo git（都是 platform 层）。
+§4e 图表改为脚本读 `docs/dependency-graph.toml`；阈值和断言未动。
+**理由**：判据是唯一真相；红要么来自越界实现（搬走），要么来自基线漏收（补基线并写明票号），
+不能靠放宽断言消红。`use rusqlite` 本身不改变 Cargo 依赖图——§1.1 看 normal 依赖、
+§1.5 看源码，两条从不同源取数，哨兵要分别注入。
+**反悔点**：若 #73 dispatcher / #84 ext-admin 之后又引入新的 `nous-*` 直接依赖，
+只在 `docs/dependency-graph.toml` 与 `docs/harness.md` §7 两处同步补边并重跑全量判据；
+不许把新边塞进「排除项」或关掉 §4e。
