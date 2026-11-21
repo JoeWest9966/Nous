@@ -79,6 +79,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/pin", post(pin))
         .route("/v1/sessions/{id}/config", post(config))
         .route("/v1/sessions/{id}/purge", post(purge))
+        .route("/v1/sessions/{id}/archive", post(archive))
+        .route("/v1/archive", get(archive_index))
+        .route("/v1/archive/{id}/restore", post(restore))
         .route("/v1/selection", get(selection).post(write_selection))
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
@@ -371,6 +374,73 @@ async fn purge(
         "id": result.id,
         "purged": true,
         "at": result.at,
+    })))
+}
+
+/// `POST /v1/sessions/{id}/archive`：闭包复印到 gen 文件 + 墓碑（#67）。
+async fn archive(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().archive(id, now_ms(), None).await?;
+    Ok(Json(json!({
+        "gen": result.gen,
+        "ids": result.ids,
+        "rows": result.rows,
+    })))
+}
+
+/// `GET /v1/archive`：世代列表 + 墓碑 + live（#67）。
+async fn archive_index(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let gens = state.commands().archives().await?;
+    let items = gens.into_iter().map(|generation| {
+        let items = generation.items.into_iter().map(|item| {
+            let parent = item.parent.map(|(id, at)| json!({ "id": id, "at": at }))
+                .unwrap_or(Value::Null);
+            let last = item.last.map(|(id, kind, text)| json!({ "id": id, "kind": kind, "text": text }))
+                .unwrap_or(Value::Null);
+            let archived = item.archived.map(|tomb| json!({
+                "at": tomb.at, "gen": tomb.gen, "purged": tomb.purged,
+            })).unwrap_or(Value::Null);
+            json!({
+                "id": item.id,
+                "parent": parent,
+                "entries": item.entries,
+                "last": last,
+                "name": item.name,
+                "archived": archived,
+                "live": item.live,
+            })
+        }).collect::<Vec<_>>();
+        json!({ "gen": generation.gen, "items": items })
+    }).collect::<Vec<_>>();
+    Ok(Json(json!({ "gens": items })))
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreBody {
+    gen: String,
+}
+
+/// `POST /v1/archive/{id}/restore`：从 gen 文件打捞回活库并抹墓碑（#67）。
+async fn restore(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let body: RestoreBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("gen is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("restore body: {error}")))?
+    };
+    let result = state.commands().restore(id, body.gen, now_ms()).await?;
+    Ok(Json(json!({
+        "restored": result.restored,
+        "gen": result.gen,
+        "rows": result.rows,
     })))
 }
 

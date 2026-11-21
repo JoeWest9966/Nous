@@ -14,6 +14,7 @@
 //! 所以「打开一份上游 v2 库」在写模式下是**明确失败**（版本 2 > 我们支持的 1），这条由
 //! `nous_chord::sqlite::apply_sqlite_migrations` 的 `SchemaTooNew` 保证，不是约定。
 
+pub mod archive;
 pub mod commit;
 pub mod documents;
 pub mod cursor;
@@ -41,6 +42,7 @@ pub use sqlite::schema::SqliteSchema;
 pub struct SqliteStore {
     db: LocalDatabase,
     schema: SqliteSchema,
+    path: std::path::PathBuf,
 }
 
 impl SqliteStore {
@@ -53,8 +55,9 @@ impl SqliteStore {
     /// 打开成功时 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` + `synchronous=NORMAL` 已经设好
     /// （`docs/storage.md` §7；最后那条的代价在 `docs/bench-commit.md`）。
     pub fn open_writer(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
         let schema = SqliteSchema::unprefixed();
-        let mut db = LocalDatabase::open(path)?;
+        let mut db = LocalDatabase::open(&path)?;
         apply_sqlite_migrations(&mut db, &migrations(&schema), schema.table("durable_schema"))?;
         // WAL + busy_timeout：单写者的两个前提。
         db.exec("PRAGMA journal_mode=WAL")?;
@@ -67,7 +70,7 @@ impl SqliteStore {
         // （`live.ts:236` `PROGRESS_COMMIT`）在本库**不需要**。见 `docs/bench-commit.md`。
         db.exec("PRAGMA synchronous=NORMAL")?;
 
-        let store = Self { db, schema };
+        let store = Self { db, schema, path };
         match store.writer()? {
             Some(writer) if writer == WRITER => Ok(store),
             found => Err(StorageError::WriterMismatch { found }),
@@ -76,9 +79,11 @@ impl SqliteStore {
 
     /// 只读打开。**不认门**：上游 v2 库（没有 `writer` 列）照读 —— 那是导入器的入口。
     pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
         Ok(Self {
-            db: LocalDatabase::open_read_only(path)?,
+            db: LocalDatabase::open_read_only(&path)?,
             schema: SqliteSchema::unprefixed(),
+            path,
         })
     }
 
@@ -88,6 +93,11 @@ impl SqliteStore {
 
     pub fn db(&self) -> &LocalDatabase {
         &self.db
+    }
+
+    /// 打开时的路径。归档目录跟着活库走（`docs/plugins.md` 的 archive 行）。
+    pub(crate) fn db_path(&self) -> std::path::PathBuf {
+        self.path.clone()
     }
 
     pub fn db_mut(&mut self) -> &mut LocalDatabase {

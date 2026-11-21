@@ -56,6 +56,7 @@
 | `dispatcher` | nous | (待建) `nous-dispatcher` | app | 编译期 | 调度节拍（trigger → 会话） | 否 | 内核算核心三件之一，见下注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
 | `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口） | 否 | #57 落地；调度循环不在本票 |
+| `archive` | nous | — | app | 数据目录 + 端点族 | `POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 是 | 独立 SQLite 文件（选项甲，见 docs/decisions.md）；不进 durable 迁移链；目录相对 `NOUS_DB` |
 | `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：13 条资源化端点 + 修订表） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判 |

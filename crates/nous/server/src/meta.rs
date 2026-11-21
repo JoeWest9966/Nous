@@ -185,6 +185,10 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // #64：写入面与 selection 两行状态都属于 sessions 模块。
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/config", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/purge", module: "sessions" },
+    // #67：世代归档三端点（独立 gen 文件 + 墓碑），模块 archive。
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/archive", module: "archive" },
+    RegisteredRoute { method: "GET", path: "/v1/archive", module: "archive" },
+    RegisteredRoute { method: "POST", path: "/v1/archive/{id}/restore", module: "archive" },
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
@@ -354,7 +358,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。
     ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
     ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行" },
-    ManifestEntry { name: "archive", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
+    ManifestEntry { name: "archive", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读" },
     ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57 落地；调度循环不在本票" },

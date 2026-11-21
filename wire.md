@@ -247,9 +247,11 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 ### 会话归档：`archive` / `purge` / 归档库 / `restore`
 
 **这一版引擎起有**：内核 2026-11-10 起（ADR 0001）；客户端 v0.4.0 起接。
-归档 = 把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
-撕原件 = 真删（活库那行 + 那份复印件）。四个方法在 `crates/nous-engine` 里都有
-（`archive` / `purge` / `archive_list` / `restore`），UI 层一行 HTTP 都不碰。
+旧引擎把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
+撕原件 = 真删（活库那行 + 那份复印件）。本库同语义，但 gen 文件后缀是 `.db`
+（`archives/gen-YYYYMMDD.db`，见 `docs/decisions.md` 的 #67 决策）；四个方法在本库
+分别是 session 命令 `archive_conversation` / `purge_session` / `list_archives` /
+`restore_conversation`，UI 层一行 HTTP 都不碰。
 
 #### GET /v1/openapi.json
 
@@ -275,9 +277,10 @@ body 空。回 200 `{"gen":"20261113","ids":[699],"rows":17}`。
 
 - `gen` 是 8 位 `YYYYMMDD`，`rows` 是复印进去的条数。**客户端不读回包**（`Value` 收着），
   刷新靠重拉 `/v1/sessions` 和 `/v1/archive` —— 别拿回包自己改本地列表。
-- 归档后 `/v1/sessions` **默认不返回**该会话（那一行自己消失）；`?archived=1` 才给全量，
-  每条带 `archived` 墓碑。「归档后行消失」只有这一个来源，客户端不许自己滤。
-- 失败：忙 / 分支里还有活后代 → 409 `{error}`，正文会列出活分支。原样显示，别改写。
+- **本库口径（#67）**：归档后 `/v1/sessions` **仍返回该会话**，带 `archived` 墓碑
+  `{at, gen, purged:false}`；捞回后墓碑回到 `null`。旧引擎的「默认隐藏 + `?archived=1`」
+  在本库不实现 —— 墓碑是事实源，显示/隐藏由客户端按墓碑决定，别在这里悄悄滤行。
+- 失败：忙（会话有非终态任务）/ 有活后代 → 409 `{error}`，正文列出活分支。原样显示，别改写。
 
 #### POST /v1/sessions/:id/purge
 
@@ -286,14 +289,15 @@ body 空。回 200 `{"purged":[699],"gen":"20261113","rows":6}`。**真删**，�
 - **必须先归档**；会话闲置、分支里没有活后代也是引擎的前置条件。不满足返回 409 / 400，
   形状还是 `{error}`，照原文显示。
 
-本库当前只实现「真删 + 墓碑」这一步（归档另票）：一次事务删干净 conversations / entries /
-tasks / submissions / documents / document_revisions / record_ids 及该会话的 pins / unread
-条目，写墓碑 `{purged:true, at}` 到 `qrd3wh.sessions`。会话不存在 → 404，已有墓碑 → 409。
+本库口径（#64 + #67）：**必须先归档**（有 `archived[id]` 墓碑，否则 409）。一次事务删干净
+conversations / entries / tasks / submissions / documents / document_revisions 与该会话的
+pins / unread 条目，墓碑改写成 `archived[id]={at, gen, purged:true}`；`record_ids` 不删（id
+永不复用，见 `docs/decisions.md`）。会话不存在 → 404，已 purged → 409。
 
 #### GET /v1/archive
 
-回 `{"gens":[{"gen":"YYYYMMDD","items":[…]}]}`，一个 `gen` = 一份 `gen-YYYYMMDD.sqlite`，
-组标题就写 `11月10日 · gen-20261110.sqlite`。item 形状：
+回 `{"gens":[{"gen":"YYYYMMDD","items":[…]}]}`，一个 `gen` = 一份 `gen-YYYYMMDD.db`，
+组标题就写 `11月10日 · gen-20261110.db`。item 形状：
 
 ```
 { id, parent: {id, at} | null, entries: number, last: {id, kind, text} | null,
