@@ -219,6 +219,12 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history/diff", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending/diff", module: "documents" },
+    // #87：盘面树动作端点和注册源逐字一致（documents_routes.rs 双向判）。
+    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/move", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/trash", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/restore", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/purge", module: "documents" },
+    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/import", module: "documents" },
     // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
     RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/model", module: "presets" },
