@@ -81,11 +81,12 @@
     },
     {
       "name": "archive",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "archive 模块尚未落地"
-      }
+      "enabled": true,
+      "endpoints": [
+        "POST /v1/sessions/:id/archive",
+        "GET /v1/archive",
+        "POST /v1/archive/{id}/restore"
+      ]
     },
     {
       "name": "combos",

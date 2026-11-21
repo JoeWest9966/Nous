@@ -1115,8 +1115,8 @@ pub struct PurgeResult {
     pub at: i64,
 }
 
-/// 真删一条会话：一次事务删干净九张表里属于它的行，写墓碑。
-/// 会话不存在 → 404；已有墓碑 → 409（第二次撕不返回 200，也不返回 500）。
+/// 真删一条会话：一次事务删干净九张表里属于它的行，墓碑翻 purged=true。
+/// 会话不存在 → 404；未归档 / 已 purged → 409（#67：purge 必须先有墓碑）。
 pub async fn purge_session(
     session: &Session,
     id: Id,
@@ -1125,20 +1125,23 @@ pub async fn purge_session(
     let mut guard = session.storage.lock().await;
     let storage = storage_mut(&mut guard)?;
     let (_, value) = session_scope_document(storage, NAMES_KIND)?;
-    if let Some(tombstone) = value
-        .as_ref()
-        .and_then(|value| value.get("purged"))
-        .and_then(Value::as_object)
-    {
-        if tombstone.get("id").and_then(Value::as_str) == Some(id.to_string().as_str()) {
-            return Err(CommandError::Conflict(format!("session {id} already purged")));
-        }
+    let tomb = generations::tombstone(value.as_ref().unwrap_or(&json!({})), id);
+    // 顺序要紧：已撕过的第二次永远 409（不是因为会话没了的 404）；
+    // 从没归档过的活会话也想撕 → 409；不存在的 id → 404。
+    if tomb.as_ref().is_some_and(|t| t.purged) {
+        return Err(CommandError::Conflict(format!("session {id} already purged")));
     }
     if storage.conversation(id)?.is_none() {
         return Err(CommandError::NotFound(format!("session {id} not found")));
     }
+    if tomb.is_none() {
+        return Err(CommandError::Conflict(format!(
+            "session {id} 还没有归档墓碑，先 archive 再 purge"
+        )));
+    }
+    let gen = tomb.map(|t| t.gen).unwrap_or_default();
     let at = now_ms();
-    storage.purge_conversation(id, at)?;
+    storage.purge_conversation(id, at, &gen)?;
     drop(guard);
     session.observers.publish(
         &CommitPublication::new(at, vec![]),
@@ -1260,4 +1263,99 @@ fn now_ms() -> i64 {
 /// 应用层停 provider 流时用它；落库终态仍只走 [`cancel`]。
 pub fn cancel_token(session: &Session) -> tokio_util::sync::CancellationToken {
     session.cancellation.token().clone()
+}
+
+// ---------------------------------------------------------------------------
+// #67：世代归档（archive / archive_list / restore）
+//
+// 与 rename / pin / purge 同一条写者：墓碑经 `commit_and_publish` 落库并广播；
+// generation 文件的读写是 storage 的能力，调用方只拿写锁串行化。
+// ---------------------------------------------------------------------------
+
+use crate::storage::archive as generations;
+
+fn archive_error(error: generations::ArchiveError) -> CommandError {
+    match error {
+        generations::ArchiveError::NotFound(id) => CommandError::NotFound(format!("session {id} not found")),
+        generations::ArchiveError::Busy(_) | generations::ArchiveError::LiveDescendants(..)
+        | generations::ArchiveError::AlreadyLive(_) => CommandError::Conflict(error.to_string()),
+        generations::ArchiveError::MissingGeneration { .. } => CommandError::NotFound(error.to_string()),
+        generations::ArchiveError::Storage(storage) => CommandError::Session(SessionError::Storage(storage)),
+    }
+}
+
+/// `POST /v1/sessions/:id/archive` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveResult {
+    pub gen: String,
+    pub ids: Vec<i64>,
+    pub rows: usize,
+}
+
+/// `POST /v1/archive/:id/restore` 的回执。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreResult {
+    pub restored: Vec<i64>,
+    pub gen: String,
+    pub rows: usize,
+}
+
+/// 归档：闭包复印进 gen 文件 + 写墓碑。忙/活后代冲突 → 409。
+pub async fn archive_conversation(
+    session: &Session,
+    id: Id,
+    at: i64,
+    gen: Option<String>,
+) -> Result<ArchiveResult, CommandError> {
+    let gen = gen.unwrap_or_else(|| generations::gen_for(at));
+    generations::read_gen(&gen).map_err(archive_error)?;
+    let db_path = {
+        let guard = session.storage.lock().await;
+        guard.as_ref().ok_or(CommandError::Conflict("session is closed".into()))?.db_path()
+    };
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    generations::check_archive(storage, id).map_err(archive_error)?;
+    let closure = generations::read_live_closure(storage, id).map_err(archive_error)?;
+    let rows = closure.rows;
+    // gen 文件在活库写锁下写：同日二次归档不会和别的会话写撞在一起。
+    generations::write_generation(&db_path, &gen, &closure).map_err(archive_error)?;
+    let write = generations::tombstone_write(storage, id, at, &gen, false, false).map_err(archive_error)?;
+    commit_and_publish(session, &mut guard, vec![write]).await?;
+    Ok(ArchiveResult { gen, ids: vec![id], rows })
+}
+
+/// `GET /v1/archive`：世代列表 + 墓碑 + live。
+pub fn list_archives(session: &Session) -> Result<Vec<generations::Generation>, CommandError> {
+    // 只读快路径：拿不到写锁就返回 409，而不是在 async 上下文里阻塞等待。
+    let guard = session.storage.try_lock().map_err(|_| {
+        CommandError::Conflict("session is busy".to_string())
+    })?;
+    let storage = guard.as_ref().ok_or(CommandError::Conflict("session is closed".into()))?;
+    generations::list(storage).map_err(archive_error)
+}
+
+/// 打捞：从 gen 文件读回闭包、写进活库、抹墓碑。原件还在 → 409。
+pub async fn restore_conversation(
+    session: &Session,
+    id: Id,
+    gen: String,
+    at: i64,
+) -> Result<RestoreResult, CommandError> {
+    generations::read_gen(&gen).map_err(archive_error)?;
+    let db_path = {
+        let guard = session.storage.lock().await;
+        guard.as_ref().ok_or(CommandError::Conflict("session is closed".into()))?.db_path()
+    };
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    if storage.conversation(id)?.is_some() {
+        return Err(archive_error(generations::ArchiveError::AlreadyLive(id)));
+    }
+    let closure = generations::read_generation_closure(&db_path, id, &gen).map_err(archive_error)?;
+    let rows = closure.rows;
+    generations::restore_into(storage, &closure).map_err(archive_error)?;
+    let write = generations::tombstone_write(storage, id, at, &gen, false, true).map_err(archive_error)?;
+    commit_and_publish(session, &mut guard, vec![write]).await?;
+    Ok(RestoreResult { restored: vec![id], gen, rows })
 }

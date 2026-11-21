@@ -172,6 +172,10 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // #64：写入面与 selection 两行状态都属于 sessions 模块。
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/config", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/purge", module: "sessions" },
+    // #67：世代归档三端点（独立 gen 文件 + 墓碑），模块 archive。
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/archive", module: "archive" },
+    RegisteredRoute { method: "GET", path: "/v1/archive", module: "archive" },
+    RegisteredRoute { method: "POST", path: "/v1/archive/{id}/restore", module: "archive" },
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
@@ -276,7 +280,8 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     // #60：13 条 presets 端点 + 修订表已落地。
     ("presets", None),
     ("skills", None),
-    ("archive", Some(ReasonCode::NotImplemented)),
+    // #67：三条归档端点已落地，能力面翻绿。
+    ("archive", None),
     ("combos", Some(ReasonCode::NotImplemented)),
     ("triggers", None),
     ("stats", None),

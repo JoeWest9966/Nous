@@ -99,12 +99,23 @@ impl Storage {
         &self.store
     }
 
-    /// #64：一次事务真删一条会话及其全部从属行，写墓碑到 `qrd3wh.sessions`。
+    /// 活库路径。归档目录是它的同级 `archives/`（归位制见 docs/plugins.md）。
+    pub fn db_path(&self) -> std::path::PathBuf {
+        self.store.db_path()
+    }
+
+    /// #67：拿到同一个写连接，给归档的跨表 restore 用一个事务。
+    pub(crate) fn store_mut(&mut self) -> &mut SqliteStore {
+        &mut self.store
+    }
+
+    /// #64 + #67：一次事务真删一条会话及其全部从属行，墓碑改写成 `archived[id].purged=true`。
+    /// 调用方（`purge_session`）必须先确认 `archived[id]` 存在（先归档）。
     ///
     /// 墓碑住在 session 作用域的单例文档里（和 names / pins 同一份）。`record_ids`
     /// 不删：id 一旦铸出就永不复用（见模块顶部规矩），删掉会让 `next_id` 重新分配同一个
     /// id，撞上别处对旧 id 的引用。
-    pub fn purge_conversation(&mut self, id: Id, at: i64) -> Result<()> {
+    pub fn purge_conversation(&mut self, id: Id, at: i64, gen: &str) -> Result<()> {
         self.ensure_open()?;
         let schema = self.store.schema().clone();
         let (_, next_seq) = self.store.metadata()?;
@@ -128,7 +139,12 @@ impl Storage {
         if !value.is_object() {
             value = json!({});
         }
-        value["purged"] = json!({ "id": id.to_string(), "at": at });
+        // #67：墓碑统一成 `archived[id] = {at, gen, purged:true}`。
+        // 归档先写 purged:false，purge 只翻这一位（四态判据只看这一份墓碑）。
+        let mut archived = value.get("archived").cloned().unwrap_or_else(|| json!({}));
+        if !archived.is_object() { archived = json!({}); }
+        archived[&id.to_string()] = json!({ "at": at, "gen": gen, "purged": true });
+        value["archived"] = archived;
         if let Some(pins) = value.get_mut("pins") {
             if let Some(ids) = pins.get_mut("ids").and_then(Value::as_array_mut) {
                 let key = id.to_string();

@@ -217,3 +217,12 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
 **推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
 再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
+
+## 2026-11-21 · 归档墓碑有两套形状，四态判据会悄悄退化
+
+**症状**：#64 的 purge 把墓碑写成 `purged:{id,at}`，#67 的 `/v1/sessions` / `/v1/archive`
+读的是 `archived[id]={at,gen,purged}`；两边各自测试都绿，合起来时「已销毁」永远显示成
+「无墓碑」，purge 也过不了「先归档」的前置。
+**根因**：两张票分头落，墓碑是同一份 `qrd3wh.sessions` 文档的两个键，没有单一真相。
+**解**：#67 收口为唯一形状 `archived[id]={at,gen,purged}`；archive 写 `purged:false`、
+purge 只翻这一位且必须先有墓碑、restore 抹掉整个键；wire.md 同步改口径。
