@@ -472,6 +472,9 @@ async fn capabilities_declares_modules_and_reasons() {
     }
     assert!(by_name.get("extensions").is_none(), "模块名是 ext，不是 extensions");
     assert_eq!(by_name["sessions"]["enabled"], json!(true));
+    // #60：presets 不再是 not_implemented，Desk「模板」页的 gate 才能打开。
+    assert_eq!(by_name["presets"]["enabled"], json!(true));
+    assert!(by_name["presets"].get("reason").is_none(), "enabled:true 不该带 reason");
     assert_eq!(by_name["ext"]["enabled"], json!(false));
     assert_eq!(by_name["ext"]["reason"]["code"], json!("frozen"));
     snapshot("capabilities_declares_modules_and_reasons", &body);

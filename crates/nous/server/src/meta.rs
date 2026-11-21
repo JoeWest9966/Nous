@@ -214,6 +214,20 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history/diff", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending", module: "documents" },
     RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending/diff", module: "documents" },
+    // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
+    RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/model", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}", module: "presets" },
+    RegisteredRoute { method: "PUT", path: "/v1/presets/{section}/order", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/categories", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "PUT", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "PATCH", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "DELETE", path: "/v1/presets/{section}/{name}", module: "presets" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/{name}/copy", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions", module: "presets" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions/{n}", module: "presets" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/{name}/rollback", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
 
@@ -270,7 +284,8 @@ const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
     ("repo", None),
     // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
     ("documents", None),
-    ("presets", Some(ReasonCode::NotImplemented)),
+    // #60：13 条 presets 端点 + 修订表已落地。
+    ("presets", None),
     ("skills", None),
     ("archive", Some(ReasonCode::NotImplemented)),
     ("combos", Some(ReasonCode::NotImplemented)),
