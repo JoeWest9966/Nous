@@ -69,3 +69,4 @@ nous-sessions = { path = "crates/nous/sessions", version = "0.1.0" }
 nous-fixture = { path = "crates/nous/fixture", version = "0.1.0" }
 nous-stats = { path = "crates/nous/stats", version = "0.1.0" }
 nous-store = { path = "crates/nous/store", version = "0.1.0" }
+nous-dispatcher = { path = "crates/nous/dispatcher", version = "0.1.0" }

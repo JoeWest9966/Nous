@@ -191,12 +191,13 @@
       "layer": "app",
       "required": false,
       "crate": "—",
-      "description": "#57 落地；调度循环不在本票",
+      "description": "#57/#58 落地；调度节拍归 `dispatcher`",
       "enabled": true,
       "endpoints": [
         "GET /v1/triggers",
         "POST /v1/triggers/{code}/fire",
-        "GET /v1/triggers/{code}/fires"
+        "GET /v1/triggers/{code}/fires",
+        "PATCH /v1/triggers/{code}"
       ]
     },
     {

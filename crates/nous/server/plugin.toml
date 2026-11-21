@@ -6,6 +6,7 @@ crate = "nous-server"
 
 [requires]                 # cargo metadata 里的内部 workspace 依赖
 nous-ai = "^0.1"
+nous-dispatcher = "^0.1"
 nous-documents = "^0.1"
 nous-durable = "^0.1"
 nous-ext = "^0.1"

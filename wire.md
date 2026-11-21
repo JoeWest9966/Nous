@@ -42,6 +42,28 @@
 
 ## 我们用到的端点
 
+### 调度节拍（#73）
+
+生产进程在 app 装配处起一条常驻节拍：默认 60s 一拍，每拍写一条 durable tick 记录；
+`scheduler.lastTickAt` 从库里的 tick 记录读，不从内存读。测试可用
+`NOUS_DISPATCHER_INTERVAL_MS` 缩短间隔（默认 60000，毫秒），不改产品默认值。
+进程退出时节拍任务随 Tokio runtime 收敛，不留下孤儿 tick。
+
+### PATCH /v1/triggers/{code}
+
+#73：改触发器自己的 `schedule` / `params` / `enabled`。`code` 是不可变 slug（`nous-store`
+的库级触发器挡着），请求体里出现 `code` 就 400。
+
+- body 是逐键覆盖的稀疏对象：出现的键才改，未出现的键不动。`schedule` 是五段 cron 字符串
+  或 `null`（取消定时），`params` 是字符串/数字/布尔组成的对象，`enabled` 是布尔。
+  `schedule`/`params` 归 `spec` 管，`enabled` 是触发器行上的列，不是 `spec` 里的一个键。
+- `version` 是触发器行上的 ETag（整数），改动一次加 1；请求体必带当前 `version`（字符串
+  形式也认），不匹配 → 412。请求另带 `If-Match` 时，它也必须和 `version` 一致。
+  回包是改后的生效定义 + 新 `version`。
+- `requestId` 是可选幂等锚：重放回第一次回执，`version` 不涨、库不再改。回包里的
+  `definition` 是从库里读回的生效值，不是把请求体原样吐回来。
+- 不存在 / 已墓碑的 `code` → 404；坏 body（未知键、错类型、坏 cron、空对象、改 `code`）→ 400。
+
 ### GET /v1/sessions
 
 会话**树**（不是列表）。返回 `{ items: [...] }`，**新的在前**。

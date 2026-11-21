@@ -262,6 +262,14 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 **解**：测试按生产形状装配——`DurableCommands::with_session(session.clone(), registry)` 与
 driver 共用同一个 `Session`，再断言 provider 见过取消信号；负向哨兵去掉 `cancel()` 才会真红。
 
+## 2026-11-21 · ManualClock 的 wait_until 在 set_ms 之后会丢唤醒
+
+**症状**：测试先把假 Clock 跳到目标时刻，再调带 `wait_until` 的节拍函数，线程永久挂住；
+去掉等待才过，判据不再覆盖「等待由注入时钟完成」。
+**根因**：`Notify::notified()` 是先注册再检查的实现，单次 `notify_waiters()` 没有持久许可；
+先 set 再 wait 时，唤醒已经过去，wait 侧看不到它。
+**解**：`wait_until` 里先读时钟，再注册 `notified()`，注册后再读一次并 `tokio::pin!` 住 future
+才 await；这样先跳时段也只做一次布尔检查，不依赖通知时序。
 ## 2026-11-22 · 运行时的五态名和 wire 的清单状态不是一套词
 
 **症状**：install 回包写 `state:"normal"`（Runtime 内部状态），判据和 `/v1/extensions` 的 `items[]` 都要 `running`。
@@ -295,6 +303,14 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 **解**：改清单表格时若撞上这条红，先逐列打印 `cells[i]` 与 entry 字段确认索引；
 保持 `cells[8]` 与 `MANIFEST.description` 逐字相同，#77 的上游追踪说明放 `cells[6]`。
 
+## 2026-11-23 · sleeping 任务里的 kind 在库里是编码字符串，不是原文
+
+**症状**：进程级判据 `SELECT count(*) FROM tasks WHERE kind='nous.dispatcher.tick'` 恒为 0，
+但 durable 的 record JSON 里明明有这条任务；误以为节拍没跑。
+**根因**：durable 按 `docs/storage.md` 的索引列规矩写 `kind`，`task_row` 用
+`encode_indexed_string` 编码（带引号），字面量匹配不上；`record` 才是原文真相。
+**解**：判据改成 `WHERE record LIKE '%nous.dispatcher.tick%'`，或先经 dispatcher 的
+`read_sleeping_ticks` 解析 record；不要拿索引列的字面量当 JSON 里那个字符串。
 ## 2026-11-21 · 契约图表内嵌在判据脚本里，文档补图追不上
 
 **症状**：#89 按票面在 `docs/harness.md` 补了 7 条 `nous-server` 依赖边，

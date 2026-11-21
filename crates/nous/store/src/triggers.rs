@@ -25,6 +25,8 @@ pub struct Trigger {
     pub spec: String,
     pub enabled: bool,
     pub next_fire_at: Option<i64>,
+    /// #73：`PATCH` 的 ETag，每次有效改动 +1。
+    pub version: i64,
     pub created_at: i64,
     pub deleted_at: Option<i64>,
 }
@@ -64,12 +66,14 @@ fn row_to_trigger(row: &Row<'_>) -> rusqlite::Result<Trigger> {
         spec: row.get("spec")?,
         enabled: row.get::<_, i64>("enabled")? != 0,
         next_fire_at: row.get("next_fire_at")?,
+        version: row.get("version")?,
         created_at: row.get("created_at")?,
         deleted_at: row.get("deleted_at")?,
     })
 }
 
-const COLUMNS: &str = "id, code, name, spec, enabled, next_fire_at, created_at, deleted_at";
+const COLUMNS: &str =
+    "id, code, name, spec, enabled, next_fire_at, version, created_at, deleted_at";
 
 impl Store {
     /// 兼容 #56 的薄入口：`Trigger::new` 会先校验准则，再走这里落行。
@@ -160,6 +164,58 @@ impl Store {
         if self.conn.execute(sql, params)? == 0 {
             return Err(StoreError::CodeUnknown(code.to_string()));
         }
+        Ok(())
+    }
+
+    /// #73：一次原子 PATCH。SQL 的 `WHERE version = ?` 就是乐观锁的物理保证，
+    /// `version + 1` 只在这里发生 —— 别的地方都不许改这一列。
+    /// 墓碑行永远不该被改：`deleted_at IS NULL` 写进 WHERE。
+    pub fn patch_trigger(
+        &self,
+        code: &str,
+        spec: &str,
+        enabled: bool,
+        expected_version: i64,
+    ) -> Result<Option<i64>> {
+        let changed = self.conn.execute(
+            "UPDATE triggers SET spec = ?1, enabled = ?2, version = version + 1
+              WHERE code = ?3 AND version = ?4 AND deleted_at IS NULL",
+            params![spec, i64::from(enabled), code, expected_version],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        let version: i64 = self.conn.query_row(
+            "SELECT version FROM triggers WHERE code = ?1",
+            params![code],
+            |row| row.get(0),
+        )?;
+        Ok(Some(version))
+    }
+
+    /// #73：PATCH 的幂等回执。命中就返回第一次的 body，调用方不再改库。
+    pub fn patch_receipt(&self, code: &str, request_id: &str) -> Result<Option<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT body FROM trigger_patch_receipts WHERE code = ?1 AND request_id = ?2",
+        )?;
+        let mut rows = stmt.query(params![code, request_id])?;
+        Ok(match rows.next()? {
+            Some(row) => Some(row.get(0)?),
+            None => None,
+        })
+    }
+
+    pub fn remember_patch_receipt(
+        &self,
+        code: &str,
+        request_id: &str,
+        body: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO trigger_patch_receipts (code, request_id, body)
+             VALUES (?1, ?2, ?3)",
+            params![code, request_id, body],
+        )?;
         Ok(())
     }
 }

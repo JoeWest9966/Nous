@@ -36,6 +36,8 @@ nous-runtime = { workspace = true }
 nous-tools = { workspace = true }
 nous-ai = { workspace = true }
 nous-store = { workspace = true }
+nous-dispatcher = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 nous-wire = { workspace = true }
 nous-telemetry = { workspace = true }

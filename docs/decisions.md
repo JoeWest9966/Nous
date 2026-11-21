@@ -817,6 +817,22 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **反悔点**：若另票引入 id 命名空间（每段 id 带会话前缀，重铸不撞旧引用），可改成连
 `record_ids` 一起删；那时必须同时改 `commit.rs` 的重复检查与本票的 purge 事务。
 
+## 2026-11-21 · #73 的 PATCH 用 version 乐观锁，dispatcher 不自己起异步循环
+
+**决定**：`PATCH /v1/triggers/{code}` 是稀疏覆盖（`schedule`/`params`/`enabled`），
+请求体带当前 `version`，每次成功改动原子 `version+1`；可选 `requestId` 只回第一次回执。
+调度侧只提供 `arm_next_tick(session, clock, …)`：把下一拍写成 durable 的 `sleeping` 任务行，
+等待交给注入的 `Clock`；生产进程何时拉起这条循环不在本票的常驻产物里。
+
+**为什么**：`code` 是触发器身份，改它相当于把历史账本改挂到另一个商品上；库里的物理
+触发器已经挡住，HTTP 不能留第二个入口。`version` 让 PATCH 和既有 `If-Match` PATCH 端点
+同一口径；`requestId` 让网络重放不产生第二次定义变更。durable 的 `tasks` 表只存不跑，
+把待办写成任务行而不是内存计时器，重启后才读得回「下一拍」；不自己写循环是 AGENTS.md
+的铁律，也避免 app 层出现第二个时间源。
+
+**反悔点**：若将来要在进程里常驻节拍，必须由新的装配票显式调用 `arm_next_tick` 并注入
+生产 `Clock`，不得在 dispatcher 里藏 `tokio::time::interval`；若发现客户端需要整份替换
+触发器定义，另开带 `If-Match` 的 PUT，不把 PATCH 悄悄改成覆盖语义。
 ## 2026-11-20 · #67 世代归档：独立 SQLite 文件（选项甲），不进 active 库
 
 **决定**：`archive` 把会话闭包复印到活库同目录下的
@@ -867,6 +883,20 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **理由**：私库是 git pull 的；只删本地目录，下一次 pull 会把扩展复活。名单随私库发布，重启后仍生效；垃圾站在 data 下不随发布走，是 install 的回退来源。核心扩展是引擎自己装配的，删掉等于自残。
 **反悔点**：若将来引入真正的包管理器（带 lockfile 与远端 registry），删除名单应当退役，改由 registry 声明已删除；那时 `deleted-extensions.json` 与 scan 的跳过分支一起删。
 
+## 2026-11-23 · #73 常驻节拍在 app 装配处 spawn，零时钟判据限定调度逻辑
+
+**决定**：`main.rs` 的 app 装配处 `tokio::spawn(nous_dispatcher::run_dispatcher(...))`，
+注入 dispatcher 的 `RealClock` 与 `NOUS_DISPATCHER_INTERVAL_MS`（默认 60000）；令牌和
+`Session::closed()` 都能让它收敛。dispatcher 暴露的 `RealClock` 是唯一的真实时钟实现，
+`run_dispatcher` / `evaluate` / `arm_next_tick` 一律只认注入的 `Clock`，判据用 `ManualClock`。
+
+**为什么**：#69 要「真实恢复」，只提供函数没人调用等于能力被藏起来。生产时钟总要有
+一个地方实现；放在 dispatcher 的具名 `RealClock` 而不是让 server 自己读 `SystemTime`，
+保持「调度逻辑零直接时钟」的判据能精确打在注入路径上，也让进程级判据真起 nous-app
+就能验到 60s 节拍的可配置短间隔。
+
+**反悔点**：若将来把节拍挪进专门的 daemon，不能复制一份时钟实现或再起第二条任务循环；
+只把这一处 spawn 移到新入口，仍用同一个 `run_dispatcher`，并保留进程级判据。
 ## 2026-11-21 · #89 边界判据归位：搬 SQL，补基线，不放松判据
 
 **决定**：presets 的回执/修订 SQL 与 stats 的插件库体检收进 `nous-store`

@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use axum::extract::{Path as AxumPath, State};
+use axum::Json as AxumJson;
 use nous_durable::actor::{Actor, ActorKind};
 use nous_durable::session::commands::{record_origin, submit_message, OriginRecord, SubmitRequest};
 use nous_durable::session::Session;
@@ -13,6 +15,7 @@ use nous_store::{
     FireActor, TriggerError, scheduler_lag, FireCounts, FireState, Inserted, SCHEDULER_TICK_MS,
     Store as TriggerStore, Trigger as TriggerDefinition,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::error::{Result, ServerError};
@@ -263,6 +266,147 @@ pub async fn fire_state(store: &tokio::sync::Mutex<TriggerStore>, code: &str, no
     Ok(store.lock().await.fire(code, now_ms).map_err(internal)?.map(|fire| fire.state))
 }
 
+/// #73：`PATCH /v1/triggers/{code}` 的请求体。逐键覆盖，未知键 fail-fast。
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PatchBody {
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    schedule: Option<Value>,
+    #[serde(default)]
+    params: Option<Value>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    /// #73 的 ETag：当前 `version`。整数是票面写法；字符串 / `W/"N"` 也认，
+    /// 方便和既有 PATCH 的 If-Match 客户端共用。
+    #[serde(default, deserialize_with = "deserialize_version")]
+    version: Option<i64>,
+}
+
+fn deserialize_version<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<i64>, D::Error> {
+    /// 请求里的 `version` 字段是可选的；缺省时 `Option` 自己会进来，这里只接有值的那种。
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RawVersion {
+        Number(i64),
+        Text(String),
+    }
+    let value = match Option::<RawVersion>::deserialize(d)? {
+        Some(RawVersion::Number(number)) => Value::Number(number.into()),
+        Some(RawVersion::Text(text)) => Value::String(text),
+        None => return Ok(None),
+    };
+    let text = match value {
+        Value::Number(number) => number.to_string(),
+        Value::String(text) => text,
+        Value::Null => return Ok(None),
+        other => return Err(serde::de::Error::custom(format!("version 不是数字：{other}"))),
+    };
+    let trimmed = text.trim().trim_start_matches("W/").trim_matches('"');
+    trimmed
+        .parse::<i64>()
+        .map(Some)
+        .map_err(|_| serde::de::Error::custom("version 不是数字"))
+}
+
+fn parse_version(raw: &str) -> Result<i64> {
+    let trimmed = raw.trim().trim_start_matches("W/").trim_matches('"');
+    trimmed
+        .parse::<i64>()
+        .map_err(|_| ServerError::BadRequest(format!("version 不是数字：{raw}")))
+}
+
+/// `If-Match` 头也必须和 body 的 `version` 一致：两个地方都不许各说各话。
+fn header_version(headers: &axum::http::HeaderMap) -> Result<Option<String>> {
+    Ok(headers
+        .get(axum::http::header::IF_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string))
+}
+
+/// #73：`PATCH /v1/triggers/{code}`。改 `schedule` / `params` / `enabled`，`code` 不可变。
+pub async fn patch_trigger(
+    State(state): State<Arc<crate::app::AppState>>,
+    AxumPath(code): AxumPath<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<AxumJson<Value>> {
+    let runtime = state.triggers().ok_or_else(|| {
+        ServerError::Conflict("triggers not configured".to_string())
+    })?;
+    let body: PatchBody = serde_json::from_slice(&body)
+        .map_err(|error| ServerError::BadRequest(format!("patch body: {error}")))?;
+    let expected = body.version.ok_or_else(|| {
+        ServerError::BadRequest("version is required".to_string())
+    })?;
+    if let Some(header) = header_version(&headers)? {
+        if parse_version(&header)? != expected {
+            return Err(ServerError::PreconditionFailed("If-Match 与 version 不一致".to_string()));
+        }
+    }
+    if body.schedule.is_none() && body.params.is_none() && body.enabled.is_none() {
+        return Err(ServerError::BadRequest("patch body 至少要改一个键".to_string()));
+    }
+    // requestId 可选：重放回第一次回执，版本不涨。
+    if let Some(request_id) = body.request_id.as_deref().filter(|id| !id.is_empty()) {
+        let store = runtime.store.lock().await;
+        if let Some(receipt) = store.patch_receipt(&code, request_id).map_err(internal)? {
+            return Ok(AxumJson(serde_json::from_str(&receipt).map_err(internal)?));
+        }
+    }
+    let (after, new_version) = {
+        let store = runtime.store.lock().await;
+        let row = store.trigger(&code).map_err(internal)?
+            .filter(|row| row.deleted_at.is_none())
+            .ok_or_else(|| ServerError::NotFound(format!("trigger {code} not found")))?;
+        let current = nous_store::Trigger::from_row(&row, &row.spec).map_err(internal)?;
+        let schedule = match body.schedule {
+            None => None,
+            Some(Value::Null) => Some(None),
+            Some(Value::String(cron)) => Some(Some(cron)),
+            Some(other) => return Err(ServerError::BadRequest(format!("schedule 必须是字符串或 null：{other}"))),
+        };
+        let patched = current
+            .patch(schedule, body.params, body.enabled)
+            .map_err(|error| ServerError::BadRequest(error.slug().to_string()))?;
+        let version = store
+            .patch_trigger(&code, &patched.definition_json(), patched.enabled(), expected)
+            .map_err(internal)?
+            .ok_or_else(|| ServerError::PreconditionFailed(format!("trigger {code} version 不匹配")))?;
+        let after_row = store.trigger(&code).map_err(internal)?.ok_or_else(|| {
+            ServerError::Internal("patch 后读不回触发器".to_string())
+        })?;
+        (definition_json(&after_row), version)
+    };
+    runtime.reload_definitions().await;
+    let response = json!({
+        "code": code,
+        "enabled": after["enabled"].clone(),
+        "name": after["name"].clone(),
+        "spec": after["spec"].clone(),
+        "version": new_version,
+        "definition": after,
+    });
+    if let Some(request_id) = body.request_id.as_deref().filter(|id| !id.is_empty()) {
+        let store = runtime.store.lock().await;
+        store
+            .remember_patch_receipt(&code, request_id, &response.to_string())
+            .map_err(internal)?;
+    }
+    Ok(AxumJson(response))
+}
+
+fn definition_json(row: &nous_store::triggers::Trigger) -> Value {
+    json!({
+        "code": row.code,
+        "name": row.name,
+        "enabled": row.enabled,
+        "nextFireAt": row.next_fire_at,
+        "version": row.version,
+        "spec": serde_json::from_str::<Value>(&row.spec).unwrap_or(Value::Null),
+    })
+}
 
 /// 进程级点火装配：store + 同一个 Session + 定义快照 + 模板读取 + faux 轮次驱动器。
 #[derive(Clone)]
@@ -341,10 +485,18 @@ impl TriggerRuntime {
         self.definitions.read().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// #58 调度心跳：调度循环每拍调一次。循环还没落地时没人调，`lastTickAt` 诚实为 `null`。
+    /// #73 调度心跳：每拍由 dispatcher 从 durable 的 tick 记录读回后写进运行时快照。
+    /// **不是内存计数的真相**：库里的 tick 记录才是真相，这里只是给同一轮 HTTP 读口用。
     pub fn record_tick(&self, now_ms: i64) {
         self.last_tick_at
             .store(now_ms, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// #73：从 durable 库读回最近一拍的时刻（`lastTickAt` 的真相来源）。
+    pub fn load_last_tick_at(&self) -> Option<i64> {
+        let storage = durable_storage(&self.durable_db).ok()?;
+        let ticks = nous_dispatcher::read_sleeping_ticks(&storage).ok()?;
+        ticks.last().and_then(|record| record["state"]["wakeAt"].as_i64())
     }
 
     /// 「还没响过」的哨兵值。和合法时间戳不可能重叠（epoch 毫秒不会是 `i64::MIN`）。

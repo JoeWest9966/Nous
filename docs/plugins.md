@@ -54,9 +54,9 @@
 | `server` | nous | `nous-server` | app | 编译期 | `/v1/*` 端点 + SSE | 是 | 唯一监听处；bin 叫 `nous-app` |
 | `fixture` | nous | `nous-fixture` | dev | 编译期 | fixture 库 → `/v1/sessions` 同形 JSON | 否 | 测试夹具 binary（`dev`：不进 systemd、不进发布包） |
 | `audit` | nous | (待建) `nous-audit` | app | 编译期 | 事件追加与投影 | 否 | 今天 `activity.js`（55 行） |
-| `dispatcher` | nous | (待建) `nous-dispatcher` | app | 编译期 | 调度节拍（trigger → 会话） | 否 | 内核算核心三件之一，见下注 |
+| `dispatcher` | nous | `nous-dispatcher` | app | 编译期 | 注入 Clock + durable `sleeping` 任务的 60s 节拍、纯判定 `evaluate`、忙则跳过、失败隔离（trigger → 会话） | 否 | #73 落地；内核算核心三件之一，见下注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
-| `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口） | 否 | #57 落地；调度循环不在本票 |
+| `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口）+ `PATCH /v1/triggers/{code}`（#73：改 schedule/params/enabled，code 不可变） | 否 | #57/#58 落地；调度节拍归 `dispatcher` |
 | `archive` | nous | — | app | 数据目录 + 端点族 | `POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 是 | 独立 SQLite 文件（选项甲，见 docs/decisions.md）；不进 durable 迁移链；目录相对 `NOUS_DB` |
 | `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
