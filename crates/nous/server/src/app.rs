@@ -342,6 +342,7 @@ impl AppState {
             repos: crate::repos::from_path(kind, root.as_ref()),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -389,6 +390,7 @@ impl AppState {
             documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: Some(crate::combos::ComboStore::new(root, triggers)),
