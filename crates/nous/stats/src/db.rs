@@ -80,16 +80,11 @@ fn plugins_report(path: &Path) -> Result<Value> {
     }
     let store = nous_store::Store::open(path)?;
     let schema = store.schema_version()?;
-    let quick_check = store
-        .conn()
-        .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+    let quick_check = nous_store::presets::quick_check(&store)
         .map_err(|error| StatsError::Storage(error.to_string()))?;
     let mut rows = BTreeMap::new();
     for table in PLUGIN_TABLES {
-        let count: i64 = store
-            .conn()
-            .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| row.get(0))
-            .unwrap_or(0);
+        let count = nous_store::presets::table_count(&store, table).unwrap_or(0);
         rows.insert(table.to_string(), json!(count));
     }
     Ok(json!({
