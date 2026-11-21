@@ -116,3 +116,26 @@ pub async fn first_sse_data(body: axum::body::Body) -> String {
 pub fn not_found() -> ServerError {
     ServerError::NotFound("nope".into())
 }
+
+/// 给一个已经打开的 `AppState` 挂一条**脚本 faux** 运行时。
+///
+/// 用的是 state 自己那条 `Session`（同一个写者），所以不会多开第二个 writer。
+/// #70 之后 `POST /messages` 一律起轮次：没有运行时的装配会 503，
+/// 而协议类测试只关心「受理/幂等/帧序」，给它一条能跑通的 faux 就够。
+pub fn with_faux_runtime(state: std::sync::Arc<nous_server::AppState>) -> std::sync::Arc<nous_server::AppState> {
+    use std::collections::BTreeMap;
+    let session = state
+        .commands()
+        .session()
+        .expect("durable 装配才有 Session");
+    let provider = nous_ai::providers::faux::FauxProvider::new({
+        let script = nous_ai::providers::faux::FauxScript::new();
+        script.append_responses(vec![nous_ai::providers::faux::FauxStep::factory(|_| {
+            nous_ai::providers::faux::faux_assistant_message("ok", nous_ai::StopReason::Stop)
+        })]);
+        script
+    });
+    let tools: Arc<BTreeMap<String, Arc<dyn nous_ai::tool::AgentTool>>> = Arc::new(BTreeMap::new());
+    let runtime = nous_server::runtime::assemble_with_provider(provider, tools, session);
+    state.with_runtime(Arc::new(runtime))
+}

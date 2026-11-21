@@ -922,8 +922,9 @@ fn entry_of(state: &Arc<AppState>, session: i64, entry_id: i64) -> Value {
 /// 模型解析顺序（写死，别在别处再算一次）：
 /// 1. 请求体 `model`（`{provider, modelId}` 或 `"provider/modelId"`）；
 /// 2. 会话当前的 `model`；
-/// 3. 编目的 `default`。
-/// 落不到任何一个真实 model → 503（不是 202，也不是随便挑第一个）。
+/// 3. 编目的 `default`；
+/// 4. 装配里恰好只有**一个**模型时用它（多个时不许挑，那是猜）。
+/// 落不到任何一个真实 model → 503（不是 202，也不猜）。
 fn resolve_turn_model(
     state: &Arc<AppState>,
     runtime: &crate::runtime::AssembledRuntime,
@@ -947,6 +948,21 @@ fn resolve_turn_model(
                 (model.provider.clone(), model.model_id.clone())
             })
         });
+    // 第四个来源：装配里**只有一个**模型时用它（faux / 单 provider 单模型的常见情形）。
+    // 多个模型时不许挑第一个 —— 那是猜，客户端会得到不是自己要的模型。
+    let want = want.or_else(|| {
+        let mut all = runtime
+            .models_by_provider
+            .iter()
+            .flat_map(|(provider, models)| {
+                models.iter().map(move |model| (provider.clone(), model.id.clone()))
+            });
+        let first = all.next()?;
+        if all.next().is_some() {
+            return None;
+        }
+        Some(first)
+    });
     let Some((provider, model_id)) = want else {
         return Err(ServerError::Unavailable(
             "没有可用模型：请求体、会话、编目默认都没有".into(),

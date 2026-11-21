@@ -65,7 +65,8 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 async fn the_same_request_id_returns_the_same_submission_and_stores_one_row() {
     let path = temp_db("idempotent");
     seed(&path, None).await;
-    let app = AppState::durable(&path).unwrap();
+    // #70 之后受理即起轮次：没有运行时会 503，协议类测试需要一条能跑的 faux。
+    let app = common::with_faux_runtime(AppState::durable(&path).unwrap());
     let routes = router(app.clone());
 
     let first = call(
@@ -104,7 +105,7 @@ async fn the_same_request_id_returns_the_same_submission_and_stores_one_row() {
 async fn the_first_frame_after_posting_is_message_start_not_message_update() {
     let path = temp_db("message-start");
     seed(&path, None).await;
-    let app = AppState::durable(&path).unwrap();
+    let app = common::with_faux_runtime(AppState::durable(&path).unwrap());
     let routes = router(app.clone());
 
     // 先连上 SSE（拿 snapshot），再发消息 —— 判据看的是「响应发出后」。
@@ -239,7 +240,7 @@ async fn fork_returns_201_and_only_names_when_a_name_was_given() {
 }
 
 #[tokio::test]
-async fn fork_while_busy_is_409_and_wait_ms_is_400() {
+async fn fork_while_busy_is_409_and_wait_ms_is_accepted() {
     let path = temp_db("fork-busy");
     seed(
         &path,
@@ -255,7 +256,7 @@ async fn fork_while_busy_is_409_and_wait_ms_is_400() {
         })),
     )
     .await;
-    let app = AppState::durable(&path).unwrap();
+    let app = common::with_faux_runtime(AppState::durable(&path).unwrap());
     let routes = router(app.clone());
 
     let (status, body) = call(&routes, "POST", "/v1/sessions/1/fork", None).await;
@@ -269,7 +270,11 @@ async fn fork_while_busy_is_409_and_wait_ms_is_400() {
         Some(json!({ "content": "hi", "waitMs": 500 })),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "waitMs 没实现就不许假装，实测 {body}");
+    // #70：`waitMs` 已实现 —— 500ms 内跑完就 200 带答案，跑不完就 202；都不是 400。
+    assert!(
+        matches!(status, StatusCode::OK | StatusCode::ACCEPTED),
+        "waitMs 该被接受，实测 {status} {body}"
+    );
 
     drop(routes);
     drop(app);

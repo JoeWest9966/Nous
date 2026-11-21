@@ -52,6 +52,18 @@ async fn get(app: &axum::Router, uri: &str) -> Value {
 
 /// 组装一个「指向脚本 provider」的 runtime；`kind` 决定走哪条分支。
 fn fixture(tag: &str, kind: &'static str) -> (i64, axum::Router, String, String) {
+    fixture_with_models(tag, kind, 1)
+}
+
+/// `models` = 这个脚本 provider 暴露几个模型。
+///
+/// 一个模型时「装配里唯一可用」可以作为兜底（不猜）；**两个**时没有默认就该 503 ——
+/// 判据 2 要的是后者。
+fn fixture_with_models(
+    tag: &str,
+    kind: &'static str,
+    models: usize,
+) -> (i64, axum::Router, String, String) {
     let db = temp_db(tag);
     let session = Arc::new(Session::open(&db).unwrap());
     let provider = nous_ai::providers::faux::FauxProvider::new({
@@ -64,6 +76,24 @@ fn fixture(tag: &str, kind: &'static str) -> (i64, axum::Router, String, String)
         })]);
         script
     });
+    let extra: Vec<nous_ai::Model> = (1..models)
+        .map(|index| {
+            let mut model = provider.models()[0].clone();
+            model.id = format!("{}-{index}", model.id);
+            model
+        })
+        .collect();
+    let provider = if extra.is_empty() {
+        provider
+    } else {
+        let script = nous_ai::providers::faux::FauxScript::new();
+        script.append_responses(vec![nous_ai::providers::faux::FauxStep::factory(|_| {
+            nous_ai::providers::faux::faux_assistant_message(ANSWER, nous_ai::StopReason::Stop)
+        })]);
+        let mut all = vec![provider.models()[0].clone()];
+        all.extend(extra);
+        nous_ai::providers::faux::FauxProvider::with_models(script, all)
+    };
     let provider_id = provider.id().to_string();
     let model_id = provider.models()[0].id.clone();
     let tools: Arc<BTreeMap<String, Arc<dyn nous_ai::tool::AgentTool>>> = Arc::new(BTreeMap::new());
@@ -121,7 +151,7 @@ async fn real_kind_assembly_still_runs_a_turn() {
 #[tokio::test]
 async fn no_model_anywhere_is_503_not_202() {
     // 判据 2：请求体、会话、编目默认都没有模型 → 503（不是 202 让客户端白等）。
-    let (id, app, _provider, _model) = fixture("no-model", "real");
+    let (id, app, _provider, _model) = fixture_with_models("no-model", "real", 2);
     let (status, body) = post(
         &app,
         &format!("/v1/sessions/{id}/messages"),

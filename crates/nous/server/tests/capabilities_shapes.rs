@@ -225,10 +225,25 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// 一个**一定不存在**的私库根：形状快照不能取决于这台机器上有没有 `/opt/Nous-skills`。
+fn missing_repo() -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "nous-skills-missing-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ))
+}
+
 /// GET /v1/skills —— `types.rs::Skills` / `Skill`。
 #[tokio::test]
 async fn skills_response_pins_client_shape() {
-    let env = ContentEnv::cleared();
+    let mut env = ContentEnv::cleared();
+    // 显式指到一个不存在的目录：`present:false` 才是确定性形状（机器上可能有真私库）。
+    let missing = missing_repo();
+    env.set("NOUS_SKILLS", &missing);
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
     let (status, body) = get_json(&app, "/v1/skills").await;
     drop(env);
@@ -271,12 +286,15 @@ async fn skills_default_root_is_the_private_repo_path() {
 /// 判据 3：默认路径不存在时，root 照旧是路径，present=false，列表空。
 #[tokio::test]
 async fn missing_private_repo_says_where_it_looked() {
-    assert!(!std::path::Path::new("/opt/Nous-skills").exists(), "本测试要求默认路径不存在");
-    let env = ContentEnv::cleared();
+    // 用「一定不存在的覆盖值」代替「默认路径碰巧不存在」：判据要的是语义，不是这台机器。
+    let missing = missing_repo();
+    assert!(!missing.exists(), "测试自己的临时路径不该存在");
+    let mut env = ContentEnv::cleared();
+    env.set("NOUS_SKILLS", &missing);
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
     let (_, body) = get_json(&app, "/v1/skills").await;
     drop(env);
-    assert_eq!(body["root"], json!("/opt/Nous-skills"));
+    assert_eq!(body["root"], json!(missing.display().to_string()));
     assert_eq!(body["present"], json!(false));
     assert!(body["missing"].is_string(), "missing 要给一句人话");
     assert_eq!(body["skills"], json!([]));
