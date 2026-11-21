@@ -114,8 +114,16 @@ plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store
 这里只留语义，不带形状，也不假装有权威测试指针。
 
 - `requestId` 是幂等锚：重连重发同一句拿到同一次提交，不会答两遍。**桌面端一定要传**。
-- 不传 `waitMs` 时立即回 `202 { submissionId, status: "queued" }`，真正的流走 SSE。
-  桌面端就按这条来：发消息 → 拿 202 → 靠 SSE 收内容。别用 `waitMs` 等同步。
+- **一律起轮次**：受理之后引擎就开跑（`faux` 只是模型来源不同，不决定跑不跑）。
+- `model`（可选）：`{ provider, modelId }` 或 `"provider/modelId"`。解析顺序写死：
+  请求体 → 会话当前的 `model` → 编目的 `default`。**一条都落不到 → `503 { error }`**
+  （不是 202，也不是随便挑一个模型）。
+- `whenBusy`（可选）：`"queue"`（默认，照样排队）/ `"interrupt"`（先停当前这一轮再受理）。
+  其它值 → `400`，不许静默当 queue。
+- `waitMs`（可选）：缺省或 `0` → 立即 `202 { submissionId, status, entryId }`；
+  `> 0` → 最多等这么久，轮次完成就回 `200 { submissionId, status: "done", entryId, entry, terminal }`，
+  超时回 `202 { submissionId, status: "running", entryId }`。等待接在轮次完成信号上，不是 sleep 轮询。
+  桌面端默认不用它：发消息 → 202 → 靠 SSE 收内容。
 
 ### GET /v1/sessions/:id/events —— SSE
 

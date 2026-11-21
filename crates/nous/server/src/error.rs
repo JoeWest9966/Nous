@@ -23,6 +23,9 @@ pub enum ServerError {
     Conflict(String),
     /// HTTP 412：If-Match 乐观锁不匹配（#60）。409 是「现在不行」，412 是「你手里的版本过期了」。
     PreconditionFailed(String),
+    /// 503：能受理但跑不了（没有可用模型 / 没装轮次运行时）。**不许降级成 202** ——
+    /// 202 是「已经在跑」，没有东西在跑时回 202 就是骗客户端去等一个不会来的答案。
+    Unavailable(String),
     Internal(String),
 }
 
@@ -35,6 +38,7 @@ impl ServerError {
             ServerError::NotFound(_) => StatusCode::NOT_FOUND,
             ServerError::Conflict(_) => StatusCode::CONFLICT,
             ServerError::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
+            ServerError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ServerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -47,6 +51,7 @@ impl ServerError {
             | ServerError::NotFound(message)
             | ServerError::Conflict(message)
             | ServerError::PreconditionFailed(message)
+            | ServerError::Unavailable(message)
             | ServerError::Internal(message) => message,
         }
     }

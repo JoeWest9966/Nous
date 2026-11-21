@@ -217,3 +217,9 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
 **推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
 再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
+
+## 坑：`submit` 会先落一条 assistant **占位** entry
+
+症状：判据写「entries 里有 `pi.assistant` 就算轮次跑了」，结果永远绿 —— 轮次根本没跑。
+根因：`commands.submit` 先写一条占位 assistant entry（`assistant_entry_id`），真轮次再把它填实。
+解：断言要落在**正文**上（provider 的解释文本 / `stopReason`），不是 `kind`。`#70` 的测试就是这么修的。
