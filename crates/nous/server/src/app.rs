@@ -49,6 +49,8 @@ pub struct AppState {
     stats: Option<crate::stats::StatsRuntime>,
     /// #81：扩展运行时。只有一个入口可 spawn 扩展子进程，装配一次后由端点读观测。
     ext: Option<Arc<nous_ext::Runtime>>,
+    /// #84：扩展源码管理面（私库根 + 垃圾站）。运行时装配时一并注入。
+    ext_admin: Option<nous_ext::AdminStore>,
     /// #61：组合名册的盘面根 + 触发器名册根。未装配的测试路由回 409（不是空 200）。
     combos: Option<crate::combos::ComboStore>,
 }
@@ -83,6 +85,7 @@ impl AppState {
             presets: None,
             stats: None,
             ext: None,
+            ext_admin: None,
             combos: None,
         })
     }
@@ -104,6 +107,7 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
@@ -158,6 +162,7 @@ impl AppState {
             presets: None,
             stats: None,
             ext: None,
+            ext_admin: None,
             combos: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
@@ -207,6 +212,7 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
@@ -259,6 +265,7 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
@@ -298,6 +305,7 @@ impl AppState {
             origin,
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
@@ -373,6 +381,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
         })
     }
@@ -392,6 +401,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
         })
     }
@@ -413,6 +423,7 @@ impl AppState {
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(), variant_tables: tables,
             presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(), combos: self.combos.clone(),
+            ext_admin: self.ext_admin.clone(),
         })
     }
 
@@ -441,6 +452,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
         })
     }
@@ -475,6 +487,7 @@ impl AppState {
             stats: self.stats.clone(),
             combos: Some(crate::combos::ComboStore::new(root, triggers)),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
         })
     }
 
@@ -510,12 +523,38 @@ impl AppState {
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
             ext: Some(runtime),
+            ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
         })
     }
 
     pub fn ext(&self) -> Option<&Arc<nous_ext::Runtime>> {
         self.ext.as_ref()
+    }
+
+    /// #84：装配扩展管理面的盘面根（生产由 main 注入一次，测试用临时目录）。
+    pub fn with_ext_admin(
+        self: Arc<Self>,
+        root: impl Into<std::path::PathBuf>,
+        trash: impl Into<std::path::PathBuf>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(), commands: self.commands.clone(), hub: self.hub.clone(),
+            models: self.models.clone(), catalog_env: self.catalog_env.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
+            presets: self.presets.clone(), stats: self.stats.clone(),
+            ext: self.ext.clone(), ext_admin: Some(nous_ext::AdminStore::new(root, trash)),
+            combos: self.combos.clone(),
+        })
+    }
+
+    pub fn ext_admin(&self) -> Option<&nous_ext::AdminStore> {
+        self.ext_admin.as_ref()
     }
 
     /// 装上 stats 的只读句柄（生产装配只调一次；测试用它打真 Router）。
@@ -537,6 +576,7 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
@@ -569,6 +609,7 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),

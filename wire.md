@@ -558,6 +558,28 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 失败的那一项保留旧进程与旧状态，错误进扩展自己的诊断；不返回假成功。
 文件管理面（`{file,files,publish,create}`）由 #75 的 repo 层提供，不在这里重复实现。
 
+### 扩展管理面（#84）：create / duplicate / install / uninstall / 类别 / usage / pending
+
+人手动作都写在 `NOUS_EXTEND` 这份私库里，git 发布与 pending 一律复用 #75 的
+`/v1/repos/extend/*`，这里不重复实现。写端点都不自动 commit。
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `POST /v1/extensions/create` | body `{name, category?}`。生成 `<name>/` 下三个文件：`nous.json` / `README.md` / `main.rs`。201 回 `{name, dir, files}`。名字已存在 409，非法名字 400。 |
+| `POST /v1/extensions/duplicate` | body `{name, to, unbind?}`。整目录复制，只改 `nous.json` 的 `name`（`unbind=true` 时连 `file`/`entry` 一起改成 `to`）。其余文件字节不变。201 回 `{name, to, files}`。 |
+| `POST /v1/extensions/uninstall` | body `{name}`。源码移到 `<data>/extend-trash/<name>-<epochms>/`，并把名字写进私库根的 `deleted-extensions.json`（防 git pull 复活）。运行时同步卸载。核心扩展 `nous`/`skills`/`prompts` → 400。回 `{name, trashed, deleted}`。 |
+| `POST /v1/extensions/install` | body `{name}`。从垃圾站最新一份（没有就从 HEAD）装回 `<name>/`，经 #81 的装载入口起进程。回 `{name, state, from}`，`state` 是装载后的真状态。 |
+| `GET /v1/extensions/categories` | 回 `{categories:[...]}`，读私库根的 `categories.json`（在私库里，随发布进历史）。文件不存在回空表。 |
+| `POST /v1/extensions/categories` | body `{op:"add"\|"rename"\|"remove", name, to?}`。`rename` 同时改写所有挂它的扩展的 `nous.json.category`。回 `{categories, affected}`。 |
+| `POST /v1/extensions/category` | body `{name, category}`。给一个扩展挂/改单值类别（`null` 清除），写 `nous.json`。回 `{name, category}`。 |
+| pending 三件 | **没有** `/v1/extensions/pending` 端点：**直接复用** `/v1/repos/extend/pending` / `/pending/diff` / `/pending/commit`，不另开实现。 |
+
+- `deleted-extensions.json` 是删除名单而不是墓碑表：名字在里面，扫描就跳过这个扩展，
+  即使 `git pull` 把目录带回来也不会复活。名单随私库发布，重启后仍生效。
+- `categories.json` 是字符串数组；`nous.json` 的 `category` 是单值字符串（见 SDK 清单），
+  不是 skills 那种数组。词表与扩展字段共用同一套字符串，不另造 id。
+- 判据见 `crates/nous/server/tests/extension_admin_endpoints.rs`。
+
 ### GET /v1/search
 
 `GET /v1/search?q=&kind=&limit=`（#85）：服务端一次扫描完成，**客户端不许逐会话拉正文**。

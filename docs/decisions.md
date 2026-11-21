@@ -860,3 +860,9 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 第二份状态：给 `Runtime` 加配置态并让 `state` 成为它的投影，先改 wire.md 再改代码。
 若产物不放在源码根下（例如统一发行到 `/opt/nous-ext/`），只改 `assemble_extensions`
 的 `artifacts_dir` 推导，不动清单形状。
+
+## 2026-11-22 · 卸载是移动到垃圾站 + 删除名单，不是 git rm
+
+**决定**：`POST /v1/extensions/uninstall` 把源码 `rename` 到 `data/extend-trash/<name>-<ms>/`，并在私库根写 `deleted-extensions.json`；scan 认名单跳过，install 从垃圾站最新一份装回。核心 `nous`/`skills`/`prompts` 一律 400。
+**理由**：私库是 git pull 的；只删本地目录，下一次 pull 会把扩展复活。名单随私库发布，重启后仍生效；垃圾站在 data 下不随发布走，是 install 的回退来源。核心扩展是引擎自己装配的，删掉等于自残。
+**反悔点**：若将来引入真正的包管理器（带 lockfile 与远端 registry），删除名单应当退役，改由 registry 声明已删除；那时 `deleted-extensions.json` 与 scan 的跳过分支一起删。
