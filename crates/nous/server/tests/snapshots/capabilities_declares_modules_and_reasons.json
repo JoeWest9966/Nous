@@ -148,16 +148,16 @@
     {
       "name": "combos",
       "version": "0.1.3",
-      "kind": "声明式",
+      "kind": "编译期",
       "layer": "app",
       "required": false,
       "crate": "—",
-      "description": "旧面板概念，Rust 版尚未落地",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "combos 模块尚未落地"
-      }
+      "description": "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/combos/:section",
+        "PATCH /v1/combos/:section/:name"
+      ]
     },
     {
       "name": "triggers",

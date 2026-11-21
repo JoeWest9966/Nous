@@ -56,10 +56,24 @@ async fn fixture(tag: &str, template: Option<&str>) -> (i64, axum::Router, std::
     );
     let tools: Arc<BTreeMap<String, Arc<dyn nous_ai::tool::AgentTool>>> = Arc::new(BTreeMap::new());
     let runtime = nous_server::runtime::assemble_with_provider(provider, tools, session.clone());
+    // #70：messages 现在要求模型来源。给 #72 的夹具注入一个最小 catalog，
+    // 让这两条判据继续只验「template 注入 / 缺模板诊断」，不被模型解析挡掉。
+    use nous_device::{CatalogDiagnostics, ModelItem, ModelRef, ModelsResponse};
+    let catalog = ModelsResponse {
+        default: Some(ModelRef { provider: "faux".into(), model_id: "echo".into() }),
+        items: vec![ModelItem {
+            provider: "faux".into(), model_id: "echo".into(), name: "Faux Echo".into(),
+            thinking_levels: vec![], context_window: None, max_tokens: None,
+        }],
+        catalog: CatalogDiagnostics {
+            state: "inline", source: Some("test"),
+            path: std::path::PathBuf::from("test"), fetched_at: None, error: None,
+        },
+    };
     let state = AppState::durable_with_commands(
         nous_server::ImportedSource::open(&db).unwrap(),
         nous_server::DurableCommands::with_session(session, nous_durable::session::ObserverRegistry::new()),
-    ).with_runtime(Arc::new(runtime));
+    ).with_models(catalog).with_runtime(Arc::new(runtime));
     (id, router(state), root.join("X/PROMPT.md"))
 }
 

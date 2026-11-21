@@ -541,6 +541,13 @@ async fn capabilities_declares_modules_and_reasons() {
     assert!(ext_endpoints.iter().any(|e| e == "GET /v1/extensions"));
     assert!(ext_endpoints.iter().any(|e| e == "POST /v1/extensions/reload"));
     assert!(by_name["ext"].get("reason").is_none(), "enabled:true 不带 reason");
+    // #61：combos 也不再是 not_implemented，Desk「终极模板」页的 gate 才能打开。
+    assert_eq!(by_name["combos"]["enabled"], json!(true));
+    assert!(by_name["combos"].get("reason").is_none(), "enabled:true 不该带 reason");
+    let combos_endpoints = by_name["combos"]["endpoints"].as_array().unwrap();
+    assert_eq!(combos_endpoints.len(), 2);
+    assert!(combos_endpoints.iter().any(|e| e == "GET /v1/combos/:section"));
+    assert!(combos_endpoints.iter().any(|e| e == "PATCH /v1/combos/:section/:name"));
     snapshot("capabilities_declares_modules_and_reasons", &body);
 }
 

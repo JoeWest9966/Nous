@@ -42,6 +42,8 @@ pub struct TurnOutcome {
     pub assistant: AssistantMessage,
     pub terminal: TerminalReason,
     pub tool_calls: Vec<String>,
+    /// #70：终态 entry 的完整记录（waitMs>0 要原样回给调用方）。
+    pub entry: serde_json::Value,
 }
 
 /// 应用层的轮次驱动器。
@@ -242,6 +244,11 @@ impl TurnDriver for HarnessTurnDriver {
 
         let terminal = if assistant.stop_reason == StopReason::Aborted {
             return Err("aborted turn must be settled through cancel(), not a normal commit".into());
+        } else if assistant.stop_reason == StopReason::Error {
+            return Err(assistant
+                .error_message
+                .clone()
+                .unwrap_or_else(|| "provider returned an error".to_string()));
         } else {
             nous_durable::types::TerminalReason::Done
         };
@@ -297,7 +304,7 @@ impl TurnDriver for HarnessTurnDriver {
                 }).collect::<Vec<_>>(),
             });
         }
-        writes.push(nous_durable::StorageWrite::Entry(final_entry));
+        writes.push(nous_durable::StorageWrite::Entry(final_entry.clone()));
         if live_existed {
             writes.push(
                 generation_change(live, &live_snapshot, None).map_err(|error| error.to_string())?,
@@ -351,11 +358,22 @@ impl TurnDriver for HarnessTurnDriver {
             }
         }
 
+        // #70：assistant entry 落库后把 submission 从 queued 推到 done。
+        // 这是第二次提交（entry 与 submission 分表），但都在同一个 Session 写者里。
+        nous_durable::session::commands::settle_submission(
+            &self.session,
+            submission,
+            entry_id,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
         Ok(TurnOutcome {
             submission,
             assistant,
             terminal,
             tool_calls,
+            entry: final_entry,
         })
     }
 }

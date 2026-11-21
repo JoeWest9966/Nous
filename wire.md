@@ -116,6 +116,13 @@ plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store
 - `requestId` 是幂等锚：重连重发同一句拿到同一次提交，不会答两遍。**桌面端一定要传**。
 - 不传 `waitMs` 时立即回 `202 { submissionId, status: "queued" }`，真正的流走 SSE。
   桌面端就按这条来：发消息 → 拿 202 → 靠 SSE 收内容。别用 `waitMs` 等同步。
+- #70：任何 202 之后都会起一轮（真 provider 与 faux 一样），submission 必须离开 `queued`
+  并收敛到 `done` 或 `unanswered`。模型解析顺序写死：请求体 `model` → 会话当前的
+  `model` → 编目 `default` → 都没有就 **503 `{error:"没有可用模型"}`**，不许静默受理。
+- `waitMs`：`0`（或省略）回 202；`>0` 最多等这么久，轮次完成回 **200 且带答案 entry**，
+  超时回 202（答案仍走 SSE）。真实等待绑在轮次完成信号上，不是 sleep 轮询。
+- `whenBusy`：`queue`（默认，忙时排队）或 `interrupt`（先停当前轮次再受理）；
+  非法值 400。忙时判定以服务端会话状态为准，客户端不自己猜。
 
 ### GET /v1/sessions/:id/events —— SSE
 
@@ -446,6 +453,34 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ---
 
+### GET /v1/combos/:section · PATCH /v1/combos/:section/:name
+
+组合（终极模板里「触发器 + 会话模板」那一条）的开关面。段与 `presets` 同两个值：
+`Session-Template` / `Ultimate-Template`。名册由扫 `<root>/<section>/<name>/preset.json`
+得出（`<root>` 是 `NOUS_PRESETS`，与 `presets` 共用数据根），进程内不留常驻名单。
+
+`GET` 回 `{ combos: [...] }`，每条：
+
+```
+{ name, trigger, params, session, enabled, problem }
+```
+
+未知字段原样透传（`serde_json::Value` 收着，不 `deny_unknown_fields`）。
+
+- `enabled` 是**引擎算的**：`spec.enabled !== false`（缺省 true）**且**引用的 trigger /
+  preset 存在可用；算不出来则 `enabled=false` 且 `problem` 写人话。客户端只显示 + 写穿，
+  不自己拼规则。
+- `params` 是对象（字符串 / 数字 / 布尔）；`session` 指向 `Session-Template` 段的名字。
+- `problem` 是字符串：写坏 / 引用没了都在这里说清楚，页面照原文显示。
+
+`PATCH` 只改 `{ enabled: true|false }`，不碰别的字段、别的组合。必带 `If-Match`
+（版本不匹配 → 412）与 `requestId`（幂等锚：重放回第一次回执，`version` 不涨）。
+回包 `{ name, trigger, params, session, enabled, problem, version, requestId }`；
+写的是 `spec.enabled` 那一位，不是新增一份开关表。
+
+> 旧版 `POST /v1/combos/:name/enable` 与 `/disable` 已取消：`enabled` 是一个字段，不是
+> 两个动作，两条路径等于给同一个位开两个入口。只留一条 `PATCH {enabled}`。
+
 ### GET /v1/models
 
 返回默认模型 + 模型列表。
@@ -668,6 +703,9 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 | `archived.purged` 改名 / 换语义 | 撕过的显示成「原件在」，会让人重复撕 |
 | `live` 没了 / 恒为 true | 「已捞回」和「无墓碑」颠倒，该给「打捞」的不给 |
 | `restore` 收 `gen` 改成收别的 | 打捞 400，归档库页点了没反应 |
+| `combos[].enabled` 改成客户端自己算 | 开关状态跟引擎分叉，Desk 灰掉的页会误亮 |
+| `combos` 的 `problem` 不再是人话 / 恒空 | 引用失效的组合看着像能用，点了才报错 |
+| `PATCH /v1/combos` 丢了 `If-Match` 或 `requestId` | 并发覆盖 / 重放翻两次开关，version 与盘面分叉 |
 
 所以：启动时打 `GET /v1/device` 记引擎版本，About 里显示，出问题先对版本。
 

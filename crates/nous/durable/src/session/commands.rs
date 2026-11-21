@@ -226,11 +226,30 @@ pub async fn cancel(
         }
 
         let tasks = live_task_ids(storage, request.conversation)?;
-        if tasks.is_empty() {
-            return Err(CommandError::Conflict(
-                "session has no running task to abort".to_string(),
-            ));
-        }
+        // #70：真 provider 的轮次不建 task（它只在 durable 的 live 文档里留痕），
+        // 所以「没有 task」不等于「没有正在跑的轮次」——有未收敛的 input submission
+        // 就说明有一轮还活着，abort 必须停 token 并落终态，不能回 409 假装没事。
+        let live_submissions = if tasks.is_empty() {
+            let pending: Vec<Value> = storage
+                .submissions(request.conversation)?
+                .into_iter()
+                .filter(|record| {
+                    record.get("type").and_then(Value::as_str) == Some("input")
+                        && matches!(
+                            record.get("status").and_then(Value::as_str),
+                            Some("queued") | Some("placed")
+                        )
+                })
+                .collect();
+            if pending.is_empty() {
+                return Err(CommandError::Conflict(
+                    "session has no running task to abort".to_string(),
+                ));
+            }
+            pending
+        } else {
+            Vec::new()
+        };
         let entry_id = storage.mint_id()?;
         // 终态与正文同一条 entry、同一次提交。若 pi.live 里已有落库的 partial，
         // 把它搬进来（并清 generation）—— 重连看到的是「有结局的一段文本」。
@@ -251,6 +270,13 @@ pub async fn cancel(
             };
             mark_abort_requested(&mut task);
             writes.push(StorageWrite::Task(task));
+        }
+        // #70：submission 也必须跟着收敛，不能停在 queued。
+        for record in &live_submissions {
+            let mut record = record.clone();
+            record["status"] = Value::String("unanswered".to_string());
+            record["reason"] = Value::String(request.reason.as_str().to_string());
+            writes.push(StorageWrite::Submission(record));
         }
         (
             CancelOutcome {
@@ -1292,4 +1318,76 @@ fn now_ms() -> i64 {
 /// 应用层停 provider 流时用它；落库终态仍只走 [`cancel`]。
 pub fn cancel_token(session: &Session) -> tokio_util::sync::CancellationToken {
     session.cancellation.token().clone()
+}
+
+/// #70：把一条 `input/queued` 或 `input/placed` 的 submission 推到 `done`。
+///
+/// 只改 `status` 与 `answer` 两个键，其余字段（requestId / actor / trace）原样保留；
+/// 与 assistant entry 分开提交（entry 提交成功才算答上）。重复调用是幂等的：
+/// 已经是 `done` 就直接返回。
+pub async fn settle_submission(
+    session: &Session,
+    submission: Id,
+    answer: Id,
+) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let record = {
+        let storage = storage_mut(&mut guard)?;
+        storage
+            .submission(submission)?
+            .ok_or_else(|| CommandError::NotFound(format!("submission {submission} not found")))?
+    };
+    let mut record = record;
+    let status = record.get("status").and_then(Value::as_str).unwrap_or_default();
+    if status == "done" || status == "unanswered" {
+        return Ok(());
+    }
+    record["status"] = Value::String("done".to_string());
+    record["answer"] = json!(answer);
+    record["entry"] = json!(answer);
+    commit_and_publish(session, &mut guard, vec![StorageWrite::Submission(record)]).await?;
+    Ok(())
+}
+
+/// #70：轮次失败（没有可用模型 / provider 出错 / 用户取消）时把 submission 收敛到
+/// `unanswered`，让 `queued` 不留在库里。reason 是五值终态的语义串。
+pub async fn fail_submission(
+    session: &Session,
+    submission: Id,
+    reason: &str,
+    detail: Option<Value>,
+) -> Result<(), CommandError> {
+    let mut guard = session.storage.lock().await;
+    let record = {
+        let storage = storage_mut(&mut guard)?;
+        storage
+            .submission(submission)?
+            .ok_or_else(|| CommandError::NotFound(format!("submission {submission} not found")))?
+    };
+    let mut record = record;
+    let status = record.get("status").and_then(Value::as_str).unwrap_or_default();
+    if status == "done" || status == "unanswered" {
+        return Ok(());
+    }
+    record["status"] = Value::String("unanswered".to_string());
+    record["reason"] = Value::String(reason.to_string());
+    if let Some(detail) = detail {
+        record["detail"] = detail;
+    }
+    commit_and_publish(session, &mut guard, vec![StorageWrite::Submission(record)]).await?;
+    Ok(())
+}
+
+/// #70：这个会话有没有未收敛的 input submission（= 还有一轮在跑）。
+/// 只读，不另开写者；`whenBusy=interrupt` 用它判定是否需要先停当前轮次。
+pub async fn has_pending_submission(session: &Session, conversation: Id) -> Result<bool, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let storage = storage_mut(&mut guard)?;
+    Ok(storage.submissions(conversation)?.into_iter().any(|record| {
+        record.get("type").and_then(Value::as_str) == Some("input")
+            && matches!(
+                record.get("status").and_then(Value::as_str),
+                Some("queued") | Some("placed")
+            )
+    }))
 }

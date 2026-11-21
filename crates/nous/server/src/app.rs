@@ -45,6 +45,8 @@ pub struct AppState {
     stats: Option<crate::stats::StatsRuntime>,
     /// #81：扩展运行时。只有一个入口可 spawn 扩展子进程，装配一次后由端点读观测。
     ext: Option<Arc<nous_ext::Runtime>>,
+    /// #61：组合名册的盘面根 + 触发器名册根。未装配的测试路由回 409（不是空 200）。
+    combos: Option<crate::combos::ComboStore>,
 }
 
 impl AppState {
@@ -75,6 +77,7 @@ impl AppState {
             presets: None,
             stats: None,
             ext: None,
+            combos: None,
         })
     }
 
@@ -98,6 +101,7 @@ impl AppState {
             repos: self.repos.clone(),
             presets: Some(store),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -144,6 +148,7 @@ impl AppState {
             presets: None,
             stats: None,
             ext: None,
+            combos: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -195,6 +200,7 @@ impl AppState {
             repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -244,6 +250,7 @@ impl AppState {
             repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -280,6 +287,7 @@ impl AppState {
             repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -343,6 +351,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             ext: self.ext.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -363,6 +372,38 @@ impl AppState {
             repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            ext: self.ext.clone(),
+            combos: self.combos.clone(),
+        })
+    }
+
+    /// #61：装配组合名册的两个盘面根（生产由 main 注入一次）。
+    pub fn with_combos_root(self: Arc<Self>, root: impl Into<std::path::PathBuf>) -> Arc<Self> {
+        self.with_combos_roots(root, std::path::PathBuf::from("/opt/Nous-Trigger"))
+    }
+
+    /// 同上，但触发器根可显式指定（判据要能改名触发器的目录）。
+    pub fn with_combos_roots(
+        self: Arc<Self>,
+        root: impl Into<std::path::PathBuf>,
+        triggers: impl Into<std::path::PathBuf>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
+            presets: self.presets.clone(),
+            stats: self.stats.clone(),
+            combos: Some(crate::combos::ComboStore::new(root, triggers)),
             ext: self.ext.clone(),
         })
     }
@@ -397,6 +438,7 @@ impl AppState {
             stats: self.stats.clone(),
             repos: self.repos.clone(),
             ext: Some(runtime),
+            combos: self.combos.clone(),
         })
     }
 
@@ -426,7 +468,12 @@ impl AppState {
             repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: Some(runtime),
+            combos: self.combos.clone(),
         })
+    }
+
+    pub fn combos(&self) -> Option<&crate::combos::ComboStore> {
+        self.combos.as_ref()
     }
 
     /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
@@ -451,6 +498,7 @@ impl AppState {
             repos: self.repos.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 

@@ -47,7 +47,6 @@
 | `prompts` | nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
 | `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载）；`ext-host` 行是它后续的重划 |
 | `archive` | nous | — | app | 编译期 | `archive` / `purge` / `archive_list` / `restore` | 否 | 面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票 |
-| `combos` | nous | — | app | 声明式 | 组合名册 | 否 | 旧面板概念，Rust 版尚未落地 |
 | `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
 | `ext-sdk` | nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
 | `ext-host` | nous | (待建) `nous-ext-host` | app | 编译期 | 帧协议 + 进程监管 + 熔断 + 热加载 | 是 | slice 1（`#20`） |
@@ -60,6 +59,7 @@
 | `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：13 条资源化端点 + 修订表） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判 |
+| `combos` | nous | — | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读 |
 | `skills` | nous | — | app | 声明式 | skill 目录（提供） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；管理面见下一行 |
 | `presets` | nous | — | app | 声明式 | 模板 / 终极模板名册 | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判 |
 | `skills` | nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行 |

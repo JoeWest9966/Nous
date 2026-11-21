@@ -60,7 +60,9 @@ async fn fixture(tag: &str, skills: &[&str]) -> (axum::Router, std::path::PathBu
     let state = AppState::durable_with_commands(
         nous_server::ImportedSource::open(&db).unwrap(),
         nous_server::DurableCommands::with_session(session, nous_durable::session::ObserverRegistry::new()),
-    ).with_runtime(Arc::new(runtime));
+    // #70：messages 现在要求模型来源。给 #83 的旧夹具注入最小 faux catalog，
+    // 让这些判据继续只验「技能注入」，不被模型解析挡掉。
+    ).with_models(nous_server::runtime::faux_catalog()).with_runtime(Arc::new(runtime));
     let app = router(state);
     let (status, created) = call(&app, "POST", "/v1/sessions", Some(json!({"name": "", "skills": skills, "template": null}))).await;
     assert_eq!(status, StatusCode::CREATED, "{created}");

@@ -22,11 +22,18 @@ fn sample_ext_bin(name: &str) -> PathBuf {
     // 二进制路径只问 cargo：先显式编出样例（workspace 的 target-dir 可能在仓外），
     // 再从 `CARGO_BIN_EXE_nous-app` 的同目录取同名 sibling —— 和 judge.sh 的
     // `cargo build -p exts-*` 同一条生产路径，不猜 `<repo>/target/debug`。
+    // 两个进程级测试可能并行：用目录锁串行化 cargo build，别让它们互抢 target 锁
+    // 吃掉 start_server 的启动窗口。
+    let lock = std::env::temp_dir().join(format!("nous-t81-build-{name}.lock"));
+    while std::fs::create_dir(&lock).is_err() {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let built = Command::new("cargo")
         .args(["build", "--quiet", "-p", name, "--bin", name])
         .current_dir(workspace_root())
         .output()
         .expect("cargo build 样例扩展");
+    let _ = std::fs::remove_dir(&lock);
     assert!(
         built.status.success(),
         "样例扩展 {name} 编译失败：{}",
@@ -154,7 +161,7 @@ fn start_server(root: &Path, port: u16) -> Server {
         .spawn()
         .expect("spawn nous-app");
     let base = format!("http://127.0.0.1:{port}");
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
         if let Ok(value) = std::panic::catch_unwind(|| http(&format!("{base}/v1/device"), "GET")) {
             if value.get("version").is_some() {
@@ -164,7 +171,7 @@ fn start_server(root: &Path, port: u16) -> Server {
         std::thread::sleep(Duration::from_millis(100));
     }
     let _ = child.kill();
-    panic!("nous-app 15 秒内没起来：{base}");
+    panic!("nous-app 60 秒内没起来：{base}");
 }
 
 fn extension(body: &Value, name: &str) -> Value {
