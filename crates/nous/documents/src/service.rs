@@ -200,4 +200,8 @@ impl DocumentService {
     pub fn writer(&self) -> Option<Arc<dyn DocumentWriter>> {
         self.writer.clone()
     }
+
+    pub fn reader(&self) -> Arc<dyn DocumentReader> {
+        self.reader.clone()
+    }
 }
