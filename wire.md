@@ -262,9 +262,11 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 ### 会话归档：`archive` / `purge` / 归档库 / `restore`
 
 **这一版引擎起有**：内核 2026-11-10 起（ADR 0001）；客户端 v0.4.0 起接。
-归档 = 把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
-撕原件 = 真删（活库那行 + 那份复印件）。四个方法在 `crates/nous-engine` 里都有
-（`archive` / `purge` / `archive_list` / `restore`），UI 层一行 HTTP 都不碰。
+旧引擎把会话复印进 `data/archives/gen-YYYYMMDD.sqlite` + 写墓碑，**不是删**；
+撕原件 = 真删（活库那行 + 那份复印件）。本库同语义，但 gen 文件后缀是 `.db`
+（`archives/gen-YYYYMMDD.db`，见 `docs/decisions.md` 的 #67 决策）；四个方法在本库
+分别是 session 命令 `archive_conversation` / `purge_session` / `list_archives` /
+`restore_conversation`，UI 层一行 HTTP 都不碰。
 
 #### GET /v1/openapi.json
 
@@ -290,9 +292,10 @@ body 空。回 200 `{"gen":"20261113","ids":[699],"rows":17}`。
 
 - `gen` 是 8 位 `YYYYMMDD`，`rows` 是复印进去的条数。**客户端不读回包**（`Value` 收着），
   刷新靠重拉 `/v1/sessions` 和 `/v1/archive` —— 别拿回包自己改本地列表。
-- 归档后 `/v1/sessions` **默认不返回**该会话（那一行自己消失）；`?archived=1` 才给全量，
-  每条带 `archived` 墓碑。「归档后行消失」只有这一个来源，客户端不许自己滤。
-- 失败：忙 / 分支里还有活后代 → 409 `{error}`，正文会列出活分支。原样显示，别改写。
+- **本库口径（#67）**：归档后 `/v1/sessions` **仍返回该会话**，带 `archived` 墓碑
+  `{at, gen, purged:false}`；捞回后墓碑回到 `null`。旧引擎的「默认隐藏 + `?archived=1`」
+  在本库不实现 —— 墓碑是事实源，显示/隐藏由客户端按墓碑决定，别在这里悄悄滤行。
+- 失败：忙（会话有非终态任务）/ 有活后代 → 409 `{error}`，正文列出活分支。原样显示，别改写。
 
 #### POST /v1/sessions/:id/purge
 
@@ -301,14 +304,15 @@ body 空。回 200 `{"purged":[699],"gen":"20261113","rows":6}`。**真删**，�
 - **必须先归档**；会话闲置、分支里没有活后代也是引擎的前置条件。不满足返回 409 / 400，
   形状还是 `{error}`，照原文显示。
 
-本库当前只实现「真删 + 墓碑」这一步（归档另票）：一次事务删干净 conversations / entries /
-tasks / submissions / documents / document_revisions / record_ids 及该会话的 pins / unread
-条目，写墓碑 `{purged:true, at}` 到 `qrd3wh.sessions`。会话不存在 → 404，已有墓碑 → 409。
+本库口径（#64 + #67）：**必须先归档**（有 `archived[id]` 墓碑，否则 409）。一次事务删干净
+conversations / entries / tasks / submissions / documents / document_revisions 与该会话的
+pins / unread 条目，墓碑改写成 `archived[id]={at, gen, purged:true}`；`record_ids` 不删（id
+永不复用，见 `docs/decisions.md`）。会话不存在 → 404，已 purged → 409。
 
 #### GET /v1/archive
 
-回 `{"gens":[{"gen":"YYYYMMDD","items":[…]}]}`，一个 `gen` = 一份 `gen-YYYYMMDD.sqlite`，
-组标题就写 `11月10日 · gen-20261110.sqlite`。item 形状：
+回 `{"gens":[{"gen":"YYYYMMDD","items":[…]}]}`，一个 `gen` = 一份 `gen-YYYYMMDD.db`，
+组标题就写 `11月10日 · gen-20261110.db`。item 形状：
 
 ```
 { id, parent: {id, at} | null, entries: number, last: {id, kind, text} | null,
@@ -548,9 +552,48 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 
 ### GET /v1/extensions
 
-正常回清单形状（今天冻结为 `{ items: [] }`）。`?usage=1`（#85）回
-`{ <扩展名>: [<会话 id>, ...] }` —— 扫会话记录里的 `extensions` 字段；没人用回 `{}`，
-不因为一个可选参数把端点判死。
+正常回真装载清单（#81 解冻，不再是 `{ items: [] }` 的冻结占位）：
+
+```
+{ items: [{ name, version, kind, loaded, pid, state, error? }] }
+```
+
+- `name` / `version` / `kind` 来自扩展自己的 `nous.json`（`kind` 是 `category`，缺席给 `native`）。
+- `loaded` = 清单 + 握手都过；装载失败也留一项（`loaded:false` + `error`），不静默消失。
+- `pid` 是扩展子进程 pid（`u32`，没进程时 `null`）；`state` 是五态之一，进程死了但状态机
+  还没推进时如实给 `crashed`（不是 `normal`）。`error` 只在失败/崩溃时有值。
+- 源码根走 `NOUS_EXTEND`（默认 `/opt/Nous-extend`），产物在根下 `artifacts/`。
+  没装配运行时（测试路由）仍回 `{ items: [] }`，不伪造内容。
+- `?usage=1`（#85）回 `{ <扩展名>: [<会话 id>, ...] }` —— 扫会话记录里的 `extensions` 字段；
+  没人用回 `{}`，不因为一个可选参数把端点判死。
+
+### POST /v1/extensions/reload
+
+按盘上现状重装所有已装载扩展（真起新进程，pid 会变），回 `{ reloaded: [name, ...] }`。
+失败的那一项保留旧进程与旧状态，错误进扩展自己的诊断；不返回假成功。
+文件管理面（`{file,files,publish,create}`）由 #75 的 repo 层提供，不在这里重复实现。
+
+### 扩展管理面（#84）：create / duplicate / install / uninstall / 类别 / usage / pending
+
+人手动作都写在 `NOUS_EXTEND` 这份私库里，git 发布与 pending 一律复用 #75 的
+`/v1/repos/extend/*`，这里不重复实现。写端点都不自动 commit。
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `POST /v1/extensions/create` | body `{name, category?}`。生成 `<name>/` 下三个文件：`nous.json` / `README.md` / `main.rs`。201 回 `{name, dir, files}`。名字已存在 409，非法名字 400。 |
+| `POST /v1/extensions/duplicate` | body `{name, to, unbind?}`。整目录复制，只改 `nous.json` 的 `name`（`unbind=true` 时连 `file`/`entry` 一起改成 `to`）。其余文件字节不变。201 回 `{name, to, files}`。 |
+| `POST /v1/extensions/uninstall` | body `{name}`。源码移到 `<data>/extend-trash/<name>-<epochms>/`，并把名字写进私库根的 `deleted-extensions.json`（防 git pull 复活）。运行时同步卸载。核心扩展 `nous`/`skills`/`prompts` → 400。回 `{name, trashed, deleted}`。 |
+| `POST /v1/extensions/install` | body `{name}`。从垃圾站最新一份（没有就从 HEAD）装回 `<name>/`，经 #81 的装载入口起进程。回 `{name, state, from}`，`state` 是装载后的真状态。 |
+| `GET /v1/extensions/categories` | 回 `{categories:[...]}`，读私库根的 `categories.json`（在私库里，随发布进历史）。文件不存在回空表。 |
+| `POST /v1/extensions/categories` | body `{op:"add"\|"rename"\|"remove", name, to?}`。`rename` 同时改写所有挂它的扩展的 `nous.json.category`。回 `{categories, affected}`。 |
+| `POST /v1/extensions/category` | body `{name, category}`。给一个扩展挂/改单值类别（`null` 清除），写 `nous.json`。回 `{name, category}`。 |
+| pending 三件 | **没有** `/v1/extensions/pending` 端点：**直接复用** `/v1/repos/extend/pending` / `/pending/diff` / `/pending/commit`，不另开实现。 |
+
+- `deleted-extensions.json` 是删除名单而不是墓碑表：名字在里面，扫描就跳过这个扩展，
+  即使 `git pull` 把目录带回来也不会复活。名单随私库发布，重启后仍生效。
+- `categories.json` 是字符串数组；`nous.json` 的 `category` 是单值字符串（见 SDK 清单），
+  不是 skills 那种数组。词表与扩展字段共用同一套字符串，不另造 id。
+- 判据见 `crates/nous/server/tests/extension_admin_endpoints.rs`。
 
 ### GET /v1/search
 
@@ -581,6 +624,37 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 起轮时按**选中顺序**读 `<skill>/SKILL.md` 正文（去掉 frontmatter）拼进 `pi.system` 的
 `model[0].sections.prompts`。技能缺失 / frontmatter 坏只留 `skill: missing` / `skill: problem`
 诊断，轮次照跑；只读会话照样注入。判据见 `crates/nous/server/tests/skill_injection.rs`。
+
+### documents 的盘面树（kind `tree`，#87）
+
+沿用 `documents` 的 12 条端点族（不新增写通道）：`GET /v1/documents/tree` 列段，
+`GET`/`PUT /v1/documents/tree/{section}/board` 读写一棵盘面树，其余端点（create / rename /
+history / diff / validate / pending）语义不变。一个 `section` = 一个盘面；每一盘面在库里
+只有一份 `tree.board` 文档，整棵树是它的字段。建节点、挂到父下、移动/重排、回收、恢复、
+清除都是对这一份文档的一次写（一次 durable 提交），没有 `tree.json` / `map/<node>/*.md`
+文件形态，也没有 `.trash/`。
+
+字段形状以 `crates/nous/server/tests/documents_tree.rs::tree_lifecycle_has_http_and_db_rows_on_every_step`
+为准（本文件只索引端点与约束）。
+
+- 节点形状是 `{id, title, kind, parent, children, order, trashedAt}`，字段含义由测试指针固定；
+  这里只写约束：`kind` 只能是 `folder` 或 `doc`；`parent` 是父节点 id 或空；`children` 按
+  `order` 升序；`trashedAt` 是回收墓碑（毫秒或空），空 = 在世。
+- 移动/重排必须原子：一次 `move` 写同时改源父的 `children`、目标父的 `children`、节点自身的
+  `parent/order`；库里不存在「孩子搬走了但旧父还挂着」的中间态。
+- 环和自引用写不进库：目标等于自身或自己的后代时回 400 或 409，`{ error }` 点出命中节点；
+  旧树原样留在库里。找不到父/节点回 404。
+- 回收站是同一份树文档里的墓碑，不是另一张表也不是目录：`trashedAt` 非空即从正常树隐藏；
+  `restore` 回空；`purge` 是显式动作，清除节点及其后代，不可撤销。
+- 乐观锁：`PUT` 建/整份重置一盘面的树；后续的 `move` / `trash` / `restore` / `purge`
+  必须带从响应拿到的 `etag`，与当前文档 etag 不一致回 409 —— 单用户边界由修订版本
+  承担，不靠锁文件。
+- 迁移走 `POST /v1/documents/tree/{section}/{name}/import`：入参只是旧 `tree.json` 的值
+  和可选的 `mapDirs` / `goneDirs` 目录名清单（由外部只读读出归档 tar 后送入），服务不读盘、
+  不写盘，解析出的树经同一写端落 `nous.db`；目标库仍只有 `nous.db` / `nous-plugins.db`，
+  跨库顺序不变。字段形状以
+  `crates/nous/server/tests/documents_tree.rs::archived_tree_imports_into_the_same_document_store`
+  为准。
 
 ### GET /v1/prompts
 
@@ -628,6 +702,49 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - `GET /v1/repos/:repo/history?name=&limit=` → `{items:[{hash, at, actor, message}]}`，是私库 git 历史，
   与 `#60` 的引擎内 `revisions` 不同，不许混。
 - `POST /v1/repos/:repo/{archive,restore,purge}` `{name, requestId}` → `{commit, pushed}`。
+
+#### 变体（#76，只给 `skills` / `extend`）
+
+绑定表是数据文件 `data/skills.local.json` / `data/extensions.local.json`：
+`{v:1, variants:{family:{id:{root,branch}}}}`，本地状态，不进私库发布。变体是仓库自己的
+worktree + 分支：主干（main/master/HEAD）永远不许变。
+
+- `GET /v1/repos/:repo/variants` → `{v, variants}` 原样回绑定表（缺文件回 `{v:1, variants:{}}`）。
+- `POST /v1/repos/:repo/variants/bind` `{id, paths?}` → `{id, root, branch}`。分支存在就 checkout，
+  不存在就 `-b`；未提交的改动从工作区拷到 worktree 并在变体分支提交。
+- `POST /v1/repos/:repo/variants/unbind` `{id}` → `{id, removed:true}`；只解绑定，树还在。
+- `POST /v1/repos/:repo/variants/branch` `{id, branch}` → `{id, branch, root}`；
+  `main` / `master` / `HEAD` → 400。
+- `POST /v1/repos/:repo/variants/publish` `{id, message, requestId?}` → `{commit, pushed, branch}`；
+  只 commit/push 变体分支，主干不动。
+- `POST /v1/repos/:repo/variants/prune` `{id, force?}` → `{unmerged, remoteBranch, removed:true}`；
+  未合并且不带 `force:true` → 409，确认后删 worktree + 本地分支 + 远端分支。
+- `GET /v1/repos/:repo/variants/usage?id=` → `[会话 id...]`：扫会话 `skills` / `extensions` 字段
+  反查谁在用这个变体；没人用回空数组，不 404。
+
+#### 上游追踪（#77，`:repo` 恒为 `skills`）
+
+镜像是 `data/upstream/<name>/` 缓存（不进内核库），订阅清单 `sources.json` 在技能私库里，
+`{v, sources:[{name,url,branch?,prefix?,version?}]}`，整份替换后走 `/commit` 才进历史。
+`version` 只由 `pin` / `sync` 与首拉基线写，其余动作一律不改。
+
+- `GET/POST /v1/repos/:repo/sources` → `{v, sources:[...]}`；GET 只读盘上正文，POST 整份替换（写盘不提交）。
+- `GET /v1/repos/:repo/upstream` → `{sources:[{...,mirror,mirrorHead,pinned,newer,drift,bytes,entries}], errors}`。
+  `pinned` 是认的 commit；`newer` = 远端 HEAD ≠ `pinned`（上次 check 的缓存）；
+  `drift` = 镜像 HEAD ≠ `pinned`，或镜像工作区有手改（认的版本与看到的不是一版）。
+  没有 check 过就 `newer:false`，打开面板不联网。
+- `POST /v1/repos/:repo/upstream/{refresh,pin,check,sync}`：
+  `refresh` 只拉不改 `pinned`；`pin {name,commit?,requestId}` 是日常唯一写 `version` 的入口；
+  `check {name?}` 只 `ls-remote` 问 refs，写 `.git/nous-check.json` 缓存，不下载对象；
+  `sync {name}` = refresh + pin 到远端 HEAD。首拉自动记基线是唯一一次非 pin 写入。
+- `GET /v1/repos/:repo/upstream/tree?name=&path=` → `{items:[{path,sha,mode,size}]}`（只读上游 tree）。
+- `GET /v1/repos/:repo/upstream/file?name=&path=` → `{path,text}`（只读 upstream blob）。
+- `GET /v1/repos/:repo/upstream/files?name=&path=` → `{files:[{path,state,size}]}`；
+  `state ∈ same|diff|missing`，按 git blob sha 比本地正文。
+- `POST /v1/repos/:repo/upstream/{copy,adopt}` `{name,path,to?,requestId}`：
+  抄一条上游技能（整目录 + 附件）；`adopt` 在 `nous.json` 写 `upstream` foot 标记
+  `<source>/<path>@<sha>`，`copy` 只写 `copiedFrom` 便条、不写 foot。目标已存在 → 409，
+  源不存在 → 400；写盘不提交，发布走 `/commit`。
 
 - `:repo` 不在四值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
   且 `{field, problem}`，不 commit 不 push。推送失败不改盘上文件。

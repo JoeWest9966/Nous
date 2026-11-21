@@ -18,6 +18,7 @@
 
 pub mod app;
 pub mod auth;
+pub mod ext_admin;
 pub mod coalesce;
 pub mod commands;
 pub mod combos;
@@ -35,6 +36,7 @@ pub mod runtime;
 pub mod source;
 pub mod stats;
 pub mod triggers;
+pub mod upstream;
 
 pub use app::AppState;
 pub use coalesce::{Framing, FRAME_INTERVAL};

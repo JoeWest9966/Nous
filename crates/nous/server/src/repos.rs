@@ -56,8 +56,46 @@ pub struct HistoryDiffQuery {
     pub path: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct VariantIdBody {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VariantBindBody {
+    pub id: String,
+    #[serde(default)]
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VariantBranchBody {
+    pub id: String,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VariantPublishBody {
+    pub id: String,
+    pub message: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VariantPruneBody {
+    pub id: String,
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VariantUsageQuery {
+    pub id: String,
+}
+
 /// 把私库错误映射成 wire 的 `{error}`；409 额外带磁盘当前正文（票面要求）。
-fn repo_error(error: RepoError) -> ServerError {
+pub(crate) fn repo_error(error: RepoError) -> ServerError {
     match error {
         RepoError::BadRequest(m) | RepoError::InvalidPath(m) => ServerError::BadRequest(m),
         RepoError::Validation { field, problem } => ServerError::Validation { field, problem },
@@ -77,7 +115,7 @@ fn repo_error(error: RepoError) -> ServerError {
     }
 }
 
-fn select(state: &AppState, kind: &str) -> std::result::Result<Arc<Repo>, ServerError> {
+pub(crate) fn select(state: &AppState, kind: &str) -> std::result::Result<Arc<Repo>, ServerError> {
     if !REPO_KINDS.contains(&kind) {
         return Err(ServerError::BadRequest(format!("未知私库：{kind}")));
     }
@@ -101,6 +139,117 @@ pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         .route("/v1/repos/{repo}/archive", axum::routing::post(archive))
         .route("/v1/repos/{repo}/restore", axum::routing::post(restore))
         .route("/v1/repos/{repo}/purge", axum::routing::post(purge))
+        // #76：变体（只给 skills / extend；其余四值回 400）。
+        .route("/v1/repos/{repo}/variants", axum::routing::get(variants))
+        .route("/v1/repos/{repo}/variants/bind", axum::routing::post(variant_bind))
+        .route("/v1/repos/{repo}/variants/unbind", axum::routing::post(variant_unbind))
+        .route("/v1/repos/{repo}/variants/branch", axum::routing::post(variant_branch))
+        .route("/v1/repos/{repo}/variants/publish", axum::routing::post(variant_publish))
+        .route("/v1/repos/{repo}/variants/prune", axum::routing::post(variant_prune))
+        .route("/v1/repos/{repo}/variants/usage", axum::routing::get(variant_usage))
+}
+
+/// 变体只给技能 / 扩展；其余私库（presets / prompts）回 400。
+fn variant_kind(kind: &str) -> std::result::Result<(&'static str, nous_repo::VariantFamily), ServerError> {
+    match kind {
+        "skills" => Ok(("skills", nous_repo::VariantFamily::Skill)),
+        "extend" => Ok(("extend", nous_repo::VariantFamily::Extension)),
+        other if REPO_KINDS.contains(&other) => Err(ServerError::BadRequest(format!("私库 {other} 没有变体"))),
+        other => Err(ServerError::BadRequest(format!("未知私库：{other}"))),
+    }
+}
+
+fn table_path(state: &AppState, kind: &str) -> std::result::Result<std::path::PathBuf, ServerError> {
+    state.variant_table(kind).ok_or_else(|| ServerError::Conflict("变体绑定表未装配".into()))
+}
+
+async fn variants(
+    State(state): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let (kind, _) = variant_kind(&kind)?;
+    let repo = select(&state, kind)?;
+    json_result(repo.variants(&table_path(&state, kind)?))
+}
+
+async fn variant_bind(
+    State(state): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+    Json(body): Json<VariantBindBody>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let (kind, family) = variant_kind(&kind)?;
+    let repo = select(&state, kind)?;
+    let paths: Vec<&str> = body.paths.iter().map(String::as_str).collect();
+    json_result(repo.bind(family, &table_path(&state, kind)?, nous_repo::BindVariant {
+        id: &body.id, paths: &paths,
+    }))
+}
+
+async fn variant_unbind(
+    State(state): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+    Json(body): Json<VariantIdBody>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let (kind, family) = variant_kind(&kind)?;
+    let repo = select(&state, kind)?;
+    let result = repo.unbind(family, &table_path(&state, kind)?, &body.id).map_err(repo_error)?;
+    let _ = result;
+    Ok(Json(json!({ "id": body.id, "removed": true })))
+}
+
+async fn variant_branch(
+    State(state): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+    Json(body): Json<VariantBranchBody>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let (kind, family) = variant_kind(&kind)?;
+    let repo = select(&state, kind)?;
+    let table = table_path(&state, kind)?;
+    let branch = repo.switch_branch(family, &table, &body.id, &body.branch).map_err(repo_error)?;
+    let root = repo.variants(&table).ok()
+        .and_then(|v| v["variants"][family_key(family)][&body.id]["root"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    Ok(Json(json!({ "id": body.id, "branch": branch, "root": root })))
+}
+
+fn family_key(family: nous_repo::VariantFamily) -> &'static str {
+    match family { nous_repo::VariantFamily::Skill => "skill", nous_repo::VariantFamily::Extension => "extension" }
+}
+
+async fn variant_publish(
+    State(state): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+    Json(body): Json<VariantPublishBody>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let (kind, family) = variant_kind(&kind)?;
+    let repo = select(&state, kind)?;
+    json_result(repo.publish(family, &table_path(&state, kind)?, &body.id, &body.message, body.request_id.as_deref()))
+}
+
+async fn variant_prune(
+    State(state): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+    Json(body): Json<VariantPruneBody>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let (kind, family) = variant_kind(&kind)?;
+    let repo = select(&state, kind)?;
+    let result = repo.prune(family, &table_path(&state, kind)?, &body.id,
+        nous_repo::PruneVariant { force: body.force }).map_err(repo_error)?;
+    Ok(Json(json!({ "unmerged": result.unmerged, "remoteBranch": result.remote_branch, "removed": true })))
+}
+
+async fn variant_usage(
+    State(state): State<Arc<AppState>>,
+    AxumPath(kind): AxumPath<String>,
+    Query(q): Query<VariantUsageQuery>,
+) -> std::result::Result<Json<Value>, ServerError> {
+    let (kind, _) = variant_kind(&kind)?;
+    let _ = select(&state, kind)?;
+    let _ = table_path(&state, kind)?;
+    let field = if kind == "skills" { "skills" } else { "extensions" };
+    let usage = state.source().usage(field)?;
+    Ok(Json(usage.get(&q.id).cloned().unwrap_or(Value::Null).as_array()
+        .map(|ids| json!(ids)).unwrap_or(json!([]))))
 }
 
 async fn status(State(state): State<Arc<AppState>>, AxumPath(kind): AxumPath<String>) -> std::result::Result<Json<Value>, ServerError> {
@@ -179,4 +328,15 @@ pub fn from_path(kind: &str, root: &Path) -> std::collections::BTreeMap<String, 
     let mut map = std::collections::BTreeMap::new();
     if let Ok(repo) = Repo::open(root) { map.insert(kind.to_string(), Arc::new(repo)); }
     map
+}
+
+/// #76：生产装配的变体绑定表路径。位于各私库根的 `data/` 下，沿用 env 的四条路径解析。
+pub fn variant_tables_from_env() -> std::collections::BTreeMap<String, std::path::PathBuf> {
+    [
+        ("skills", nous_env::SKILLS.resolve().join("data/skills.local.json")),
+        ("extend", nous_env::EXTEND.resolve().join("data/extensions.local.json")),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect()
 }

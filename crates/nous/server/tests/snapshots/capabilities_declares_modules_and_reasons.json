@@ -54,7 +54,7 @@
       "layer": "platform",
       "required": true,
       "crate": "`nous-repo`",
-      "description": "四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history；唯一的 git 进程调用面",
+      "description": "唯一的 git 进程调用面；四条私库路径解析沿用 `env`",
       "enabled": true,
       "endpoints": [
         "GET /v1/repos/:repo/status",
@@ -66,7 +66,26 @@
         "POST /v1/repos/:repo/commit",
         "POST /v1/repos/:repo/archive",
         "POST /v1/repos/:repo/restore",
-        "POST /v1/repos/:repo/purge"
+        "POST /v1/repos/:repo/purge",
+        "GET /v1/repos/:repo/variants",
+        "POST /v1/repos/:repo/variants/bind",
+        "POST /v1/repos/:repo/variants/unbind",
+        "POST /v1/repos/:repo/variants/branch",
+        "POST /v1/repos/:repo/variants/publish",
+        "POST /v1/repos/:repo/variants/prune",
+        "GET /v1/repos/:repo/variants/usage",
+        "GET /v1/repos/:repo/sources",
+        "POST /v1/repos/:repo/sources",
+        "GET /v1/repos/:repo/upstream",
+        "POST /v1/repos/:repo/upstream/refresh",
+        "POST /v1/repos/:repo/upstream/pin",
+        "POST /v1/repos/:repo/upstream/check",
+        "POST /v1/repos/:repo/upstream/sync",
+        "GET /v1/repos/:repo/upstream/tree",
+        "GET /v1/repos/:repo/upstream/file",
+        "GET /v1/repos/:repo/upstream/files",
+        "POST /v1/repos/:repo/upstream/copy",
+        "POST /v1/repos/:repo/upstream/adopt"
       ]
     },
     {
@@ -90,7 +109,12 @@
         "GET /v1/documents/{kind}/{section}/{name}/history",
         "GET /v1/documents/{kind}/{section}/{name}/history/diff",
         "GET /v1/documents/{kind}/{section}/{name}/pending",
-        "GET /v1/documents/{kind}/{section}/{name}/pending/diff"
+        "GET /v1/documents/{kind}/{section}/{name}/pending/diff",
+        "POST /v1/documents/tree/{section}/{name}/move",
+        "POST /v1/documents/tree/{section}/{name}/trash",
+        "POST /v1/documents/tree/{section}/{name}/restore",
+        "POST /v1/documents/tree/{section}/{name}/purge",
+        "POST /v1/documents/tree/{section}/{name}/import"
       ]
     },
     {
@@ -139,11 +163,12 @@
       "required": false,
       "crate": "—",
       "description": "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票",
-      "enabled": false,
-      "reason": {
-        "code": "not_implemented",
-        "message": "archive 模块尚未落地"
-      }
+      "enabled": true,
+      "endpoints": [
+        "POST /v1/sessions/:id/archive",
+        "GET /v1/archive",
+        "POST /v1/archive/{id}/restore"
+      ]
     },
     {
       "name": "combos",
@@ -230,12 +255,19 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-ext`",
-      "description": "已落地（#17–#37）；`ext-host` 行是它后续的重划",
-      "enabled": false,
-      "reason": {
-        "code": "frozen",
-        "message": "扩展运行时已冻结，这里只返回空清单"
-      }
+      "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/extensions",
+        "POST /v1/extensions/reload",
+        "POST /v1/extensions/create",
+        "POST /v1/extensions/duplicate",
+        "POST /v1/extensions/install",
+        "POST /v1/extensions/uninstall",
+        "GET /v1/extensions/categories",
+        "POST /v1/extensions/categories",
+        "POST /v1/extensions/category"
+      ]
     }
   ],
   "runtime": {

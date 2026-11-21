@@ -213,10 +213,27 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 `E0063 missing fields ... in initializer`，跟业务行为无关。
 **根因**：多个测试用结构体字面量构造环境快照（这是好事：不依赖全局 env），
 但 Rust 没有「字面量自动补默认值」这回事。
-**解**：每个字面量显式写 `remote_base: None, remote_token: None, cache_path: None`，
+**解**：每个字面量显式写 `remote_base: None, remote_token: None, cache_path: None`,
 让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
 **推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
 再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
+
+## 2026-11-21 · 冻结的解法不是空数组，是把运行时的脸露出来
+
+**症状**：`GET /v1/extensions` 恒 `{items:[]}`，`capabilities.ext` 写着 frozen，
+可 `ext/src/spawn.rs` 里 `Command::new` 早在、六个样例扩展也都在仓里 —— 客户端显示「没有扩展」。
+**根因**：声明关着、代码开着，观测面没有读运行时的事实，两张真相分叉。
+**解**：清单改回 enabled；`items` 直接由 Runtime 的清单/进程/状态机投影，失败项也留一行带 error；
+reload 走同一个实例的唯一入口。别在 server 里再存一张注册表。
+
+## 2026-11-21 · 命中行里出现字符串不等于打中了执行路径
+
+**症状**：`if false && libc::prctl(libc::PR_SET_PDEATHSIG, …)` 让父死收割彻底失效，
+只查 `source.contains("PR_SET_PDEATHSIG")` 的静态判据照样绿——哨兵在空转。
+**根因**：字符串命中不区分注释、短路和被包在 `cfg!` 里的死分支；进程级测试又被
+管道 EOF / `Runtime::drop` 两级兜底盖住，单独关掉第三级也看不出差别。
+**解**：静态判据只读含 prctl 的那一行，要求它恰是 `if libc::prctl(...) != 0` 的真执行条件；
+负向哨兵用 `false &&` 短路验红。进程级判据保留，作为另两级的正交覆盖。
 
 ## 2026-11-20 · 判据 3 的 `../../` 打不中 realpath 检查
 
@@ -228,6 +245,14 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 关掉 realpath 检查时它在 `仓外不许出现文件` 断言红；同一招也用于 `git add .` 哨兵
 （加 `git diff --cached --name-only` 空断言，`commit -- pathspec` 挡不住误 staged 的搭车文件）。
 
+## 2026-11-21 · 加路由忘了更新能力快照，全 workspace 红在看起来无关的测试
+
+**症状**：#77 加了 12 条 `/v1/repos/skills/sources|upstream/*` 路由后，单个 crate 测试全绿，
+全 workspace 挂在 `capabilities_shapes::capabilities_declares_modules_and_reasons` 的 JSON 快照漂移。
+**根因**：`meta.rs` 的 `ROUTES` 和 `tests/snapshots/capabilities_declares_modules_and_reasons.json`
+是同一份路由表的两个副本；单 crate 迭代只跑 `nous-repo` / `nous-server` 的目标测试，不比快照。
+**解**：任何加路由的票，收尾前必须跑一次全 workspace；快照漂移时从失败输出里取 `actual`
+写回去（不要手敲），再复跑确认绿。
 ## 2026-11-20 · abort 测试里两个 Session 指向同一份库，取消信号却到不了 provider
 
 **症状**：`POST /abort` 落了 `user_cancel` 终态、submission 也变 `unanswered`，但慢 provider
@@ -245,3 +270,35 @@ driver 共用同一个 `Session`，再断言 provider 见过取消信号；负�
 先 set 再 wait 时，唤醒已经过去，wait 侧看不到它。
 **解**：`wait_until` 里先读时钟，再注册 `notified()`，注册后再读一次并 `tokio::pin!` 住 future
 才 await；这样先跳时段也只做一次布尔检查，不依赖通知时序。
+## 2026-11-22 · 运行时的五态名和 wire 的清单状态不是一套词
+
+**症状**：install 回包写 `state:"normal"`（Runtime 内部状态），判据和 `/v1/extensions` 的 `items[]` 都要 `running`。
+**根因**：`ExtState::Normal` 是状态机内部名，`/v1/extensions` 的投影在 `runtime::items` 里翻成 wire 的 `running`，install 是新路径，容易漏翻。
+**解**：所有出 HTTP 的状态都过一次 `normal → running` 映射；实现写在端点翻译层，不在 CLI/AdminStore 里。
+**推广**：新写端点回 state 时先看 `runtime::items()` 的同一段映射，别直出 `ExtState::as_str()`。
+## 2026-11-21 · 归档墓碑有两套形状，四态判据会悄悄退化
+
+**症状**：#64 的 purge 把墓碑写成 `purged:{id,at}`，#67 的 `/v1/sessions` / `/v1/archive`
+读的是 `archived[id]={at,gen,purged}`；两边各自测试都绿，合起来时「已销毁」永远显示成
+「无墓碑」，purge 也过不了「先归档」的前置。
+**根因**：两张票分头落，墓碑是同一份 `qrd3wh.sessions` 文档的两个键，没有单一真相。
+**解**：#67 收口为唯一形状 `archived[id]={at,gen,purged}`；archive 写 `purged:false`、
+purge 只翻这一位且必须先有墓碑、restore 抹掉整个键；wire.md 同步改口径。
+
+## 2026-11-20 · 变体分支没有 upstream，裸 `git push` 报假失败
+
+**症状**：`publish` 在变体 worktree 里 commit 成功，但 `pushed=false`，远端根本没有变体分支。
+**根因**：`git push --porcelain` 在 `push.default=simple` 下要求当前分支有 upstream；
+worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
+**解**：显式 `git push origin HEAD:refs/heads/<branch>`；没有远端才回 `Unknown`（wire null），
+推送失败仍回 `false`，绝不冒成功。哨兵：把 refspec 改成 `main` → 判据 2 的远端主干不变断言红。
+
+## 2026-11-21 · #88 的清单快照判据是「备注」列当「API 面」用
+
+**症状**：合并 #88 后给 `docs/plugins.md` 的 `repo` 行加说明文字，
+`capabilities_manifest::manifest_metadata_matches_the_plugins_table_cell_by_cell` 变红，
+报「六列一行都对不上」，但六列肉眼看全对。
+**根因**：该测试把 `cells[8]`（备注）与 `ManifestEntry.description` 比，而行里 `cells[6]`（API 面）
+才是描述列；集成前两格恰好相同，所以空转地绿。
+**解**：改清单表格时若撞上这条红，先逐列打印 `cells[i]` 与 entry 字段确认索引；
+保持 `cells[8]` 与 `MANIFEST.description` 逐字相同，#77 的上游追踪说明放 `cells[6]`。

@@ -7,6 +7,7 @@
 //! | `NOUS_LISTEN` | `127.0.0.1:4789` | 监听地址。端口给 0 时由内核选，实际地址打到 stdout |
 //! | `NOUS_DB` | `./nous.db` | 库路径（**本库自己写的 v1 库**） |
 //! | `NOUS_START_DIRS` | 进程 cwd | `GET /v1/fs/dirs` 的默认起点（冒号分隔，取第一条） |
+//! | `NOUS_EXTEND` | `/opt/Nous-extend` | 扩展源码根（#63）；产物在根下 `artifacts/` |
 //! | `NOUS_ADOPT_LEGACY` | 不设 | `1` = 把一份**上游 v2 副本**领养成本库可写库（见下） |
 //!
 //! ## 启动行是给脚本抓的
@@ -29,6 +30,7 @@ use std::process::ExitCode;
 use axum::Router;
 use nous_durable::storage::{adopt_legacy_copy, SqliteStore};
 use nous_durable::StorageError;
+use nous_env::EXTEND;
 use nous_server::{auth, refusal, router, AppState, DurableCommands, SessionObserver};
 use nous_server::refusal::{decide_refusal, EXIT_ERROR, EXIT_REFUSED};
 #[allow(unused_imports)]
@@ -54,6 +56,33 @@ fn plugins_db_path(db: &str) -> String {
             .to_string_lossy()
             .into_owned()
     })
+}
+
+/// #81: 扩展运行时装配。源码根走 #63 的 NOUS_EXTEND (一处解析),
+/// 产物根与源码根并列 (ext-probe 沙盒形状: exts/ 与 artifacts/ 同级).
+/// 源码根名不是 exts 时退化为根下 artifacts/ (兼容简单布局).
+fn assemble_extensions(state: Arc<AppState>) -> Arc<AppState> {
+    let root = EXTEND.resolve();
+    let artifacts = root
+        .parent()
+        .filter(|_| root.file_name().is_some_and(|name| name == "exts"))
+        .map(|parent| parent.join("artifacts"))
+        .unwrap_or_else(|| root.join("artifacts"));
+    let mut config = nous_ext::RuntimeConfig::new(root.clone(), artifacts);
+    config.handles.insert(
+        "skills".to_string(),
+        nous_ext::HandleValue::dir(nous_env::SKILLS.resolve()),
+    );
+    config.handles.insert(
+        "prompts".to_string(),
+        nous_ext::HandleValue::dir(nous_env::PROMPTS.resolve()),
+    );
+    let runtime = nous_ext::Runtime::new(config);
+    // 一个扩展坏了只记诊断, 主进程照常监听 (EX-66).
+    runtime.start_all();
+    // #84：管理面的垃圾站住在进程 workdir/data 下，不在私库里（不随发布走）。
+    let trash = std::path::PathBuf::from("data").join("extend-trash");
+    state.with_ext(runtime).with_ext_admin(root.clone(), trash)
 }
 
 /// epoch 毫秒（fire 与观测的时钟入口；store 层零时钟，时间都由这里传入）。
@@ -310,6 +339,8 @@ async fn run() -> Result<(), RunError> {
         std::path::PathBuf::from(&db),
         commands.session().clone(),
     );
+    // #81: 扩展运行时在监听之前装配完; 后续观测/重载都打同一个实例.
+    let state = assemble_extensions(state);
 
     // #57：Nous 自己的库（`nous-plugins.db`：triggers/fires，往后是审计与别的插件数据），
     // 点火走的是上面那条同一个 Session。路径推导和 `--triggers` 共用一个函数

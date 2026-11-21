@@ -833,3 +833,52 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **反悔点**：若将来要在进程里常驻节拍，必须由新的装配票显式调用 `arm_next_tick` 并注入
 生产 `Clock`，不得在 dispatcher 里藏 `tokio::time::interval`；若发现客户端需要整份替换
 触发器定义，另开带 `If-Match` 的 PUT，不把 PATCH 悄悄改成覆盖语义。
+## 2026-11-20 · #67 世代归档：独立 SQLite 文件（选项甲），不进 active 库
+
+**决定**：`archive` 把会话闭包复印到活库同目录下的
+`archives/gen-YYYYMMDD.db`（可配置目录由装配注入；测试走临时目录），源文件用 durable
+自己的迁移链初始化并以**只读**方式取行；活库只写一个墓碑 `archived[id] =
+{at,gen,purged:false}`。`restore{gen}` 从那份文件读回并写活库，抹掉墓碑；`purge`
+必须先有墓碑。归档库**不进** durable 的迁移链、备份/`--check` 只认 `NOUS_DB` 那一份。
+同日重复归档按会话 id 先清后写，不产生重复行。
+
+**为什么**：归档的价值是「原件被撕了也能回来」；选项乙把复印件放在活库里，会跟活库
+一起滚进备份、一起丢，正好丢掉这份价值。甲把 durable 的建表语句与读法复用为生成物
+（`migrations()` 是唯一真相），代价只是一次按会话的闭包复制；不新增第二写者。
+
+**反悔点**：若出现「归档库与活库 schema 分叉导致恢复失败」的实证（具体：同一份 generation
+在新版 durable 的迁移链下打不开或丢行），或备份策略改成整目录快照且要求单文件可恢复，
+就翻到选项乙（活库 `archived` 表 + generation 列，一次 v3 迁移）；翻的时候改本段、
+`docs/storage.md`、`wire.md` 的 generation 语义与三条端点的存储实现，保留墓碑对外形状不变。
+## 2026-11-20 · 变体绑定表落在私库根的 `data/` 下，不另设全局目录
+
+**决定**：`skills` 用 `<NOUS_SKILLS>/data/skills.local.json`，`extend` 用
+`<NOUS_EXTEND>/data/extensions.local.json`；表里只有 `{v:1, variants:{family:{id:{root,branch}}}}`。
+**为什么**：TS 时代就是这个形状与位置；绑定是本地状态，不应进私库发布，也不该散在 `~` 里。
+**反悔点**：若要把本地状态集中进 `/var/lib/nous/`，改 `repos::variant_tables_from_env` 一处即可；
+现有表的 `root` 是绝对路径，搬家后要么迁移路径、要么重绑。
+
+## 2026-11-21 · ext 运行时解冻：观测走运行时自己，不另造注册中心（#81）
+
+**决定**：`GET /v1/extensions` 的清单直接投影 `nous_ext::Runtime` 持有的事实（清单、
+进程 pid、状态机、错误），失败项也留一行；`POST /v1/extensions/reload` 打同一个实例的
+`reload_all()`（扩展级 `reload` 的唯一入口）。server 只装配一次并读观测，不维护第二张表。
+装配入口在 `main.rs`：源码根走 `nous_env::EXTEND`（#63 的四根之一），产物固定在根下
+`artifacts/`，句柄只给 skills / prompts 的值（扩展拿到的是代读后的内容，不是路径）。
+
+**为什么**：清单里的 `ext` 曾经 `frozen` 而代码完整在 —— 能力被藏起来不是没做。
+再起一张 "extensions registry" 会跟运行时的状态机分叉（谁先看到崩溃、谁记 pid），
+而且客户端会拿两张真相吵起来。`ext-probe` 的沙盒已经是同一形状（exts/ + artifacts/ +
+句柄目录），照它装配比新发明一个数据目录安全。父进程退出兜底用 `PR_SET_PDEATHSIG`
+（pre_exec 里装，另看一眼 ppid 关掉 spawn 竞态），与 kill/Drop 构成三级。
+
+**反悔点**：若 #84 的管理面需要「装了但没启用 / 被禁用」这种配置态，不要往这个清单里塞
+第二份状态：给 `Runtime` 加配置态并让 `state` 成为它的投影，先改 wire.md 再改代码。
+若产物不放在源码根下（例如统一发行到 `/opt/nous-ext/`），只改 `assemble_extensions`
+的 `artifacts_dir` 推导，不动清单形状。
+
+## 2026-11-22 · 卸载是移动到垃圾站 + 删除名单，不是 git rm
+
+**决定**：`POST /v1/extensions/uninstall` 把源码 `rename` 到 `data/extend-trash/<name>-<ms>/`，并在私库根写 `deleted-extensions.json`；scan 认名单跳过，install 从垃圾站最新一份装回。核心 `nous`/`skills`/`prompts` 一律 400。
+**理由**：私库是 git pull 的；只删本地目录，下一次 pull 会把扩展复活。名单随私库发布，重启后仍生效；垃圾站在 data 下不随发布走，是 install 的回退来源。核心扩展是引擎自己装配的，删掉等于自残。
+**反悔点**：若将来引入真正的包管理器（带 lockfile 与远端 registry），删除名单应当退役，改由 registry 声明已删除；那时 `deleted-extensions.json` 与 scan 的跳过分支一起删。

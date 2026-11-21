@@ -79,10 +79,20 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/pin", post(pin))
         .route("/v1/sessions/{id}/config", post(config))
         .route("/v1/sessions/{id}/purge", post(purge))
+        .route("/v1/sessions/{id}/archive", post(archive))
+        .route("/v1/archive", get(archive_index))
+        .route("/v1/archive/{id}/restore", post(restore))
         .route("/v1/selection", get(selection).post(write_selection))
         .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
+        .route("/v1/extensions/reload", post(reload_extensions))
+        .route("/v1/extensions/create", post(crate::ext_admin::create))
+        .route("/v1/extensions/duplicate", post(crate::ext_admin::duplicate))
+        .route("/v1/extensions/install", post(crate::ext_admin::install))
+        .route("/v1/extensions/uninstall", post(crate::ext_admin::uninstall))
+        .route("/v1/extensions/categories", get(crate::ext_admin::get_categories).post(crate::ext_admin::post_categories))
+        .route("/v1/extensions/category", post(crate::ext_admin::category))
         .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
@@ -97,6 +107,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
     // #75：repo 路由先挂在带 state 的 Router 上（与 #48 documents 同一份 state）。
     let router = crate::repos::attach(router);
+    // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。
+    let router = crate::upstream::attach(router);
     let router = crate::documents::attach(state.clone(), router);
     // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
     match state.presets() {
@@ -375,6 +387,73 @@ async fn purge(
     })))
 }
 
+/// `POST /v1/sessions/{id}/archive`：闭包复印到 gen 文件 + 墓碑（#67）。
+async fn archive(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let result = state.commands().archive(id, now_ms(), None).await?;
+    Ok(Json(json!({
+        "gen": result.gen,
+        "ids": result.ids,
+        "rows": result.rows,
+    })))
+}
+
+/// `GET /v1/archive`：世代列表 + 墓碑 + live（#67）。
+async fn archive_index(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let gens = state.commands().archives().await?;
+    let items = gens.into_iter().map(|generation| {
+        let items = generation.items.into_iter().map(|item| {
+            let parent = item.parent.map(|(id, at)| json!({ "id": id, "at": at }))
+                .unwrap_or(Value::Null);
+            let last = item.last.map(|(id, kind, text)| json!({ "id": id, "kind": kind, "text": text }))
+                .unwrap_or(Value::Null);
+            let archived = item.archived.map(|tomb| json!({
+                "at": tomb.at, "gen": tomb.gen, "purged": tomb.purged,
+            })).unwrap_or(Value::Null);
+            json!({
+                "id": item.id,
+                "parent": parent,
+                "entries": item.entries,
+                "last": last,
+                "name": item.name,
+                "archived": archived,
+                "live": item.live,
+            })
+        }).collect::<Vec<_>>();
+        json!({ "gen": generation.gen, "items": items })
+    }).collect::<Vec<_>>();
+    Ok(Json(json!({ "gens": items })))
+}
+
+#[derive(Debug, Deserialize)]
+struct RestoreBody {
+    gen: String,
+}
+
+/// `POST /v1/archive/{id}/restore`：从 gen 文件打捞回活库并抹墓碑（#67）。
+async fn restore(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>> {
+    let id = parse_session(&id)?;
+    let body: RestoreBody = if body.is_empty() {
+        return Err(ServerError::BadRequest("gen is required".to_string()));
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|error| ServerError::BadRequest(format!("restore body: {error}")))?
+    };
+    let result = state.commands().restore(id, body.gen, now_ms()).await?;
+    Ok(Json(json!({
+        "restored": result.restored,
+        "gen": result.gen,
+        "rows": result.rows,
+    })))
+}
+
 /// `GET /v1/prompts`：A 阶段空表。
 async fn prompts() -> Json<Value> {
     Json(crate::meta::prompts())
@@ -388,7 +467,18 @@ async fn extensions(
     if query.requested() {
         return Ok(Json(state.source().usage("extensions")?));
     }
-    Ok(Json(crate::meta::extensions()))
+    let items = state.ext().map(|runtime| runtime.items());
+    Ok(Json(crate::meta::extensions(items.as_deref())))
+}
+
+/// `POST /v1/extensions/reload`：按盘上现状重装所有已装载扩展（#81）。
+/// 返回 `{ reloaded: [name...] }`；失败的保留旧进程，错误进扩展自己的诊断。
+async fn reload_extensions(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let runtime = state.ext().ok_or_else(|| {
+        crate::error::ServerError::Conflict("extensions runtime not configured".to_string())
+    })?;
+    let reloaded = runtime.reload_all();
+    Ok(Json(json!({ "reloaded": reloaded })))
 }
 
 /// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。
