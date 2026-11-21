@@ -95,6 +95,18 @@ fn archived_tree_json_maps_groups_docs_and_gone_dirs_to_tombstones() {
     tree.check_integrity().unwrap();
 }
 
+/// 迁移是只读投影：归档 tar 在仓外，服务不读盘也不写盘（wire.md #87）。
+/// 用源码断言守住这条约束 —— 一旦有人往 tree_migrate 里塞 std::fs，就会红。
+#[test]
+fn migration_module_never_touches_the_filesystem() {
+    let source = std::fs::read_to_string("src/kinds/tree_migrate.rs").unwrap();
+    let forbidden = ["std::fs", "tokio::fs", "std::process", "File::open", "fs::write"];
+    for needle in forbidden {
+        assert!(!source.contains(needle),
+            "tree_migrate.rs 不许碰文件系统（命中 {needle}）—— 归档只读由调用方送入");
+    }
+}
+
 #[test]
 fn malformed_cycle_in_stored_tree_is_rejected_not_looped_forever() {
     let mut tree = BoardTree::default();

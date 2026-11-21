@@ -173,6 +173,72 @@ async fn cycles_and_stale_etags_are_rejected_and_leave_the_db_untouched() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 引用完整性（#86 反悔点）：PUT 一棵有悬空 parent 的树必须被拒，库里不留半棵树。
+#[tokio::test]
+async fn put_tree_with_dangling_parent_is_rejected_and_not_stored() {
+    let path = temp_db("dangling");
+    let app = setup(&path).await;
+    let board = "desk";
+    let bad = json!({"etag": null, "nodes": [
+        folder("root", None),
+        folder("orphan", Some("missing-parent"))]});
+    let (status, body) = call(&app, Method::PUT,
+        &format!("/v1/documents/tree/{board}/board"), Some(bad)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND,
+        "悬空 parent 按 wire.md 回 404：{status} {body}");
+    assert!(body["error"].as_str().unwrap_or_default().contains("missing-parent"),
+        "error 要点出悬空节点：{body}");
+    let storage = nous_durable::Storage::open_read_only(&path).unwrap();
+    let page = storage.scan_documents(&nous_durable::DocumentQuery {
+        scope: json!({"kind": "session"}), kind: Some("tree.desk".into()),
+        at: nous_durable::DocumentPoint::Current,
+    }, 100, None).unwrap().unwrap();
+    assert!(page.items.is_empty(), "4xx 之后库里不能留下半棵树：{:?}", page.items);
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 并发边界（判据 3）：两个请求都拿着同一个**合法** etag 写同一盘树，
+/// 只能一个落库，另一个 409。只测字面量 stale-etag 不够 —— 那绕过了真正的窗口。
+#[tokio::test]
+async fn concurrent_moves_with_the_same_etag_leave_one_winner() {
+    let path = temp_db("concurrent-etag");
+    let app = setup(&path).await;
+    let board = "desk";
+    let seed = json!({"etag": null, "nodes": [
+        folder("root", None), folder("a", Some("root")), folder("b", Some("root"))]});
+    let (status, created) = call(&app, Method::PUT,
+        &format!("/v1/documents/tree/{board}/board"), Some(seed)).await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let etag = created["etag"].as_str().unwrap().to_string();
+    let uri = format!("/v1/documents/tree/{board}/board/move");
+
+    // 两个请求都带同一个 etag（都是合法的，不是手编的 stale 值）。
+    let (first, second) = tokio::join!(
+        call(&app, Method::POST, &uri,
+            Some(json!({"etag": etag, "id": "a", "parent": "root", "order": 1}))),
+        call(&app, Method::POST, &uri,
+            Some(json!({"etag": etag, "id": "b", "parent": "root", "order": 2}))),
+    );
+    let statuses = [first.0, second.0];
+    assert_eq!(statuses.iter().filter(|s| **s == StatusCode::OK).count(), 1,
+        "并发同 etag 只能一个成功：{:?} / {:?}", first, second);
+    assert_eq!(statuses.iter().filter(|s| **s == StatusCode::CONFLICT).count(), 1,
+        "并发同 etag 另一个必须 409：{:?} / {:?}", first, second);
+    let loser = if first.0 == StatusCode::CONFLICT { &first } else { &second };
+    assert!(loser.1["error"].as_str().unwrap_or_default().to_lowercase().contains("version"),
+        "409 要说清是版本冲突：{loser:?}");
+    println!("命中行: 并发 move 状态分别 {} / {}，失败方 error={}",
+        first.0, second.0, loser.1["error"]);
+
+    // 库里只应有赢家那一次移动（两个 order 不会同时变）。
+    let db = stored_tree(&path, board);
+    let a_order = db["nodes"]["a"]["order"].as_i64().unwrap();
+    let b_order = db["nodes"]["b"]["order"].as_i64().unwrap();
+    assert!(!(a_order == 1 && b_order == 2),
+        "两次并发写都落库了：a.order={a_order} b.order={b_order}");
+    let _ = std::fs::remove_file(&path);
+}
+
 #[tokio::test]
 async fn archived_tree_imports_into_the_same_document_store() {
     let path = temp_db("import");
