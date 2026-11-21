@@ -16,14 +16,14 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use crate::error::{Result, StoreError};
 
 /// 这一版支持的 schema 版本 = 迁移链最后一条。
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 /// 我们的版本表。**不许**改成 `durable_schema`（那是别人家的）。
 pub const VERSION_TABLE: &str = "schema_version";
 
 /// 迁移链。版本号必须从 1 连续排到 [`CURRENT_VERSION`]，跳号就是改坏了。
 pub fn steps() -> Vec<(u32, &'static str)> {
-    vec![(1, V1), (2, V2)]
+    vec![(1, V1), (2, V2), (3, V3)]
 }
 
 /// 第一版的两张表 + 三条库级规矩。
@@ -85,6 +85,7 @@ CREATE TABLE presets_revisions (
 ) STRICT;
 CREATE INDEX presets_revisions_by_request ON presets_revisions (section, name, request_id);
 
+
 -- 写端点的幂等回执：同一 requestId 重放必须吐回第一次的回执（version 不涨）。
 CREATE TABLE preset_write_receipts (
   section    TEXT NOT NULL,
@@ -93,6 +94,18 @@ CREATE TABLE preset_write_receipts (
   request_id TEXT NOT NULL,
   body       TEXT NOT NULL,
   PRIMARY KEY (section, name, kind, request_id)
+) STRICT;
+"#;
+
+/// #73：`triggers.version` + PATCH 幂等回执。ALTER 只加列，不动已有数据：
+/// 老触发器从 version=1 起（本来就没被 PATCH 过）。
+const V3: &str = r#"
+ALTER TABLE triggers ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+CREATE TABLE trigger_patch_receipts (
+  code       TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  body       TEXT NOT NULL,
+  PRIMARY KEY (code, request_id)
 ) STRICT;
 "#;
 

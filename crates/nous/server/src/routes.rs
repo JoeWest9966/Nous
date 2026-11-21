@@ -87,6 +87,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/triggers", get(triggers))
         .route("/v1/triggers/{code}/fire", post(fire_trigger))
         .route("/v1/triggers/{code}/fires", get(trigger_fires))
+        .route("/v1/triggers/{code}", axum::routing::patch(crate::triggers::patch_trigger))
         .route("/v1/capabilities", get(capabilities))
         .route("/v1/stats/usage", get(crate::stats::usage))
         .route("/v1/stats/tasks", get(crate::stats::tasks))
@@ -463,10 +464,12 @@ async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
         return Ok(Json(report));
     };
     let store = runtime.store.lock().await;
+    // #73：心跳从 durable 的 tick 记录读回；装配没读到时再退回内存快照（老测试/CLI 语义）。
+    let last_tick = runtime.load_last_tick_at().or_else(|| runtime.last_tick_at());
     let report = crate::triggers::observation_report(
         &store,
         &runtime.definitions(),
-        runtime.last_tick_at(),
+        last_tick,
         now_ms(),
     )?;
     Ok(Json(report))

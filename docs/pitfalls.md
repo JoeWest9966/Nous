@@ -236,3 +236,12 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 自己开一个 `Session`，driver 用另一个 `Session`，两者写同一份 sqlite 却各拿一个 token。
 **解**：测试按生产形状装配——`DurableCommands::with_session(session.clone(), registry)` 与
 driver 共用同一个 `Session`，再断言 provider 见过取消信号；负向哨兵去掉 `cancel()` 才会真红。
+
+## 2026-11-21 · ManualClock 的 wait_until 在 set_ms 之后会丢唤醒
+
+**症状**：测试先把假 Clock 跳到目标时刻，再调带 `wait_until` 的节拍函数，线程永久挂住；
+去掉等待才过，判据不再覆盖「等待由注入时钟完成」。
+**根因**：`Notify::notified()` 是先注册再检查的实现，单次 `notify_waiters()` 没有持久许可；
+先 set 再 wait 时，唤醒已经过去，wait 侧看不到它。
+**解**：`wait_until` 里先读时钟，再注册 `notified()`，注册后再读一次并 `tokio::pin!` 住 future
+才 await；这样先跳时段也只做一次布尔检查，不依赖通知时序。

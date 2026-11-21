@@ -1,0 +1,16 @@
+[package]
+name = "nous-dispatcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "#73：注入时钟 + durable sleeping 任务的调度节拍，纯判定 evaluate 与失败隔离"
+
+[dependencies]
+nous-durable = { workspace = true }
+nous-store = { workspace = true }
+nous-chord = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

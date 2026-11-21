@@ -1307,6 +1307,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-dispatcher"
+version = "0.1.3"
+dependencies = [
+ "async-trait",
+ "nous-chord",
+ "nous-durable",
+ "nous-store",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "nous-documents"
 version = "0.1.3"
 dependencies = [
@@ -1445,6 +1458,7 @@ dependencies = [
  "futures",
  "nous-ai",
  "nous-device",
+ "nous-dispatcher",
  "nous-documents",
  "nous-durable",
  "nous-env",

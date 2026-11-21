@@ -816,3 +816,20 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 
 **反悔点**：若另票引入 id 命名空间（每段 id 带会话前缀，重铸不撞旧引用），可改成连
 `record_ids` 一起删；那时必须同时改 `commit.rs` 的重复检查与本票的 purge 事务。
+
+## 2026-11-21 · #73 的 PATCH 用 version 乐观锁，dispatcher 不自己起异步循环
+
+**决定**：`PATCH /v1/triggers/{code}` 是稀疏覆盖（`schedule`/`params`/`enabled`），
+请求体带当前 `version`，每次成功改动原子 `version+1`；可选 `requestId` 只回第一次回执。
+调度侧只提供 `arm_next_tick(session, clock, …)`：把下一拍写成 durable 的 `sleeping` 任务行，
+等待交给注入的 `Clock`；生产进程何时拉起这条循环不在本票的常驻产物里。
+
+**为什么**：`code` 是触发器身份，改它相当于把历史账本改挂到另一个商品上；库里的物理
+触发器已经挡住，HTTP 不能留第二个入口。`version` 让 PATCH 和既有 `If-Match` PATCH 端点
+同一口径；`requestId` 让网络重放不产生第二次定义变更。durable 的 `tasks` 表只存不跑，
+把待办写成任务行而不是内存计时器，重启后才读得回「下一拍」；不自己写循环是 AGENTS.md
+的铁律，也避免 app 层出现第二个时间源。
+
+**反悔点**：若将来要在进程里常驻节拍，必须由新的装配票显式调用 `arm_next_tick` 并注入
+生产 `Clock`，不得在 dispatcher 里藏 `tokio::time::interval`；若发现客户端需要整份替换
+触发器定义，另开带 `If-Match` 的 PUT，不把 PATCH 悄悄改成覆盖语义。

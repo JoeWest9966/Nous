@@ -198,6 +198,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/fire", module: "triggers" },
     // #58：观测读口 —— 每个触发器自己的账，可读（时间倒序）。
     RegisteredRoute { method: "GET", path: "/v1/triggers/{code}/fires", module: "triggers" },
+    // #73：PATCH /v1/triggers/{code} —— 改 schedule/params/enabled，code 不可变。
+    RegisteredRoute { method: "PATCH", path: "/v1/triggers/{code}", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
     // #62：stats 三条只读观测端点。
     RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
@@ -351,7 +353,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "archive", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读" },
-    ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57 落地；调度循环不在本票" },
+    ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57/#58 落地；调度节拍归 `dispatcher`" },
     ManifestEntry { name: "stats", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-stats`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
     ManifestEntry { name: "device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "今天 `prompts/index.js`" },
