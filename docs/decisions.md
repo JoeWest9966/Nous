@@ -822,7 +822,9 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **决定**：`PATCH /v1/triggers/{code}` 是稀疏覆盖（`schedule`/`params`/`enabled`），
 请求体带当前 `version`，每次成功改动原子 `version+1`；可选 `requestId` 只回第一次回执。
 调度侧只提供 `arm_next_tick(session, clock, …)`：把下一拍写成 durable 的 `sleeping` 任务行，
-等待交给注入的 `Clock`；生产进程何时拉起这条循环不在本票的常驻产物里。
+等待交给注入的 `Clock`。**现状（review #12 校正）**：`main.rs` 的 app 装配处已
+`tokio::spawn(nous_dispatcher::run_dispatcher(...))` 常驻这条节拍（详见 2026-11-23 条）；
+「生产进程何时拉起这条循环不在本票常驻产物里」是 #73 当时的范围说明，不是今天的进程形态。
 
 **为什么**：`code` 是触发器身份，改它相当于把历史账本改挂到另一个商品上；库里的物理
 触发器已经挡住，HTTP 不能留第二个入口。`version` 让 PATCH 和既有 `If-Match` PATCH 端点
@@ -920,3 +922,31 @@ spawn 集合 2→5，补 #78 的 env-ssh mux/remote 与 #75 的 repo git（都�
 **反悔点**：若 #73 dispatcher / #84 ext-admin 之后又引入新的 `nous-*` 直接依赖，
 只在 `docs/dependency-graph.toml` 与 `docs/harness.md` §7 两处同步补边并重跑全量判据；
 不许把新边塞进「排除项」或关掉 §4e。
+
+## 2026-11-24 · review #10：幂等回执与变更同提交，失败整体回滚
+
+**决定**：`PATCH /v1/triggers/{code}` 的定义变更与 `trigger_patch_receipts` 行放进
+`Store::patch_with_receipt` 的同一 `BEGIN IMMEDIATE`；`PATCH /v1/combos` 先把回执原子写就位、
+再替换 `preset.json`，任一步失败就删回执，盘面回到变更前的字节。**重放回第一次回执；
+第一次整体失败时盘/库未变，重放按全新请求执行**（已写进 `wire.md`）。
+
+**为什么**：旧顺序先改盘/库再记回执，回执写失败会让重放拿到 412（改已发生却说没发生），
+或反过来留下假回执。把两件事绑成一个提交边界，不需要第二写者，也不改两库分离的顺序。
+
+**反悔点**：若将来某个端点的变更跨库（durable + store）无法同提交，必须先在 `wire.md`
+定义「变更与回执分离」的补偿协议（重放语义、412/200 的判定），再动代码；
+不许用「先写回执」的盘上技巧掩盖跨库不一致。
+
+## 2026-11-24 · review #4：归档的 generation 与墓碑不是同一次 durable 提交，用补偿代替
+
+**决定**：generation 是独立 SQLite 文件、墓碑是活库里的文档写，两者**不在同一个 durable 事务**；
+用严格的顺序 + 补偿达到"失败不留半截状态"：先写 `gen-*.db.tmp` → rename 就位 → 写墓碑提交；
+generation 写失败就删临时文件（库未动），墓碑提交失败就删已就位的 generation。
+restore 方向相反：闭包先写回活库，抹墓碑失败时**保留 generation**（那是恢复的唯一来源）。
+
+**为什么**：durable 的提交框架（`StorageWrite` / seq / 文档 revision / 观察者广播）只认活库事务，
+把跨文件的 generation 字节搬进同一事务要给 `Storage::commit` 开专门的 hook，等于为归档造第二套提交边界。
+判据按"外部可见状态"判定：注入失败后库里 generations / archived 标记都不变、盘上无孤儿文件。
+
+**反悔点**：若将来 generation 改成活库里的表（不再是独立文件），必须把复制闭包与墓碑并进
+`Storage::commit` 的同一批写，并删掉这里的补偿分支；那时 `docs/storage.md` 的表数与迁移链一起改。

@@ -48,6 +48,8 @@ def read_plugins_rows():
         report(f'{PLUGINS_DOC} 缺失（清单是判据的一部分）', True)
         return {}
     rows = {}
+    duplicates = []
+    all_modules = set()
     with open(PLUGINS_DOC, encoding='utf-8') as handle:
         for line in handle:
             if not line.lstrip().startswith('|'):
@@ -59,6 +61,9 @@ def read_plugins_rows():
             # 只认反引号包起来的模块名；表头 `module` 与分隔行 `---` 都不是模块。
             if not (cells[0].strip().startswith('`') and re.fullmatch(r'[a-z][a-z0-9-]*', module)):
                 continue
+            if module in all_modules:
+                duplicates.append(module)
+            all_modules.add(module)
             crate_raw = cells[2]
             if crate_raw.startswith('(待建)') or cell_text(crate_raw) in ('—', '-', ''):
                 continue  # 待建 / 外挂行不是 crate 目录
@@ -67,6 +72,8 @@ def read_plugins_rows():
                 'crate': cell_text(crate_raw),
                 'layer': cell_text(cells[3]),
             }
+    if duplicates:
+        report(f'{PLUGINS_DOC} 模块名重复（后者不再静默覆盖前者）：{sorted(set(duplicates))}', True)
     if not rows:
         report(f'{PLUGINS_DOC} 不可解析（一行 crate 都没读出来）', True)
     return rows

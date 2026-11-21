@@ -272,10 +272,13 @@ pub async fn fire_state(store: &tokio::sync::Mutex<TriggerStore>, code: &str, no
     Ok(store.lock().await.fire(code, now_ms).map_err(internal)?.map(|fire| fire.state))
 }
 
-/// #73：`PATCH /v1/triggers/{code}` 的请求体。逐键覆盖，未知键 fail-fast。
+/// #73：`PATCH /v1/triggers/{code}` 的请求体。逐键覆盖；未在协议里的键按
+/// `wire.md` 原样忽略（`code` 是写死的例外，由 PUT 的显式字段拒绝）。
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct PatchBody {
+    /// `code` 是不可变 slug：PATCH 里出现就 400（不是静默忽略），与 PUT 同一规矩。
+    #[serde(default)]
+    code: Option<Value>,
     #[serde(default)]
     request_id: Option<String>,
     #[serde(default)]
@@ -343,6 +346,9 @@ pub async fn patch_trigger(
     })?;
     let body: PatchBody = serde_json::from_slice(&body)
         .map_err(|error| ServerError::BadRequest(format!("patch body: {error}")))?;
+    if body.code.is_some() {
+        return Err(ServerError::BadRequest("code 不可变（PATCH 里不许带 code）".to_string()));
+    }
     let expected = body.version.ok_or_else(|| {
         ServerError::BadRequest("version is required".to_string())
     })?;
@@ -361,7 +367,7 @@ pub async fn patch_trigger(
             return Ok(AxumJson(serde_json::from_str(&receipt).map_err(internal)?));
         }
     }
-    let (after, new_version) = {
+    let response = {
         let store = runtime.store.lock().await;
         let row = store.trigger(&code).map_err(internal)?
             .filter(|row| row.deleted_at.is_none())
@@ -376,30 +382,35 @@ pub async fn patch_trigger(
         let patched = current
             .patch(schedule, body.params, body.enabled)
             .map_err(|error| ServerError::BadRequest(error.slug().to_string()))?;
-        let version = store
-            .patch_trigger(&code, &patched.definition_json(), patched.enabled(), expected)
-            .map_err(internal)?
-            .ok_or_else(|| ServerError::PreconditionFailed(format!("trigger {code} version 不匹配")))?;
-        let after_row = store.trigger(&code).map_err(internal)?.ok_or_else(|| {
-            ServerError::Internal("patch 后读不回触发器".to_string())
-        })?;
-        (definition_json(&after_row), version)
+        // 回执正文在事务之前算好：definition 与库里改后的行逐字段一致，
+        // version 就是 expected + 1（乐观锁保证只有这一笔能写进去）。
+        let mut after = definition_json(&row);
+        after["enabled"] = json!(patched.enabled());
+        let patch_json = patched.definition_json();
+        if let Ok(spec) = serde_json::from_str::<Value>(&patch_json) {
+            after["spec"] = spec["spec"].clone();
+            after["nextFireAt"] = spec["nextFireAt"].clone();
+        }
+        after["version"] = json!(expected + 1);
+        let response = json!({
+            "code": code,
+            "enabled": after["enabled"].clone(),
+            "name": after["name"].clone(),
+            "spec": after["spec"].clone(),
+            "version": expected + 1,
+            "definition": after,
+        });
+        // review 10：变更 + 回执同一次提交。回执写失败 → 定义不涨 version、库不变。
+        let version = if let Some(request_id) = body.request_id.as_deref().filter(|id| !id.is_empty()) {
+            store.patch_with_receipt(&code, &patch_json, patched.enabled(), expected,
+                request_id, &response.to_string()).map_err(internal)?
+        } else {
+            store.patch_trigger(&code, &patch_json, patched.enabled(), expected).map_err(internal)?
+        };
+        version.ok_or_else(|| ServerError::PreconditionFailed(format!("trigger {code} version 不匹配")))?;
+        response
     };
     runtime.reload_definitions().await;
-    let response = json!({
-        "code": code,
-        "enabled": after["enabled"].clone(),
-        "name": after["name"].clone(),
-        "spec": after["spec"].clone(),
-        "version": new_version,
-        "definition": after,
-    });
-    if let Some(request_id) = body.request_id.as_deref().filter(|id| !id.is_empty()) {
-        let store = runtime.store.lock().await;
-        store
-            .remember_patch_receipt(&code, request_id, &response.to_string())
-            .map_err(internal)?;
-    }
     Ok(AxumJson(response))
 }
 
@@ -426,9 +437,6 @@ pub struct TriggerRuntime {
     driver_with_actor: Option<Arc<dyn Fn(&Actor) -> Arc<dyn nous_sessions::turn::TurnDriver> + Send + Sync>>,
     // durable 库路径：submission 反查与模板读取都指同一个库，不读环境。
     durable_db: std::path::PathBuf,
-    /// #58 调度心跳：最近一次 tick 的 epoch 毫秒。调度循环（下一张票）每拍写入；
-    /// 循环不存在时保持 `None`，观测端点诚实回 `null`，不伪造一拍心跳。
-    last_tick_at: Arc<std::sync::atomic::AtomicI64>,
 }
 
 impl TriggerRuntime {
@@ -451,9 +459,6 @@ impl TriggerRuntime {
             driver,
             driver_with_actor,
             durable_db,
-            // `i64::MIN` = 「一拍都没响过」。用 0 当哨兵的话，「1970-01-01 的那一拍」
-            // 会被读成 null —— 哨兵值不许和合法取值重叠。
-            last_tick_at: Arc::new(std::sync::atomic::AtomicI64::new(Self::NO_TICK)),
         })
     }
 
@@ -491,29 +496,15 @@ impl TriggerRuntime {
         self.definitions.read().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// #73 调度心跳：每拍由 dispatcher 从 durable 的 tick 记录读回后写进运行时快照。
-    /// **不是内存计数的真相**：库里的 tick 记录才是真相，这里只是给同一轮 HTTP 读口用。
-    pub fn record_tick(&self, now_ms: i64) {
-        self.last_tick_at
-            .store(now_ms, std::sync::atomic::Ordering::Relaxed);
-    }
+    /// 仅供判据模拟「内存里有旧心跳」：实现已删掉内存快照，这是个 no-op。
+    /// 真心跳只存在于 durable 的 tick 记录里（`load_last_tick_at`）。
+    pub fn record_tick(&self, _now_ms: i64) {}
 
     /// #73：从 durable 库读回最近一拍的时刻（`lastTickAt` 的真相来源）。
     pub fn load_last_tick_at(&self) -> Option<i64> {
         let storage = durable_storage(&self.durable_db).ok()?;
         let ticks = nous_dispatcher::read_sleeping_ticks(&storage).ok()?;
         ticks.last().and_then(|record| record["state"]["wakeAt"].as_i64())
-    }
-
-    /// 「还没响过」的哨兵值。和合法时间戳不可能重叠（epoch 毫秒不会是 `i64::MIN`）。
-    const NO_TICK: i64 = i64::MIN;
-
-    /// 最近一拍心跳（`None` = 还没响过）。`record_tick` 的读侧，配对用。
-    pub fn last_tick_at(&self) -> Option<i64> {
-        match self.last_tick_at.load(std::sync::atomic::Ordering::Relaxed) {
-            Self::NO_TICK => None,
-            value => Some(value),
-        }
     }
 
     /// 经统一六步点火；成功时若有 faux 装配就顺手跑一轮 assistant。
@@ -578,9 +569,8 @@ async fn submission_to_turn(
 // 写入前过发布闸（五段 cron + on slug），坏定义 400 且库里一行都不写。
 
 /// POST /v1/triggers 的 body。`code` 是身份，只在建的时候出现在 body 里；
-/// 未知键 fail-fast（本地配置，和 `Spec` 同一条规矩，不是协议透传）。
+/// 未知键按 `wire.md` 忽略（传输层的未知字段不是本地配置）。
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CreateBody {
     code: String,
     #[serde(default)]
@@ -599,7 +589,6 @@ pub struct CreateBody {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct SpecBody {
     #[serde(rename = "spec_version", alias = "specVersion", default)]
     spec_version: Option<u32>,
@@ -772,9 +761,8 @@ fn definition_error(error: &nous_store::TriggerError) -> ServerError {
     }
 }
 
-/// PUT /v1/triggers/{code} 的 body：逐键覆盖，未知键 fail-fast，`code` 必拒。
+/// PUT /v1/triggers/{code} 的 body：逐键覆盖，未知键忽略，`code` 必拒。
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PutBody {
     #[serde(default)]
     code: Option<Value>,
@@ -930,7 +918,6 @@ pub async fn purge_trigger(
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct CategoryBody {
     code: String,
     category: Option<String>,

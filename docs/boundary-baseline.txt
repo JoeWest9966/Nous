@@ -156,6 +156,13 @@ crates/nous/wire/tests/event_json.rs:             block: json!({"type":"toolCall
 # 以下 15 行是 #72（会话 template 单值持久化）与 #83（选中 skills 的会话写面）
 # 落进 kernel 后 S8 的真实新增；`template` / `skill` 在此处是会话配置字段名 / 测试文件名，
 # 不是 discovery 语义。原样存取、不解释、不扩散到新模块，逐行附票号。
+#
+# #89 票面写「S8 基线新增 13 行」，此处实际收口 15 行（逐行统计：#72 ×13、#83 ×2）。
+# 13 → 15 的差是 #72/#83 的正当写面，不是放宽判据：#89 的 13 是票面预估数，
+# 逐行判定把 #72 的 commands/会话文档/测试三处读口共 13 行与 #83 的 2 行都认作正当写面，
+# 各行的票号与理由写在行尾 `# #72:` / `# #83:`，不按预估数反推删除任何一行。
+# 其中 #72 的 13 行 = commands.rs 2 + session/mod.rs 2 + storage/sessions.rs 4
+#   + tests/session_template.rs 5；#83 的 2 行 = commands.rs 1 + tests/session_skills.rs 1。
 crates/nous/durable/src/session/commands.rs: /// 和 template 一样放在 commands 面，不动 `Session` 的 A3 六方法表。  # #72：注释指明 template 读口的落点，不是 discovery
 crates/nous/durable/src/session/commands.rs: /// `skills` / `extensions` / `template` / `machine` / `cwd`；`skills` / `extensions`  # #83：会话配置字段原样列出（skills 按选中顺序写入 pi.agent）
 crates/nous/durable/src/session/commands.rs:         "template",  # #72：commands 面读 session 模板字段的键名

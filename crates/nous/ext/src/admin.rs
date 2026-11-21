@@ -49,16 +49,25 @@ pub struct DuplicateOptions {
 }
 
 /// 扩展源码根 + 垃圾站根。
+/// HEAD 回退回调。手写 Debug 只为让 `AdminStore` 继续保持 `#[derive(Debug)]`。
+#[derive(Clone)]
+pub struct HeadRestore(pub std::sync::Arc<dyn Fn(&std::path::Path, &str) -> std::result::Result<(), String> + Send + Sync>);
+impl std::fmt::Debug for HeadRestore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("HeadRestore(...)") }
+}
+
 #[derive(Debug, Clone)]
 pub struct AdminStore {
     pub root: PathBuf,
     /// `data/extend-trash/`，不在私库里（不随发布走）。
     pub trash: PathBuf,
+    /// #84 HEAD 回退：由 app 装配注入（唯一 git 调用面在 nous-repo），ext 自己不 spawn git。
+    pub head_restore: Option<HeadRestore>,
 }
 
 impl AdminStore {
     pub fn new(root: impl Into<PathBuf>, trash: impl Into<PathBuf>) -> Self {
-        Self { root: root.into(), trash: trash.into() }
+        Self { root: root.into(), trash: trash.into(), head_restore: None }
     }
 
     fn dir(&self, name: &str) -> ExtResult<PathBuf> {
@@ -206,7 +215,13 @@ impl AdminStore {
         } else {
             let head = self.root.join(valid_name(name)?);
             if !head.is_dir() {
-                return Err(ExtError::Spawn(format!("垃圾站和 HEAD 里都没有扩展 {name}")));
+                // 工作树里没有：请 app 注入的 git 调用面从 HEAD 物化（#84 回退分支）。
+                if let Some(restore) = &self.head_restore {
+                    (restore.0)(&self.root, name).map_err(ExtError::Spawn)?;
+                }
+                if !head.is_dir() {
+                    return Err(ExtError::Spawn(format!("垃圾站和 HEAD 里都没有扩展 {name}")));
+                }
             }
             ("head", head)
         };

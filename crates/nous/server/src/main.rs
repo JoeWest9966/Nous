@@ -408,7 +408,7 @@ async fn run() -> Result<(), RunError> {
     let dispatcher_cancel = tokio_util::sync::CancellationToken::new();
     let dispatcher_session = commands.session().clone();
     let dispatcher_clock: Arc<dyn nous_durable::harness::clock::Clock> =
-        Arc::new(nous_dispatcher::RealClock);
+        nous_server::clock::system_clock();
     let dispatcher_interval = nous_dispatcher::interval_from_env();
     let dispatcher_task = tokio::spawn(nous_dispatcher::run_dispatcher(
         dispatcher_session.clone(),

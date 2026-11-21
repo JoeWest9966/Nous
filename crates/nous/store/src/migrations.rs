@@ -16,14 +16,14 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use crate::error::{Result, StoreError};
 
 /// 这一版支持的 schema 版本 = 迁移链最后一条。
-pub const CURRENT_VERSION: u32 = 4;
+pub const CURRENT_VERSION: u32 = 5;
 
 /// 我们的版本表。**不许**改成 `durable_schema`（那是别人家的）。
 pub const VERSION_TABLE: &str = "schema_version";
 
 /// 迁移链。版本号必须从 1 连续排到 [`CURRENT_VERSION`]，跳号就是改坏了。
 pub fn steps() -> Vec<(u32, &'static str)> {
-    vec![(1, V1), (2, V2), (3, V3), (4, V4)]
+    vec![(1, V1), (2, V2), (3, V3), (4, V4), (5, V5)]
 }
 
 /// 第一版的两张表 + 三条库级规矩。
@@ -119,6 +119,11 @@ ALTER TABLE triggers ADD COLUMN category   TEXT;
 CREATE TABLE trigger_categories (
   name TEXT NOT NULL PRIMARY KEY
 ) STRICT;
+"#;
+
+/// #review 11：归档前 enabled 的快照。老行没有快照时按启用态处理（与旧 restore 行为一致）。
+const V5: &str = r#"
+ALTER TABLE triggers ADD COLUMN pre_archive_enabled INTEGER;
 "#;
 
 /// 建版本表 → 读版本 → 按链推进。可重复调用（第二次什么都不做）。

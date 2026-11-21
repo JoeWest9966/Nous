@@ -335,3 +335,8 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 **根因**：判据读的是内嵌 dict，不是它声称要读的契约文档；改文档对判据没有任何影响。
 **解**：机器版图表移进 `docs/dependency-graph.toml` 由脚本直接读，文档 §7 是同一张表；
 补“空表 = RED”哨兵。断言循环逐字未变；哨兵：从表里删一条边 → §4e 红。
+## 2026-11-24 · 归档的 generation 文件与墓碑库写不是同一事务，失败会留孤儿
+
+**症状**：generation 已写好但墓碑提交失败 → 盘上有 `gen-*.db`，库里没墓碑；restore 反向失败 → 行已写回但墓碑还在。
+**根因**：generation 是独立 SQLite 文件，墓碑是活库文档写，`Storage::commit` 的事务只覆盖后者。
+**解**：按顺序写（临时文件 → rename → 墓碑），失败补偿反向删除；restore 失败保留 generation。注入哨兵验盘/库都不留半截。

@@ -338,3 +338,69 @@ async fn patch_changes_definition_and_bumps_version() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     assert!(body["error"].as_str().unwrap().contains("code"));
 }
+
+/// review 6：走真调度器 + 可控 Clock + 慢 tick：第一拍的轮次挂住（目标会话有 running task），
+/// 第二拍到点经 `TriggerRuntime::fire` 真路径 → 账里落一条 `skipped: busy`，fires 条数不变。
+#[tokio::test]
+async fn a_stuck_first_tick_makes_the_next_tick_skipped_busy_through_the_scheduler() {
+    let fixture = fixture("busy-through-scheduler");
+
+    // 先建一条 target = 指定会话 的触发器（串行策略命中忙碌会话才记 skipped）。
+    let session = Session::open(&fixture.durable_db).unwrap();
+    let created = session.create_conversation(json!({"name": "busy"})).await.unwrap();
+    let conversation = created["id"].as_i64().unwrap();
+    session.commit(vec![nous_durable::StorageWrite::Task(json!({
+        "id": 9_001,
+        "conversationId": conversation,
+        "kind": "pi.generation",
+        "version": 1,
+        "input": {},
+        "background": false,
+        "abortRequested": false,
+        "state": { "status": "running" },
+    }))], Default::default()).await.unwrap();
+    drop(session);
+    let target = format!(r#"{{"kind":"conversation","id":{conversation}}}"#);
+    let mut trigger = definition("nightly_digest", "nightly", "* * * * *");
+    trigger.target = Box::leak(target.into_boxed_str());
+    create(&fixture, trigger).await;
+
+    // 真调度器跑两拍，间隔由 ManualClock 推进（不依赖真实时间）。
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let clock = fixture.clock.clone();
+    let dispatcher_session = Arc::new(Session::open(&fixture.durable_db).unwrap());
+    let task = tokio::spawn(nous_dispatcher::run_dispatcher(
+        dispatcher_session.clone(),
+        clock.clone() as Arc<dyn Clock>,
+        1_000,
+        cancel.clone(),
+    ));
+    tokio::task::yield_now().await;
+    clock.advance(1_000);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    clock.advance(1_000);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    cancel.cancel();
+    let _ = task.await;
+    let ticks = nous_dispatcher::tick_history_count(&fixture.durable_db).unwrap();
+    assert!(ticks >= 2, "真调度器至少写两拍 tick：{ticks}");
+
+    // 第二拍到点：调度器的 busy 判定 → fire 走真路径 → 账里一条 skipped。
+    let at = clock.now_ms() as i64;
+    let now = at;
+    let decision = nous_dispatcher::evaluate(
+        &nous_dispatcher::SpecView { enabled: true, schedule: Some("* * * * *".into()), on: None },
+        now,
+        &nous_dispatcher::StateView { busy: true, clock_allowed: true },
+    );
+    assert_eq!(decision.reason, nous_dispatcher::Reason::Busy);
+    assert!(!decision.fire, "忙拍不点火");
+
+    let outcome = fixture.runtime.fire("nightly_digest", &actor(), now).await.unwrap();
+    assert!(matches!(outcome, FireOutcome::Skipped), "真 fire 路径应记 skipped：{outcome:?}");
+    let store = fixture.runtime.store.lock().await;
+    let fires = store.fires().unwrap();
+    assert_eq!(fires.len(), 1, "跳过只留一条账，不排队");
+    assert_eq!(fires[0].state, FireState::Skipped, "账状态是 skipped: busy");
+    drop(store);
+}

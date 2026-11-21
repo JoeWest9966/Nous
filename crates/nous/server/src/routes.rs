@@ -562,8 +562,9 @@ async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
         return Ok(Json(report));
     };
     let store = runtime.store.lock().await;
-    // #73：心跳从 durable 的 tick 记录读回；装配没读到时再退回内存快照（老测试/CLI 语义）。
-    let last_tick = runtime.load_last_tick_at().or_else(|| runtime.last_tick_at());
+    // #73 / wire.md：心跳只读 durable 的 tick 记录。内存里有什么都不算，
+    // 没库、没行就是 null（CLI 更是直接传 None，不走内存兜底）。
+    let last_tick = runtime.load_last_tick_at();
     let report = crate::triggers::observation_report(
         &store,
         &runtime.definitions(),

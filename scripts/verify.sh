@@ -1093,6 +1093,17 @@ for p in m['packages']:
 		"$TOTAL" "$B_GREEN" "$B_RED" "$B_SKIP"
 fi
 
+# 5b. review #5：dispatcher 零直接时钟（rg 0 命中；生产时钟唯一在 app 装配处）。
+#     独立脚本判据：没有 rg 也算未完成（不是 SKIP）。
+if [ "$WHAT" = all ] || [ "$WHAT" = boundary ]; then
+	step "5b. #73 dispatcher 零直接时钟 + 单一生产时钟"
+	if ./scripts/check-dispatcher-clock.sh; then
+		ok "dispatcher 零直接时钟，生产时钟唯一在 app 装配处"
+	else
+		bad "dispatcher 直接读时钟或生产时钟实现不在 app 装配处"
+	fi
+fi
+
 # ════════════════════════════════════════════════════════════════════════════
 # 6a. #52 判据 2b / 16（不动第 5 段的 15 条边界判据口径）
 # ════════════════════════════════════════════════════════════════════════════

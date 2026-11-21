@@ -49,6 +49,16 @@
 `NOUS_DISPATCHER_INTERVAL_MS` 缩短间隔（默认 60000，毫秒），不改产品默认值。
 进程退出时节拍任务随 Tokio runtime 收敛，不留下孤儿 tick。
 
+## 幂等回执的提交边界（review #10）
+
+`requestId` 的回执必须与它描述的变更在**同一提交 / 同一临界区**：
+- 库上（trigger PATCH）：定义变更与 receipt 行同一 `BEGIN IMMEDIATE`；回执写失败 → 整批回滚，`version` 不涨。
+- 盘上（combos PATCH）：回执先原子写就位，再改 `preset.json`；后者失败 → 删回执，盘面不变。
+
+**选定语义：重放回第一次回执；若第一次整体失败，则盘/库未变，重放当作全新请求执行。**
+不许出现「变更落了、回执没落 → 重放 412」或「回执落了、变更没落 → 重放假成功」。
+反悔点见 `docs/decisions.md` 2026-11-24 条。
+
 ### PATCH /v1/triggers/{code}
 
 #73：改触发器自己的 `schedule` / `params` / `enabled`。`code` 是不可变 slug（`nous-store`

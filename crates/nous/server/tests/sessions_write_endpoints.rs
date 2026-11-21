@@ -18,15 +18,15 @@ use serde_json::{json, Value};
 use tower::ServiceExt;
 
 fn temp_db(tag: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "nous-issue64-{tag}-{}-{:?}.sqlite",
+    // 每个测试独立目录：归档 gen 文件落在 db 同级的 archives/，共用 /tmp 会并发写同一份。
+    let dir = std::env::temp_dir().join(format!(
+        "nous-issue64-{tag}-{}-{}",
         std::process::id(),
-        std::thread::current().id()
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     ));
-    let _ = std::fs::remove_file(&path);
-    let _ = std::fs::remove_file(path.with_extension("sqlite-wal"));
-    let _ = std::fs::remove_file(path.with_extension("sqlite-shm"));
-    path
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("nous.sqlite")
 }
 
 /// 三条会话，各自带 entry / task / submission / document；会话 1 还被置顶、有未读水位。

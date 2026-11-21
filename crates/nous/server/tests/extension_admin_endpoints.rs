@@ -103,6 +103,28 @@ fn install_runnable(root: &Path, name: &str, binary: &Path) -> std::sync::Arc<no
     runtime
 }
 
+/// 只造产物元数据（不建扩展源码目录），供 install 从 HEAD 装回后真装载。
+fn install_runnable_artifacts_only(root: &Path, binary: &Path) -> std::sync::Arc<nous_ext::Runtime> {
+    let artifacts = root.parent().unwrap().join("artifacts");
+    std::fs::create_dir_all(&artifacts).unwrap();
+    let target = artifacts.join("exts-handle");
+    std::fs::copy(binary, &target).unwrap();
+    let output = Command::new("sha256sum").arg(&target).output().unwrap();
+    let hash = String::from_utf8(output.stdout).unwrap().split_whitespace().next().unwrap().to_string();
+    std::fs::write(artifacts.join("exts-handle.json"), json!({
+        "hash": hash, "builtFrom": "t84", "buildMachine": "container",
+        "protocol": 3, "triple": "x86_64-unknown-linux-gnu"
+    }).to_string()).unwrap();
+    let prompts = root.parent().unwrap().join("prompts");
+    std::fs::create_dir_all(&prompts).unwrap();
+    let mut config = nous_ext::RuntimeConfig::new(root, artifacts);
+    config.isolation.enabled = false;
+    config.handles.insert("prompts".into(), nous_ext::HandleValue::dir(prompts));
+    let runtime = nous_ext::Runtime::new(config);
+    runtime.start_all();
+    runtime
+}
+
 /// 真 git 仓（带 origin bare remote），pending 视图才有可信的 HEAD。
 fn init_repo(root: &Path) {
     let git = |args: &[&str]| {
@@ -343,4 +365,58 @@ async fn uninstall_trashes_source_and_install_restores_a_running_extension() {
     let (_, list) = call(&app, Method::GET, "/v1/extensions", None).await;
     let item = list["items"].as_array().unwrap().iter().find(|i| i["name"] == json!("alpha")).unwrap();
     assert_eq!(item["state"], json!("running"), "清单投影也是 running：{item}");
+}
+
+/// review 8：垃圾站清空、但私库 HEAD 里还有 → install 从 HEAD 装回，state=running。
+#[tokio::test]
+async fn install_falls_back_to_head_when_trash_is_empty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let base = tmp.path().join("base");
+    let root = base.join("exts");
+    let trash = base.join("data/extend-trash");
+    std::fs::create_dir_all(&root).unwrap();
+    init_repo(&root);
+    let _env = EnvGuard::new(&[("NOUS_EXTEND", root.clone())]);
+
+    // 先把 alpha 提交进 HEAD，再从工作树移走（模拟干净 checkout + 卸载后垃圾站也清了）。
+    std::fs::create_dir_all(root.join("alpha")).unwrap();
+    std::fs::write(root.join("alpha/nous.json"), json!({
+        "name": "alpha", "version": "0.1.0", "protocol": 3,
+        "file": "exts-handle", "entry": "exts-handle",
+        "sections": [{"key":"prompts","tag":"prompts"}],
+        "handles": [], "summary": "#84 head fallback", "category": "sample"
+    }).to_string()).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git").args(args).current_dir(&root)
+            .env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "t84").env("GIT_AUTHOR_EMAIL", "t84@example.invalid")
+            .env("GIT_COMMITTER_NAME", "t84").env("GIT_COMMITTER_EMAIL", "t84@example.invalid")
+            .output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["add", "alpha"]);
+    git(&["commit", "-qm", "seed alpha"]);
+    std::fs::write(root.join("deleted-extensions.json"), json!(["alpha"]).to_string()).unwrap();
+    // 工作树里没有 alpha，垃圾站也是空的。
+    std::fs::remove_dir_all(root.join("alpha")).unwrap();
+    let _ = std::fs::remove_dir_all(&trash);
+
+    // 产物元数据（与 HEAD 里的 nous.json 的 file/entry 对应）。
+    let runtime = install_runnable_artifacts_only(&root, &sample_ext_bin());
+    let app = router(AppState::with_source(common::FakeSource::two_sessions())
+        .with_repos_for_test("extend", &root)
+        .with_ext_admin(&root, &trash)
+        .with_ext(runtime.clone()));
+
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/install", Some(json!({"name":"alpha"}))).await;
+    assert_eq!(status, StatusCode::OK, "HEAD 回退 install 实测 {status:?} {body}");
+    assert_eq!(body["from"], json!("head"), "从 HEAD 装回：{body}");
+    assert_eq!(body["state"], json!("running"), "装回后真装载：{body}");
+    assert!(root.join("alpha/nous.json").is_file(), "源码回到私库");
+
+    // 两边都没有 → 明确错误（404 类）。
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/install", Some(json!({"name":"nowhere"}))).await;
+    assert!(status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST || status == StatusCode::CONFLICT,
+        "两边都没有要给明确错误，不该 200：{status:?} {body}");
+    assert!(body["error"].is_string(), "错误体形状：{body}");
 }

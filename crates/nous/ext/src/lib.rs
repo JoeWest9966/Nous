@@ -29,7 +29,7 @@ pub mod sha256;
 pub mod spawn;
 pub mod state;
 
-pub use admin::{AdminStore, CreateOptions, DuplicateOptions, REPO_DELETED_FILE};
+pub use admin::{AdminStore, CreateOptions, DuplicateOptions, HeadRestore, REPO_DELETED_FILE};
 pub use config::{HandleValue, Isolation, Limits, RuntimeConfig};
 pub use error::{ExtError, ExtResult, FailureClass};
 pub use install::Installer;

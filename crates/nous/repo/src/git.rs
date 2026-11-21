@@ -91,3 +91,25 @@ pub(crate) fn git_push(root: &Path) -> Result<crate::Pushed> {
         }
     }
 }
+
+/// #84：把私库 HEAD 里的一个目录原样物化到工作树（install 的 HEAD 回退）。
+/// 只用本模块唯一的 git 调用面；不往外冒 `git`，也不改 HEAD/索引。
+pub fn materialize_head_dir(root: &Path, name: &str) -> Result<()> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == ".." || name == "." {
+        return Err(RepoError::InvalidPath(format!("非法的扩展名：{name}")));
+    }
+    let listed = git_ok(root, &["ls-tree", "-r", "--name-only", "HEAD", "--", name])?;
+    let paths: Vec<&str> = listed.lines().filter(|line| !line.trim().is_empty()).collect();
+    if paths.is_empty() {
+        return Err(RepoError::NotFound(format!("HEAD 里没有扩展 {name}")));
+    }
+    for rel in paths {
+        let blob = git_bytes(root, &["show", &format!("HEAD:{rel}")])?;
+        let target = root.join(rel);
+        std::fs::create_dir_all(target.parent().ok_or_else(|| RepoError::InvalidPath(rel.into()))?)
+            .map_err(|e| RepoError::Io(format!("mkdir {}: {e}", target.display())))?;
+        std::fs::write(&target, blob)
+            .map_err(|e| RepoError::Io(format!("write {}: {e}", target.display())))?;
+    }
+    Ok(())
+}
