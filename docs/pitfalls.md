@@ -319,6 +319,15 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 `encode_indexed_string` 编码（带引号），字面量匹配不上；`record` 才是原文真相。
 **解**：判据改成 `WHERE record LIKE '%nous.dispatcher.tick%'`，或先经 dispatcher 的
 `read_sleeping_ticks` 解析 record；不要拿索引列的字面量当 JSON 里那个字符串。
+
+## 2026-11-22 · 试跑的「问触发器」与手动 launch 不能共用判定入口
+
+**症状**：#82 两个动作看起来都是「起一条会话」，把 launch 也接到 `evaluate` 后，
+不命中的 cron 让手动 launch 变成 `{fired:false}`，会话和血缘都不写。
+**根因**：`forced` 不是回包上的一个词，它是「有没有经过触发器」这件事本身；
+判定一旦共用，跳过判定的入口就不存在了，只能靠回包自说自话。
+**解**：`fire` 单独持有判定与「不 fire 就不建会话」的早退，`launch` 只进共用的 launch
+路径（建会话 → 血缘 → 回执），判定不参与；哨兵分别弄坏两处，各有对应判据变红。
 ## 2026-11-21 · 契约图表内嵌在判据脚本里，文档补图追不上
 
 **症状**：#89 按票面在 `docs/harness.md` 补了 7 条 `nous-server` 依赖边，

@@ -25,6 +25,8 @@ nous-server = [
   "nous-durable", "nous-wire", "nous-telemetry",
   "nous-ai", "nous-runtime", "nous-sessions", "nous-tools", "nous-documents",
   "nous-store", "nous-env",
+  # #73 调度节拍的 evaluate 纯判定由 server 复用
+  "nous-dispatcher",
   # #65 机器/模型编目
   "nous-device",
   # #78 远端执行环境

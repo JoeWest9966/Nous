@@ -414,6 +414,7 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 | `POST /v1/presets/:section/:name/copy` | 复制成新名，body `{name, requestId}` |
 | `GET /v1/presets/:section/:name/revisions` | 修订清单：`n` / 时间 / `actor` / `sha` / 摘要 |
 | `GET /v1/presets/:section/:name/revisions/:n` | 某一版原文（diff 由 Desk 算，无状态） |
+| `POST /v1/presets/Ultimate-Template/launch` | #82：手动起一条终极模板（跳过触发器判定，`forced:true`） |
 | `POST /v1/presets/:section/:name/rollback` | 回到第 `n` 版，原子写一次修订，body `{n, requestId}` |
 | `GET /v1/openapi.json` | 从路由注册表生成的机器可读契约（presets 第一个接入方） |
 
@@ -542,6 +543,16 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 > 旧版 `POST /v1/combos/:name/enable` 与 `/disable` 已取消：`enabled` 是一个字段，不是
 > 两个动作，两条路径等于给同一个位开两个入口。只留一条 `PATCH {enabled}`。
+
+### POST /v1/combos/:section/:name/fire（#82）
+
+试跑一次组合：用 `#73` 的 `evaluate` **问一次触发器**，判定 `fire:true` 才建会话；
+不 fire 就不建会话（`sessions` 条数不变），也不写血缘。只在 `Ultimate-Template` 段上成立。
+body 必带幂等锚 `requestId`。回包给判定结果 `fired`、人话 `reason` 和可选 `sessionId`；
+不 fire 时 `sessionId` 为 `null`。
+
+起会话时写血缘 `origins`：`{ultimate, trigger, at, forced:false}`（#74，与点火路径同一条
+`record_origin`）。`requestId` 重放回第一次回执，不新建会话、不追加血缘。
 
 ### GET /v1/models
 

@@ -60,6 +60,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     let router = Router::new()
         .route("/v1/combos/{section}", get(crate::combos::list))
         .route("/v1/combos/{section}/{name}", axum::routing::patch(crate::combos::patch))
+        .route("/v1/combos/{section}/{name}/fire", post(crate::combos_actions::fire))
+        .route("/v1/presets/Ultimate-Template/launch", post(crate::combos_actions::launch_handler))
         .route("/v1/sessions", get(sessions).post(create_session))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))
@@ -116,10 +118,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     let router = crate::upstream::attach(router);
     let router = crate::documents::attach(state.clone(), router);
     // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
-    match state.presets() {
+    let router = match state.presets() {
         Some(store) => crate::presets::attach(store.clone(), router),
         None => router,
-    }
+    };
+    router
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
