@@ -227,3 +227,12 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 **解**：补 `symlink_escape_is_rejected_by_realpath_check`（仓内 `link` → 仓外，写 `link/escaped.txt`），
 关掉 realpath 检查时它在 `仓外不许出现文件` 断言红；同一招也用于 `git add .` 哨兵
 （加 `git diff --cached --name-only` 空断言，`commit -- pathspec` 挡不住误 staged 的搭车文件）。
+
+## 2026-11-20 · abort 测试里两个 Session 指向同一份库，取消信号却到不了 provider
+
+**症状**：`POST /abort` 落了 `user_cancel` 终态、submission 也变 `unanswered`，但慢 provider
+没停；断言「取消信号到达 provider」的红/绿随 `Session` 实例数量漂移。
+**根因**：`Session` 的取消 token 是**实例字段**，不是库级状态。测试用 `AppState::durable()`
+自己开一个 `Session`，driver 用另一个 `Session`，两者写同一份 sqlite 却各拿一个 token。
+**解**：测试按生产形状装配——`DurableCommands::with_session(session.clone(), registry)` 与
+driver 共用同一个 `Session`，再断言 provider 见过取消信号；负向哨兵去掉 `cancel()` 才会真红。

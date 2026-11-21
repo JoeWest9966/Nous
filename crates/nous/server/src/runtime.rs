@@ -30,6 +30,52 @@ pub fn provider_kind(values: &dyn ValueSource) -> &'static str {
     }
 }
 
+/// #70：模型解析的**唯一顺序**：请求体 → 会话 → 编目 default → 503。
+///
+/// 会话里的 model 是 wire 的字符串（`<provider>/<modelId>`，第一个 `/` 切开）；
+/// 请求体与编目 default 是 `{provider, modelId}`。解析结果只描述「是谁」，
+/// 真正的 provider 绑定由组装根持有（这里是 `assemble_with_provider` 注入的那一个）。
+pub fn resolve_model_ref(
+    body: Option<&nous_device::ModelRef>,
+    session: Option<&str>,
+    catalog: &ModelsResponse,
+) -> Option<nous_device::ModelRef> {
+    if let Some(model) = body {
+        if !model.provider.is_empty() && !model.model_id.is_empty() {
+            return Some(model.clone());
+        }
+    }
+    if let Some(text) = session {
+        if let Some((provider, id)) = text.split_once('/') {
+            if !provider.is_empty() && !id.is_empty() {
+                return Some(nous_device::ModelRef {
+                    provider: provider.to_string(),
+                    model_id: id.to_string(),
+                });
+            }
+        }
+    }
+    catalog.default.clone()
+}
+
+/// 把 wire 的模型引用变成轮次用的 `nous_ai::Model`。
+/// faux 用 `Api::Faux`，真 provider 用 `Api::OpenaiCompletions` 作为协议占位：
+/// 本票只决定「用哪个模型」，凭证/端点绑定由组装根的 provider 完成。
+pub fn model_from_ref(reference: &nous_device::ModelRef) -> nous_ai::Model {
+    let (api, base_url) = if reference.provider == "faux" {
+        (nous_ai::Api::Faux, "http://localhost:0")
+    } else {
+        (nous_ai::Api::OpenaiCompletions, "http://localhost:1")
+    };
+    nous_ai::Model::new(
+        &reference.model_id,
+        &reference.model_id,
+        api,
+        &reference.provider,
+        base_url,
+    )
+}
+
 /// 只给 faux 用的编目：一个 `faux/echo` 模型，没有凭证要求。
 pub fn faux_catalog() -> ModelsResponse {
     ModelsResponse {
@@ -88,6 +134,8 @@ pub struct AssembledRuntime {
     /// #51：只影响 `/v1/models` 与 capabilities，不参与轮次语义。
     pub models: ModelsResponse,
     pub provider_kind: &'static str,
+    /// #70：一轮结束时广播它的 submission id。waitMs 等的是这个信号，不是 sleep 轮询。
+    pub completions: tokio::sync::broadcast::Sender<(i64, serde_json::Value)>,
 }
 
 /// 从宿主配置和环境变量构造注册表。
@@ -203,6 +251,7 @@ pub fn assemble(
         tool_names,
         models: catalog,
         provider_kind: kind,
+        completions: tokio::sync::broadcast::channel(64).0,
     })
 }
 
@@ -229,6 +278,7 @@ pub fn assemble_with_provider(
         tool_names,
         models: faux_catalog(),
         provider_kind: "faux",
+        completions: tokio::sync::broadcast::channel(64).0,
     }
 }
 
@@ -238,13 +288,6 @@ impl ValueSource for ProcessEnvValues {
     fn env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
     }
-}
-
-/// 真装配的占位 provider：没有凭证时不产生回复。
-/// 注意当前路由层还没有 #44 的 resolve/503 判定，所以这里有回复就等同于「真模型在答」；
-/// 绝不许把它换成返回固定文本的 provider（那会让「没配 key 也能答」变成真的）。
-pub fn unconfigured_provider() -> Arc<dyn nous_ai::Provider> {
-    crate::runtime::offline_provider()
 }
 
 /// 离线/测试用的 provider。生产走 RuntimeConfig::resolve 绑定真实供应商。
