@@ -249,6 +249,19 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 只读机读视图：从 `meta::ROUTES` 生成 OpenAPI `paths`，与 `/v1/capabilities` / `/v1/_routes`
 三处同源。加端点先改 `meta::ROUTES`，这里自动跟着变；不手抄第二份路径清单。
 
+#### GET /v1/capabilities
+
+一个发行版一张清单：`modules[]` 每个模块声明 `name` / `enabled` 与 `endpoints` 或 `reason`，
+顶层给 `contract` / `server` / `runtime` / `services`。字段形状以
+`crates/nous/server/tests/capabilities_shapes.rs::capabilities_declares_modules_and_reasons` 为准。
+
+- #88：`modules[]` 每个模块（含未启用的）另带版本、类型、层、必需、来源 crate、说明六列，
+  取自 `docs/plugins.md` 同一张表；判据 `capabilities_manifest.rs::manifest_metadata_matches_the_plugins_table_cell_by_cell`
+  逐格比对编译后的清单与文档表。`crate` 可能是 `—` 或 `(待建) xxx`，不可当成可运行的包名。
+- `layer` 四值封闭、`kind` 三值封闭；`enabled:false` 的模块用 `reason.code` 四值封闭解释原因。
+- 六列是加法：老引擎没有这些字段时，桌面端降级成「版本 = server.version，类型 / 层 = —」，
+  不据此判模块不存在。新字段一律只读，`endpoints` / `reason` 的既有语义不变。
+
 #### POST /v1/sessions/:id/archive
 
 body 空。回 200 `{"gen":"20261113","ids":[699],"rows":17}`。

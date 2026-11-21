@@ -410,6 +410,34 @@ async fn capabilities_declares_modules_and_reasons() {
     );
 
     let modules = body["modules"].as_array().unwrap();
+    // #88：每个 module（含未启用的）都带六列，且 enum 闭集。
+    assert_eq!(modules.len(), 12, "capabilities 必须吐出全部 12 个 module");
+    for module in modules {
+        let name = module["name"].as_str().unwrap();
+        let where_ = format!("capabilities.modules[{name}]");
+        fields(
+            module,
+            &where_,
+            &[
+                ("version", is_string),
+                ("kind", is_string),
+                ("layer", is_string),
+                ("required", is_bool),
+                ("crate", is_string),
+                ("description", is_string),
+            ],
+        );
+        let kind = module["kind"].as_str().unwrap();
+        assert!(
+            matches!(kind, "编译期" | "声明式" | "运行时外挂"),
+            "{where_}.kind 非法：{kind}"
+        );
+        let layer = module["layer"].as_str().unwrap();
+        assert!(
+            matches!(layer, "kernel" | "platform" | "app" | "dev"),
+            "{where_}.layer 非法：{layer}"
+        );
+    }
     let by_name: std::collections::BTreeMap<&str, &Value> = modules
         .iter()
         .map(|m| (m["name"].as_str().expect("name 是字符串"), m))
