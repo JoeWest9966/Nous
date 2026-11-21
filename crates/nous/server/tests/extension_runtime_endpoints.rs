@@ -154,7 +154,9 @@ fn start_server(root: &Path, port: u16) -> Server {
         .env("NOUS_EXTEND", root.join("exts"))
         .env("NOUS_SKILLS", root.join("skills"))
         .env("NOUS_PROMPTS", root.join("prompts"))
-        .env_remove("NOUS_TOKEN_FILE")
+        // 指到临时目录里一个不存在的文件：`env_remove` 会退回到 `$HOME/.config/nous/token`
+        // （开发机上真有），于是每个请求 401，判据变成「这台机器有没有 token 文件」。
+        .env("NOUS_TOKEN_FILE", root.join("no-token"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

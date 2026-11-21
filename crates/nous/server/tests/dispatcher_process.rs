@@ -18,6 +18,9 @@ fn spawn_app(dir: &std::path::Path, port: u16) -> Child {
         .env("NOUS_LISTEN", format!("127.0.0.1:{port}"))
         .env("NOUS_DB", dir.join("nous.db"))
         .env("NOUS_PLUGINS_DB", dir.join("nous-plugins.db"))
+        // token 文件指到临时目录里一个不存在的路径：否则会读到 `$HOME/.config/nous/token`
+        // （开发机上真有），/v1/triggers 直接 401 —— 判据就变成「这台机器有没有 token 文件」。
+        .env("NOUS_TOKEN_FILE", dir.join("no-token"))
         .env("NOUS_DISPATCHER_INTERVAL_MS", "40")
         .env("NOUS_ORIGIN", format!("http://127.0.0.1:{port}"))
         .current_dir(dir)
