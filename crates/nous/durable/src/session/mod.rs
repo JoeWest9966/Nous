@@ -37,7 +37,6 @@ mod session_document;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use nous_chord::context::Context;
 use nous_chord::watch::WatchEnd;
@@ -341,6 +340,25 @@ impl Session {
         document["templates"] = templates;
         let mut document_writes = session_document::upsert_session_document(storage, "qrd3wh.sessions", document_id, document)?;
         let mut writes = vec![StorageWrite::Conversation(json!({ "id": id }))];
+        // #83：建会话选的 skills 落在 conversation 作用域的 pi.agent 文档，
+        // 和 #64 的 config 同源；没有选就不造文档（未选 = 不挂技能）。
+        let skills = config.get("skills").cloned().unwrap_or(json!([]));
+        if skills.as_array().is_some_and(|items| !items.is_empty()) {
+            let agent_id = storage.mint_id()?;
+            writes.push(StorageWrite::DocumentCreate {
+                id: agent_id,
+                record: json!({
+                    "id": agent_id,
+                    "kind": "pi.agent",
+                    "scope": { "kind": "conversation", "conversationId": id },
+                    "history": "latest", "fork": "current",
+                }),
+                content: crate::DocumentContent::Base {
+                    version: 1,
+                    value: json!({ "skills": skills }),
+                },
+            });
+        }
         writes.append(&mut document_writes);
         let committed = storage.commit(&[writes], |_, _| {})?;
         if let Some(refusal) = committed.refused {
