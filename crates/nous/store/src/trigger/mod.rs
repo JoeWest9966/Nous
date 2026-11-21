@@ -589,3 +589,14 @@ pub fn fire_due(triggers: &[Trigger], now_ms: i64) -> Vec<DueFire> {
     }
     due
 }
+
+/// #80：发布闸 —— `on` 是点火源的 slug（`kind` 或 `kind:ref`），封闭的 kind 集合。
+/// `trigger:*` / `chain:*` 是编排，明确拒绝；坏形状一律 `NoFiringSource`。
+pub fn validate_on(on: Option<&str>) -> std::result::Result<(), TriggerError> {
+    let Some(on) = on else { return Ok(()) };
+    let kind = on.split_once(':').map(|(kind, _)| kind).unwrap_or(on);
+    match kind {
+        "cron" | "clock" | "event" | "agent" | "human" | "ext" => Ok(()),
+        _ => Err(TriggerError::NoFiringSource),
+    }
+}

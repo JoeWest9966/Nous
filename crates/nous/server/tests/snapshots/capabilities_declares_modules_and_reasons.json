@@ -195,9 +195,16 @@
       "enabled": true,
       "endpoints": [
         "GET /v1/triggers",
+        "POST /v1/triggers",
+        "GET /v1/triggers/categories",
+        "POST /v1/triggers/category",
+        "POST /v1/triggers/{code}/archive",
+        "POST /v1/triggers/{code}/restore",
+        "POST /v1/triggers/{code}/purge",
         "POST /v1/triggers/{code}/fire",
         "GET /v1/triggers/{code}/fires",
-        "PATCH /v1/triggers/{code}"
+        "PATCH /v1/triggers/{code}",
+        "PUT /v1/triggers/{code}"
       ]
     },
     {

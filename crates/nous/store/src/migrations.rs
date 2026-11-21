@@ -16,14 +16,14 @@ use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use crate::error::{Result, StoreError};
 
 /// 这一版支持的 schema 版本 = 迁移链最后一条。
-pub const CURRENT_VERSION: u32 = 3;
+pub const CURRENT_VERSION: u32 = 4;
 
 /// 我们的版本表。**不许**改成 `durable_schema`（那是别人家的）。
 pub const VERSION_TABLE: &str = "schema_version";
 
 /// 迁移链。版本号必须从 1 连续排到 [`CURRENT_VERSION`]，跳号就是改坏了。
 pub fn steps() -> Vec<(u32, &'static str)> {
-    vec![(1, V1), (2, V2), (3, V3)]
+    vec![(1, V1), (2, V2), (3, V3), (4, V4)]
 }
 
 /// 第一版的两张表 + 三条库级规矩。
@@ -106,6 +106,18 @@ CREATE TABLE trigger_patch_receipts (
   request_id TEXT NOT NULL,
   body       TEXT NOT NULL,
   PRIMARY KEY (code, request_id)
+) STRICT;
+"#;
+
+/// #80：归档 / 真删的两位墓碑与类别挂值。archive 不动 definition，version 只描述定义。
+const V4: &str = r#"
+ALTER TABLE triggers ADD COLUMN archived_at INTEGER;
+ALTER TABLE triggers ADD COLUMN purged_at  INTEGER;
+ALTER TABLE triggers ADD COLUMN category   TEXT;
+
+-- 类别词表：只有字符串，没有 id（与 skills 的 categories.json 同规矩）。
+CREATE TABLE trigger_categories (
+  name TEXT NOT NULL PRIMARY KEY
 ) STRICT;
 "#;
 

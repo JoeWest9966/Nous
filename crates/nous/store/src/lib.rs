@@ -49,7 +49,7 @@ pub use fires::{
 };
 pub use migrations::{CURRENT_VERSION, VERSION_TABLE};
 pub use trigger::{
-    ensure_code_immutable, fire_due, parse_five_field_cron, DueFire, FireActor, NewTrigger as NewTriggerDefinition,
+    ensure_code_immutable, fire_due, parse_five_field_cron, validate_on, DueFire, FireActor, NewTrigger as NewTriggerDefinition,
     Policy, Spec, Target, TemplateRef, Trigger, TriggerError,
 };
 pub use triggers::NewTrigger;

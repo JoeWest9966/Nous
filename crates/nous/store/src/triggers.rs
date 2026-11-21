@@ -29,6 +29,12 @@ pub struct Trigger {
     pub version: i64,
     pub created_at: i64,
     pub deleted_at: Option<i64>,
+    /// #80：归档时刻（墓碑的一种）。archive 写，restore 抹掉。
+    pub archived_at: Option<i64>,
+    /// #80：真删时刻。`fires` 已随之删光，行只为占住 code 而留。
+    pub purged_at: Option<i64>,
+    /// #80：单值类别（字符串或 null）。
+    pub category: Option<String>,
 }
 
 impl Trigger {
@@ -69,11 +75,14 @@ fn row_to_trigger(row: &Row<'_>) -> rusqlite::Result<Trigger> {
         version: row.get("version")?,
         created_at: row.get("created_at")?,
         deleted_at: row.get("deleted_at")?,
+        archived_at: row.get("archived_at")?,
+        purged_at: row.get("purged_at")?,
+        category: row.get("category")?,
     })
 }
 
 const COLUMNS: &str =
-    "id, code, name, spec, enabled, next_fire_at, version, created_at, deleted_at";
+    "id, code, name, spec, enabled, next_fire_at, version, created_at, deleted_at, archived_at, purged_at, category";
 
 impl Store {
     /// 兼容 #56 的薄入口：`Trigger::new` 会先校验准则，再走这里落行。
@@ -151,6 +160,92 @@ impl Store {
         )
     }
 
+    /// #80：一次原子归档 —— 只写墓碑、不动 definition / version / 账。
+    /// 用 `WHERE deleted_at IS NULL` 挡住重复归档与「已真删再归档」。
+    pub fn archive_trigger(&self, code: &str, now_ms: i64) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE triggers
+                SET deleted_at = ?1, archived_at = ?1, enabled = 0, next_fire_at = NULL
+              WHERE code = ?2 AND deleted_at IS NULL",
+            params![now_ms, code],
+        )? > 0)
+    }
+
+    /// #80：捞回 —— 抹掉归档墓碑。只捞归档态（`archived_at IS NOT NULL AND purged_at IS NULL`）。
+    pub fn restore_trigger(&self, code: &str, _now_ms: i64) -> Result<bool> {
+        Ok(self.conn.execute(
+            "UPDATE triggers
+                SET deleted_at = NULL, archived_at = NULL, enabled = 1
+              WHERE code = ?1 AND archived_at IS NOT NULL AND purged_at IS NULL",
+            params![code],
+        )? > 0)
+    }
+
+    /// #80：真删 —— 必须先归档（有 archived_at）；原子删光 `fires`，触发器行留 purged 墓碑占 code。
+    /// 返回删掉的账行数；`None` = 前置不满足（没归档 / 已真删 / 不存在）。
+    pub fn purge_trigger(&self, code: &str, now_ms: i64) -> Result<Option<i64>> {
+        match self.trigger(code)? {
+            Some(ref row) if row.archived_at.is_some() && row.purged_at.is_none() => {}
+            _ => return Ok(None),
+        };
+        let fires: i64 = {
+            let mut stmt = self.conn.prepare("SELECT count(*) FROM fires WHERE trigger_code = ?1")?;
+            stmt.query_row(params![code], |row| row.get(0))?
+        };
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> Result<()> {
+            self.conn.execute("DELETE FROM fires WHERE trigger_code = ?1", params![code])?;
+            self.conn.execute(
+                "UPDATE triggers SET purged_at = ?1, deleted_at = ?1 WHERE code = ?2",
+                params![now_ms, code],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => self.conn.execute_batch("COMMIT")?,
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                return Err(error);
+            }
+        }
+        Ok(Some(fires))
+    }
+
+    /// #80：给一个触发器挂 / 清单值类别；类别不在词表里时自动登记。
+    pub fn set_trigger_category(&self, code: &str, category: Option<&str>) -> Result<Option<String>> {
+        if self.conn.execute(
+            "UPDATE triggers SET category = ?1 WHERE code = ?2 AND deleted_at IS NULL",
+            params![category, code],
+        )? == 0 {
+            return Ok(None);
+        }
+        if let Some(name) = category {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO trigger_categories (name) VALUES (?1)",
+                params![name],
+            )?;
+        }
+        Ok(Some(category.unwrap_or("").to_string()))
+    }
+
+    /// #80：类别词表 ∪ 在用的类别，排序去重。
+    pub fn trigger_categories(&self) -> Result<Vec<String>> {
+        let mut names: Vec<String> = self
+            .conn
+            .prepare("SELECT name FROM trigger_categories")?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        names.extend(
+            self.conn
+                .prepare("SELECT DISTINCT category FROM triggers WHERE category IS NOT NULL")?
+                .query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<Vec<String>>>()?,
+        );
+        names.sort();
+        names.dedup();
+        Ok(names)
+    }
+
     fn occupant(&self, code: &str) -> Result<Option<Option<i64>>> {
         let mut stmt = self.conn.prepare("SELECT deleted_at FROM triggers WHERE code = ?1")?;
         let mut rows = stmt.query(params![code])?;
@@ -191,6 +286,30 @@ impl Store {
             |row| row.get(0),
         )?;
         Ok(Some(version))
+    }
+
+    /// #80：整份改定义（PUT）。SQL 的 `WHERE version = ?` 是乐观锁；`version + 1` 只在这里走。
+    /// 与 #73 的 `patch_trigger` 同一把锁，两个写口不许各算各的。
+    pub fn put_definition(
+        &self,
+        code: &str,
+        spec: &str,
+        enabled: bool,
+        expected_version: i64,
+    ) -> Result<Option<i64>> {
+        let changed = self.conn.execute(
+            "UPDATE triggers SET spec = ?1, enabled = ?2, version = version + 1
+              WHERE code = ?3 AND version = ?4 AND deleted_at IS NULL AND purged_at IS NULL",
+            params![spec, i64::from(enabled), code, expected_version],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.conn.query_row(
+            "SELECT version FROM triggers WHERE code = ?1",
+            params![code],
+            |row| row.get(0),
+        )?))
     }
 
     /// #73：PATCH 的幂等回执。命中就返回第一次的 body，调用方不再改库。

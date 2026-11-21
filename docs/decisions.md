@@ -882,6 +882,15 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **决定**：`POST /v1/extensions/uninstall` 把源码 `rename` 到 `data/extend-trash/<name>-<ms>/`，并在私库根写 `deleted-extensions.json`；scan 认名单跳过，install 从垃圾站最新一份装回。核心 `nous`/`skills`/`prompts` 一律 400。
 **理由**：私库是 git pull 的；只删本地目录，下一次 pull 会把扩展复活。名单随私库发布，重启后仍生效；垃圾站在 data 下不随发布走，是 install 的回退来源。核心扩展是引擎自己装配的，删掉等于自残。
 **反悔点**：若将来引入真正的包管理器（带 lockfile 与远端 registry），删除名单应当退役，改由 registry 声明已删除；那时 `deleted-extensions.json` 与 scan 的跳过分支一起删。
+## 2026-11-22 · 触发器真删：账随定义一起销毁，行留 purged 墓碑占 code（#80）
+
+**决定**：`POST /v1/triggers/{code}/purge` 先要求归档态，然后在一个事务里删光该 code 的
+全部 `fires` 行，把 `triggers` 行标 `purged_at`（`deleted_at` 也填上），`code` 永不复用。
+归档 / 捞回只翻墓碑、`version` 不动；整份改定义（PUT）才 +1。
+**为什么**：触发器的定义只有 `triggers` 一行，不像会话另有 `gen-*.db` 复印件；留行只为
+占住 code（requestId / actor.id / 审计都挂着它），账留成孤儿表没有任何读口。
+**反悔点**：若将来要给已删触发器出审计报告，不能靠留 `fires`（它已删），得另开不可变
+事件表并经签字 —— 那会是第二条写通道，先改 wire.md 再动库。
 
 ## 2026-11-23 · #73 常驻节拍在 app 装配处 spawn，零时钟判据限定调度逻辑
 
