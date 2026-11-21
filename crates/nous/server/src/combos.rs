@@ -38,10 +38,10 @@ const RECEIPTS_DIR: &str = ".combos-receipts";
 
 /// 一份组合的盘面原文（不缓存）。
 #[derive(Debug, Clone)]
-struct ComboFile {
-    name: String,
-    bytes: Vec<u8>,
-    body: Value,
+pub(crate) struct ComboFile {
+    pub(crate) name: String,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) body: Value,
 }
 
 impl ComboFile {
@@ -51,7 +51,7 @@ impl ComboFile {
 }
 
 /// 一条组合的对外形状。`unknown` 里收着引擎以后加的字段，原样透传。
-fn view(file: &ComboFile, triggers: &BTreeSet<String>, sessions: &BTreeSet<String>) -> Value {
+pub(crate) fn view(file: &ComboFile, triggers: &BTreeSet<String>, sessions: &BTreeSet<String>) -> Value {
     let spec = file.body.get("spec").cloned().unwrap_or(Value::Null);
     let mut problems = Vec::new();
     let trigger = spec.get("trigger").and_then(Value::as_str).unwrap_or("").to_string();
@@ -151,7 +151,7 @@ impl ComboStore {
         Ok(out)
     }
 
-    fn one(&self, section: &str, name: &str) -> Result<ComboFile> {
+    pub(crate) fn one(&self, section: &str, name: &str) -> Result<ComboFile> {
         let path = self.file_path(section, name)?;
         let bytes = fs::read(&path)
             .map_err(|_| ServerError::NotFound(format!("组合不存在: {section}/{name}")))?;
@@ -161,7 +161,7 @@ impl ComboStore {
     }
 
     /// 触发器名册：`<NOUS_TRIGGER>/<code>/` 下有目录就算存在。
-    fn trigger_names(&self) -> BTreeSet<String> {
+    pub(crate) fn trigger_names(&self) -> BTreeSet<String> {
         fs::read_dir(&self.triggers)
             .ok()
             .map(|entries| {
@@ -175,7 +175,7 @@ impl ComboStore {
     }
 
     /// 会话模板名册：与 presets 共用数据根，从盘现扫（不读 durable 库）。
-    fn session_names(&self) -> Result<BTreeSet<String>> {
+    pub(crate) fn session_names(&self) -> Result<BTreeSet<String>> {
         Ok(self.scan("Session-Template")?.into_iter().map(|file| file.name).collect())
     }
 
@@ -228,6 +228,15 @@ impl ComboStore {
         Ok(receipt)
     }
 
+    /// #82：动作（fire / launch）的幂等回执，与 PATCH 共用同一份盘面目录。
+    pub(crate) fn action_receipt(&self, name: &str, request_id: &str) -> Result<Option<Value>> {
+        self.receipt("Ultimate-Template", name, request_id)
+    }
+
+    pub(crate) fn remember_action(&self, name: &str, request_id: &str, receipt: &Value) -> Result<()> {
+        self.remember("Ultimate-Template", name, request_id, receipt)
+    }
+
     fn receipt_dir(&self, section: &str, name: &str) -> PathBuf {
         self.root.join(RECEIPTS_DIR).join(section).join(name)
     }
@@ -254,7 +263,7 @@ impl ComboStore {
     }
 }
 
-fn combo_store(state: &AppState) -> Result<&ComboStore> {
+pub(crate) fn combo_store(state: &AppState) -> Result<&ComboStore> {
     state.combos().ok_or_else(|| ServerError::Conflict("combos not configured".to_string()))
 }
 

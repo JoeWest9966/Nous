@@ -53,6 +53,8 @@ pub struct AppState {
     ext_admin: Option<nous_ext::AdminStore>,
     /// #61：组合名册的盘面根 + 触发器名册根。未装配的测试路由回 409（不是空 200）。
     combos: Option<crate::combos::ComboStore>,
+    /// #82：试跑判定用的注入时钟与「时钟许可」这一外部事实，生产由 `main` 装配一次。
+    combo_action: Option<crate::combos_actions::ComboAction>,
 }
 
 impl AppState {
@@ -87,6 +89,7 @@ impl AppState {
             ext: None,
             ext_admin: None,
             combos: None,
+            combo_action: None,
         })
     }
 
@@ -114,6 +117,7 @@ impl AppState {
             presets: Some(store),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -164,6 +168,7 @@ impl AppState {
             ext: None,
             ext_admin: None,
             combos: None,
+            combo_action: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -219,6 +224,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -272,6 +278,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -312,6 +319,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -383,6 +391,7 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -403,6 +412,7 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -422,7 +432,7 @@ impl AppState {
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(), variant_tables: tables,
-            presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(), combos: self.combos.clone(),
+            presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(), combos: self.combos.clone(), combo_action: self.combo_action.clone(),
             ext_admin: self.ext_admin.clone(),
         })
     }
@@ -454,6 +464,7 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -486,6 +497,41 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: Some(crate::combos::ComboStore::new(root, triggers)),
+            combo_action: self.combo_action.clone(),
+            ext: self.ext.clone(),
+            ext_admin: self.ext_admin.clone(),
+        })
+    }
+
+    /// #82：注入试跑判定的时钟与时钟许可（生产在 `main` 装配一次，测试用假时钟）。
+    pub fn with_combos_action_clock(
+        self: Arc<Self>,
+        clock: Arc<dyn nous_durable::harness::clock::Clock>,
+        clock_allowed: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(
+                self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(
+                self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
+            presets: self.presets.clone(),
+            stats: self.stats.clone(),
+            combos: self.combos.clone(),
+            combo_action: Some(crate::combos_actions::ComboAction::new(clock, clock_allowed)),
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
         })
@@ -493,6 +539,11 @@ impl AppState {
 
     pub fn triggers(&self) -> Option<&crate::triggers::TriggerRuntime> {
         self.triggers.as_ref()
+    }
+
+    /// #82：试跑判定的装配（未装配时动作端点回 503，不假装判定过）。
+    pub fn combo_action(&self) -> Option<&crate::combos_actions::ComboAction> {
+        self.combo_action.as_ref()
     }
 
     pub fn stats(&self) -> Option<&crate::stats::StatsRuntime> {
@@ -525,6 +576,7 @@ impl AppState {
             ext: Some(runtime),
             ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -550,6 +602,7 @@ impl AppState {
             presets: self.presets.clone(), stats: self.stats.clone(),
             ext: self.ext.clone(), ext_admin: Some(nous_ext::AdminStore::new(root, trash)),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -583,6 +636,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: Some(runtime),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 
@@ -616,6 +670,7 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
         })
     }
 

@@ -545,9 +545,11 @@ async fn capabilities_declares_modules_and_reasons() {
     assert_eq!(by_name["combos"]["enabled"], json!(true));
     assert!(by_name["combos"].get("reason").is_none(), "enabled:true 不该带 reason");
     let combos_endpoints = by_name["combos"]["endpoints"].as_array().unwrap();
-    assert_eq!(combos_endpoints.len(), 2);
+    assert_eq!(combos_endpoints.len(), 4, "combos 现有列 + 开关 + 试跑 + launch 四条");
     assert!(combos_endpoints.iter().any(|e| e == "GET /v1/combos/:section"));
     assert!(combos_endpoints.iter().any(|e| e == "PATCH /v1/combos/:section/:name"));
+    assert!(combos_endpoints.iter().any(|e| e == "POST /v1/combos/{section}/{name}/fire"));
+    assert!(combos_endpoints.iter().any(|e| e == "POST /v1/presets/Ultimate-Template/launch"));
     snapshot("capabilities_declares_modules_and_reasons", &body);
 }
 

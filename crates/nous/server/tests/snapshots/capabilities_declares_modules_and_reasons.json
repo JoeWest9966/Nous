@@ -181,7 +181,9 @@
       "enabled": true,
       "endpoints": [
         "GET /v1/combos/:section",
-        "PATCH /v1/combos/:section/:name"
+        "PATCH /v1/combos/:section/:name",
+        "POST /v1/combos/{section}/{name}/fire",
+        "POST /v1/presets/Ultimate-Template/launch"
       ]
     },
     {

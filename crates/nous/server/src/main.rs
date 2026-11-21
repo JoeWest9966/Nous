@@ -389,7 +389,18 @@ async fn run() -> Result<(), RunError> {
         None,
         std::path::PathBuf::from(&db),
     )?;
+    // #82：试跑判定复用 #73 的 evaluate —— 时钟由这里注入一次，许可名单看当前触发器定义。
+    let clock_allowed = {
+        let store = trigger_runtime.store.lock().await;
+        nous_server::triggers::TriggerRuntime::open_definitions_only(&store)
+            .map(|definitions| definitions.iter().any(|definition| {
+                definition.spec().on.as_deref().is_some_and(|on| on == "cron" || on == "clock")
+                    || definition.spec().schedule.is_some()
+            }))
+            .unwrap_or(false)
+    };
     let state = state.with_triggers(trigger_runtime);
+    let state = state.with_combos_action_clock(nous_server::clock::system_clock(), clock_allowed);
 
     // #62：stats 的只读句柄。库路径与启动/`--check`/`--triggers` 共用 `db` 与
     // `plugins_db_path()` 的推导，不让三条端点读另一份库。
