@@ -168,7 +168,10 @@ async fn selection_survives_a_restart_and_a_missing_session_reads_back_null() {
     assert_eq!(read, json!({ "id": null }), "清空后读回 null");
 
     // 指向已删会话：GET 回 null，并顺手清掉死指针（重启后再读仍是 null）。
+    // #67：purge 必须先归档，先补一次 archive 再撕。
     let (_, _) = call(&restarted, "POST", "/v1/selection", Some(json!({ "id": 3 }))).await;
+    let (status, archived) = call(&restarted, "POST", "/v1/sessions/3/archive", None).await;
+    assert_eq!(status, StatusCode::OK, " purge 前先归档：{archived}");
     let (status, _) = call(&restarted, "POST", "/v1/sessions/3/purge", None).await;
     assert_eq!(status, StatusCode::OK, "会话 3 撕掉，selection 指向死指针");
     let (_, dead) = call(&restarted, "GET", "/v1/selection", None).await;
@@ -240,6 +243,11 @@ async fn purge_removes_every_view_and_the_second_attempt_is_409() {
     seed(&path).await;
     let router = app(&path);
 
+    // #67：purge 必须先有墓碑；没归档先撕必须 409。
+    let (status, unarchived) = call(&router, "POST", "/v1/sessions/1/purge", None).await;
+    assert_eq!(status, StatusCode::CONFLICT, "未归档先 purge 409：{unarchived}");
+    let (status, archived) = call(&router, "POST", "/v1/sessions/1/archive", None).await;
+    assert_eq!(status, StatusCode::OK, "purge 前先归档：{archived}");
     let (status, receipt) = call(&router, "POST", "/v1/sessions/1/purge", None).await;
     assert_eq!(status, StatusCode::OK, "purge 200：{receipt}");
     assert_eq!(receipt["id"], json!(1));

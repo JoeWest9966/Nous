@@ -75,6 +75,28 @@ fn validate(root: &Path, paths: &[String]) -> Result<()> {
         if !full.is_file() { continue; }
         let content = std::fs::read_to_string(&full).map_err(|e| RepoError::Io(e.to_string()))?;
         let issue: Option<(String, String)> = match repo_kind.as_str() {
+            "skills" if path == "sources.json" => {
+                let value = serde_json::from_str::<serde_json::Value>(&content);
+                match value {
+                    Err(_) => Some(("sources.json".into(), "不是合法 JSON".into())),
+                    Ok(v) if !v.get("sources").is_some_and(|s| s.is_array()) => {
+                        Some(("sources".into(), "缺 sources 数组".into()))
+                    }
+                    Ok(v) => {
+                        let bad: Vec<String> = v["sources"].as_array().unwrap()
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, s)| {
+                                s.get("name").and_then(|n| n.as_str()).unwrap_or_default().is_empty()
+                                    || s.get("url").and_then(|u| u.as_str()).unwrap_or_default().is_empty()
+                            })
+                            .map(|(i, _)| format!("sources[{i}]"))
+                            .collect();
+                        if bad.is_empty() { None }
+                        else { Some(("sources".into(), format!("缺 name/url：{}", bad.join(", ")))) }
+                    }
+                }
+            }
             "skills" if path.ends_with("SKILL.md") => {
                 if !(content.starts_with("---\n") && content[4..].contains("\n---")) {
                     Some(("SKILL.md".into(), "缺少 frontmatter".into()))

@@ -37,8 +37,12 @@ pub struct AppState {
     origin: String,
     /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
     triggers: Option<crate::triggers::TriggerRuntime>,
+    /// #77：镜像缓存根（`data/upstream/<name>/`）。`None` = 没有 data 根，上游路由如实报错。
+    upstream_data: Option<std::path::PathBuf>,
     /// #75：四套私库（presets / skills / prompts / extend）的读写与发布面。
     repos: std::collections::BTreeMap<String, std::sync::Arc<nous_repo::Repo>>,
+    /// #76：变体绑定表路径（skills / extend）。
+    variant_tables: std::collections::BTreeMap<String, std::path::PathBuf>,
     /// #60：模板私库 + 修订表的写者（整段串行锁）。按 env 的路径解析，进程内不留 map。
     presets: Option<crate::presets::SharedStore>,
     /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
@@ -75,7 +79,9 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            upstream_data: std::env::var_os("NOUS_DATA").map(std::path::PathBuf::from),
             repos: crate::repos::from_env(),
+            variant_tables: crate::repos::variant_tables_from_env(),
             presets: None,
             stats: None,
             ext: None,
@@ -103,6 +109,8 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: Some(store),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
@@ -148,7 +156,9 @@ impl AppState {
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| "http://127.0.0.1:4789".to_string()),
             triggers: None,
+            upstream_data: std::env::var_os("NOUS_DATA").map(std::path::PathBuf::from),
             repos: crate::repos::from_env(),
+            variant_tables: crate::repos::variant_tables_from_env(),
             presets: None,
             stats: None,
             ext: None,
@@ -204,6 +214,8 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
@@ -255,6 +267,8 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
@@ -293,6 +307,8 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
@@ -346,6 +362,29 @@ impl AppState {
         self.repos.get(kind).cloned()
     }
 
+    /// #77：镜像缓存根；测试显式注入，生产从 `NOUS_DATA` 读一次。
+    pub fn upstream_data(&self) -> Option<std::path::PathBuf> {
+        self.upstream_data.clone()
+    }
+
+    /// #77：测试注入 data 根（只用于进程内 Router 测试）。
+    pub fn with_upstream_data_for_test(self: Arc<Self>, data: impl AsRef<std::path::Path>) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(), commands: self.commands.clone(), hub: self.hub.clone(),
+            models: self.models.clone(), catalog_env: self.catalog_env.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            repos: self.repos.clone(), upstream_data: Some(data.as_ref().to_path_buf()),
+            variant_tables: self.variant_tables.clone(),
+            presets: self.presets.clone(),
+            stats: self.stats.clone(),
+            ext: self.ext.clone(),
+            combos: self.combos.clone(),
+        })
+    }
+
     /// #75：测试注入指定私库根（只用于进程内 Router 测试）。
     pub fn with_repos_for_test(self: Arc<Self>, kind: &str, root: impl AsRef<std::path::Path>) -> Arc<Self> {
         Arc::new(Self {
@@ -356,12 +395,39 @@ impl AppState {
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: crate::repos::from_path(kind, root.as_ref()),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
         })
+    }
+
+    /// #76：测试注入变体绑定表路径（只用于进程内 Router 测试）。
+    pub fn with_variant_table_for_test(
+        self: Arc<Self>,
+        path: impl AsRef<std::path::Path>,
+    ) -> Arc<Self> {
+        let mut tables = self.variant_tables.clone();
+        tables.insert("skills".into(), path.as_ref().to_path_buf());
+        tables.insert("extend".into(), path.as_ref().to_path_buf());
+        Arc::new(Self {
+            source: self.source.clone(), commands: self.commands.clone(), hub: self.hub.clone(),
+            models: self.models.clone(), catalog_env: self.catalog_env.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            repos: self.repos.clone(), upstream_data: self.upstream_data.clone(), variant_tables: tables,
+            presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(), combos: self.combos.clone(),
+        })
+    }
+
+    /// #76：变体绑定表路径（未装配返回 None，由路由回 409）。
+    pub fn variant_table(&self, kind: &str) -> Option<std::path::PathBuf> {
+        self.variant_tables.get(kind).cloned()
     }
 
     /// #57 的点火装配（只有 main 注入一次）。
@@ -379,6 +445,8 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: Some(triggers),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             ext: self.ext.clone(),
@@ -411,6 +479,8 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: Some(crate::combos::ComboStore::new(root, triggers)),
@@ -448,6 +518,8 @@ impl AppState {
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             ext: Some(runtime),
             ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
@@ -502,6 +574,8 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: Some(runtime),
             combos: self.combos.clone(),
@@ -533,6 +607,8 @@ impl AppState {
             ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
             repos: self.repos.clone(),
+            upstream_data: self.upstream_data.clone(),
+            variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: self.stats.clone(),
             combos: self.combos.clone(),

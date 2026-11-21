@@ -31,7 +31,7 @@
 | `chord` | nous | `nous-chord` | kernel | 编译期 | context / json / delta / sqlite / watch / output | 是 | 语义基元 |
 | `durable` | nous | `nous-durable` | kernel | 编译期 | 提交 / 文档 / 会话与 entry 查询 / scans | 是 | 存储与事务边界 |
 | `env` | nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait + 四条私库路径解析（`content.rs`：#63）+ `GET /v1/fs/dirs` 的目录解析（`NOUS_START_DIRS` 只在这里读） | 是 | 契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin` |
-| `repo` | nous | `nous-repo` | platform | 编译期 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75） | 是 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history；唯一的 git 进程调用面 |
+| `repo` | nous | `nous-repo` | platform | 编译期 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75）+ 技能/扩展变体 worktree + 绑定表 + prune/publish/usage（#76）+ 上游追踪（sources / mirror / check / pin / sync / tree / file / copy / adopt；#77） | 是 | 唯一的 git 进程调用面；四条私库路径解析沿用 `env` |
 | `env-local` | nous | (待建) `nous-env-local` | platform | 编译期 | `ExecutionEnv` 本地实现 | 是 | 今天的 `os_env.rs` 落点 |
 | `env-ssh` | nous | `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现（ssh/scp + ControlMaster + 临时密钥） | 否 | 今天 `ssh-env.js`（631 行）；#78 落地 |
 | `ai-types` | nous | `nous-ai-types` | kernel | 编译期 | TSchema / Message / Usage（纯） | 是 | 从 `nous-ai` 拆出，零 IO 零时钟（T2 已落地） |
@@ -57,6 +57,7 @@
 | `dispatcher` | nous | (待建) `nous-dispatcher` | app | 编译期 | 调度节拍（trigger → 会话） | 否 | 内核算核心三件之一，见下注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
 | `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口） | 否 | #57 落地；调度循环不在本票 |
+| `archive` | nous | — | app | 数据目录 + 端点族 | `POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 是 | 独立 SQLite 文件（选项甲，见 docs/decisions.md）；不进 durable 迁移链；目录相对 `NOUS_DB` |
 | `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：13 条资源化端点 + 修订表） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判 |
@@ -77,7 +78,7 @@
 | `locks.ts` | 文件锁——坑里记过"不许移植进 Rust" | 删掉，用 durable 的提交序列代替 |
 | `tree.ts` / `docname.ts` | 内容树：数据访问还是工具？ | 并入 `server` 的投影层，不单独成 crate |
 | `archive.js`（443） | 归档是维护动作还是插件？ | 有独立入口（命令/端点）= 插件；否则工具函数 |
-| `upstream.js`（672） | 上游追踪 | 开发工具，不是插件 |
+| `upstream.js`（672） | 上游追踪 | #77 归入 `repo` 插件（镜像在 data/，订阅清单在技能私库） |
 | `unread.js`（111） | 未读投影 | 并入 `server` 投影层 |
 | `catalog.js`（225） | 编目 | 机器编目 → `dispatcher` 或 `server` |
 | `maintenance.js`（75） | 维护动作 | 工具函数 |

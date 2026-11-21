@@ -170,6 +170,27 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/archive", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/restore", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/purge", module: "repo" },
+    // #76：变体（skills / extend）。
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/variants", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/variants/bind", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/variants/unbind", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/variants/branch", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/variants/publish", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/variants/prune", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/variants/usage", module: "repo" },
+    // #77：上游追踪（sources + 10 条 upstream 动作）挂在 skills 私库上。
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/sources", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/sources", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/upstream", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/refresh", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/pin", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/check", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/sync", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/upstream/tree", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/upstream/file", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/upstream/files", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/copy", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/adopt", module: "repo" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "device" },
@@ -185,6 +206,10 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // #64：写入面与 selection 两行状态都属于 sessions 模块。
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/config", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/purge", module: "sessions" },
+    // #67：世代归档三端点（独立 gen 文件 + 墓碑），模块 archive。
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/archive", module: "archive" },
+    RegisteredRoute { method: "GET", path: "/v1/archive", module: "archive" },
+    RegisteredRoute { method: "POST", path: "/v1/archive/{id}/restore", module: "archive" },
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
@@ -358,13 +383,13 @@ pub const MANIFEST: &[ManifestEntry] = &[
     // #68：env 的本地目录浏览已落地，SSH 远端另票。
     ManifestEntry { name: "env", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-env`", description: "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`" },
     // #75：四套私库共用的 git 发布 / 归档 / pending / diff / history。
-    ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history；唯一的 git 进程调用面" },
+    ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "唯一的 git 进程调用面；四条私库路径解析沿用 `env`" },
     // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
     ManifestEntry { name: "documents", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-documents`", description: "#48：一个实现生成 presets / prompts 两套端点" },
     // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。
     ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
     ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行" },
-    ManifestEntry { name: "archive", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
+    ManifestEntry { name: "archive", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读" },
     ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57 落地；调度循环不在本票" },

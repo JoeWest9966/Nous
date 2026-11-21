@@ -17,7 +17,9 @@ use nous_durable::session::commands::{
     scan_orphans, set_pin, set_selection, submit_message, unread_map, CommandError,
     ConfigResult, ForkRequest, PinOutcome, PinRequest, PurgeResult, SelectionResult,
     SubmitRequest,
+    archive_conversation, list_archives, restore_conversation, ArchiveResult, RestoreResult,
 };
+use nous_durable::storage::archive::Generation;
 use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
 use nous_durable::Storage;
 use serde_json::{json, Value};
@@ -118,6 +120,23 @@ pub trait CommandSource: Send + Sync {
 
     /// 真删一条会话并写墓碑；已有墓碑 → 409。
     async fn purge(&self, session: i64) -> Result<PurgeResult>;
+
+    /// #67：归档（闭包复印进 gen 文件 + 墓碑）；忙 / 活后代 → 409。
+    async fn archive(&self, session: i64, at: i64, gen: Option<String>) -> Result<ArchiveResult> {
+        let _ = (session, at, gen);
+        Err(read_only())
+    }
+
+    /// #67：世代列表 + 墓碑 + live。
+    async fn archives(&self) -> Result<Vec<Generation>> {
+        Err(read_only())
+    }
+
+    /// #67：从 gen 文件打捞回活库并抹墓碑；原件还在 → 409。
+    async fn restore(&self, session: i64, gen: String, at: i64) -> Result<RestoreResult> {
+        let _ = (session, gen, at);
+        Err(read_only())
+    }
 
     /// #72：一条会话挂的 template 名（durable 的 session 作用域文档，重启后仍在）。
     async fn template(&self, session: i64) -> Result<Option<String>> { let _ = session; Ok(None) }
@@ -338,6 +357,22 @@ impl CommandSource for DurableCommands {
             .await
             .map_err(command_error)
     }
+
+    async fn archive(&self, session: i64, at: i64, gen: Option<String>) -> Result<ArchiveResult> {
+        archive_conversation(&self.session, session, at, gen)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn archives(&self) -> Result<Vec<Generation>> {
+        list_archives(&self.session).map_err(command_error)
+    }
+
+    async fn restore(&self, session: i64, gen: String, at: i64) -> Result<RestoreResult> {
+        restore_conversation(&self.session, session, gen, at)
+            .await
+            .map_err(command_error)
+    }
 }
 
 /// 只读装配：写请求一律 409；读投影（unread）从注入的只读数据源出处，形状与写装配一致。
@@ -403,6 +438,18 @@ impl CommandSource for ReadOnlyCommands {
     }
 
     async fn purge(&self, _: i64) -> Result<PurgeResult> {
+        Err(read_only())
+    }
+
+    async fn archive(&self, _: i64, _: i64, _: Option<String>) -> Result<ArchiveResult> {
+        Err(read_only())
+    }
+
+    async fn archives(&self) -> Result<Vec<Generation>> {
+        Err(read_only())
+    }
+
+    async fn restore(&self, _: i64, _: String, _: i64) -> Result<RestoreResult> {
         Err(read_only())
     }
 
