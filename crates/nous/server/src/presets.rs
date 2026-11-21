@@ -18,11 +18,12 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
-use rusqlite::params;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use nous_store::Store;
 
 use crate::error::{Result, ServerError};
+use nous_store::PresetRevision as Revision;
 
 pub const SECTIONS: &[&str] = &["Session-Template", "Ultimate-Template"];
 
@@ -69,16 +70,6 @@ struct PresetFile {
     name: String,
     body: Value,
     bytes: Vec<u8>,
-}
-
-#[derive(Debug, Clone)]
-struct Revision {
-    n: i64,
-    sha: String,
-    body: String,
-    actor: String,
-    at: i64,
-    request_id: String,
 }
 
 impl PresetStore {
@@ -143,25 +134,19 @@ impl PresetStore {
     }
 
     /// schema 在 `nous_store::Store::open` 时已迁移；这里只负责读写，不重开迁移链。
-    fn connect(&self) -> Result<rusqlite::Connection> {
-        rusqlite::Connection::open(&self.db)
-            .map_err(|error| ServerError::Internal(format!("打开插件库失败: {error}")))
+    /// #89：server 不直接开库，数据面只经 `nous_store`（verify.sh §1.1 / §1.5）。
+    fn store(&self) -> Result<Store> {
+        Store::open(&self.db).map_err(|error| ServerError::Internal(format!("打开插件库失败: {error}")))
     }
 
     fn receipt(&self, section: &str, name: &str, kind: &WriteKind, request_id: &str) -> Result<Option<Receipt>> {
-        let conn = self.connect()?;
-        let mut stmt = conn.prepare(
-            "SELECT body FROM preset_write_receipts WHERE section=?1 AND name=?2 AND kind=?3 AND request_id=?4",
-        ).map_err(|error| ServerError::Internal(format!("读回执失败: {error}")))?;
-        let rows: Vec<String> = stmt
-            .query_map(params![section, name, kind.as_str(), request_id], |row| row.get(0))
-            .map_err(|error| ServerError::Internal(format!("读回执失败: {error}")))?
-            .filter_map(|row| row.ok())
-            .collect();
-        match rows.first() {
+        let text = self.store()?
+            .preset_receipt(section, name, kind.as_str(), request_id)
+            .map_err(|error| ServerError::Internal(format!("读回执失败: {error}")))?;
+        match text {
             None => Ok(None),
             Some(text) => {
-                let value: Value = serde_json::from_str(text)
+                let value: Value = serde_json::from_str(&text)
                     .map_err(|error| ServerError::Internal(format!("回执坏了: {error}")))?;
                 let version = value["version"].as_i64().unwrap_or(0);
                 let status = match value["status"].as_i64() {
@@ -183,60 +168,23 @@ impl PresetStore {
         request_id: &str,
         body: &Value,
     ) -> Result<()> {
-        let conn = self.connect()?;
-        conn.execute(
-            "INSERT OR IGNORE INTO preset_write_receipts (section, name, kind, request_id, body) VALUES (?1,?2,?3,?4,?5)",
-            params![section, name, kind.as_str(), request_id, body.to_string()],
-        )
-        .map_err(|error| ServerError::Internal(format!("记回执失败: {error}")))?;
+        self.store()?
+            .remember_preset_write(section, name, kind.as_str(), request_id, &body.to_string())
+            .map_err(|error| ServerError::Internal(format!("记回执失败: {error}")))?;
         Ok(())
     }
 
     fn revisions(&self, section: &str, name: &str) -> Result<Vec<Revision>> {
-        let conn = self.connect()?;
-        let rows = {
-            let mut stmt = conn.prepare(
-                "SELECT n, sha, body, actor, at, request_id FROM presets_revisions WHERE section=?1 AND name=?2 ORDER BY n",
-            ).map_err(|error| ServerError::Internal(format!("读修订失败: {error}")))?;
-            let iter = stmt.query_map(params![section, name], |row| {
-                Ok(Revision {
-                    n: row.get(0)?,
-                    sha: row.get(1)?,
-                    body: row.get(2)?,
-                    actor: row.get(3)?,
-                    at: row.get(4)?,
-                    request_id: row.get(5)?,
-                })
-            }).map_err(|error| ServerError::Internal(format!("读修订失败: {error}")))?;
-            iter.collect::<std::result::Result<Vec<_>, _>>()
-        };
-        rows.map_err(|error| ServerError::Internal(format!("读修订失败: {error}")))
+        self.store()?
+            .preset_revisions(section, name)
+            .map_err(|error| ServerError::Internal(format!("读修订失败: {error}")))
     }
 
     /// 写一次修订：n = 当前最大 n + 1，整条在一个事务里，原子。
     fn append_revision(&self, section: &str, name: &str, bytes: &[u8], request_id: &str) -> Result<i64> {
-        let conn = self.connect()?;
-        let tx = conn.unchecked_transaction()
-            .map_err(|error| ServerError::Internal(format!("开修订事务失败: {error}")))?;
-        let n: i64 = tx.query_row(
-            "SELECT COALESCE(MAX(n), 0) + 1 FROM presets_revisions WHERE section=?1 AND name=?2",
-            params![section, name],
-            |row| row.get(0),
-        ).map_err(|error| ServerError::Internal(format!("算修订号失败: {error}")))?;
-        tx.execute(
-            "INSERT INTO presets_revisions (section,name,n,sha,body,actor,at,request_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-            params![
-                section, name, n,
-                sha256_hex(bytes),
-                String::from_utf8_lossy(bytes).into_owned(),
-                "local",
-                now_ms(),
-                request_id,
-            ],
-        ).map_err(|error| ServerError::Internal(format!("写修订失败: {error}")))?;
-        tx.commit()
-            .map_err(|error| ServerError::Internal(format!("提交修订失败: {error}")))?;
-        Ok(n)
+        self.store()?
+            .append_preset_revision(section, name, bytes, "local", now_ms(), &sha256_hex(bytes), request_id)
+            .map_err(|error| ServerError::Internal(format!("写修订失败: {error}")))
     }
 
     /// 原子写盘：临时文件 + rename，写完的字节就是之后 roster 的 sha 来源。

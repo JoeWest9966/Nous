@@ -47,7 +47,6 @@ serde_json = { workspace = true }
 # `Sse` 认的是 `futures_core::Stream`，不为这一件事自己手写 `poll_next`。
 futures = { workspace = true }
 base64 = { workspace = true }
-rusqlite = { workspace = true }
 
 # 端点判据直接打 Router（`ServiceExt::oneshot`），不起真监听端口 —— 不绑 127.0.0.1，
 # 也就没有端口冲突和防火墙那类假红。`tower` 只进测试。
@@ -55,7 +54,7 @@ rusqlite = { workspace = true }
 libc = "0.2"
 nous-device = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
-# 判据 `refusal_schema_too_new`：把库的版本推到「代码看不懂」那一版（真 SQL，不调我们的迁移）。
+# 判据 `refusal_schema_too_new` / `presets_endpoints`：测试自己开独立连接读真库做正向哨兵；生产代码零 rusqlite。
 rusqlite = { workspace = true }
 # 判据 1/3 的进程级哨兵：临时 HOME 下的 token 文件权限与读取。
 tempfile = { workspace = true }
