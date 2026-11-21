@@ -13,7 +13,7 @@ fn app() -> Command {
     Command::new(env!("CARGO_BIN_EXE_nous-app"))
 }
 
-fn spawn_app(dir: &std::path::Path, port: u16) -> (Child, String) {
+fn spawn_app(dir: &std::path::Path, port: u16) -> Child {
     let mut child = app()
         .env("NOUS_LISTEN", format!("127.0.0.1:{port}"))
         .env("NOUS_DB", dir.join("nous.db"))
@@ -25,16 +25,27 @@ fn spawn_app(dir: &std::path::Path, port: u16) -> (Child, String) {
         .stderr(Stdio::piped())
         .spawn()
         .expect("nous-app 子进程起得来");
-    let mut reader = BufReader::new(child.stdout.take().expect("stdout piped"));
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .expect("读得到 listening on");
-    assert!(
-        line.starts_with("listening on "),
-        "启动行应该是 listening on ...，实得：{line}"
-    );
-    (child, line)
+    let mut stdout = BufReader::new(child.stdout.take().expect("stdout piped"));
+    let mut stderr = BufReader::new(child.stderr.take().expect("stderr piped"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let startup = loop {
+        let mut line = String::new();
+        if stdout.read_line(&mut line).expect("读得到 stdout") > 0 {
+            assert!(
+                line.starts_with("listening on "),
+                "启动行应该是 listening on ...，实得：{line}"
+            );
+            break line;
+        }
+        let mut error_line = String::new();
+        let _ = stderr.read_line(&mut error_line);
+        if Instant::now() >= deadline {
+            panic!("5 秒内没读到 listening on；stderr：{error_line}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let _ = startup;
+    child
 }
 
 fn get_scheduler(port: u16) -> Value {
@@ -96,7 +107,7 @@ fn production_process_runs_a_real_dispatcher_tick_loop() {
     assert_eq!(tick_count(dir.path()), 0);
 
     let port = 47_900 + (std::process::id() % 500) as u16;
-    let (mut child, _line) = spawn_app(dir.path(), port);
+    let mut child = spawn_app(dir.path(), port);
 
     // 等至少两拍：证明是常驻循环，而不是启动时写死的一条。
     let seen = wait_for_at_least(dir.path(), 2, Duration::from_secs(5));

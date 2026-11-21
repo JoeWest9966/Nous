@@ -311,3 +311,10 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 `encode_indexed_string` 编码（带引号），字面量匹配不上；`record` 才是原文真相。
 **解**：判据改成 `WHERE record LIKE '%nous.dispatcher.tick%'`，或先经 dispatcher 的
 `read_sleeping_ticks` 解析 record；不要拿索引列的字面量当 JSON 里那个字符串。
+## 2026-11-21 · 契约图表内嵌在判据脚本里，文档补图追不上
+
+**症状**：#89 按票面在 `docs/harness.md` 补了 7 条 `nous-server` 依赖边，
+`verify.sh` §4e 仍红，且脚本里那份 allow 表与文档是两份真相。
+**根因**：判据读的是内嵌 dict，不是它声称要读的契约文档；改文档对判据没有任何影响。
+**解**：机器版图表移进 `docs/dependency-graph.toml` 由脚本直接读，文档 §7 是同一张表；
+补“空表 = RED”哨兵。断言循环逐字未变；哨兵：从表里删一条边 → §4e 红。
