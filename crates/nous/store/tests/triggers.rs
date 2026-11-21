@@ -143,3 +143,51 @@ fn an_unknown_code_is_named_not_silently_ignored() {
     }
     assert!(store.triggers().expect("list").is_empty());
 }
+
+/// review 10：PATCH 的回执与定义变更同一事务 —— 回执写失败时定义不许改。
+#[test]
+fn patch_and_receipt_fail_as_one_unit() {
+    let (_dir, store) = open();
+    store.create_trigger(new("nightly_digest"), 1_000).expect("create");
+    let before = store.trigger("nightly_digest").unwrap().unwrap();
+    let spec = r#"{"spec_version":1,"schedule":"*/15 * * * *","on":null}"#;
+
+    // 先埋一条同 (code, request_id) 的回执 → 后写冲突 → 整个事务回滚。
+    store.remember_patch_receipt("nightly_digest", "atomic-1", "first").unwrap();
+    let outcome = store.patch_with_receipt("nightly_digest", spec, false, 1, "atomic-1", "second");
+    assert!(outcome.is_err(), "回执写冲突必须让整个 PATCH 失败：{outcome:?}");
+
+    let after = store.trigger("nightly_digest").unwrap().unwrap();
+    assert_eq!(after.version, before.version, "失败不许涨 version");
+    assert_eq!(after.enabled, before.enabled, "失败不许改 enabled");
+    assert_eq!(after.spec, before.spec, "失败不许改 spec");
+    assert_eq!(store.patch_receipt("nightly_digest", "atomic-1").unwrap().unwrap(), "first");
+
+    // 正常路径：一次事务写两份，重放必回第一次的回执。
+    let version = store.patch_with_receipt("nightly_digest", spec, false, 1, "atomic-2", "receipt-body").unwrap().unwrap();
+    assert_eq!(version, 2);
+    assert_eq!(store.patch_receipt("nightly_digest", "atomic-2").unwrap().unwrap(), "receipt-body");
+    assert_eq!(store.trigger("nightly_digest").unwrap().unwrap().version, 2);
+}
+
+/// review 11：归档前的 enabled 必须原样捞回（停用态不能被 restore 启用）。
+#[test]
+fn restore_keeps_the_pre_archive_enabled_flag() {
+    let (_dir, store) = open();
+    store.create_trigger(new("nightly_digest"), 1_000).expect("create");
+    store.patch_trigger("nightly_digest", r#"{"spec_version":1,"schedule":null,"on":null}"#, false, 1).unwrap().unwrap();
+    assert_eq!(store.trigger("nightly_digest").unwrap().unwrap().enabled, false);
+
+    store.archive_trigger("nightly_digest", 2_000).unwrap();
+    assert_eq!(store.trigger("nightly_digest").unwrap().unwrap().enabled, false);
+    store.restore_trigger("nightly_digest", 3_000).unwrap();
+    let after = store.trigger("nightly_digest").unwrap().unwrap();
+    assert_eq!(after.enabled, false, "停用态归档 → 捞回仍停用");
+    assert_eq!(after.version, 2, "归档/捞回不动 version");
+
+    // 对照：启用态仍回启用。
+    store.patch_trigger("nightly_digest", r#"{"spec_version":1,"schedule":null,"on":null}"#, true, 2).unwrap().unwrap();
+    store.archive_trigger("nightly_digest", 4_000).unwrap();
+    store.restore_trigger("nightly_digest", 5_000).unwrap();
+    assert_eq!(store.trigger("nightly_digest").unwrap().unwrap().enabled, true);
+}

@@ -39,8 +39,6 @@ pub enum Reason {
     NoSchedule,
     /// 许可名单里没有时钟。
     NotAllowed,
-    /// 外部事实不全（调用方没带来判定需要的东西）。
-    MissingState,
     /// cron 写坏了；调用方把 `detail` 记到 `lastError`，其余触发器照跑。
     BadSchedule { detail: String },
 }
@@ -108,7 +106,6 @@ pub fn reason_text(reason: &Reason) -> String {
         Reason::Busy => "上一拍还没完，跳过本拍".to_string(),
         Reason::NoSchedule => "这一拍没有到点".to_string(),
         Reason::NotAllowed => "点火许可里没有时钟".to_string(),
-        Reason::MissingState => "判定所需的状态缺失".to_string(),
         Reason::BadSchedule { detail } => format!("schedule 写坏了：{detail}"),
     }
 }

@@ -6,9 +6,7 @@
 //! `conversationId` 固定 0（调度不是任何会话的子任务）。真正的等待和推进由 Clock 完成。
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use nous_chord::sqlite::{SqliteExecutor, SqliteValue as Cell};
 use nous_durable::harness::clock::Clock;
 use nous_durable::session::{CommitOptions, Session};
@@ -28,27 +26,6 @@ pub fn interval_from_env() -> u64 {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(SCHEDULER_TICK_MS)
-}
-
-/// 生产的真实时钟。dispatcher 自己不读它，只有装配处把这一份注入进来。
-#[derive(Debug, Clone, Copy, Default)]
-pub struct RealClock;
-
-#[async_trait]
-impl Clock for RealClock {
-    fn now_ms(&self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis() as u64)
-            .unwrap_or_default()
-    }
-
-    async fn wait_until(&self, at_ms: u64) {
-        let now = self.now_ms();
-        if at_ms > now {
-            tokio::time::sleep(Duration::from_millis(at_ms - now)).await;
-        }
-    }
 }
 
 /// 一拍的待办：第 n 拍、什么时候该响。
@@ -160,9 +137,7 @@ pub async fn run_dispatcher(
         tokio::select! {
             _ = cancel.cancelled() => return,
             _ = session.closed() => return,
-            _ = tokio::time::sleep(Duration::from_millis(
-                wait_until.saturating_sub(clock.now_ms()),
-            )) => {}
+            _ = clock.wait_until(wait_until) => {}
         }
         if cancel.is_cancelled() {
             return;

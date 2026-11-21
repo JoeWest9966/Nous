@@ -3,7 +3,7 @@
 //! 定义（字段、spec、cron、`fire_due`）在 [`crate::trigger`]；这里只做 `triggers` 表的
 //! 行读写。`code` 不可变、真 `DELETE` 被拒、墓碑占着 `code` 三件事由库里的触发器保证。
 
-use rusqlite::{params, Row};
+use rusqlite::{params, OptionalExtension, Row};
 
 use crate::error::{is_constraint_violation, Result, StoreError};
 use crate::Store;
@@ -82,7 +82,7 @@ fn row_to_trigger(row: &Row<'_>) -> rusqlite::Result<Trigger> {
 }
 
 const COLUMNS: &str =
-    "id, code, name, spec, enabled, next_fire_at, version, created_at, deleted_at, archived_at, purged_at, category";
+    "id, code, name, spec, enabled, next_fire_at, version, created_at, deleted_at, archived_at, purged_at, category, pre_archive_enabled";
 
 impl Store {
     /// 兼容 #56 的薄入口：`Trigger::new` 会先校验准则，再走这里落行。
@@ -163,11 +163,18 @@ impl Store {
     /// #80：一次原子归档 —— 只写墓碑、不动 definition / version / 账。
     /// 用 `WHERE deleted_at IS NULL` 挡住重复归档与「已真删再归档」。
     pub fn archive_trigger(&self, code: &str, now_ms: i64) -> Result<bool> {
+        // 先记下归档前的 enabled，再在同一条 UPDATE 里写墓碑 + 停用 + 快照。
+        let before: Option<i64> = self.conn.query_row(
+            "SELECT enabled FROM triggers WHERE code = ?1 AND deleted_at IS NULL",
+            params![code], |row| row.get(0),
+        ).optional()?;
+        let Some(before) = before else { return Ok(false) };
         Ok(self.conn.execute(
             "UPDATE triggers
-                SET deleted_at = ?1, archived_at = ?1, enabled = 0, next_fire_at = NULL
-              WHERE code = ?2 AND deleted_at IS NULL",
-            params![now_ms, code],
+                SET deleted_at = ?1, archived_at = ?1, enabled = 0, next_fire_at = NULL,
+                    pre_archive_enabled = ?2
+              WHERE code = ?3 AND deleted_at IS NULL",
+            params![now_ms, before, code],
         )? > 0)
     }
 
@@ -175,7 +182,8 @@ impl Store {
     pub fn restore_trigger(&self, code: &str, _now_ms: i64) -> Result<bool> {
         Ok(self.conn.execute(
             "UPDATE triggers
-                SET deleted_at = NULL, archived_at = NULL, enabled = 1
+                SET deleted_at = NULL, archived_at = NULL,
+                    enabled = COALESCE(pre_archive_enabled, 1)
               WHERE code = ?1 AND archived_at IS NOT NULL AND purged_at IS NULL",
             params![code],
         )? > 0)
@@ -310,6 +318,41 @@ impl Store {
             params![code],
             |row| row.get(0),
         )?))
+    }
+
+    /// review 10：PATCH 的定义变更与幂等回执**同一次提交**。
+    /// 回执写失败（重名、IO）→ 整个事务回滚，definition / version 都不动；
+    /// 这样重放永远拿得到第一次那份回执，不会卡在「改了库但没记回执 → 412」。
+    pub fn patch_with_receipt(
+        &self,
+        code: &str,
+        spec: &str,
+        enabled: bool,
+        expected_version: i64,
+        request_id: &str,
+        receipt_body: &str,
+    ) -> Result<Option<i64>> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> Result<Option<i64>> {
+            let changed = self.conn.execute(
+                "UPDATE triggers SET spec = ?1, enabled = ?2, version = version + 1
+                  WHERE code = ?3 AND version = ?4 AND deleted_at IS NULL",
+                params![spec, i64::from(enabled), code, expected_version],
+            )?;
+            if changed == 0 { return Ok(None); }
+            self.conn.execute(
+                "INSERT INTO trigger_patch_receipts (code, request_id, body) VALUES (?1, ?2, ?3)",
+                params![code, request_id, receipt_body],
+            )?;
+            let version: i64 = self.conn.query_row(
+                "SELECT version FROM triggers WHERE code = ?1", params![code], |row| row.get(0),
+            )?;
+            Ok(Some(version))
+        })();
+        match result {
+            Ok(value) => { self.conn.execute_batch("COMMIT")?; Ok(value) }
+            Err(error) => { let _ = self.conn.execute_batch("ROLLBACK"); Err(error) }
+        }
     }
 
     /// #73：PATCH 的幂等回执。命中就返回第一次的 body，调用方不再改库。

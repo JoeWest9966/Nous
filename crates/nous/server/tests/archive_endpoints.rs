@@ -15,16 +15,14 @@ use std::path::PathBuf;
 use tower::ServiceExt;
 
 fn temp_db(tag: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "nous-archive-{tag}-{}-{:?}.sqlite",
+    let dir = std::env::temp_dir().join(format!(
+        "nous-archive-{tag}-{}-{}",
         std::process::id(),
-        std::thread::current().id()
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     ));
-    let _ = std::fs::remove_file(&path);
-    for suffix in ["-wal", "-shm"] {
-        let _ = std::fs::remove_file(PathBuf::from(format!("{}{suffix}", path.display())));
-    }
-    path
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.join("nous.sqlite")
 }
 
 async fn seed(path: &PathBuf, id: i64, entries: &[i64]) {
@@ -38,9 +36,57 @@ async fn seed(path: &PathBuf, id: i64, entries: &[i64]) {
             "model": [{ "role": "user", "content": format!("第 {entry_id} 条") }],
         })));
     }
+    // review 7：票面要求的闭包成员全部种上（tasks / submissions / documents /
+    // document_revisions / record_ids 由 mint 分配，会话与 entries 显式写）。
+    writes.push(StorageWrite::Task(json!({
+        "id": id + 1_000,
+        "conversationId": id,
+        "kind": "pi.generation",
+        "version": 1,
+        "input": {},
+        "background": false,
+        "abortRequested": false,
+        "state": { "status": "terminal" },
+    })));
+    writes.push(StorageWrite::Submission(json!({
+        "id": id + 2_000,
+        "conversationId": id,
+        "type": "input",
+        "status": "queued",
+        "content": "归档测试提交",
+        "requestId": "archive-seed-1",
+    })));
     let outcome = session.commit(writes, Default::default()).await.unwrap();
     assert!(outcome.refused.is_none(), "{:?}", outcome.refused);
+    // 文档 + 修订（一次 Base，一次 Delta 各写一条 revision）。
+    let doc = StorageWrite::DocumentCreate {
+        id: id + 3_000,
+        record: json!({
+            "id": id + 3_000,
+            "kind": "qrd3wh.test",
+            "scope": { "kind": "conversation", "conversationId": id },
+            "history": "latest",
+            "fork": "current",
+        }),
+        content: nous_durable::DocumentContent::Base {
+            version: 1,
+            value: json!({ "text": "归档文档" }),
+        },
+    };
+    let outcome = session.commit(vec![doc], Default::default()).await.unwrap();
+    assert!(outcome.refused.is_none(), "{:?}", outcome.refused);
     session.close().await.unwrap();
+}
+
+/// 从独立只读连接数各表行数——不同源（rusqlite 独立连接，不经 durable 的 API）。
+fn table_counts(path: &PathBuf) -> std::collections::BTreeMap<String, i64> {
+    let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    let mut out = std::collections::BTreeMap::new();
+    for table in ["conversations", "entries", "tasks", "submissions", "documents", "document_revisions", "record_ids"] {
+        let n: i64 = conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0)).unwrap();
+        out.insert(table.to_string(), n);
+    }
+    out
 }
 
 async fn call(
@@ -84,11 +130,23 @@ async fn archive_purge_restore_round_trips_every_entry_id() {
     let routes = router(app.clone());
 
     // 归档：回包带 gen / ids / rows，会话仍在列表里，墓碑 purged:false。
+    let before_counts = table_counts(&path);
+    assert!(before_counts["tasks"] >= 1 && before_counts["submissions"] >= 1
+        && before_counts["documents"] >= 1 && before_counts["document_revisions"] >= 1,
+        "seed 必须种全票面闭包成员：{before_counts:?}");
     let (status, body) = call(&routes, "POST", "/v1/sessions/500/archive", None).await;
     assert_eq!(status, StatusCode::OK, "实测 {:?}", body);
     let gen = body["gen"].as_str().expect("回包有 gen").to_string();
     assert_eq!(gen.len(), 8);
     assert_eq!(body["ids"], json!([500]));
+
+    // review 7：generation 文件必须含票面要求的全成员（不只是 conversations/entries）。
+    let gen_file = path.parent().unwrap().join(format!("archives/gen-{gen}.db"));
+    assert!(gen_file.exists());
+    let gen_counts = table_counts(&gen_file);
+    for table in ["conversations", "entries", "tasks", "submissions", "documents", "document_revisions", "record_ids"] {
+        assert!(gen_counts[table] > 0, "generation 缺成员 {table}：{gen_counts:?}");
+    }
 
     let (_, sessions) = call(&routes, "GET", "/v1/sessions", None).await;
     let entry = item(&sessions, 500).expect("归档后会话仍在 /v1/sessions");
@@ -133,6 +191,11 @@ async fn archive_purge_restore_round_trips_every_entry_id() {
     expected.sort_unstable();
     assert_eq!(after, expected, "捞回来的 entry id 必须逐条一致");
 
+    let restored_counts = table_counts(&path);
+    for table in ["conversations", "entries", "tasks", "submissions", "documents", "document_revisions", "record_ids"] {
+        assert!(restored_counts[table] >= before_counts[table],
+            "restore 后 {table} 应至少回到归档前：{restored_counts:?} vs {before_counts:?}");
+    }
     let (_, archive) = call(&routes, "GET", "/v1/archive", None).await;
     let restored = archive["gens"].as_array().unwrap().iter()
         .flat_map(|g| g["items"].as_array().unwrap().iter())

@@ -121,7 +121,37 @@ impl ComboStore {
         {
             return Err(ServerError::BadRequest(format!("非法的 name: {name:?}")));
         }
-        Ok(self.section_path(section)?.join(name).join("preset.json"))
+        let section_path = self.section_path(section)?;
+        let dir = section_path.join(name);
+        let real_root = fs::canonicalize(&self.root)
+            .map_err(|error| ServerError::Internal(format!("realpath 数据根失败: {error}")))?;
+        // 词法检查只挡 `../`；目录是仓内指向仓外的符号链接时只有 realpath 挡得住。
+        // 写法照 crates/nous/repo/src/files.rs::safe_path：解析最长已存在的祖先，
+        // 不存在的尾段逐段追加，逐段验符号链接。
+        let mut ancestor = dir.clone();
+        let mut tail: Vec<std::ffi::OsString> = Vec::new();
+        while !ancestor.exists() {
+            if let Some(part) = ancestor.file_name() { tail.push(part.to_os_string()); }
+            if !ancestor.pop() || ancestor == Path::new("/") {
+                return Err(ServerError::BadRequest(format!("路径逃出私库根: {section}/{name}")));
+            }
+        }
+        let mut resolved = fs::canonicalize(&ancestor)
+            .map_err(|error| ServerError::Internal(format!("realpath 失败: {error}")))?;
+        if !resolved.starts_with(&real_root) {
+            return Err(ServerError::BadRequest(format!("路径逃出私库根: {section}/{name}")));
+        }
+        for part in tail.into_iter().rev() {
+            resolved.push(part);
+            if resolved.is_symlink() {
+                resolved = fs::canonicalize(&resolved)
+                    .map_err(|error| ServerError::Internal(format!("realpath 失败: {error}")))?;
+                if !resolved.starts_with(&real_root) {
+                    return Err(ServerError::BadRequest(format!("路径逃出私库根: {section}/{name}")));
+                }
+            }
+        }
+        Ok(dir.join("preset.json"))
     }
 
     fn scan(&self, section: &str) -> Result<Vec<ComboFile>> {
@@ -212,19 +242,32 @@ impl ComboStore {
         spec.insert("enabled".to_string(), json!(enabled));
         let bytes = serde_json::to_vec_pretty(&body)
             .map_err(|error| ServerError::Internal(format!("序列化 preset.json: {error}")))?;
-        let path = self.file_path(section, name)?;
-        let dir = path.parent().ok_or_else(|| ServerError::Internal("没有父目录".into()))?;
-        let temp = dir.join(".preset.json.tmp");
-        fs::write(&temp, &bytes)
-            .map_err(|error| ServerError::Internal(format!("写临时文件失败: {error}")))?;
-        fs::rename(&temp, &path)
-            .map_err(|error| ServerError::Internal(format!("原子替换失败: {error}")))?;
-        let written = ComboFile { name: name.to_string(), bytes, body };
+        let written = ComboFile { name: name.to_string(), bytes: bytes.clone(), body };
         let triggers = self.trigger_names();
         let sessions = self.session_names()?;
         let mut receipt = view(&written, &triggers, &sessions);
         receipt["requestId"] = json!(request_id);
+        // review 10（盘上）：回执先写（原子 rename），再改 preset；任一步失败就整体回滚
+        // （删掉刚写的回执），重放必回到「变更未发生」的原点，不会拿到半截回执。
         self.remember(section, name, request_id, &receipt)?;
+        let path = self.file_path(section, name)?;
+        let dir = path.parent().ok_or_else(|| ServerError::Internal("没有父目录".into()))?;
+        let temp = dir.join(".preset.json.tmp");
+        let write_result = (|| -> Result<()> {
+            if std::env::var("NOUS_TEST_COMBOS_WRITE_FAIL").as_deref() == Ok("1") {
+                return Err(ServerError::Internal("injected preset write failure".into()));
+            }
+            fs::write(&temp, &bytes)
+                .map_err(|error| ServerError::Internal(format!("写临时文件失败: {error}")))?;
+            fs::rename(&temp, &path)
+                .map_err(|error| ServerError::Internal(format!("原子替换失败: {error}")))?;
+            Ok(())
+        })();
+        if let Err(error) = write_result {
+            let _ = std::fs::remove_file(&temp);
+            let _ = std::fs::remove_file(self.receipt_dir(section, name).join(format!("{request_id}.json")));
+            return Err(error);
+        }
         Ok(receipt)
     }
 

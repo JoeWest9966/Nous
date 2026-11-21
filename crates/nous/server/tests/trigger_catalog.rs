@@ -252,3 +252,39 @@ async fn category_vocabulary_and_per_trigger_category() {
     let (_, cats) = call(&fixture.app, "GET", "/v1/triggers/categories", Value::Null).await;
     assert!(cats["categories"].as_array().unwrap().iter().any(|c| c == "运维/夜报"), "词表条目不因清除而消失");
 }
+
+// —— review 1：协议是哑的 —— 未知字段必须忽略，不许 400 -------------------
+
+#[tokio::test]
+async fn unknown_body_fields_are_ignored_instead_of_400() {
+    let fixture = fixture("unknown-fields");
+
+    // POST /v1/triggers：多一个未知字段仍 201，且库里只有这一条。
+    let mut create = new_body("nightly_digest", Some("0 3 * * *"));
+    create["engineFromTheFuture"] = json!({ "shape": ["new", "fields"] });
+    let (status, body) = call(&fixture.app, "POST", "/v1/triggers", create).await;
+    assert_eq!(status, StatusCode::CREATED, "未知字段不该让新建 400：{body}");
+    assert_eq!(body["code"], json!("nightly_digest"));
+
+    // PATCH：未知字段 + 合法的 schedule/version，必须 200 且真的改了 enabled。
+    let mut patch = json!({ "enabled": false, "version": 1 });
+    patch["engineFromTheFuture"] = json!("ignored");
+    let (status, body) = call(&fixture.app, "PATCH", "/v1/triggers/nightly_digest", patch).await;
+    assert_eq!(status, StatusCode::OK, "未知字段不该让 PATCH 400：{body}");
+    assert_eq!(body["enabled"], json!(false));
+    assert_eq!(body["version"], json!(2));
+
+    // PUT：未知字段仍 200。code 是唯一例外：写死 400，不能混同于“未知字段”。
+    let mut put = json!({ "schedule": "*/15 * * * *", "version": 2 });
+    put["engineFromTheFuture"] = json!(42);
+    let (status, body) = call(&fixture.app, "PUT", "/v1/triggers/nightly_digest", put).await;
+    assert_eq!(status, StatusCode::OK, "未知字段不该让 PUT 400：{body}");
+    assert_eq!(body["version"], json!(3));
+
+    // category 的 body 也一样：多字段 200，挂值生效。
+    let mut category = json!({ "code": "nightly_digest", "category": "夜报" });
+    category["engineFromTheFuture"] = json!(true);
+    let (status, body) = call(&fixture.app, "POST", "/v1/triggers/category", category).await;
+    assert_eq!(status, StatusCode::OK, "未知字段不该让 category 400：{body}");
+    assert_eq!(body["category"], json!("夜报"));
+}

@@ -1451,7 +1451,15 @@ pub async fn archive_conversation(
     // gen 文件在活库写锁下写：同日二次归档不会和别的会话写撞在一起。
     generations::write_generation(&db_path, &gen, &closure).map_err(archive_error)?;
     let write = generations::tombstone_write(storage, id, at, &gen, false, false).map_err(archive_error)?;
-    commit_and_publish(session, &mut guard, vec![write]).await?;
+    if std::env::var("NOUS_TEST_ARCHIVE_FAIL_BEFORE_TOMBSTONE").as_deref() == Ok(gen.as_str()) {
+        let _ = std::fs::remove_file(generations::generation_path(&db_path, &gen));
+        return Err(CommandError::Conflict("injected tombstone failure".into()));
+    }
+    if let Err(error) = commit_and_publish(session, &mut guard, vec![write]).await {
+        // 墓碑提交失败 → 抹掉刚写的 generation，绝不留「有复印件、没墓碑」的孤儿。
+        let _ = std::fs::remove_file(generations::generation_path(&db_path, &gen));
+        return Err(error);
+    }
     Ok(ArchiveResult { gen, ids: vec![id], rows })
 }
 
@@ -1486,6 +1494,10 @@ pub async fn restore_conversation(
     let rows = closure.rows;
     generations::restore_into(storage, &closure).map_err(archive_error)?;
     let write = generations::tombstone_write(storage, id, at, &gen, false, true).map_err(archive_error)?;
-    commit_and_publish(session, &mut guard, vec![write]).await?;
+    if let Err(error) = commit_and_publish(session, &mut guard, vec![write]).await {
+        // 抹墓碑失败 → 库里行已写回、墓碑还在（下次可重试）；generation 文件是恢复的
+        // 唯一来源，**必须保留**，不能删 —— 与 archive 的补偿方向相反。
+        return Err(error);
+    }
     Ok(RestoreResult { restored: vec![id], gen, rows })
 }

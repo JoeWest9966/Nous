@@ -448,9 +448,30 @@ pub(crate) fn restore_into(storage: &mut Storage, closure: &Closure) -> ArchiveR
 
 /// 把闭包写进 generation 文件（同日按 id 先清后写，不重复）。
 pub(crate) fn write_generation(db: &Path, gen: &str, closure: &Closure) -> ArchiveResult<()> {
-    let mut generation = open_generation(&generation_path(db, gen))?;
+    // 先写临时文件，再 rename 就位：中途失败（尤其是墓碑提交前的那段）不留半截 generation。
+    let final_path = generation_path(db, gen);
+    let temp_path = final_path.with_extension("db.tmp");
+    let _ = std::fs::remove_file(&temp_path);
+    let mut generation = open_generation(&temp_path)?;
     let schema = generation.schema().clone();
-    generation.db_mut().transaction(|tx| write_closure(tx, &schema, closure))?;
+    let written = generation.db_mut().transaction(|tx| write_closure(tx, &schema, closure));
+    drop(generation);
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    // 测试注入：模拟“generation 已经写好、墓碑提交前失败”。临时文件必须被清掉，
+    // 真库一行未动（负向哨兵：把这段清理删掉，failed_generation_write… 会红）。
+    if std::env::var("NOUS_TEST_ARCHIVE_FAIL_AFTER_WRITE").as_deref() == Ok(gen) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(ArchiveError::Storage(StorageError::Shape(
+            "injected archive failure after generation write".into(),
+        )));
+    }
+    std::fs::rename(&temp_path, &final_path).map_err(|error| {
+        let _ = std::fs::remove_file(&temp_path);
+        ArchiveError::Storage(StorageError::Shape(format!("rename generation: {error}")))
+    })?;
     Ok(())
 }
 

@@ -274,3 +274,67 @@ async fn patch_rejects_bad_input_with_the_wire_error_shape() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "只认两个段：{wrong_section}");
     assert!(wrong_section["error"].is_string());
 }
+
+/// review 3：词法合法的目录名也可能是符号链接，realpath 必须拒逃逸，
+/// 且盘上不能出现新文件（负向哨兵：关掉 realpath 检查这条红）。
+#[tokio::test]
+async fn symlink_escape_is_rejected_without_writing_outside_the_root() {
+    use std::os::unix::fs::symlink;
+
+    let dir = temp_dir("symlink-escape");
+    let root = dir.path();
+    let outside = dir.path().parent().unwrap().join(format!("{}-outside", dir.path().file_name().unwrap().to_string_lossy()));
+    let _ = fs::remove_dir_all(&outside);
+    fs::create_dir_all(&outside).unwrap();
+    let section = root.join("Ultimate-Template");
+    fs::create_dir_all(&section).unwrap();
+    symlink(&outside, section.join("nightly")).unwrap();
+
+    let app = app_with(root);
+    let (status, body) = call(
+        &app,
+        "PATCH",
+        "/v1/combos/Ultimate-Template/nightly",
+        Some(json!({ "enabled": false, "requestId": "escape-1" })),
+        Some("\"whatever\""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "符号链接逃逸必须 400：{body}");
+    assert!(!outside.join("preset.json").exists(), "盘上不许出现逃逸文件");
+    assert!(!root.join(".combos-receipts/Ultimate-Template/nightly/escape-1.json").exists(),
+        "被拒的请求不许留回执");
+    let _ = fs::remove_dir_all(&outside);
+}
+
+/// review 10（盘上半）：回执写在变更前；preset 写失败时回执不残留，
+/// 重放不会拿到一份「变更没发生却说发生了」的回执。
+#[tokio::test]
+async fn a_failed_preset_write_does_not_leave_an_orphan_receipt() {
+    let dir = temp_dir("receipt-fail");
+    let root = dir.path();
+    write_preset(root, "Ultimate-Template", "nightly", &ultimate(true, "daily", "morning"));
+    let app = app_with(root);
+    let (_, body) = get(&app, "Ultimate-Template").await;
+    let etag = find(&body, "nightly")["version"].as_str().unwrap().to_string();
+    let before = read_preset(root, "Ultimate-Template", "nightly");
+
+    // 注入：在写 preset 前失败（模拟盘写错误），回执若已先写就必须回滚删掉。
+    std::env::set_var("NOUS_TEST_COMBOS_WRITE_FAIL", "1");
+    let (status, body) = call(
+        &app, "PATCH", "/v1/combos/Ultimate-Template/nightly",
+        Some(json!({ "enabled": false, "requestId": "fail-1" })), Some(&etag),
+    ).await;
+    std::env::remove_var("NOUS_TEST_COMBOS_WRITE_FAIL");
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "写失败要明确报错：{body}");
+    assert_eq!(read_preset(root, "Ultimate-Template", "nightly"), before, "失败不许改盘");
+    assert!(!root.join(".combos-receipts/Ultimate-Template/nightly/fail-1.json").exists(),
+        "失败不许留下孤儿回执");
+
+    // 重放：不能返回失败那次的回执，应重新执行成功。
+    let (status, replay) = call(
+        &app, "PATCH", "/v1/combos/Ultimate-Template/nightly",
+        Some(json!({ "enabled": false, "requestId": "fail-1" })), Some(&etag),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "重放应该重新执行一次：{replay}");
+    assert_eq!(read_preset(root, "Ultimate-Template", "nightly")["spec"]["enabled"], json!(false));
+}

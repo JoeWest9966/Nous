@@ -600,7 +600,14 @@ impl AppState {
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(), stats: self.stats.clone(),
-            ext: self.ext.clone(), ext_admin: Some(nous_ext::AdminStore::new(root, trash)),
+            ext: self.ext.clone(),
+            ext_admin: Some({
+                let mut admin = nous_ext::AdminStore::new(root, trash);
+                admin.head_restore = Some(nous_ext::HeadRestore(std::sync::Arc::new(|root: &std::path::Path, name: &str| {
+                    nous_repo::materialize_head_dir(root, name).map_err(|e| e.to_string())
+                })));
+                admin
+            }),
             combos: self.combos.clone(),
             combo_action: self.combo_action.clone(),
         })
