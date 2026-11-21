@@ -42,6 +42,13 @@
 
 ## 我们用到的端点
 
+### 调度节拍（#73）
+
+生产进程在 app 装配处起一条常驻节拍：默认 60s 一拍，每拍写一条 durable tick 记录；
+`scheduler.lastTickAt` 从库里的 tick 记录读，不从内存读。测试可用
+`NOUS_DISPATCHER_INTERVAL_MS` 缩短间隔（默认 60000，毫秒），不改产品默认值。
+进程退出时节拍任务随 Tokio runtime 收敛，不留下孤儿 tick。
+
 ### PATCH /v1/triggers/{code}
 
 #73：改触发器自己的 `schedule` / `params` / `enabled`。`code` 是不可变 slug（`nous-store`

@@ -882,3 +882,18 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 **决定**：`POST /v1/extensions/uninstall` 把源码 `rename` 到 `data/extend-trash/<name>-<ms>/`，并在私库根写 `deleted-extensions.json`；scan 认名单跳过，install 从垃圾站最新一份装回。核心 `nous`/`skills`/`prompts` 一律 400。
 **理由**：私库是 git pull 的；只删本地目录，下一次 pull 会把扩展复活。名单随私库发布，重启后仍生效；垃圾站在 data 下不随发布走，是 install 的回退来源。核心扩展是引擎自己装配的，删掉等于自残。
 **反悔点**：若将来引入真正的包管理器（带 lockfile 与远端 registry），删除名单应当退役，改由 registry 声明已删除；那时 `deleted-extensions.json` 与 scan 的跳过分支一起删。
+
+## 2026-11-23 · #73 常驻节拍在 app 装配处 spawn，零时钟判据限定调度逻辑
+
+**决定**：`main.rs` 的 app 装配处 `tokio::spawn(nous_dispatcher::run_dispatcher(...))`，
+注入 dispatcher 的 `RealClock` 与 `NOUS_DISPATCHER_INTERVAL_MS`（默认 60000）；令牌和
+`Session::closed()` 都能让它收敛。dispatcher 暴露的 `RealClock` 是唯一的真实时钟实现，
+`run_dispatcher` / `evaluate` / `arm_next_tick` 一律只认注入的 `Clock`，判据用 `ManualClock`。
+
+**为什么**：#69 要「真实恢复」，只提供函数没人调用等于能力被藏起来。生产时钟总要有
+一个地方实现；放在 dispatcher 的具名 `RealClock` 而不是让 server 自己读 `SystemTime`，
+保持「调度逻辑零直接时钟」的判据能精确打在注入路径上，也让进程级判据真起 nous-app
+就能验到 60s 节拍的可配置短间隔。
+
+**反悔点**：若将来把节拍挪进专门的 daemon，不能复制一份时钟实现或再起第二条任务循环；
+只把这一处 spawn 移到新入口，仍用同一个 `run_dispatcher`，并保留进程级判据。

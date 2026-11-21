@@ -302,3 +302,12 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 才是描述列；集成前两格恰好相同，所以空转地绿。
 **解**：改清单表格时若撞上这条红，先逐列打印 `cells[i]` 与 entry 字段确认索引；
 保持 `cells[8]` 与 `MANIFEST.description` 逐字相同，#77 的上游追踪说明放 `cells[6]`。
+
+## 2026-11-23 · sleeping 任务里的 kind 在库里是编码字符串，不是原文
+
+**症状**：进程级判据 `SELECT count(*) FROM tasks WHERE kind='nous.dispatcher.tick'` 恒为 0，
+但 durable 的 record JSON 里明明有这条任务；误以为节拍没跑。
+**根因**：durable 按 `docs/storage.md` 的索引列规矩写 `kind`，`task_row` 用
+`encode_indexed_string` 编码（带引号），字面量匹配不上；`record` 才是原文真相。
+**解**：判据改成 `WHERE record LIKE '%nous.dispatcher.tick%'`，或先经 dispatcher 的
+`read_sleeping_ticks` 解析 record；不要拿索引列的字面量当 JSON 里那个字符串。

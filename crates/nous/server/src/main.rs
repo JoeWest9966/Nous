@@ -391,6 +391,21 @@ async fn run() -> Result<(), RunError> {
     )?;
     let state = state.with_triggers(trigger_runtime);
 
+    // #73：常驻调度节拍在 app 的唯一装配处起。真实 Clock 由 dispatcher 提供，
+    // 这里只注入它；间隔从 NOUS_DISPATCHER_INTERVAL_MS 读（默认 60s）。
+    // 心跳推进 durable 的 sleeping 任务与 tick 记录；点火仍走 TriggerRuntime::fire。
+    let dispatcher_cancel = tokio_util::sync::CancellationToken::new();
+    let dispatcher_session = commands.session().clone();
+    let dispatcher_clock: Arc<dyn nous_durable::harness::clock::Clock> =
+        Arc::new(nous_dispatcher::RealClock);
+    let dispatcher_interval = nous_dispatcher::interval_from_env();
+    let dispatcher_task = tokio::spawn(nous_dispatcher::run_dispatcher(
+        dispatcher_session.clone(),
+        dispatcher_clock,
+        dispatcher_interval,
+        dispatcher_cancel.clone(),
+    ));
+
     // #62：stats 的只读句柄。库路径与启动/`--check`/`--triggers` 共用 `db` 与
     // `plugins_db_path()` 的推导，不让三条端点读另一份库。
     let state = state.with_stats(nous_server::stats::StatsRuntime {
@@ -457,7 +472,11 @@ async fn run() -> Result<(), RunError> {
         })),
         None => router(state),
     };
-    axum::serve(listener, app).await?;
+    let served = axum::serve(listener, app).await;
+    // 进程退出（含 serve 失败）都收节拍：不留下继续写库的孤儿任务。
+    dispatcher_cancel.cancel();
+    let _ = dispatcher_task.await;
+    served?;
     Ok(())
 }
 

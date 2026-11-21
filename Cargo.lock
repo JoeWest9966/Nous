@@ -1317,6 +1317,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1480,6 +1481,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tower",
 ]
 

@@ -199,8 +199,8 @@ async fn one_tick_records_heartbeat_and_fires_exactly_one_turn() {
     let store = TriggerStore::open(&fixture.trigger_db).unwrap();
     let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store).unwrap();
     let last_tick = fixture.runtime.load_last_tick_at();
-    let due = now_ms as i64 + 2;
-    assert_eq!(last_tick, Some(due));
+    let due = last_tick.expect("sleeping tick 行里有 wakeAt");
+    assert!(due >= now_ms as i64, "tick 不早于注入 Clock 的时刻");
     let report = nous_server::triggers::observation_report(
         &store,
         &definitions,

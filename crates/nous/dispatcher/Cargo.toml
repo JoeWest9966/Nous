@@ -10,6 +10,7 @@ description = "#73：注入时钟 + durable sleeping 任务的调度节拍，纯
 nous-durable = { workspace = true }
 nous-store = { workspace = true }
 nous-chord = { workspace = true }
+tokio-util = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
