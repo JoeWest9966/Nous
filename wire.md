@@ -249,6 +249,19 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 只读机读视图：从 `meta::ROUTES` 生成 OpenAPI `paths`，与 `/v1/capabilities` / `/v1/_routes`
 三处同源。加端点先改 `meta::ROUTES`，这里自动跟着变；不手抄第二份路径清单。
 
+#### GET /v1/capabilities
+
+一个发行版一张清单：`modules[]` 每个模块声明 `name` / `enabled` 与 `endpoints` 或 `reason`，
+顶层给 `contract` / `server` / `runtime` / `services`。字段形状以
+`crates/nous/server/tests/capabilities_shapes.rs::capabilities_declares_modules_and_reasons` 为准。
+
+- #88：`modules[]` 每个模块（含未启用的）另带版本、类型、层、必需、来源 crate、说明六列，
+  取自 `docs/plugins.md` 同一张表；判据 `capabilities_manifest.rs::manifest_metadata_matches_the_plugins_table_cell_by_cell`
+  逐格比对编译后的清单与文档表。`crate` 可能是 `—` 或 `(待建) xxx`，不可当成可运行的包名。
+- `layer` 四值封闭、`kind` 三值封闭；`enabled:false` 的模块用 `reason.code` 四值封闭解释原因。
+- 六列是加法：老引擎没有这些字段时，桌面端降级成「版本 = server.version，类型 / 层 = —」，
+  不据此判模块不存在。新字段一律只读，`endpoints` / `reason` 的既有语义不变。
+
 #### POST /v1/sessions/:id/archive
 
 body 空。回 200 `{"gen":"20261113","ids":[699],"rows":17}`。
@@ -531,6 +544,11 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
 - 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
 
+#83：建会话 / `POST /v1/sessions/:id/config` 选的 `skills` 落在会话的 `pi.agent` 文档里，
+起轮时按**选中顺序**读 `<skill>/SKILL.md` 正文（去掉 frontmatter）拼进 `pi.system` 的
+`model[0].sections.prompts`。技能缺失 / frontmatter 坏只留 `skill: missing` / `skill: problem`
+诊断，轮次照跑；只读会话照样注入。判据见 `crates/nous/server/tests/skill_injection.rs`。
+
 ### GET /v1/prompts
 
 `{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
@@ -561,6 +579,25 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - 本库的静态编目不知道具体 `user` / `port` / `ips` / `addr`，就回 `null` / `[]` / `""` ——
   不编造地址。旧字段（`hostname` / `os` / `arch` / `triples` / `rustc` / `roles` /
   `annotations` / `items`）保留一版，客户端按任一套都能读到。
+
+## 私库读写与发布（#75）
+
+四套私库（`:repo` ∈ `presets | skills | prompts | extend`）共用一套端点；文件 CRUD
+在 `nous-repo` 的公共 API，HTTP 只暴露发布与读视图。字段形状以
+`crates/nous/server/tests/repos_endpoints.rs` 为准（本文件只索引端点与约束）。
+
+- `GET /v1/repos/:repo/status` → `{root, head, branch, ahead, behind, dirty, locked}`。
+- `GET /v1/repos/:repo/pending` → `{units:[{name, state, aheadCommits, paths[]}]}`，按目录单元分组。
+- `GET /v1/repos/:repo/pending/diff?path=` / `history/diff?name=&hash=&path=` → `{before, after}`（全文，不是 git patch）。
+- `GET /v1/repos/:repo/pending/commit?hash=` → `{hash, message, files[]}`。
+- `POST /v1/repos/:repo/commit` `{paths[], message, requestId}` → `{commit, pushed, refs}`。
+  `pushed` 三态 `true | false | null`，推送失败不能报 true；pathspec 防搭车。
+- `GET /v1/repos/:repo/history?name=&limit=` → `{items:[{hash, at, actor, message}]}`，是私库 git 历史，
+  与 `#60` 的引擎内 `revisions` 不同，不许混。
+- `POST /v1/repos/:repo/{archive,restore,purge}` `{name, requestId}` → `{commit, pushed}`。
+
+- `:repo` 不在四值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
+  且 `{field, problem}`，不 commit 不 push。推送失败不改盘上文件。
 
 ### GET /v1/fs/dirs?path=&machine=&hidden=
 

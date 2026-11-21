@@ -53,7 +53,7 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
     let summary = String::from_utf8_lossy(&checked.stdout);
     let last = summary.lines().last().unwrap_or_default();
     // device 自己让 checked 从 17 → 18；别的票再加插件（如 #62 的 stats）会继续 +1，
-    // 所以只钉「至少 18 且 0 处不符」，不写死数字（与票面判据一致）。
+    // 所以只钉「至少 19 且 0 处不符」，不写死数字（与票面判据一致）。
     let checked_n: u32 = last
         .split("checked=")
         .nth(1)
@@ -61,8 +61,8 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     assert!(
-        checked_n >= 18 && last.contains("mismatched=0"),
-        "清单应至少 18 行且 0 处不符：{last}"
+        checked_n >= 19 && last.contains("mismatched=0"),
+        "清单应至少 19 行（含 #75 的 repo）且 0 处不符：{last}"
     );
 
     let doc = std::fs::read_to_string(Path::new(root()).join("docs/plugins.md")).unwrap();

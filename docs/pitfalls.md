@@ -225,3 +225,22 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 **根因**：声明关着、代码开着，观测面没有读运行时的事实，两张真相分叉。
 **解**：清单改回 enabled；`items` 直接由 Runtime 的清单/进程/状态机投影，失败项也留一行带 error；
 reload 走同一个实例的唯一入口。别在 server 里再存一张注册表。
+
+## 2026-11-21 · 命中行里出现字符串不等于打中了执行路径
+
+**症状**：`if false && libc::prctl(libc::PR_SET_PDEATHSIG, …)` 让父死收割彻底失效，
+只查 `source.contains("PR_SET_PDEATHSIG")` 的静态判据照样绿——哨兵在空转。
+**根因**：字符串命中不区分注释、短路和被包在 `cfg!` 里的死分支；进程级测试又被
+管道 EOF / `Runtime::drop` 两级兜底盖住，单独关掉第三级也看不出差别。
+**解**：静态判据只读含 prctl 的那一行，要求它恰是 `if libc::prctl(...) != 0` 的真执行条件；
+负向哨兵用 `false &&` 短路验红。进程级判据保留，作为另两级的正交覆盖。
+
+## 2026-11-20 · 判据 3 的 `../../` 打不中 realpath 检查
+
+**症状**：把 `files.rs` 里两处 `resolved.starts_with(&real_root)` 改成 `if false && …`，
+`path_escape_is_rejected_without_creating_any_file` 照样绿——负向哨兵没变红，判据在空转。
+**根因**：`../../etc/passwd` 被 `Component::ParentDir` 词法检查挡在 realpath 之前；真正需要
+realpath 的是「路径片段全合法、但目录是仓内指向仓外的符号链接」。
+**解**：补 `symlink_escape_is_rejected_by_realpath_check`（仓内 `link` → 仓外，写 `link/escaped.txt`），
+关掉 realpath 检查时它在 `仓外不许出现文件` 断言红；同一招也用于 `git add .` 哨兵
+（加 `git diff --cached --name-only` 空断言，`commit -- pathspec` 挡不住误 staged 的搭车文件）。

@@ -157,6 +157,16 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
     // #68：只读目录浏览（env 插件）。
     RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/status", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending/diff", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending/commit", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history/diff", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/commit", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/archive", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/restore", module: "repo" },
+    RegisteredRoute { method: "POST", path: "/v1/repos/:repo/purge", module: "repo" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
     RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "device" },
@@ -235,7 +245,7 @@ pub fn routes_view() -> Value {
             .collect::<Vec<_>>(),
         "modules": MANIFEST
             .iter()
-            .map(|(name, _)| json!({ "name": name, "enabled": route_enabled(name) }))
+            .map(|entry| json!({ "name": entry.name, "enabled": route_enabled(entry.name) }))
             .collect::<Vec<_>>(),
     })
 }
@@ -259,36 +269,95 @@ pub fn openapi_paths() -> Value {
 pub fn route_enabled(module: &str) -> bool {
     MANIFEST
         .iter()
-        .find(|(name, _)| *name == module)
-        .is_some_and(|(_, reason)| reason.is_none())
+        .find(|entry| entry.name == module)
+        .is_some_and(|entry| entry.reason.is_none())
 }
 
 fn enabled_routes() -> impl Iterator<Item = &'static RegisteredRoute> {
     ROUTES.iter().filter(|route| route_enabled(route.module))
 }
 
+/// `#88`：清单的一行。五个展示列逐格抄自 `docs/plugins.md` 主表，
+/// `capabilities_manifest.rs` 逐格比对，不许第二份手抄。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ManifestEntry {
+    pub name: &'static str,
+    pub reason: Option<ReasonCode>,
+    pub layer: Layer,
+    pub kind: ModuleKind,
+    pub required: bool,
+    pub crate_name: &'static str,
+    pub description: &'static str,
+}
+
+impl ManifestEntry {
+    pub fn required_text(self) -> &'static str {
+        if self.required { "是" } else { "否" }
+    }
+}
+
+/// 四值封闭，与 `docs/plugins.md` 的 layer 列同源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    Kernel,
+    Platform,
+    App,
+    Dev,
+}
+
+impl Layer {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Kernel => "kernel",
+            Self::Platform => "platform",
+            Self::App => "app",
+            Self::Dev => "dev",
+        }
+    }
+}
+
+/// 三值封闭，与 `docs/plugins.md` 的「形态」列同源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleKind {
+    Compiled,
+    Declarative,
+    External,
+}
+
+impl ModuleKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compiled => "编译期",
+            Self::Declarative => "声明式",
+            Self::External => "运行时外挂",
+        }
+    }
+}
+
 /// 清单：模块名 == `docs/plugins.md` 的 module 列（评论第二条的拍板）。
 /// `enabled` = 清单 ∩ 代码：没有注册路由的模块一律 disabled + reason。
-const MANIFEST: &[(&str, Option<ReasonCode>)] = &[
-    ("sessions", None),
+pub const MANIFEST: &[ManifestEntry] = &[
+    ManifestEntry { name: "sessions", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-sessions`", description: "**pi 本体**（#44 落地），承载最小轮次与取消收敛" },
     // #68：env 的本地目录浏览已落地，SSH 远端另票。
-    ("env", None),
+    ManifestEntry { name: "env", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-env`", description: "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`" },
+    // #75：四套私库共用的 git 发布 / 归档 / pending / diff / history。
+    ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history；唯一的 git 进程调用面" },
     // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
-    ("documents", None),
-    // #60：13 条 presets 端点 + 修订表已落地。
-    ("presets", None),
-    ("skills", None),
-    ("archive", Some(ReasonCode::NotImplemented)),
-    ("combos", Some(ReasonCode::NotImplemented)),
-    ("triggers", None),
-    ("stats", None),
-    ("device", None),
-    ("prompts", None),
-    ("ext", None),
+    ManifestEntry { name: "documents", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-documents`", description: "#48：一个实现生成 presets / prompts 两套端点" },
+    // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。
+    ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
+    ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行" },
+    ManifestEntry { name: "archive", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
+    ManifestEntry { name: "combos", reason: Some(ReasonCode::NotImplemented), layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "—", description: "旧面板概念，Rust 版尚未落地" },
+    ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57 落地；调度循环不在本票" },
+    ManifestEntry { name: "stats", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-stats`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
+    ManifestEntry { name: "device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
+    ManifestEntry { name: "prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "今天 `prompts/index.js`" },
+    ManifestEntry { name: "ext", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载）；`ext-host` 行是它后续的重划" },
 ];
 
-#[derive(Debug, Clone, Copy)]
-enum ReasonCode {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasonCode {
     NotImplemented,
     #[allow(dead_code)] // 四值封闭：desk 按这个枚举分支，不许少一个
     DisabledByManifest,
@@ -323,31 +392,41 @@ impl ReasonCode {
 pub fn capabilities(origin: &str) -> Value {
     let modules: Vec<Value> = MANIFEST
         .iter()
-        .map(|(name, manifest_reason)| {
+        .map(|entry| {
+            let name = entry.name;
             let registered: Vec<&RegisteredRoute> = enabled_routes()
-                .filter(|route| route.module == *name)
+                .filter(|route| route.module == name)
                 .collect();
             // 清单关掉的模块即便有代码也不声明；清单开着但没代码就 not_implemented。
-            let reason = manifest_reason.or_else(|| {
+            let reason = entry.reason.or_else(|| {
                 registered
                     .is_empty()
                     .then_some(ReasonCode::NotImplemented)
             });
+            // #88：六列是新加的，老桌面端只读 name/enabled/endpoints/reason，照旧能解析。
+            let mut module = json!({
+                "name": name,
+                "version": env!("CARGO_PKG_VERSION"),
+                "kind": entry.kind.as_str(),
+                "layer": entry.layer.as_str(),
+                "required": entry.required,
+                "crate": entry.crate_name,
+                "description": entry.description,
+            });
             match reason {
-                Some(code) => json!({
-                    "name": name,
-                    "enabled": false,
-                    "reason": { "code": code.as_str(), "message": code.message(name) },
-                }),
-                None => json!({
-                    "name": name,
-                    "enabled": true,
-                    "endpoints": registered
+                Some(code) => {
+                    module["enabled"] = json!(false);
+                    module["reason"] = json!({ "code": code.as_str(), "message": code.message(name) });
+                }
+                None => {
+                    module["enabled"] = json!(true);
+                    module["endpoints"] = json!(registered
                         .iter()
                         .map(|route| format!("{} {}", route.method, route.path))
-                        .collect::<Vec<_>>(),
-                }),
+                        .collect::<Vec<_>>());
+                }
             }
+            module
         })
         .collect();
     json!({

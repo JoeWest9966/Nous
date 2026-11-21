@@ -19,12 +19,26 @@ fn workspace_root() -> PathBuf {
 }
 
 fn sample_ext_bin(name: &str) -> PathBuf {
-    // cargo 把集成测试编到 target/debug/deps/<hash>/，产物不跟它同目录；
-    // 从 CARGO_MANIFEST_DIR 回推 workspace 根，只用于测试准备样例产物。
-    let path = workspace_root().join("target").join("debug").join(name);
+    // 二进制路径只问 cargo：先显式编出样例（workspace 的 target-dir 可能在仓外），
+    // 再从 `CARGO_BIN_EXE_nous-app` 的同目录取同名 sibling —— 和 judge.sh 的
+    // `cargo build -p exts-*` 同一条生产路径，不猜 `<repo>/target/debug`。
+    let built = Command::new("cargo")
+        .args(["build", "--quiet", "-p", name, "--bin", name])
+        .current_dir(workspace_root())
+        .output()
+        .expect("cargo build 样例扩展");
+    assert!(
+        built.status.success(),
+        "样例扩展 {name} 编译失败：{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let path = PathBuf::from(env!("CARGO_BIN_EXE_nous-app"))
+        .parent()
+        .expect("nous-app binary has a parent")
+        .join(name);
     assert!(
         path.exists(),
-        "样例扩展二进制不存在：{}（先 cargo build -p {name}）",
+        "样例扩展二进制不存在：{}（cargo build -p {name} 没产出同名 bin）",
         path.display()
     );
     path
@@ -172,13 +186,15 @@ fn spawn_installs_parent_death_signal_and_closes_race() {
         workspace_root().join("crates/nous/ext/src/spawn.rs"),
     )
     .unwrap();
+    // 命中行必须落在真执行路径上：`if false && prctl(...)`、`cfg!(never) && …`
+    // 都含字符串却不装信号 —— 静态判据必须把它们判红（负向哨兵）。
+    let prctl_line = source
+        .lines()
+        .find(|line| line.contains("libc::prctl(libc::PR_SET_PDEATHSIG"))
+        .unwrap_or("");
     assert!(
-        source.contains("PR_SET_PDEATHSIG"),
-        "扩展子进程必须装 PR_SET_PDEATHSIG（父进程退出兜底）"
-    );
-    assert!(
-        source.contains("getppid()"),
-        "pre_exec 必须复核 ppid，关掉 spawn 期间的竞态窗口"
+        prctl_line.contains("if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0"),
+        "PR_SET_PDEATHSIG 必须在一个真执行的 if 条件里，不许只出现在注释/短路表达式：{prctl_line}"
     );
 }
 

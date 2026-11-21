@@ -1,0 +1,15 @@
+[package]
+name = "nous-repo"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "#75：四套私库的文件读写与 git 发布（platform 层，唯一 git 进程面）"
+
+[dependencies]
+nous-env = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

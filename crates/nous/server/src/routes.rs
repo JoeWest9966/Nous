@@ -91,7 +91,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/stats/tasks", get(crate::stats::tasks))
         .route("/v1/stats/db", get(crate::stats::db))
         .route("/v1/openapi.json", get(crate::stats::openapi));
+    // #75：repo 路由与 documents 路由都在同一份 state 上；documents::attach 统一应用 state。
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
+    // #75：repo 路由先挂在带 state 的 Router 上（与 #48 documents 同一份 state）。
+    let router = crate::repos::attach(router);
     let router = crate::documents::attach(state.clone(), router);
     // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
     match state.presets() {
@@ -743,22 +746,36 @@ struct SubmitBody {
     when_busy: Option<Value>,
 }
 
-/// 把会话 template 的正文写进一条 `pi.system` entry，并回一条 message 给本轮 provider。
+/// 把会话 template 正文 + 选中的技能正文写进一条 `pi.system` entry，并回一条 message 给本轮
+/// provider。
 ///
 /// 正文进 `sections.prompts`（不是 `content`）：#74 的 `?system=1` 回放按 sections 合并，
-/// 后续系统消息能按名字覆盖这一段；名字本身就是诊断位（`template: missing`）。
+/// 后续系统消息能按名字覆盖这一段；名字本身就是诊断位（`template: missing` /
+/// `skill: missing` / `skill: problem`）。
+/// #83：技能是提示词不是工具，所以这里不查 `readOnly` —— 只读会话照样注入技能。
 async fn inject_prompt_section(
     state: &Arc<AppState>,
     session_id: i64,
     submitted: &crate::commands::SubmitResult,
 ) -> Option<nous_ai::Message> {
-    let template_name = state.commands().template(session_id).await.ok().flatten()?;
+    let template_name = state.commands().template(session_id).await.ok().flatten();
     let prompts_root = nous_env::PROMPTS.resolve();
-    let (text, actor) = if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
-        (nous_prompts::render(&template.body, &Default::default()), "prompts".to_string())
-    } else {
-        (format!("template: missing ({template_name})"), "prompts".to_string())
+    let template_text = template_name.map(|template_name| {
+        if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
+            nous_prompts::render(&template.body, &Default::default())
+        } else {
+            format!("template: missing ({template_name})")
+        }
+    });
+    let selected = state.commands().skills(session_id).await.ok().unwrap_or_default();
+    let skills_text = nous_skills::assemble_prompts(&nous_env::SKILLS.resolve(), &selected);
+    let text = match (template_text, skills_text.is_empty()) {
+        (Some(head), false) => format!("{head}\n\n{skills_text}"),
+        (Some(head), true) => head,
+        (None, skills) if !skills => skills_text,
+        _ => return None,
     };
+    let actor = "prompts".to_string();
     let message_value = serde_json::to_value(nous_ai::transform::system::section_patch(
         &[("prompts", Some(text.as_str()))], 0,
     )).ok()?;
@@ -810,8 +827,8 @@ async fn messages(
         if let Some(runtime) = state.runtime() {
             let submitted = result.clone();
             let driver = runtime.driver.clone();
-            // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
-            // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
+            // #72 + #83：template 与选中技能在起轮前拼成一条 pi.system
+            // （与 #74 回放同一条线）。读取失败只记诊断，不阻断轮次。
             let system_message = inject_prompt_section(&state, session, &submitted).await;
             let mut turn_context = nous_ai::Context::new(Vec::new());
             if let Some(message) = system_message {
