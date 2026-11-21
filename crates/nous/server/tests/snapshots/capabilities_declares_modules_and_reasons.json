@@ -48,7 +48,19 @@
         "POST /v1/repos/:repo/commit",
         "POST /v1/repos/:repo/archive",
         "POST /v1/repos/:repo/restore",
-        "POST /v1/repos/:repo/purge"
+        "POST /v1/repos/:repo/purge",
+        "GET /v1/repos/:repo/sources",
+        "POST /v1/repos/:repo/sources",
+        "GET /v1/repos/:repo/upstream",
+        "POST /v1/repos/:repo/upstream/refresh",
+        "POST /v1/repos/:repo/upstream/pin",
+        "POST /v1/repos/:repo/upstream/check",
+        "POST /v1/repos/:repo/upstream/sync",
+        "GET /v1/repos/:repo/upstream/tree",
+        "GET /v1/repos/:repo/upstream/file",
+        "GET /v1/repos/:repo/upstream/files",
+        "POST /v1/repos/:repo/upstream/copy",
+        "POST /v1/repos/:repo/upstream/adopt"
       ]
     },
     {

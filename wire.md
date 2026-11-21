@@ -518,6 +518,30 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
   与 `#60` 的引擎内 `revisions` 不同，不许混。
 - `POST /v1/repos/:repo/{archive,restore,purge}` `{name, requestId}` → `{commit, pushed}`。
 
+#### 上游追踪（#77，`:repo` 恒为 `skills`）
+
+镜像是 `data/upstream/<name>/` 缓存（不进内核库），订阅清单 `sources.json` 在技能私库里，
+`{v, sources:[{name,url,branch?,prefix?,version?}]}`，整份替换后走 `/commit` 才进历史。
+`version` 只由 `pin` / `sync` 与首拉基线写，其余动作一律不改。
+
+- `GET/POST /v1/repos/:repo/sources` → `{v, sources:[...]}`；GET 只读盘上正文，POST 整份替换（写盘不提交）。
+- `GET /v1/repos/:repo/upstream` → `{sources:[{...,mirror,mirrorHead,pinned,newer,drift,bytes,entries}], errors}`。
+  `pinned` 是认的 commit；`newer` = 远端 HEAD ≠ `pinned`（上次 check 的缓存）；
+  `drift` = 镜像 HEAD ≠ `pinned`，或镜像工作区有手改（认的版本与看到的不是一版）。
+  没有 check 过就 `newer:false`，打开面板不联网。
+- `POST /v1/repos/:repo/upstream/{refresh,pin,check,sync}`：
+  `refresh` 只拉不改 `pinned`；`pin {name,commit?,requestId}` 是日常唯一写 `version` 的入口；
+  `check {name?}` 只 `ls-remote` 问 refs，写 `.git/nous-check.json` 缓存，不下载对象；
+  `sync {name}` = refresh + pin 到远端 HEAD。首拉自动记基线是唯一一次非 pin 写入。
+- `GET /v1/repos/:repo/upstream/tree?name=&path=` → `{items:[{path,sha,mode,size}]}`（只读上游 tree）。
+- `GET /v1/repos/:repo/upstream/file?name=&path=` → `{path,text}`（只读 upstream blob）。
+- `GET /v1/repos/:repo/upstream/files?name=&path=` → `{files:[{path,state,size}]}`；
+  `state ∈ same|diff|missing`，按 git blob sha 比本地正文。
+- `POST /v1/repos/:repo/upstream/{copy,adopt}` `{name,path,to?,requestId}`：
+  抄一条上游技能（整目录 + 附件）；`adopt` 在 `nous.json` 写 `upstream` foot 标记
+  `<source>/<path>@<sha>`，`copy` 只写 `copiedFrom` 便条、不写 foot。目标已存在 → 409，
+  源不存在 → 400；写盘不提交，发布走 `/commit`。
+
 - `:repo` 不在四值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
   且 `{field, problem}`，不 commit 不 push。推送失败不改盘上文件。
 

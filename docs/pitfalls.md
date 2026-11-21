@@ -227,3 +227,12 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 **解**：补 `symlink_escape_is_rejected_by_realpath_check`（仓内 `link` → 仓外，写 `link/escaped.txt`），
 关掉 realpath 检查时它在 `仓外不许出现文件` 断言红；同一招也用于 `git add .` 哨兵
 （加 `git diff --cached --name-only` 空断言，`commit -- pathspec` 挡不住误 staged 的搭车文件）。
+
+## 2026-11-21 · 加路由忘了更新能力快照，全 workspace 红在看起来无关的测试
+
+**症状**：#77 加了 12 条 `/v1/repos/skills/sources|upstream/*` 路由后，单个 crate 测试全绿，
+全 workspace 挂在 `capabilities_shapes::capabilities_declares_modules_and_reasons` 的 JSON 快照漂移。
+**根因**：`meta.rs` 的 `ROUTES` 和 `tests/snapshots/capabilities_declares_modules_and_reasons.json`
+是同一份路由表的两个副本；单 crate 迭代只跑 `nous-repo` / `nous-server` 的目标测试，不比快照。
+**解**：任何加路由的票，收尾前必须跑一次全 workspace；快照漂移时从失败输出里取 `actual`
+写回去（不要手敲），再复跑确认绿。

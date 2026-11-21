@@ -33,6 +33,7 @@ pub mod runtime;
 pub mod source;
 pub mod stats;
 pub mod triggers;
+pub mod upstream;
 
 pub use app::AppState;
 pub use coalesce::{Framing, FRAME_INTERVAL};

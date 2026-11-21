@@ -33,6 +33,18 @@ pub(crate) fn git_ok(root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+pub(crate) fn git_bytes(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let out = git(root, args)?;
+    if !out.status.success() {
+        return Err(RepoError::Io(format!(
+            "git {} 失败：{}",
+            args.first().copied().unwrap_or(""),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(out.stdout)
+}
+
 /// 仓是否配了可用的 push 目标。没有 origin → `Unknown`（wire null）。
 pub(crate) fn has_push_target(root: &Path) -> bool {
     git_ok(root, &["remote"])
