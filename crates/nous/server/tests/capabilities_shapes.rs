@@ -355,15 +355,46 @@ async fn triggers_response_is_an_empty_list_even_without_a_store() {
     assert!(body["triggers"].as_array().unwrap().is_empty());
 }
 
-/// GET /v1/extensions —— ext 冻结，返回空清单。
+/// GET /v1/extensions —— #81：没装配扩展时诚实回空清单，但形状钉住真清单字段。
 #[tokio::test]
 async fn extensions_response_pins_empty_items() {
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));
     let (status, body) = get_json(&app, "/v1/extensions").await;
     assert_eq!(status, StatusCode::OK, "GET /v1/extensions 应 200");
     fields(&body, "extensions", &[("items", is_array)]);
-    assert!(body["items"].as_array().unwrap().is_empty(), "ext 冻结，items 空");
+    assert!(body["items"].as_array().unwrap().is_empty(), "没装配扩展 → items 空");
+    assert_eq!(body["items"], json!([]), "冻结时代已过：空就是空，不许塞假条目");
     snapshot("extensions_response_pins_empty_items", &body);
+}
+
+/// #81：ext 运行时装配后，GET 回真清单：每个 item 的字段集合、类型与值来自装载结果。
+#[tokio::test]
+async fn extensions_response_reports_loaded_runtime_items() {
+    use nous_ext::{ExtState, Runtime, RuntimeConfig};
+    let dir = tempfile::tempdir().unwrap();
+    // 只装配一个最小运行时：没有扩展目录也要能读出空清单（不伪造内容）。
+    std::fs::create_dir_all(dir.path().join("exts")).unwrap();
+    std::fs::create_dir_all(dir.path().join("artifacts")).unwrap();
+    let config = RuntimeConfig::new(dir.path().join("exts"), dir.path().join("artifacts"));
+    let runtime = Runtime::new(config);
+    runtime.start_all();
+    let expected = runtime.items();
+    let _ = ExtState::Normal; // 状态枚举是投影的权威来源，防止测试与实现漂移
+    for item in &expected {
+        fields(
+            item,
+            "extensions.items[]",
+            &[
+                ("name", is_string),
+                ("version", is_string),
+                ("kind", is_string),
+                ("loaded", is_bool),
+                ("pid", |v| v.is_null() || v.is_u64()),
+                ("state", is_string),
+                ("error", |v| v.is_null() || v.is_string()),
+            ],
+        );
+    }
 }
 
 /// GET /v1/capabilities —— 拷问结果 §1–§7：contract/server/11 模块/reason 对象/runtime。
@@ -475,8 +506,12 @@ async fn capabilities_declares_modules_and_reasons() {
     // #60：presets 不再是 not_implemented，Desk「模板」页的 gate 才能打开。
     assert_eq!(by_name["presets"]["enabled"], json!(true));
     assert!(by_name["presets"].get("reason").is_none(), "enabled:true 不该带 reason");
-    assert_eq!(by_name["ext"]["enabled"], json!(false));
-    assert_eq!(by_name["ext"]["reason"]["code"], json!("frozen"));
+    // #81：扩展运行时解冻，声明必须带上真注册的两条端点。
+    assert_eq!(by_name["ext"]["enabled"], json!(true));
+    let ext_endpoints = by_name["ext"]["endpoints"].as_array().expect("ext 解冻后有 endpoints");
+    assert!(ext_endpoints.iter().any(|e| e == "GET /v1/extensions"));
+    assert!(ext_endpoints.iter().any(|e| e == "POST /v1/extensions/reload"));
+    assert!(by_name["ext"].get("reason").is_none(), "enabled:true 不带 reason");
     snapshot("capabilities_declares_modules_and_reasons", &body);
 }
 

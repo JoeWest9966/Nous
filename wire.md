@@ -485,9 +485,26 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 
 ### GET /v1/extensions
 
-正常回清单形状（今天冻结为 `{ items: [] }`）。`?usage=1`（#85）回
-`{ <扩展名>: [<会话 id>, ...] }` —— 扫会话记录里的 `extensions` 字段；没人用回 `{}`，
-不因为一个可选参数把端点判死。
+正常回真装载清单（#81 解冻，不再是 `{ items: [] }` 的冻结占位）：
+
+```
+{ items: [{ name, version, kind, loaded, pid, state, error? }] }
+```
+
+- `name` / `version` / `kind` 来自扩展自己的 `nous.json`（`kind` 是 `category`，缺席给 `native`）。
+- `loaded` = 清单 + 握手都过；装载失败也留一项（`loaded:false` + `error`），不静默消失。
+- `pid` 是扩展子进程 pid（`u32`，没进程时 `null`）；`state` 是五态之一，进程死了但状态机
+  还没推进时如实给 `crashed`（不是 `normal`）。`error` 只在失败/崩溃时有值。
+- 源码根走 `NOUS_EXTEND`（默认 `/opt/Nous-extend`），产物在根下 `artifacts/`。
+  没装配运行时（测试路由）仍回 `{ items: [] }`，不伪造内容。
+- `?usage=1`（#85）回 `{ <扩展名>: [<会话 id>, ...] }` —— 扫会话记录里的 `extensions` 字段；
+  没人用回 `{}`，不因为一个可选参数把端点判死。
+
+### POST /v1/extensions/reload
+
+按盘上现状重装所有已装载扩展（真起新进程，pid 会变），回 `{ reloaded: [name, ...] }`。
+失败的那一项保留旧进程与旧状态，错误进扩展自己的诊断；不返回假成功。
+文件管理面（`{file,files,publish,create}`）由 #75 的 repo 层提供，不在这里重复实现。
 
 ### GET /v1/search
 

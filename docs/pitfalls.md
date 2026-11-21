@@ -217,3 +217,11 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 让「这个测试没有远端」一目了然；`from_env()` 里只读一次 `NOUS_*`，不藏隐式全局读取。
 **推广**：改公开配置结构体时，先 `rg 'StructName \{' crates/` 看所有构造点，
 再决定是补字段还是加 `#[non_exhaustive]`；别让编译错误替你找漏。
+
+## 2026-11-21 · 冻结的解法不是空数组，是把运行时的脸露出来
+
+**症状**：`GET /v1/extensions` 恒 `{items:[]}`，`capabilities.ext` 写着 frozen，
+可 `ext/src/spawn.rs` 里 `Command::new` 早在、六个样例扩展也都在仓里 —— 客户端显示「没有扩展」。
+**根因**：声明关着、代码开着，观测面没有读运行时的事实，两张真相分叉。
+**解**：清单改回 enabled；`items` 直接由 Runtime 的清单/进程/状态机投影，失败项也留一行带 error；
+reload 走同一个实例的唯一入口。别在 server 里再存一张注册表。

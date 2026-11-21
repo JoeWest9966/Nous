@@ -136,11 +136,11 @@
     },
     {
       "name": "ext",
-      "enabled": false,
-      "reason": {
-        "code": "frozen",
-        "message": "扩展运行时已冻结，这里只返回空清单"
-      }
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/extensions",
+        "POST /v1/extensions/reload"
+      ]
     }
   ],
   "runtime": {
