@@ -746,6 +746,32 @@ pub async fn session_template(session: &Session, id: Id) -> Result<Option<String
         .map(str::to_string))
 }
 
+/// 一条会话选中的技能名（#83：conversation 作用域的 `pi.agent` 文档，顺序即选中顺序）。
+/// 和 template 一样放在 commands 面，不动 `Session` 的 A3 六方法表。
+pub async fn session_skills(session: &Session, id: Id) -> Result<Vec<String>, CommandError> {
+    let guard = session.storage.lock().await;
+    let storage = guard.as_ref().ok_or(CommandError::Session(SessionError::Closed))?;
+    let Some(document_id) = storage.find_document(
+        &json!({
+            "kind": "pi.agent",
+            "scope": { "kind": "conversation", "conversationId": id },
+        }),
+        DocumentPoint::Current,
+    )?.and_then(|record| record.get("id").and_then(Value::as_i64)) else {
+        return Ok(Vec::new());
+    };
+    let Some(document) = storage.materialize(document_id, DocumentPoint::Current)? else {
+        return Ok(Vec::new());
+    };
+    Ok(document.value.get("skills")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect())
+}
+
 /// 血缘反查：`{items: [...]}`，按 `trigger` 过滤（`None` = 不过滤）。只读扫描，不另开写者。
 pub async fn origins_map(session: &Session, trigger: Option<&str>) -> Result<Value, CommandError> {
     let guard = session.storage.lock().await;
@@ -1040,6 +1066,11 @@ pub async fn configure_session(
         "machine",
         "cwd",
     ] {
+        // #83：`skills` / `extensions` 的请求值是 {add,remove} patch，不是生效值本身；
+        // 必须在下面单独做相对增删，不能被这一段整份覆盖掉（否则第二次 config 只剩 add 项）。
+        if key == "skills" || key == "extensions" {
+            continue;
+        }
         if let Some(next) = patch.get(key) {
             value[key] = next.clone();
         }
@@ -1089,13 +1120,14 @@ pub async fn configure_session(
             },
         }],
         None => {
-            let id = storage.mint_id()?;
+            let document_id = storage.mint_id()?;
             vec![StorageWrite::DocumentCreate {
-                id,
+                id: document_id,
                 record: json!({
-                    "id": id,
+                    "id": document_id,
                     "kind": "pi.agent",
                     "scope": { "kind": "conversation", "conversationId": id },
+                    "history": "latest", "fork": "current",
                 }),
                 content: DocumentContent::Base {
                     version: 1,

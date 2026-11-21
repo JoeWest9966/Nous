@@ -514,6 +514,11 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
 - 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
 
+#83：建会话 / `POST /v1/sessions/:id/config` 选的 `skills` 落在会话的 `pi.agent` 文档里，
+起轮时按**选中顺序**读 `<skill>/SKILL.md` 正文（去掉 frontmatter）拼进 `pi.system` 的
+`model[0].sections.prompts`。技能缺失 / frontmatter 坏只留 `skill: missing` / `skill: problem`
+诊断，轮次照跑；只读会话照样注入。判据见 `crates/nous/server/tests/skill_injection.rs`。
+
 ### GET /v1/prompts
 
 `{ default: string | null, root: string, present: boolean, missing: string | null, categories: string[], prompts: [...] }`。
