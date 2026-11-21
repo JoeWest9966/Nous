@@ -227,3 +227,11 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 **解**：补 `symlink_escape_is_rejected_by_realpath_check`（仓内 `link` → 仓外，写 `link/escaped.txt`），
 关掉 realpath 检查时它在 `仓外不许出现文件` 断言红；同一招也用于 `git add .` 哨兵
 （加 `git diff --cached --name-only` 空断言，`commit -- pathspec` 挡不住误 staged 的搭车文件）。
+
+## 2026-11-20 · 变体分支没有 upstream，裸 `git push` 报假失败
+
+**症状**：`publish` 在变体 worktree 里 commit 成功，但 `pushed=false`，远端根本没有变体分支。
+**根因**：`git push --porcelain` 在 `push.default=simple` 下要求当前分支有 upstream；
+worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
+**解**：显式 `git push origin HEAD:refs/heads/<branch>`；没有远端才回 `Unknown`（wire null），
+推送失败仍回 `false`，绝不冒成功。哨兵：把 refspec 改成 `main` → 判据 2 的远端主干不变断言红。

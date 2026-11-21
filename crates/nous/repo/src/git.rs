@@ -34,7 +34,7 @@ pub(crate) fn git_ok(root: &Path, args: &[&str]) -> Result<String> {
 }
 
 /// 仓是否配了可用的 push 目标。没有 origin → `Unknown`（wire null）。
-pub(crate) fn has_push_target(root: &Path) -> bool {
+pub fn has_push_target(root: &Path) -> bool {
     git_ok(root, &["remote"])
         .map(|out| out.lines().any(|line| !line.trim().is_empty()))
         .unwrap_or(false)

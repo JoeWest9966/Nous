@@ -816,3 +816,11 @@ submissions / documents / document_revisions 与该会话的 pins / unread 条�
 
 **反悔点**：若另票引入 id 命名空间（每段 id 带会话前缀，重铸不撞旧引用），可改成连
 `record_ids` 一起删；那时必须同时改 `commit.rs` 的重复检查与本票的 purge 事务。
+
+## 2026-11-20 · 变体绑定表落在私库根的 `data/` 下，不另设全局目录
+
+**决定**：`skills` 用 `<NOUS_SKILLS>/data/skills.local.json`，`extend` 用
+`<NOUS_EXTEND>/data/extensions.local.json`；表里只有 `{v:1, variants:{family:{id:{root,branch}}}}`。
+**为什么**：TS 时代就是这个形状与位置；绑定是本地状态，不应进私库发布，也不该散在 `~` 里。
+**反悔点**：若要把本地状态集中进 `/var/lib/nous/`，改 `repos::variant_tables_from_env` 一处即可；
+现有表的 `root` 是绝对路径，搬家后要么迁移路径、要么重绑。

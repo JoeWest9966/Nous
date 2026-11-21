@@ -31,7 +31,7 @@
 | `chord` | nous | `nous-chord` | kernel | 编译期 | context / json / delta / sqlite / watch / output | 是 | 语义基元 |
 | `durable` | nous | `nous-durable` | kernel | 编译期 | 提交 / 文档 / 会话与 entry 查询 / scans | 是 | 存储与事务边界 |
 | `env` | nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait + 四条私库路径解析（`content.rs`：#63）+ `GET /v1/fs/dirs` 的目录解析（`NOUS_START_DIRS` 只在这里读） | 是 | 契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin` |
-| `repo` | nous | `nous-repo` | platform | 编译期 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75） | 是 | 唯一的 git 进程调用面；四条私库路径解析沿用 `env` |
+| `repo` | nous | `nous-repo` | platform | 编译期 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75）+ 技能/扩展变体 worktree + 绑定表 + prune/publish/usage（#76） | 是 | 唯一的 git 进程调用面；四条私库路径解析沿用 `env` |
 | `env-local` | nous | (待建) `nous-env-local` | platform | 编译期 | `ExecutionEnv` 本地实现 | 是 | 今天的 `os_env.rs` 落点 |
 | `env-ssh` | nous | `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现（ssh/scp + ControlMaster + 临时密钥） | 否 | 今天 `ssh-env.js`（631 行）；#78 落地 |
 | `ai-types` | nous | `nous-ai-types` | kernel | 编译期 | TSchema / Message / Usage（纯） | 是 | 从 `nous-ai` 拆出，零 IO 零时钟（T2 已落地） |

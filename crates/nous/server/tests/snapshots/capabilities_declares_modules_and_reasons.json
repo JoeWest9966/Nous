@@ -48,7 +48,14 @@
         "POST /v1/repos/:repo/commit",
         "POST /v1/repos/:repo/archive",
         "POST /v1/repos/:repo/restore",
-        "POST /v1/repos/:repo/purge"
+        "POST /v1/repos/:repo/purge",
+        "GET /v1/repos/:repo/variants",
+        "POST /v1/repos/:repo/variants/bind",
+        "POST /v1/repos/:repo/variants/unbind",
+        "POST /v1/repos/:repo/variants/branch",
+        "POST /v1/repos/:repo/variants/publish",
+        "POST /v1/repos/:repo/variants/prune",
+        "GET /v1/repos/:repo/variants/usage"
       ]
     },
     {
