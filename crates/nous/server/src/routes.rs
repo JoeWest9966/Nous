@@ -58,6 +58,8 @@ fn now_ms() -> i64 {
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
     let router = Router::new()
+        .route("/v1/combos/{section}", get(crate::combos::list))
+        .route("/v1/combos/{section}/{name}", axum::routing::patch(crate::combos::patch))
         .route("/v1/sessions", get(sessions).post(create_session))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))
@@ -92,10 +94,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/openapi.json", get(crate::stats::openapi));
     // #75：repo 路由与 documents 路由都在同一份 state 上；documents::attach 统一应用 state。
     // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
+    // #75：repo 路由先挂在带 state 的 Router 上（与 #48 documents 同一份 state）。
     let router = crate::repos::attach(router);
     // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。
     let router = crate::upstream::attach(router);
-    crate::documents::attach(state, router)
+    let router = crate::documents::attach(state.clone(), router);
+    // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
+    match state.presets() {
+        Some(store) => crate::presets::attach(store.clone(), router),
+        None => router,
+    }
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
@@ -722,30 +730,47 @@ struct SubmitBody {
     content: Value,
     #[serde(default)]
     request_id: Option<String>,
-    /// 只要出现就拒绝：本库只实现「立即 202 + 靠 SSE 收内容」这条路径。
+    /// #70：请求体显式指定的模型（优先级最高）。
+    #[serde(default)]
+    model: Option<nous_device::ModelRef>,
+    /// `0`/省略 = 立即 202；`>0` = 最多等这么久，拿到答案回 200，超时回 202。
     #[serde(default)]
     wait_ms: Option<Value>,
-    /// 受理时忙不忙的处理。当前只有一种行为（照样排队），所以显式收下、显式忽略。
+    /// `queue`（默认）/ `interrupt`。忙时排队或先停当前轮次。
     #[serde(default)]
     when_busy: Option<Value>,
 }
 
-/// 把会话 template 的正文写进一条 `pi.system` entry，并回一条 message 给本轮 provider。
+/// 把会话 template 正文 + 选中的技能正文写进一条 `pi.system` entry，并回一条 message 给本轮
+/// provider。
 ///
 /// 正文进 `sections.prompts`（不是 `content`）：#74 的 `?system=1` 回放按 sections 合并，
-/// 后续系统消息能按名字覆盖这一段；名字本身就是诊断位（`template: missing`）。
+/// 后续系统消息能按名字覆盖这一段；名字本身就是诊断位（`template: missing` /
+/// `skill: missing` / `skill: problem`）。
+/// #83：技能是提示词不是工具，所以这里不查 `readOnly` —— 只读会话照样注入技能。
 async fn inject_prompt_section(
     state: &Arc<AppState>,
     session_id: i64,
     submitted: &crate::commands::SubmitResult,
 ) -> Option<nous_ai::Message> {
-    let template_name = state.commands().template(session_id).await.ok().flatten()?;
+    let template_name = state.commands().template(session_id).await.ok().flatten();
     let prompts_root = nous_env::PROMPTS.resolve();
-    let (text, actor) = if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
-        (nous_prompts::render(&template.body, &Default::default()), "prompts".to_string())
-    } else {
-        (format!("template: missing ({template_name})"), "prompts".to_string())
+    let template_text = template_name.map(|template_name| {
+        if let Some(template) = nous_prompts::read_template(&prompts_root, &template_name) {
+            nous_prompts::render(&template.body, &Default::default())
+        } else {
+            format!("template: missing ({template_name})")
+        }
+    });
+    let selected = state.commands().skills(session_id).await.ok().unwrap_or_default();
+    let skills_text = nous_skills::assemble_prompts(&nous_env::SKILLS.resolve(), &selected);
+    let text = match (template_text, skills_text.is_empty()) {
+        (Some(head), false) => format!("{head}\n\n{skills_text}"),
+        (Some(head), true) => head,
+        (None, skills) if !skills => skills_text,
+        _ => return None,
     };
+    let actor = "prompts".to_string();
     let message_value = serde_json::to_value(nous_ai::transform::system::section_patch(
         &[("prompts", Some(text.as_str()))], 0,
     )).ok()?;
@@ -776,55 +801,135 @@ async fn messages(
     Json(body): Json<SubmitBody>,
 ) -> Result<impl IntoResponse> {
     let session = parse_session(&id)?;
-    if body.wait_ms.is_some() {
-        return Err(ServerError::BadRequest(
-            "waitMs is not supported; listen on /events for the answer".to_string(),
-        ));
+    let wait_ms = match &body.wait_ms {
+        None | Some(Value::Null) => 0u64,
+        Some(value) => value
+            .as_u64()
+            .ok_or_else(|| ServerError::BadRequest("waitMs must be a non-negative integer".to_string()))?,
+    };
+    let when_busy = match &body.when_busy {
+        None | Some(Value::Null) => "queue",
+        Some(Value::String(value)) if value == "queue" || value == "interrupt" => value.as_str(),
+        _ => {
+            return Err(ServerError::BadRequest(
+                "whenBusy must be queue or interrupt".to_string(),
+            ))
+        }
+    };
+    if when_busy == "interrupt" && state.commands().busy(session).await? {
+        // #70：先停当前轮次（abort 会 cancel 同一个 token、写 user_cancel 终态），
+        // 再受理新的一条。停不掉就报错，不许「假装打断」。
+        state.commands().abort(session).await?;
     }
-    let _ = body.when_busy;
     let faux = state.provider_kind() == "faux";
+    // #70：模型解析在**受理之前**。没有来源就 503，不许先 202 再沉默。
+    let catalog = if state.injected_models() {
+        state.models().clone()
+    } else {
+        nous_device::load_models(state.catalog_env()).map_err(ServerError::ServiceUnavailable)?
+    };
+    let session_model = state
+        .source()
+        .sessions()?
+        .into_iter()
+        .find(|item| item.id == session)
+        .and_then(|item| item.model);
+    let reference = crate::runtime::resolve_model_ref(
+        body.model.as_ref(),
+        session_model.as_deref(),
+        &catalog,
+    )
+    .ok_or_else(|| ServerError::ServiceUnavailable("没有可用模型".to_string()))?;
     let result = state
         .commands()
         .submit(session, body.content, body.request_id)
         .await?;
 
-    // #51：只有显式 faux 装配才在受理后跑一轮。真 provider 的解析/503 语义不在本票改；
-    // 没有装配时保持原行为（只受理）。
+    // #70：受理后一律起一轮。faux 只决定模型来源，不决定「跑不跑」。
     // 事件只用 wire 已有的类型：user entry 的 message_start/entry_appended 由
     // durable 的 CommitObserver → project 投影发出，assistant 由轮次的投影发；
     // 这里不再手工补帧（之前补的假 entry 是重复且形状不对的）。
-    if faux {
-        if let Some(runtime) = state.runtime() {
-            let submitted = result.clone();
-            let driver = runtime.driver.clone();
-            // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
-            // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
-            let system_message = inject_prompt_section(&state, session, &submitted).await;
-            let mut turn_context = nous_ai::Context::new(Vec::new());
-            if let Some(message) = system_message {
-                turn_context.messages.push(message);
-            }
-            let model = nous_ai::Model::new(
+    let completion_rx = if wait_ms > 0 {
+        state.runtime().map(|runtime| runtime.completions.subscribe())
+    } else {
+        None
+    };
+    if let Some(runtime) = state.runtime() {
+        let submitted = result.clone();
+        let driver = runtime.driver.clone();
+        let completions = runtime.completions.clone();
+        let commands = state.commands().clone();
+        // #51：faux 验收模式没显式指定模型时仍用固定 echo 模型；否则用解析出的引用构造。
+        let model = if faux && body.model.is_none() {
+            nous_ai::Model::new(
                 crate::runtime::FAUX_MODEL_ID,
                 "Faux Echo",
                 nous_ai::Api::Faux,
                 "faux",
                 "http://localhost:0",
-            );
-            tokio::spawn(async move {
-                let _ = driver
-                    .run(TurnRequest {
-                        conversation: session,
-                        submission: submitted.submission_id,
-                        entry_id: submitted.assistant_entry_id,
-                        live: submitted.live_id,
-                        model,
-                        context: turn_context,
-                        attempt: 1,
-                    })
-                    .await;
-            });
+            )
+        } else {
+            crate::runtime::model_from_ref(&reference)
+        };
+        // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
+        // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
+        let system_message = inject_prompt_section(&state, session, &submitted).await;
+        let mut turn_context = nous_ai::Context::new(Vec::new());
+        if let Some(message) = system_message {
+            turn_context.messages.push(message);
         }
+        tokio::spawn(async move {
+            let outcome = driver
+                .run(TurnRequest {
+                    conversation: session,
+                    submission: submitted.submission_id,
+                    entry_id: submitted.assistant_entry_id,
+                    live: submitted.live_id,
+                    model,
+                    context: turn_context,
+                    attempt: 1,
+                })
+                .await;
+            match outcome {
+                Ok(outcome) => {
+                    let _ = completions.send((submitted.submission_id, outcome.entry));
+                }
+                Err(error) => {
+                    // #70：失败也必须收敛 submission，不能停在 queued 假装受理。
+                    eprintln!("nous-server: 轮次失败：{error}");
+                    if let Err(fail_error) = commands
+                        .fail_submission(session, submitted.submission_id, "model_error")
+                        .await
+                    {
+                        eprintln!("nous-server: submission 收敛失败：{fail_error}");
+                    }
+                }
+            }
+        });
+    }
+
+    if wait_ms > 0 {
+        if let Some(mut rx) = completion_rx {
+            let deadline = tokio::time::Duration::from_millis(wait_ms);
+            loop {
+                match tokio::time::timeout(deadline, rx.recv()).await {
+                    Ok(Ok((id, answer))) if id == result.submission_id => {
+                        return Ok((StatusCode::OK, Json(answer)));
+                    }
+                    Ok(Ok(_)) => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                    Ok(Err(tokio::sync::broadcast::error::RecvError::Closed))
+                    | Err(_) => break,
+                }
+            }
+        }
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(json!({
+                "submissionId": result.submission_id,
+                "status": "running",
+            })),
+        ));
     }
 
     Ok((

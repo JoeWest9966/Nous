@@ -116,6 +116,13 @@ plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store
 - `requestId` 是幂等锚：重连重发同一句拿到同一次提交，不会答两遍。**桌面端一定要传**。
 - 不传 `waitMs` 时立即回 `202 { submissionId, status: "queued" }`，真正的流走 SSE。
   桌面端就按这条来：发消息 → 拿 202 → 靠 SSE 收内容。别用 `waitMs` 等同步。
+- #70：任何 202 之后都会起一轮（真 provider 与 faux 一样），submission 必须离开 `queued`
+  并收敛到 `done` 或 `unanswered`。模型解析顺序写死：请求体 `model` → 会话当前的
+  `model` → 编目 `default` → 都没有就 **503 `{error:"没有可用模型"}`**，不许静默受理。
+- `waitMs`：`0`（或省略）回 202；`>0` 最多等这么久，轮次完成回 **200 且带答案 entry**，
+  超时回 202（答案仍走 SSE）。真实等待绑在轮次完成信号上，不是 sleep 轮询。
+- `whenBusy`：`queue`（默认，忙时排队）或 `interrupt`（先停当前轮次再受理）；
+  非法值 400。忙时判定以服务端会话状态为准，客户端不自己猜。
 
 ### GET /v1/sessions/:id/events —— SSE
 
@@ -249,6 +256,19 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 只读机读视图：从 `meta::ROUTES` 生成 OpenAPI `paths`，与 `/v1/capabilities` / `/v1/_routes`
 三处同源。加端点先改 `meta::ROUTES`，这里自动跟着变；不手抄第二份路径清单。
 
+#### GET /v1/capabilities
+
+一个发行版一张清单：`modules[]` 每个模块声明 `name` / `enabled` 与 `endpoints` 或 `reason`，
+顶层给 `contract` / `server` / `runtime` / `services`。字段形状以
+`crates/nous/server/tests/capabilities_shapes.rs::capabilities_declares_modules_and_reasons` 为准。
+
+- #88：`modules[]` 每个模块（含未启用的）另带版本、类型、层、必需、来源 crate、说明六列，
+  取自 `docs/plugins.md` 同一张表；判据 `capabilities_manifest.rs::manifest_metadata_matches_the_plugins_table_cell_by_cell`
+  逐格比对编译后的清单与文档表。`crate` 可能是 `—` 或 `(待建) xxx`，不可当成可运行的包名。
+- `layer` 四值封闭、`kind` 三值封闭；`enabled:false` 的模块用 `reason.code` 四值封闭解释原因。
+- 六列是加法：老引擎没有这些字段时，桌面端降级成「版本 = server.version，类型 / 层 = —」，
+  不据此判模块不存在。新字段一律只读，`endpoints` / `reason` 的既有语义不变。
+
 #### POST /v1/sessions/:id/archive
 
 body 空。回 200 `{"gen":"20261113","ids":[699],"rows":17}`。
@@ -308,7 +328,50 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
   这个约束是引擎强制的，不是产品挑的。
 - 四个动作的回包都是同一形状 `{<动作过去分词>: [ids], gen, rows}`，客户端一律不读。
 
-### GET /v1/presets/:section
+### presets：模板 / 预设（#60）
+
+`presets` 是资源化的端点族（13 条 + 生成式 OpenAPI），**盘是唯一真相**，文件住在模板私库
+（`NOUS_PRESETS`，默认 `/opt/Nous-Template`）：`<root>/<section>/<name>/preset.json`。
+段只有两个：`Session-Template`、`Ultimate-Template`，**没有第三种**。没有进程内常驻的
+`name → preset` map —— roster 由扫目录得出，盘上有目录 = 这条存在。
+
+端点表（OpenAPI 生成物 `/v1/openapi.json` 是它的机器可读版本，字段形状以
+`crates/nous/server/tests/presets_endpoints.rs` 为准）：
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `GET /v1/presets` | 段清单，每段带 `count` |
+| `GET /v1/presets/:section` | roster：`name` / `sha` / `version` / `category` / `order` / `archived` / `problem`（**清单即详情**） |
+| `GET /v1/presets/model` | 预设能引用的模型清单（只读，沿用原状） |
+| `GET /v1/presets/:section/categories` | 段内类别名册 |
+| `PUT /v1/presets/:section/order` | 整段顺序，一次写全（幂等） |
+| `GET /v1/presets/:section/:name` | 单条原文 + `ETag`（= `version`） |
+| `PUT /v1/presets/:section/:name` | 建或覆盖；`If-Match` 缺失=新建、匹配=覆盖、不匹配=412；`?dry_run=1` 校验不落盘（validate 走同一条路） |
+| `PATCH /v1/presets/:section/:name` | 只改元数据位：`{archived}` / `{name}` / `{category}` / `{order}` |
+| `DELETE /v1/presets/:section/:name` | 删（软删即 `archived`） |
+| `POST /v1/presets/:section/:name/copy` | 复制成新名，body `{name, requestId}` |
+| `GET /v1/presets/:section/:name/revisions` | 修订清单：`n` / 时间 / `actor` / `sha` / 摘要 |
+| `GET /v1/presets/:section/:name/revisions/:n` | 某一版原文（diff 由 Desk 算，无状态） |
+| `POST /v1/presets/:section/:name/rollback` | 回到第 `n` 版，原子写一次修订，body `{n, requestId}` |
+| `GET /v1/openapi.json` | 从路由注册表生成的机器可读契约（presets 第一个接入方） |
+
+- `sha` 是 `preset.json` **文件字节**的 sha256（不是清单里某个字段），roster 的 sha 必须
+  等于读文件算出的值。
+- `version` 是乐观锁的 ETag；`If-Match` 不匹配 → 412 且磁盘字节不变。
+- `?dry_run=1` 与真 PUT 共用同一份校验：坏 JSON 都是 400，区别只在 dry_run 不写盘。
+- 写端点整段串行锁；`requestId` 是幂等锚：重放回第一次的回执，`version` 不涨，
+  幂等证据看 `version` 与磁盘，不看 `changed`。
+- 修订落在 `nous-plugins.db` 的 `presets_revisions` 表（`section` / `name` / `n` / `sha` /
+  `body` / `actor` / `at` / `request_id`），**不是私库 git 历史**（那个是 #75 的 `history`）。
+  不 spawn `git`；`rollback` 替代 `git revert`。
+- 人手 `scp` 改文件仍可行：那条路走内部重扫，下一版 PUT 看到新盘面。
+- `publish` 不在这里：`POST /v1/repos/presets/commit` 是 #75。
+- 字段形状以 `crates/nous/server/tests/presets_endpoints.rs::put_writes_real_file_and_roster_sha_matches_file_bytes` 为准（本文件只索引端点与约束）。
+
+下面这段是 2026-11-19 前的旧形状，留作迁移背景；**新契约以上表为准**，
+旧 `files` / `pending` / `history` / `POST rename` / `GET|POST order` 已删：
+
+### 旧 GET /v1/presets/:section（存档）
 
 模板（通讯录）那一页的数据。**段（section）不是只有一个**：同一个私仓按段放，
 `Session-Template`（会话模板）和 `Ultimate-Template`（终极模板）各自一套端点、一套数据、
@@ -390,6 +453,34 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ---
 
+### GET /v1/combos/:section · PATCH /v1/combos/:section/:name
+
+组合（终极模板里「触发器 + 会话模板」那一条）的开关面。段与 `presets` 同两个值：
+`Session-Template` / `Ultimate-Template`。名册由扫 `<root>/<section>/<name>/preset.json`
+得出（`<root>` 是 `NOUS_PRESETS`，与 `presets` 共用数据根），进程内不留常驻名单。
+
+`GET` 回 `{ combos: [...] }`，每条：
+
+```
+{ name, trigger, params, session, enabled, problem }
+```
+
+未知字段原样透传（`serde_json::Value` 收着，不 `deny_unknown_fields`）。
+
+- `enabled` 是**引擎算的**：`spec.enabled !== false`（缺省 true）**且**引用的 trigger /
+  preset 存在可用；算不出来则 `enabled=false` 且 `problem` 写人话。客户端只显示 + 写穿，
+  不自己拼规则。
+- `params` 是对象（字符串 / 数字 / 布尔）；`session` 指向 `Session-Template` 段的名字。
+- `problem` 是字符串：写坏 / 引用没了都在这里说清楚，页面照原文显示。
+
+`PATCH` 只改 `{ enabled: true|false }`，不碰别的字段、别的组合。必带 `If-Match`
+（版本不匹配 → 412）与 `requestId`（幂等锚：重放回第一次回执，`version` 不涨）。
+回包 `{ name, trigger, params, session, enabled, problem, version, requestId }`；
+写的是 `spec.enabled` 那一位，不是新增一份开关表。
+
+> 旧版 `POST /v1/combos/:name/enable` 与 `/disable` 已取消：`enabled` 是一个字段，不是
+> 两个动作，两条路径等于给同一个位开两个入口。只留一条 `PATCH {enabled}`。
+
 ### GET /v1/models
 
 返回默认模型 + 模型列表。
@@ -470,6 +561,42 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - `repo` 块只给 `root` 与 `present`（#63 形状），**没有 git 状态字段**。
 - `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
 - 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
+
+#83：建会话 / `POST /v1/sessions/:id/config` 选的 `skills` 落在会话的 `pi.agent` 文档里，
+起轮时按**选中顺序**读 `<skill>/SKILL.md` 正文（去掉 frontmatter）拼进 `pi.system` 的
+`model[0].sections.prompts`。技能缺失 / frontmatter 坏只留 `skill: missing` / `skill: problem`
+诊断，轮次照跑；只读会话照样注入。判据见 `crates/nous/server/tests/skill_injection.rs`。
+
+### documents 的盘面树（kind `tree`，#87）
+
+沿用 `documents` 的 12 条端点族（不新增写通道）：`GET /v1/documents/tree` 列段，
+`GET`/`PUT /v1/documents/tree/{section}/board` 读写一棵盘面树，其余端点（create / rename /
+history / diff / validate / pending）语义不变。一个 `section` = 一个盘面；每一盘面在库里
+只有一份 `tree.board` 文档，整棵树是它的字段。建节点、挂到父下、移动/重排、回收、恢复、
+清除都是对这一份文档的一次写（一次 durable 提交），没有 `tree.json` / `map/<node>/*.md`
+文件形态，也没有 `.trash/`。
+
+字段形状以 `crates/nous/server/tests/documents_tree.rs::tree_lifecycle_has_http_and_db_rows_on_every_step`
+为准（本文件只索引端点与约束）。
+
+- 节点形状是 `{id, title, kind, parent, children, order, trashedAt}`，字段含义由测试指针固定；
+  这里只写约束：`kind` 只能是 `folder` 或 `doc`；`parent` 是父节点 id 或空；`children` 按
+  `order` 升序；`trashedAt` 是回收墓碑（毫秒或空），空 = 在世。
+- 移动/重排必须原子：一次 `move` 写同时改源父的 `children`、目标父的 `children`、节点自身的
+  `parent/order`；库里不存在「孩子搬走了但旧父还挂着」的中间态。
+- 环和自引用写不进库：目标等于自身或自己的后代时回 400 或 409，`{ error }` 点出命中节点；
+  旧树原样留在库里。找不到父/节点回 404。
+- 回收站是同一份树文档里的墓碑，不是另一张表也不是目录：`trashedAt` 非空即从正常树隐藏；
+  `restore` 回空；`purge` 是显式动作，清除节点及其后代，不可撤销。
+- 乐观锁：`PUT` 建/整份重置一盘面的树；后续的 `move` / `trash` / `restore` / `purge`
+  必须带从响应拿到的 `etag`，与当前文档 etag 不一致回 409 —— 单用户边界由修订版本
+  承担，不靠锁文件。
+- 迁移走 `POST /v1/documents/tree/{section}/{name}/import`：入参只是旧 `tree.json` 的值
+  和可选的 `mapDirs` / `goneDirs` 目录名清单（由外部只读读出归档 tar 后送入），服务不读盘、
+  不写盘，解析出的树经同一写端落 `nous.db`；目标库仍只有 `nous.db` / `nous-plugins.db`，
+  跨库顺序不变。字段形状以
+  `crates/nous/server/tests/documents_tree.rs::archived_tree_imports_into_the_same_document_store`
+  为准。
 
 ### GET /v1/prompts
 
@@ -614,6 +741,9 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 | `archived.purged` 改名 / 换语义 | 撕过的显示成「原件在」，会让人重复撕 |
 | `live` 没了 / 恒为 true | 「已捞回」和「无墓碑」颠倒，该给「打捞」的不给 |
 | `restore` 收 `gen` 改成收别的 | 打捞 400，归档库页点了没反应 |
+| `combos[].enabled` 改成客户端自己算 | 开关状态跟引擎分叉，Desk 灰掉的页会误亮 |
+| `combos` 的 `problem` 不再是人话 / 恒空 | 引用失效的组合看着像能用，点了才报错 |
+| `PATCH /v1/combos` 丢了 `If-Match` 或 `requestId` | 并发覆盖 / 重放翻两次开关，version 与盘面分叉 |
 
 所以：启动时打 `GET /v1/device` 记引擎版本，About 里显示，出问题先对版本。
 

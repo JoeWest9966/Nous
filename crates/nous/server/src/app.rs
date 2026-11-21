@@ -41,8 +41,12 @@ pub struct AppState {
     upstream_data: Option<std::path::PathBuf>,
     /// #75：四套私库（presets / skills / prompts / extend）的读写与发布面。
     repos: std::collections::BTreeMap<String, std::sync::Arc<nous_repo::Repo>>,
+    /// #60：模板私库 + 修订表的写者（整段串行锁）。按 env 的路径解析，进程内不留 map。
+    presets: Option<crate::presets::SharedStore>,
     /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
     stats: Option<crate::stats::StatsRuntime>,
+    /// #61：组合名册的盘面根 + 触发器名册根。未装配的测试路由回 409（不是空 200）。
+    combos: Option<crate::combos::ComboStore>,
 }
 
 impl AppState {
@@ -71,8 +75,37 @@ impl AppState {
             triggers: None,
             upstream_data: std::env::var_os("NOUS_DATA").map(std::path::PathBuf::from),
             repos: crate::repos::from_env(),
+            presets: None,
             stats: None,
+            combos: None,
         })
+    }
+
+    /// 把 presets 写者接上（main 装配一次；测试按临时目录注入）。
+    pub fn with_presets(self: Arc<Self>, store: crate::presets::SharedStore) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(
+                self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
+            ),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: Some(store),
+            stats: self.stats.clone(),
+            combos: self.combos.clone(),
+        })
+    }
+
+    pub fn presets(&self) -> Option<&crate::presets::SharedStore> {
+        self.presets.as_ref()
     }
 
     /// 只读装配：读端点可用，写端点一律 409（不假装能写）。
@@ -112,7 +145,9 @@ impl AppState {
             triggers: None,
             upstream_data: std::env::var_os("NOUS_DATA").map(std::path::PathBuf::from),
             repos: crate::repos::from_env(),
+            presets: None,
             stats: None,
+            combos: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
@@ -161,7 +196,9 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -208,7 +245,9 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -242,7 +281,9 @@ impl AppState {
             origin,
             triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -308,7 +349,9 @@ impl AppState {
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: Some(data.as_ref().to_path_buf()),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -322,7 +365,9 @@ impl AppState {
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: crate::repos::from_path(kind, root.as_ref()), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 
@@ -341,7 +386,39 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: Some(triggers),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
+        })
+    }
+
+    /// #61：装配组合名册的两个盘面根（生产由 main 注入一次）。
+    pub fn with_combos_root(self: Arc<Self>, root: impl Into<std::path::PathBuf>) -> Arc<Self> {
+        self.with_combos_roots(root, std::path::PathBuf::from("/opt/Nous-Trigger"))
+    }
+
+    /// 同上，但触发器根可显式指定（判据要能改名触发器的目录）。
+    pub fn with_combos_roots(
+        self: Arc<Self>,
+        root: impl Into<std::path::PathBuf>,
+        triggers: impl Into<std::path::PathBuf>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            source: self.source.clone(),
+            commands: self.commands.clone(),
+            hub: self.hub.clone(),
+            models: self.models.clone(),
+            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            catalog_env: self.catalog_env.clone(),
+            injected_models: self.injected_models,
+            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
+            documents: self.documents.clone(),
+            origin: self.origin.clone(),
+            triggers: self.triggers.clone(),
+            repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
+            stats: self.stats.clone(),
+            combos: Some(crate::combos::ComboStore::new(root, triggers)),
         })
     }
 
@@ -372,8 +449,14 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
             stats: Some(runtime),
+            combos: self.combos.clone(),
         })
+    }
+
+    pub fn combos(&self) -> Option<&crate::combos::ComboStore> {
+        self.combos.as_ref()
     }
 
     /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
@@ -395,7 +478,9 @@ impl AppState {
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
+            presets: self.presets.clone(),
             stats: self.stats.clone(),
+            combos: self.combos.clone(),
         })
     }
 

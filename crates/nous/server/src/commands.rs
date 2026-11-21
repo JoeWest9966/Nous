@@ -79,6 +79,20 @@ pub trait CommandSource: Send + Sync {
 
     async fn abort(&self, session: i64) -> Result<()>;
 
+    /// #70：会话有没有未收敛的轮次（`whenBusy=interrupt` 用）。
+    async fn busy(&self, session: i64) -> Result<bool> { let _ = session; Ok(false) }
+
+    /// #70：轮次失败时把 submission 收敛到 `unanswered`，不许停在 queued。
+    async fn fail_submission(
+        &self,
+        session: i64,
+        submission: i64,
+        reason: &str,
+    ) -> Result<()> {
+        let _ = (session, submission, reason);
+        Ok(())
+    }
+
     async fn fork(&self, session: i64, at: Option<i64>, name: Option<String>) -> Result<ForkResult>;
 
     /// 全部会话的未读状态（平铺 map），只读。
@@ -107,6 +121,9 @@ pub trait CommandSource: Send + Sync {
 
     /// #72：一条会话挂的 template 名（durable 的 session 作用域文档，重启后仍在）。
     async fn template(&self, session: i64) -> Result<Option<String>> { let _ = session; Ok(None) }
+
+    /// #83：一条会话选中的技能名，**按选中顺序**（pi.agent 文档）。
+    async fn skills(&self, session: i64) -> Result<Vec<String>> { let _ = session; Ok(Vec::new()) }
 
     /// 启动时补写孤儿终态（整机崩/重启留下的）。**只在组装根里调一次**，不是端点。
     ///
@@ -209,8 +226,35 @@ impl CommandSource for DurableCommands {
         Ok(())
     }
 
+    async fn busy(&self, session: i64) -> Result<bool> {
+        nous_durable::session::commands::has_pending_submission(&self.session, session)
+            .await
+            .map_err(command_error)
+    }
+
+    async fn fail_submission(
+        &self,
+        _session: i64,
+        submission: i64,
+        reason: &str,
+    ) -> Result<()> {
+        nous_durable::session::commands::fail_submission(
+            &self.session,
+            submission,
+            reason,
+            None,
+        )
+        .await
+        .map_err(command_error)
+    }
+
     async fn template(&self, session: i64) -> Result<Option<String>> {
         nous_durable::session::commands::session_template(&self.session, session)
+            .await.map_err(command_error)
+    }
+
+    async fn skills(&self, session: i64) -> Result<Vec<String>> {
+        nous_durable::session::commands::session_skills(&self.session, session)
             .await.map_err(command_error)
     }
 

@@ -31,6 +31,45 @@ pub struct SkillEntry {
     pub load: LoadState,
 }
 
+/// 把选中的技能正文按**选中顺序**拼成 `sections.prompts` 的一段（#83）。
+///
+/// 这是纯函数：只读 `root/<name>/SKILL.md`，不看环境、不看时钟、不写盘。
+/// 缺目录 / 读不到 / frontmatter 坏都变成 `skill: …` 诊断行，并继续拼后面的技能；
+/// 一轮 Assembly 永不因为一条坏技能失败。正文去掉 frontmatter，保留原文其余字节。
+pub fn assemble_prompts(root: &Path, selected: &[String]) -> String {
+    let mut blocks = Vec::new();
+    for name in selected {
+        let file = root.join(name).join("SKILL.md");
+        let text = match fs::read_to_string(&file) {
+            Ok(text) => text,
+            Err(_) => {
+                blocks.push(format!("skill: missing ({name})"));
+                continue;
+            }
+        };
+        match parse_frontmatter(&text) {
+            Ok(_) => blocks.push(strip_frontmatter(&text).trim().to_string()),
+            Err(detail) => blocks.push(format!("skill: problem ({name}): {detail}")),
+        }
+    }
+    blocks.into_iter().filter(|block| !block.is_empty()).collect::<Vec<_>>().join("\n\n")
+}
+
+/// 去掉开头的 `--- … ---` 那一段；没有 frontmatter 时原文返回（调用方已校验过）。
+fn strip_frontmatter(text: &str) -> String {
+    let mut lines = text.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return text.to_string();
+    }
+    let remainder: Vec<&str> = lines.skip_while(|line| line.trim() != "---").collect();
+    // skip_while 在收尾 `---` 那一行停住（没吃掉它），这里显式去掉。
+    if remainder.first().is_some_and(|line| line.trim() == "---") {
+        remainder[1..].join("\n")
+    } else {
+        String::new()
+    }
+}
+
 /// 一次扫描的结果：条目 + 汇总类别词表。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillScan {

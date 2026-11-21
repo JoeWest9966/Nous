@@ -318,6 +318,18 @@ async fn run() -> Result<(), RunError> {
     let plugins_db = plugins_db_path(&db);
     let trigger_store = nous_store::Store::open(&plugins_db)
         .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
+    // #60：presets 写者 = 模板私库根（NOUS_PRESETS）+ 同一份插件库（修订表）。
+    // 路径解析只走 env 插件，不在这里自己读环境变量。
+    let preset_store = Arc::new(nous_server::presets::PresetStore::new(
+        nous_env::PRESETS.resolve(),
+        std::path::PathBuf::from(&plugins_db),
+    ));
+    let state = state.with_presets(preset_store);
+    // #61：combos 复用同一份模板私库根；触发器名册从 NOUS_TRIGGER 读（两个根都只在这里解析一次）。
+    let state = state.with_combos_roots(
+        nous_env::PRESETS.resolve(),
+        nous_server::combos::triggers_root(),
+    );
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
     let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
         let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());

@@ -236,3 +236,21 @@ realpath 的是「路径片段全合法、但目录是仓内指向仓外的符�
 是同一份路由表的两个副本；单 crate 迭代只跑 `nous-repo` / `nous-server` 的目标测试，不比快照。
 **解**：任何加路由的票，收尾前必须跑一次全 workspace；快照漂移时从失败输出里取 `actual`
 写回去（不要手敲），再复跑确认绿。
+## 2026-11-20 · abort 测试里两个 Session 指向同一份库，取消信号却到不了 provider
+
+**症状**：`POST /abort` 落了 `user_cancel` 终态、submission 也变 `unanswered`，但慢 provider
+没停；断言「取消信号到达 provider」的红/绿随 `Session` 实例数量漂移。
+**根因**：`Session` 的取消 token 是**实例字段**，不是库级状态。测试用 `AppState::durable()`
+自己开一个 `Session`，driver 用另一个 `Session`，两者写同一份 sqlite 却各拿一个 token。
+**解**：测试按生产形状装配——`DurableCommands::with_session(session.clone(), registry)` 与
+driver 共用同一个 `Session`，再断言 provider 见过取消信号；负向哨兵去掉 `cancel()` 才会真红。
+
+## 2026-11-21 · #88 的清单快照判据是「备注」列当「API 面」用
+
+**症状**：合并 #88 后给 `docs/plugins.md` 的 `repo` 行加说明文字，
+`capabilities_manifest::manifest_metadata_matches_the_plugins_table_cell_by_cell` 变红，
+报「六列一行都对不上」，但六列肉眼看全对。
+**根因**：该测试把 `cells[8]`（备注）与 `ManifestEntry.description` 比，而行里 `cells[6]`（API 面）
+才是描述列；集成前两格恰好相同，所以空转地绿。
+**解**：改清单表格时若撞上这条红，先逐列打印 `cells[i]` 与 entry 字段确认索引；
+保持 `cells[8]` 与 `MANIFEST.description` 逐字相同，#77 的上游追踪说明放 `cells[6]`。

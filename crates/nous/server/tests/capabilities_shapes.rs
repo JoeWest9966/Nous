@@ -410,6 +410,34 @@ async fn capabilities_declares_modules_and_reasons() {
     );
 
     let modules = body["modules"].as_array().unwrap();
+    // #88：每个 module（含未启用的）都带六列，且 enum 闭集。
+    assert_eq!(modules.len(), 13, "capabilities 必须吐出全部 13 个 module");
+    for module in modules {
+        let name = module["name"].as_str().unwrap();
+        let where_ = format!("capabilities.modules[{name}]");
+        fields(
+            module,
+            &where_,
+            &[
+                ("version", is_string),
+                ("kind", is_string),
+                ("layer", is_string),
+                ("required", is_bool),
+                ("crate", is_string),
+                ("description", is_string),
+            ],
+        );
+        let kind = module["kind"].as_str().unwrap();
+        assert!(
+            matches!(kind, "编译期" | "声明式" | "运行时外挂"),
+            "{where_}.kind 非法：{kind}"
+        );
+        let layer = module["layer"].as_str().unwrap();
+        assert!(
+            matches!(layer, "kernel" | "platform" | "app" | "dev"),
+            "{where_}.layer 非法：{layer}"
+        );
+    }
     let by_name: std::collections::BTreeMap<&str, &Value> = modules
         .iter()
         .map(|m| (m["name"].as_str().expect("name 是字符串"), m))
@@ -418,6 +446,7 @@ async fn capabilities_declares_modules_and_reasons() {
     for name in [
         "sessions",
         "env",
+        "repo",
         "documents",
         "presets",
         "archive",
@@ -472,6 +501,16 @@ async fn capabilities_declares_modules_and_reasons() {
     }
     assert!(by_name.get("extensions").is_none(), "模块名是 ext，不是 extensions");
     assert_eq!(by_name["sessions"]["enabled"], json!(true));
+    // #60：presets 不再是 not_implemented，Desk「模板」页的 gate 才能打开。
+    assert_eq!(by_name["presets"]["enabled"], json!(true));
+    assert!(by_name["presets"].get("reason").is_none(), "enabled:true 不该带 reason");
+    // #61：combos 也不再是 not_implemented，Desk「终极模板」页的 gate 才能打开。
+    assert_eq!(by_name["combos"]["enabled"], json!(true));
+    assert!(by_name["combos"].get("reason").is_none(), "enabled:true 不该带 reason");
+    let combos_endpoints = by_name["combos"]["endpoints"].as_array().unwrap();
+    assert_eq!(combos_endpoints.len(), 2);
+    assert!(combos_endpoints.iter().any(|e| e == "GET /v1/combos/:section"));
+    assert!(combos_endpoints.iter().any(|e| e == "PATCH /v1/combos/:section/:name"));
     assert_eq!(by_name["ext"]["enabled"], json!(false));
     assert_eq!(by_name["ext"]["reason"]["code"], json!("frozen"));
     snapshot("capabilities_declares_modules_and_reasons", &body);
