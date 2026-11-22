@@ -530,9 +530,10 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 
 ### GET /v1/combos/:section · PATCH /v1/combos/:section/:name
 
-组合（终极模板里「触发器 + 会话模板」那一条）的开关面。段与 `presets` 同两个值：
-`Session-Template` / `Ultimate-Template`。名册由扫 `<root>/<section>/<name>/preset.json`
-得出（`<root>` 是 `NOUS_PRESETS`，与 `presets` 共用数据根），进程内不留常驻名单。
+组合（终极模板里「触发器 + 会话模板」那一条）的开关面。**段只有一个值：`Ultimate-Template`**
+（`Session-Template` 的条目是「开一条会话用什么」，没有触发器，不是组合；传它一律 `400`，
+不静默返回空清单）。名册由扫 `<root>/Ultimate-Template/<name>/preset.json` 得出
+（`<root>` 是 `NOUS_PRESETS`，与 `presets` 共用数据根），进程内不留常驻名单。
 
 `GET` 回 `{ combos: [...] }`，每条：
 

@@ -21,7 +21,10 @@ use serde_json::{json, Value};
 use crate::app::AppState;
 use crate::error::{Result, ServerError};
 
-pub const SECTIONS: &[&str] = &["Session-Template", "Ultimate-Template"];
+/// 组合只活在终极模板那一段。`Session-Template` 的条目是「开一条会话用什么」，
+/// 没有触发器可言 —— 以前两段都扫，结果会话模板全带「这条没钉触发器」的假 `problem`。
+/// 段白名单只有这一个值，别的段一律 400（不静默返回空：客户端会以为「这一段没组合」）。
+pub const SECTIONS: &[&str] = &["Ultimate-Template"];
 
 /// 触发器名册根：只有这一个读取点（默认 `/opt/Nous-Trigger`，与旧 TS 版一致）。
 pub const TRIGGER_VAR: &str = "NOUS_TRIGGER";
@@ -156,10 +159,15 @@ impl ComboStore {
 
     fn scan(&self, section: &str) -> Result<Vec<ComboFile>> {
         let dir = self.section_path(section)?;
-        let entries = match fs::read_dir(&dir) {
+        self.scan_dir(&dir, section)
+    }
+
+    /// 扫一个目录（不管它是不是组合段）：`Session-Template` 作为**引用目标**也要扫。
+    fn scan_dir(&self, dir: &Path, label: &str) -> Result<Vec<ComboFile>> {
+        let entries = match fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-            Err(error) => return Err(ServerError::Internal(format!("扫 {section} 失败: {error}"))),
+            Err(error) => return Err(ServerError::Internal(format!("扫 {label} 失败: {error}"))),
         };
         let mut out = Vec::new();
         for entry in entries.flatten() {
@@ -205,8 +213,16 @@ impl ComboStore {
     }
 
     /// 会话模板名册：与 presets 共用数据根，从盘现扫（不读 durable 库）。
+    ///
+    /// **不经过 `section_path`**：`Session-Template` 不是组合段，但它是组合的引用目标，
+    /// 这里只需要把那一堆目录名字扫出来。
     pub(crate) fn session_names(&self) -> Result<BTreeSet<String>> {
-        Ok(self.scan("Session-Template")?.into_iter().map(|file| file.name).collect())
+        let dir = self.root.join("Session-Template");
+        Ok(self
+            .scan_dir(&dir, "Session-Template")?
+            .into_iter()
+            .map(|file| file.name)
+            .collect())
     }
 
     fn roster(&self, section: &str) -> Result<Value> {
