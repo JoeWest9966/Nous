@@ -78,6 +78,12 @@ pub enum ExtError {
     UnknownTool(String),
     /// 装载失败但旧的继续服务（EX-41）。
     ReloadFailed(String),
+    /// 清单是 TS 时代（`qrd3wh`）JS 插件的形状（`index.js` + `defineExtension`）。
+    ///
+    /// 这不是「字段写错了」，是**装载形态换代**：新运行时只 spawn 原生进程、走协议
+    /// 握手，`index.js` 没有解释器可跑。报成 `missing-field` 会把人引去改 JSON —— 那条路
+    /// 是死的。所以单独一个变体，把话说到位。
+    LegacyJsExtension,
 }
 
 impl fmt::Display for ExtError {
@@ -87,6 +93,11 @@ impl fmt::Display for ExtError {
                 let text: Vec<String> = problems.iter().map(|item| item.to_string()).collect();
                 write!(f, "清单不合法：{}", text.join("；"))
             }
+            ExtError::LegacyJsExtension => write!(
+                f,
+                "legacy-js: {}",
+                nous_ext_sdk::manifest::LEGACY_JS_REASON
+            ),
             ExtError::MissingHandle(name) => write!(f, "missing_handle={name}"),
             ExtError::EmptyExtension => {
                 write!(f, "reason={}", nous_ext_sdk::manifest::EMPTY_REASON)
