@@ -171,11 +171,9 @@ async fn patch_is_scoped_versioned_and_idempotent() {
     let root = dir.path();
     write_preset(root, "Ultimate-Template", "nightly", &ultimate(true, "daily", "morning"));
     write_preset(root, "Ultimate-Template", "weekly", &ultimate(true, "daily", "morning"));
+    // 引用目标（不是组合）：`session` 指向它，没有它两条都算「引用不在了」。
     write_preset(root, "Session-Template", "morning", &json!({
         "name": "morning", "summary": "早报", "description": "", "category": ["默认"],
-    }));
-    write_preset(root, "Session-Template", "nightly", &json!({
-        "name": "nightly", "summary": "晚报", "description": "", "category": ["默认"],
     }));
     let triggers = temp_dir("patch-triggers");
     fs::create_dir_all(triggers.path().join("daily")).unwrap();
@@ -184,9 +182,7 @@ async fn patch_is_scoped_versioned_and_idempotent() {
 
     let (_, before) = get(&app, "Ultimate-Template").await;
     let etag = find(&before, "nightly")["version"].as_str().unwrap().to_string();
-    let other_bytes = fs::read(root.join("Session-Template").join("nightly").join("preset.json")).unwrap();
-    let (_, sessions_before) = get(&app, "Session-Template").await;
-    let other_version = find(&sessions_before, "nightly")["version"].as_str().unwrap().to_string();
+    let other_bytes = fs::read(root.join("Ultimate-Template").join("weekly").join("preset.json")).unwrap();
 
     let (status, receipt) = call(
         &app,
@@ -204,14 +200,12 @@ async fn patch_is_scoped_versioned_and_idempotent() {
     assert_eq!(after_disk["spec"]["trigger"], json!("daily"), "别的字段不许动");
     assert_eq!(after_disk["name"], json!("nightly"));
 
-    // 读回两次比对：另一条与另一段都不变。
+    // 读回两次比对：另一条组合不变。
     for _ in 0..2 {
         let (_, ultimate) = get(&app, "Ultimate-Template").await;
         assert_eq!(find(&ultimate, "nightly")["enabled"], json!(false));
         assert_eq!(find(&ultimate, "weekly")["enabled"], json!(true));
-        let (_, sessions) = get(&app, "Session-Template").await;
-        assert_eq!(find(&sessions, "nightly")["version"].as_str().unwrap(), other_version.as_str(), "另一段 version 没变");
-        assert_eq!(fs::read(root.join("Session-Template").join("nightly").join("preset.json")).unwrap(), other_bytes, "另一段盘上没被动");
+        assert_eq!(fs::read(root.join("Ultimate-Template").join("weekly").join("preset.json")).unwrap(), other_bytes, "另一条组合盘上没被动");
     }
 
     // 错 If-Match：412，盘上文件一个字节都不变。
@@ -354,21 +348,47 @@ async fn patch_on_a_legacy_file_without_spec_fills_it() {
     let _env_guard = PATCH_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = temp_dir("legacy-no-spec");
     let root = dir.path();
-    write_preset(root, "Session-Template", "legacy", &json!({
+    write_preset(root, "Ultimate-Template", "legacy", &json!({
         "v": 1, "name": "legacy", "summary": "老条目", "category": ["工程"],
     }));
     let app = app_with(root);
 
-    let (_, before) = get(&app, "Session-Template").await;
+    let (_, before) = get(&app, "Ultimate-Template").await;
     let etag = find(&before, "legacy")["version"].as_str().unwrap().to_string();
     let (status, receipt) = call(
-        &app, "PATCH", "/v1/combos/Session-Template/legacy",
+        &app, "PATCH", "/v1/combos/Ultimate-Template/legacy",
         Some(json!({ "enabled": false, "requestId": "legacy-1" })), Some(&etag),
     ).await;
     assert_eq!(status, StatusCode::OK, "缺 spec 不该 400：{receipt}");
 
-    let after = read_preset(root, "Session-Template", "legacy");
+    let after = read_preset(root, "Ultimate-Template", "legacy");
     assert_eq!(after["spec"]["enabled"], json!(false), "补出来的 spec 里写 enabled");
     assert_eq!(after["name"], json!("legacy"), "别的字段一个不动");
     assert_eq!(after["category"], json!(["工程"]));
+}
+
+/// 段只有一个值：`Session-Template` 的条目是「开一条会话用什么」，不是组合。
+/// 以前两段都扫，会话模板全带「这条没钉触发器」的假 problem。现在直接 400 ——
+/// 不静默返回空清单（那会让客户端以为「这一段真没组合」）。
+#[tokio::test]
+async fn session_template_section_is_not_a_combo_section() {
+    let dir = temp_dir("section-narrow");
+    let root = dir.path();
+    write_preset(root, "Session-Template", "morning", &json!({
+        "name": "morning", "summary": "早报", "description": "", "category": ["默认"],
+    }));
+    let app = app_with(root);
+
+    let (status, body) = get(&app, "Session-Template").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "会话模板段不是组合段：{body}");
+    assert!(
+        body["error"].as_str().is_some_and(|e| e.contains("Ultimate-Template")),
+        "错误里点名唯一合法的段：{body}"
+    );
+
+    let (status, body) = call(
+        &app, "PATCH", "/v1/combos/Session-Template/morning",
+        Some(json!({ "enabled": false, "requestId": "r-1" })), Some("v0"),
+    ).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "PATCH 同样不认这一段：{body}");
 }

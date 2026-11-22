@@ -974,6 +974,20 @@ restore 方向相反：闭包先写回活库，抹墓碑失败时**保留 genera
 （便携包 / 只读介质）；② 引擎必须持有半成品草稿而私库里不能出现；③ 私库文件被外部改坏，
 需要引擎侧第二副本恢复。反悔时先回答「两个写者谁签字」——只能双读单写，不许两条链同时写。
 
+## 2026-11-22 · combos 只认 `Ultimate-Template` 一段
+
+**选了**：`combos::SECTIONS` 从 `["Session-Template", "Ultimate-Template"]` 收窄成只剩
+`Ultimate-Template`；传别的段一律 `400`（不静默返回空清单）。`session_names()` 不再走
+`section_path`，改成直接扫 `<root>/Session-Template`（它是组合的**引用目标**，不是组合段）。
+
+**为什么**：`Session-Template` 的条目是「开一条会话用什么」，没有触发器可言。以前两段都扫，
+结果 5 条会话模板全带「这条没钉触发器；这条没钉会话模板」的假 `problem`、`enabled` 恒 false ——
+一个从定义上就不可能是组合的东西被报成「组合坏了」。Desk 只在终极模板段画开关，所以界面上
+看不到这堆噪音，但它会污染 API 消费者与将来的任何前端。
+
+**反悔点**：如果会话模板真的要带「默认触发器」（比如新建会话时自动跑一次），先改 `wire.md`
+把那段语义写清，再放开白名单 —— 放开的同时必须让 `problem` 能区分「不是组合」与「组合坏了」。
+
 ## 2026-11-24 · 资源仓管理面（三个编辑页）落在 server 翻译层，文件与 git 全部复用 `nous-repo`
 
 **决定**：`/v1/{skills,prompts,extensions}/{files,file,create,publish}` 由
