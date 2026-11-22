@@ -44,8 +44,8 @@
 | `device` | nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
 | `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
 | `documents` | nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
-| `prompts` | nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
-| `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 / 管理面（create / duplicate / install / uninstall / categories / category / usage，#84） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划 |
+| `prompts` | nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟）+ 管理面 `/v1/prompts/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 是 | 今天 `prompts/index.js` |
+| `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 / 管理面（create / duplicate / install / uninstall / categories / category / usage，#84）+ 编辑页 `/v1/extensions/{files,file,publish}`（文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划 |
 | `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
 | `ext-sdk` | nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
 | `extend-trash` | nous | — | app | 数据目录 | 卸载源码的垃圾站 + `deleted-extensions.json` 删除名单（#84） | 否 | 位于 `data/extend-trash/`，install 的回退来源；名单随私库发布，防 git pull 复活 |
@@ -61,7 +61,7 @@
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：13 条资源化端点 + 修订表） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判 |
 | `combos` | nous | — | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读 |
-| `skills` | nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行 |
+| `skills` | nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71）+ 管理面 `/v1/skills/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`） |
 | `prompt-text` | nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
 | `trigger-spec` | nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
