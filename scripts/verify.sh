@@ -1182,6 +1182,16 @@ if [ "$WHAT" = all ] || [ "$WHAT" = deploy ]; then
 		fi
 	fi
 
+	# #91 判据 1b：闸门必须用**即将上场的产物**数任务。
+	# 用旧二进制数 = 改口径那一版永远部署不上去（旧代码数出旧结果，2026-11-22 实测：
+	# 新版数出 0，旧版数出 7805，闸门信了旧的）。
+	GATE_OUT=$(./scripts/deploy.sh --selftest-gate 2>&1) || true
+	if [ -n "$GATE_OUT" ] && printf '%s' "$GATE_OUT" | grep -q '^probe: '; then
+		ok "#91 闸门用新产物：$(printf '%s' "$GATE_OUT" | tr '\n' ' ')"
+	else
+		bad "#91 闸门 selftest 未通过：$(printf '%s' "$GATE_OUT" | head -3 | tr '\n' ' ')"
+	fi
+
 	# #91 判据 1：prune 必须按 mtime 保最新，不按名字。
 	# 判据本体在 deploy.sh 的 `--selftest-prune`（本地临时目录，不碰 j1900）；
 	# 这里只跑它并看输出 —— 名字顺序与时间顺序故意相反，按名字排会删掉"最新"那个。

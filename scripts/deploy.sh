@@ -38,6 +38,7 @@ usage() {
   scripts/deploy.sh --purge --yes-i-mean-it  卸载后删 /var/lib/nous + /etc/nous/token
   scripts/deploy.sh --rotate-token           重建 /etc/nous/token（root:nous 0640）
   scripts/deploy.sh --selftest-prune         prune 选择逻辑自测（本地临时目录，不碰远端）
+  scripts/deploy.sh --selftest-gate          闸门用哪个产物自测（同上）
 EOF
 }
 
@@ -205,6 +206,37 @@ backup_and_manifest() {
 	[ $rc -eq 0 ] || die "写 manifest 失败：$out"
 	MANIFEST_PATH=$manifest
 	BACKUP_DIR=$base
+}
+
+# 闸门用哪个二进制：新产物优先，其次 current（卸载过/上传失败时）。两者都没有 → 空（跳过闸门）。
+gate_probe() {
+	local new=$1 old=$2
+	if [ -n "$new" ] && [ -e "$new" ]; then printf '%s' "$new"
+	elif [ -n "$old" ] && [ -e "$old" ]; then printf '%s' "$old"
+	fi
+}
+
+# #91 判据 1b：新产物在 → 必须用新的（不是 current）。
+selftest_gate() {
+	local tmp rc=0 probe
+	tmp=$(mktemp -d) || return 1
+	mkdir -p "$tmp/new" "$tmp/old"
+	touch "$tmp/new/nous-app" "$tmp/old/nous-app"
+
+	probe=$(gate_probe "$tmp/new/nous-app" "$tmp/old/nous-app")
+	[ "$probe" = "$tmp/new/nous-app" ] || { printf '\n✗ 新产物在时闸门却用了 %s\n' "$probe" >&2; rc=1; }
+
+	rm -f "$tmp/new/nous-app"
+	probe=$(gate_probe "$tmp/new/nous-app" "$tmp/old/nous-app")
+	[ "$probe" = "$tmp/old/nous-app" ] || { printf '\n✗ 新产物缺时闸门应退回 current，实得 %s\n' "$probe" >&2; rc=1; }
+
+	rm -f "$tmp/old/nous-app"
+	probe=$(gate_probe "$tmp/new/nous-app" "$tmp/old/nous-app")
+	[ -z "$probe" ] || { printf '\n✗ 两个都不在时应跳过闸门，实得 %s\n' "$probe" >&2; rc=1; }
+
+	rm -rf "$tmp"
+	[ $rc -eq 0 ] && printf 'probe: 新产物优先 / 缺则 current / 都没有则跳过\n'
+	return $rc
 }
 
 # 保留**最新** $3 个（按 mtime），删其余。选择逻辑只有这一份：远端 prune 与本地
@@ -393,8 +425,10 @@ do_deploy() {
 		rs sh -c "systemctl stop nous-app 2>/dev/null || true" || die "stop 失败"
 		local bin_old tasks
 		bin_old=$(rs_out readlink -f /opt/nous-app/current/nous-app 2>/dev/null || true)
-		# 闸门要用**即将上场的那个库**跑：current 在 → 用它；current 不在（卸载过）→ 用新产物。
-		local probe=${bin_old:-$REMOTE_ROOT/$BIN_NAME/nous-app}
+		# 闸门必须用**即将上场的产物**数任务：用旧二进制数 = 改口径那一版永远上不去
+		# （2026-11-22 实测：新版数出 0，旧版数出 7805，闸门信了旧的）。产物不在才退回落 current。
+		local probe
+		probe=$(gate_probe "$REMOTE_ROOT/$BIN_NAME/nous-app" "$bin_old")
 		if [ -n "$probe" ]; then
 			# `NOUS_DB` 必须显式给：unit 里那是 `Environment=`，ssh 里没有，默认 `./nous.db` 会打不开。
 			tasks=$(rs_out sh -c "NOUS_DB='$DATA_DIR/nous.db' '$probe' --active-tasks" 2>&1) || die "--active-tasks 失败：$tasks"
@@ -476,6 +510,7 @@ while [ $# -gt 0 ]; do
 	--yes-i-mean-it) PURGE_CONFIRM=1 ;;
 	--rotate-token) MODE=rotate-token ;;
 	--selftest-prune) MODE=selftest-prune ;;
+	--selftest-gate) MODE=selftest-gate ;;
 	-h|--help) usage; exit 0 ;;
 	*) die "未知参数：$1（--help 看用法）" ;;
 	esac
@@ -484,6 +519,7 @@ done
 
 case "$MODE" in
 selftest-prune) selftest_prune; exit $? ;;
+selftest-gate) selftest_gate; exit $? ;;
 deploy) do_deploy ;;
 uninstall) do_uninstall ;;
 purge) do_purge ;;
