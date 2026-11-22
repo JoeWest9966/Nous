@@ -222,8 +222,12 @@ fn sha256_hex(input: &[u8]) -> String {
 }
 
 /// 校验：纯配置 JSON，不许有正文 / frontmatter。返回规范化后的字节（末尾换行）。
+///
+/// `spec` 是引擎的扩展位：旧条目（0.1.7 之前写下的）没有这个键，补一个空对象再存，
+/// 别让「编辑一条老模板」卡在 400。`name` / `summary` / `category` 仍然必需。
 fn validate_body(value: &Value) -> Result<Vec<u8>> {
-    let object = value.as_object().ok_or_else(|| {
+    let mut value = value.clone();
+    let object = value.as_object_mut().ok_or_else(|| {
         ServerError::BadRequest("preset.json 必须是 JSON 对象".to_string())
     })?;
     if object.contains_key("content") || object.contains_key("frontmatter") {
@@ -231,7 +235,8 @@ fn validate_body(value: &Value) -> Result<Vec<u8>> {
             "preset.json 是纯配置：不许带 content / frontmatter".to_string(),
         ));
     }
-    for key in ["name", "summary", "category", "spec"] {
+    object.entry("spec").or_insert_with(|| json!({}));
+    for key in ["name", "summary", "category"] {
         if !object.contains_key(key) {
             return Err(ServerError::BadRequest(format!("preset.json 缺字段 {key}")));
         }
@@ -244,7 +249,7 @@ fn validate_body(value: &Value) -> Result<Vec<u8>> {
     {
         return Err(ServerError::BadRequest("preset.json 的 category 必须是 string[]".to_string()));
     }
-    let mut bytes = serde_json::to_vec_pretty(value)
+    let mut bytes = serde_json::to_vec_pretty(&value)
         .map_err(|error| ServerError::Internal(format!("序列化失败: {error}")))?;
     bytes.push(b'\n');
     Ok(bytes)

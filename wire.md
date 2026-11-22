@@ -432,6 +432,8 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
   等于读文件算出的值。
 - `version` 是乐观锁的 ETag；`If-Match` 不匹配 → 412 且磁盘字节不变。
 - `?dry_run=1` 与真 PUT 共用同一份校验：坏 JSON 都是 400，区别只在 dry_run 不写盘。
+- **`spec` 可缺省**：老条目（0.1.7 之前写下的）没有这个键，PUT 会补一个 `{}` 再存；
+  `name` / `summary` / `category` 仍然必需。不把「再存一遍老模板」卡在 400。
 - 写端点整段串行锁；`requestId` 是幂等锚：重放回第一次的回执，`version` 不涨，
   幂等证据看 `version` 与磁盘，不看 `changed`。
 - 修订落在 `nous-plugins.db` 的 `presets_revisions` 表（`section` / `name` / `n` / `sha` /
@@ -550,6 +552,8 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 （版本不匹配 → 412）与 `requestId`（幂等锚：重放回第一次回执，`version` 不涨）。
 回包 `{ name, trigger, params, session, enabled, problem, version, requestId }`；
 写的是 `spec.enabled` 那一位，不是新增一份开关表。
+**文件里没有 `spec` 对象时补一个 `{}` 再写**（老条目就是这样），不回 400 ——
+「没有 spec」是旧形状，不是坏数据。
 
 > 旧版 `POST /v1/combos/:name/enable` 与 `/disable` 已取消：`enabled` 是一个字段，不是
 > 两个动作，两条路径等于给同一个位开两个入口。只留一条 `PATCH {enabled}`。

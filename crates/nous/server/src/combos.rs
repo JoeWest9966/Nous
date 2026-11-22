@@ -234,11 +234,18 @@ impl ComboStore {
             )));
         }
         let mut body = file.body.clone();
-        let spec = body
+        // `spec` 是引擎的扩展位：旧条目（0.1.7 之前写下的）没有这个键。
+        // 缺了就补一个空对象再写 —— 不要回 400 把人挡在门外（那 5 条老模板就这样）。
+        let object = body.as_object_mut().ok_or_else(|| {
+            ServerError::BadRequest("preset.json 必须是 JSON 对象".to_string())
+        })?;
+        let spec = object
+            .entry("spec".to_string())
+            .or_insert_with(|| json!({}))
             .as_object_mut()
-            .and_then(|object| object.get_mut("spec"))
-            .and_then(Value::as_object_mut)
-            .ok_or_else(|| ServerError::BadRequest("preset.json 没有 spec 对象".to_string()))?;
+            .ok_or_else(|| {
+                ServerError::BadRequest("preset.json 的 spec 不是对象".to_string())
+            })?;
         spec.insert("enabled".to_string(), json!(enabled));
         let bytes = serde_json::to_vec_pretty(&body)
             .map_err(|error| ServerError::Internal(format!("序列化 preset.json: {error}")))?;
