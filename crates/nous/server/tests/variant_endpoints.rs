@@ -90,7 +90,7 @@ async fn bind_publish_branch_and_unbind_are_live_over_http() {
 
     let (status, table) = call(&app, "GET", "/v1/repos/skills/variants", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(table["variants"]["skill"]["alpha"]["branch"], json!(branch));
+    assert_eq!(table["variants"]["skills"]["alpha"]["branch"], json!(branch));
 
     std::fs::write(Path::new(root).join("alpha/SKILL.md"), "---\nname: alpha\ndescription: v2\n---\nbody\n").unwrap();
     let (status, published) = call(&app, "POST", "/v1/repos/skills/variants/publish",

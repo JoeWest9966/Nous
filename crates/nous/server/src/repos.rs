@@ -213,7 +213,8 @@ async fn variant_branch(
 }
 
 fn family_key(family: nous_repo::VariantFamily) -> &'static str {
-    match family { nous_repo::VariantFamily::Skill => "skill", nous_repo::VariantFamily::Extension => "extension" }
+    // 与私库名一致（同 `nous_repo::VariantFamily::key`）：`skills` / `extend`。
+    match family { nous_repo::VariantFamily::Skill => "skills", nous_repo::VariantFamily::Extension => "extend" }
 }
 
 async fn variant_publish(

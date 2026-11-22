@@ -83,9 +83,9 @@ fn bind_creates_worktree_branch_and_binding_table_entry() {
     let table: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&f.bind_table).unwrap()).unwrap();
     assert_eq!(table["v"], 1);
-    assert_eq!(table["variants"]["skill"]["alpha"]["branch"], json!(variant.branch));
+    assert_eq!(table["variants"]["skills"]["alpha"]["branch"], json!(variant.branch));
     assert_eq!(
-        table["variants"]["skill"]["alpha"]["root"],
+        table["variants"]["skills"]["alpha"]["root"],
         json!(variant.root.to_string_lossy().into_owned())
     );
 }
@@ -133,7 +133,7 @@ fn unbind_keeps_tree_prune_removes_worktree_and_local_branch() {
     assert!(git(&f.root, &["worktree", "list"]).contains(variant.root.to_str().unwrap()));
     let table: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&f.bind_table).unwrap()).unwrap();
-    assert!(table["variants"]["skill"].get("alpha").is_none(), "解绑后表里没有它");
+    assert!(table["variants"]["skills"].get("alpha").is_none(), "解绑后表里没有它");
 
     // 重新绑到同一个分支（树仍在，分支也在），再 prune。
     let variant = repo
