@@ -22,9 +22,18 @@ fn stats_plugin_manifest_module_layer_and_routes_are_registered() {
     let stats_routes: Vec<_> = nous_server::meta::ROUTES.iter()
         .filter(|route| route.module == "stats")
         .collect();
-    assert_eq!(stats_routes.len(), 3);
-    for path in ["/v1/stats/usage", "/v1/stats/tasks", "/v1/stats/db"] {
-        assert!(stats_routes.iter().any(|r| r.method == "GET" && r.path == path));
+    assert_eq!(stats_routes.len(), 8);
+    for path in [
+        "/v1/stats/usage",
+        "/v1/stats/tasks",
+        "/v1/stats/db",
+        "/v1/stats/overview",
+        "/v1/stats/conversations",
+        "/v1/stats/conversation/:id",
+        "/v1/stats/cost",
+        "/v1/stats/health",
+    ] {
+        assert!(stats_routes.iter().any(|r| r.method == "GET" && r.path == path), "缺 {path}");
     }
     assert!(nous_server::meta::route_enabled("stats"));
 }

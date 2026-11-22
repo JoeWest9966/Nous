@@ -262,6 +262,12 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
     RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "stats" },
     RegisteredRoute { method: "GET", path: "/v1/stats/db", module: "stats" },
+    // 数据监控室六屏复原：明细读口（X 光片 / 会话树 / 回放 / 账单 / 维修）。
+    RegisteredRoute { method: "GET", path: "/v1/stats/overview", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/conversations", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/conversation/:id", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/cost", module: "stats" },
+    RegisteredRoute { method: "GET", path: "/v1/stats/health", module: "stats" },
     RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
     // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
     RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
