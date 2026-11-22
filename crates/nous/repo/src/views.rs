@@ -112,6 +112,29 @@ pub fn pending(root: &Path) -> Result<Vec<PendingUnit>> {
     Ok(out)
 }
 
+/// HEAD 里带这个前缀的路径。前缀按**段内口径**给（`<段>/<名>`），
+/// 名册用它算 `tracked`：盘上有、仓里没 → 未发布。
+pub fn tracked_paths(root: &Path, prefix: &str) -> Result<Vec<String>> {
+    let prefix = prefix.trim().trim_matches('/');
+    if prefix.is_empty() || prefix.contains("..") {
+        return Err(crate::error::RepoError::BadRequest(format!("前缀非法：{prefix}")));
+    }
+    let needle = format!("{prefix}/");
+    let out = git::git_ok(root, &["ls-files", "--", prefix])?;
+    Ok(out
+        .lines()
+        .filter(|line| *line == prefix || line.starts_with(&needle))
+        .map(str::to_string)
+        .collect())
+}
+
+/// `origin` 的 URL；没配远端给 `None`（本地单用户也是合法用法）。
+pub fn remote_url(root: &Path) -> Result<Option<String>> {
+    let out = git::git_ok(root, &["remote", "get-url", "origin"])?;
+    let url = out.trim();
+    Ok((!url.is_empty()).then(|| url.to_string()))
+}
+
 pub fn pending_diff(root: &Path, path: &str) -> Result<Diff> {
     let safe = crate::files::safe_path(root, path)?;
     let before = git::git_ok(root, &[&format!("HEAD:{path}")]).unwrap_or_default();

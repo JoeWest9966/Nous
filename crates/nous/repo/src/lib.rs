@@ -100,6 +100,18 @@ impl Repo {
         views::pending(&self.root)
     }
 
+    /// HEAD 里有没有这条（前缀 = `<段>/<名>` 或 `<段>/<名>/`）。
+    ///
+    /// 名册的 `tracked` 判据：盘上有、仓里没 → `false`，页面画「未发布」。
+    pub fn tracked_paths(&self, prefix: &str) -> Result<Vec<String>> {
+        views::tracked_paths(&self.root, prefix)
+    }
+
+    /// `origin` 的 URL；没配远端给 `None`（本地单用户也是合法用法）。
+    pub fn remote_url(&self) -> Result<Option<String>> {
+        views::remote_url(&self.root)
+    }
+
     pub fn pending_diff(&self, path: &str) -> Result<Diff> {
         views::pending_diff(&self.root, path)
     }

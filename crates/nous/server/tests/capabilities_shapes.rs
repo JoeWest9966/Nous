@@ -463,7 +463,7 @@ async fn capabilities_declares_modules_and_reasons() {
 
     let modules = body["modules"].as_array().unwrap();
     // #88：每个 module（含未启用的）都带六列，且 enum 闭集。
-    assert_eq!(modules.len(), 12, "#90 下线 documents 后 capabilities 应吐出 12 个 module");
+    assert_eq!(modules.len(), 13, "#90 下线 documents、#60 补 presets-admin 后 capabilities 应吐出 13 个 module");
     for module in modules {
         let name = module["name"].as_str().unwrap();
         let where_ = format!("capabilities.modules[{name}]");
@@ -500,6 +500,7 @@ async fn capabilities_declares_modules_and_reasons() {
         "env",
         "repo",
         "presets",
+        "presets-admin",
         "archive",
         "combos",
         "triggers",

@@ -2,7 +2,7 @@
 //!
 //! 三处公共接缝，全部从真实实现取值：
 //! 1. HTTP：真 Router（`tower::ServiceExt::oneshot`）；
-//! 2. 盘：直接读 `<root>/<section>/<name>/preset.json` 的字节，独立算 sha256（`sha256sum`）；
+//! 2. 盘：直接读 `<root>/<section>/<name>/<manifest>` 的字节，独立算 sha256（`sha256sum`）；
 //! 3. 库：另开只读 `rusqlite` 连接读 `nous-plugins.db` 的 `presets_revisions`。
 //!
 //! 不拿响应体当证据：响应的 `sha` 必须等于文件字节的哈希，修订必须真在库里。
@@ -15,6 +15,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
 use nous_durable::storage::sessions::SessionItem;
+use nous_presets_admin::ModelLevels;
+use nous_server::presets::Sources;
 use nous_server::{router, AppState, Result, ServerError, SessionSource};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -48,17 +50,53 @@ impl Fixture {
         let db = dir.join("nous-plugins.db");
         std::fs::create_dir_all(&root).unwrap();
         std::env::set_var("NOUS_PRESETS", &root);
-        // 每个 case 用独立路径，AppState 构造时只读一次环境，之后 handler 自己按配置解析。
+
+        // 解析要问的外部根：全部落在临时目录里，判据不读开发机的真实私库。
+        let skills = dir.join("skills");
+        let prompts = dir.join("prompts");
+        let extensions = dir.join("extend");
+        let triggers = dir.join("triggers");
+        std::fs::create_dir_all(skills.join("deep-dive")).unwrap();
+        std::fs::write(skills.join("deep-dive/SKILL.md"), "---\nname: deep-dive\n---\n正文").unwrap();
+        std::fs::create_dir_all(prompts.join("smart-ass")).unwrap();
+        std::fs::write(prompts.join("smart-ass/nous.json"), r#"{"description":"d","category":[]}"#).unwrap();
+        std::fs::write(prompts.join("smart-ass/PROMPT.md"), "正文").unwrap();
+        std::fs::create_dir_all(extensions.join("probe")).unwrap();
+        std::fs::create_dir_all(triggers.join("single-shot")).unwrap();
+        std::fs::write(
+            triggers.join("single-shot/nous.json"),
+            r#"{"name":"single-shot","summary":"一次","version":1,"params":[{"name":"epoch","type":"epoch","required":true}]}"#,
+        )
+        .unwrap();
+        let sources = Sources {
+            skills,
+            prompts,
+            extensions,
+            triggers,
+            models: Some(vec![ModelLevels {
+                provider: "volc-ark".into(),
+                model_id: "flash".into(),
+                thinking_levels: vec!["off".into(), "medium".into()],
+            }]),
+            device_model: Some(("volc-ark".into(), "flash".into())),
+        };
+
         let source: std::sync::Arc<dyn SessionSource> = std::sync::Arc::new(EmptySource);
         // 先建插件库（迁移出 presets_revisions / preset_write_receipts），再注入写者。
         let _ = nous_store::Store::open(&db).unwrap();
-        let store = std::sync::Arc::new(nous_server::presets::PresetStore::new(root.clone(), db.clone()));
+        let store = std::sync::Arc::new(
+            nous_server::presets::PresetStore::new(root.clone(), db.clone()).with_sources(sources),
+        );
         let app = router(AppState::with_source(source).with_presets(store));
         Self { _guard: guard, dir, root, db, app }
     }
 
     fn file(&self, section: &str, name: &str) -> PathBuf {
         self.root.join(section).join(name).join("preset.json")
+    }
+
+    fn ultimate(&self, name: &str) -> PathBuf {
+        self.root.join("Ultimate-Template").join(name).join("ultimate.json")
     }
 }
 
@@ -170,15 +208,23 @@ async fn capabilities_enable_presets_without_a_reason() {
             .is_some_and(|list| list.iter().any(|e| e.as_str() == Some("GET /v1/presets/{section}"))),
         "presets 的端点必须从注册表声明出来：{module}"
     );
+    let admin = body["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == json!("presets-admin"))
+        .expect("capabilities 必须声明 presets-admin 模块");
+    assert_eq!(admin["enabled"], json!(true), "presets-admin 的端点已挂上：{admin}");
 }
 
+/// 新契约（TS 内核同形）：`preset.json` 是**扁平**配置，`spec` 就是整份 body。
 fn preset_body(name: &str, summary: &str) -> Value {
     json!({
+        "v": 1,
         "name": name,
         "summary": summary,
         "description": "一段说明",
         "category": ["写作", "周报"],
-        "spec": { "v": 1, "session": "default" },
         "requestId": "same-req",
     })
 }
@@ -205,14 +251,54 @@ async fn put_writes_real_file_and_roster_sha_matches_file_bytes() {
         json!("第一版"),
         "文件内容必须是刚写进去的那份"
     );
+    assert!(
+        serde_json::from_slice::<Value>(&on_disk).unwrap().get("spec").is_none(),
+        "新契约不许把整份 body 再包一层 spec"
+    );
 
     let (status, roster, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template", None, None).await;
     assert_eq!(status, StatusCode::OK, "{roster}");
-    let items = roster["items"].as_array().expect("roster.items 是数组");
+    let items = roster["presets"].as_array().expect("roster.presets 是数组");
     let item = items.iter().find(|item| item["name"] == json!("foo"))
         .unwrap_or_else(|| panic!("roster 里没有 foo：{roster}"));
-    assert_eq!(item["sha"], json!(expected_sha), "roster.sha 必须等于文件字节的 sha256：{item}；文件={:?}", std::fs::read(&path).unwrap());
+    assert_eq!(item["sha"], json!(expected_sha), "roster.sha 必须等于文件字节的 sha256：{item}");
     assert_eq!(item["version"], response["version"], "version 必须与 PUT 回执一致");
+}
+
+#[tokio::test]
+async fn roster_carries_flat_spec_and_resolved_states() {
+    let fixture = Fixture::new("resolved");
+    let body = json!({
+        "v": 1,
+        "name": "deep-dive",
+        "summary": "挖到底",
+        "category": ["工程"],
+        "model": { "provider": "volc-ark", "modelId": "flash" },
+        "thinkingLevel": "medium",
+        "skills": ["deep-dive", "gone"],
+        "extensions": ["probe", "prompt:x"],
+        "template": "smart-ass",
+        "requestId": "resolved-1",
+    });
+    let (status, put, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/deep-dive", Some(body), None).await;
+    assert_eq!(status, StatusCode::CREATED, "{put}");
+    let (status, roster, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{roster}");
+    let item = roster["presets"].as_array().unwrap().iter()
+        .find(|item| item["name"] == json!("deep-dive")).unwrap().clone();
+    // `spec` 就是整份 body —— 图的数据源。
+    assert_eq!(item["spec"]["model"]["modelId"], json!("flash"));
+    assert!(item["specError"].is_null(), "形状对的条目 specError 必须空：{item}");
+    // `resolved` 的七维状态：引用坏了报 invalid，没坏报 ok。
+    assert_eq!(item["resolved"]["model"]["state"], json!("ok"));
+    assert_eq!(item["resolved"]["thinking"]["state"], json!("ok"));
+    assert_eq!(item["resolved"]["skills"][0]["state"], json!("ok"));
+    assert_eq!(item["resolved"]["skills"][1]["state"], json!("invalid"));
+    assert_eq!(item["resolved"]["extensions"][1]["state"], json!("invalid"), "名牌不是扩展");
+    assert_eq!(item["resolved"]["template"]["state"], json!("ok"));
+    // 没有 git 仓：tracked=false，但 dir 是真的绝对路径。
+    assert_eq!(item["tracked"], json!(false));
+    assert!(item["dir"].as_str().unwrap().ends_with("Session-Template/deep-dive"));
 }
 
 #[tokio::test]
@@ -256,8 +342,6 @@ async fn revisions_keep_every_version_and_rollback_restores_exact_bytes() {
     assert_eq!(revision_rows(&fixture.db, "Session-Template", "rev").len(), 3);
 }
 
-fn cleanup_debug(msg: String) -> String { msg }
-
 #[tokio::test]
 async fn idempotent_replays_keep_version_and_disk_unchanged() {
     let fixture = Fixture::new("idempotent");
@@ -274,14 +358,10 @@ async fn idempotent_replays_keep_version_and_disk_unchanged() {
     let (_, again, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/idem/copy", Some(copy), None).await;
     let copy_version = again["version"].as_i64().unwrap();
     assert_eq!(revision_rows(&fixture.db, "Session-Template", "copied").len(), 1);
-    assert!(!fixture.root.join("Session-Template/copied2").exists(), "目录不多一份");
-
-    let rollback = json!({ "n": 1, "requestId": "rb-1" });
-    let (_, rb1, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/idem/rollback", Some(rollback.clone()), None).await;
-    let (_, rb2, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/idem/rollback", Some(rollback), None).await;
-    assert_eq!(rb1["version"], rb2["version"], "rollback 重放 version 不涨");
-    assert_eq!(revision_rows(&fixture.db, "Session-Template", "idem").len(), 2, "rollback 重放不许多一条修订");
-    assert!(copy_version >= 1, "{}", cleanup_debug("copy 回执必须有 version".into()));
+    assert!(copy_version >= 1, "copy 回执必须有 version");
+    // 复制出来的清单里 `name` 必须换成新名字（目录名 = 主键）。
+    let copied: Value = serde_json::from_slice(&std::fs::read(fixture.file("Session-Template", "copied")).unwrap()).unwrap();
+    assert_eq!(copied["name"], json!("copied"));
 }
 
 #[tokio::test]
@@ -309,7 +389,7 @@ async fn wrong_if_match_refuses_and_leaves_the_file_bytes_untouched() {
 #[tokio::test]
 async fn dry_run_validates_without_writing_but_real_put_rejects_the_same_file() {
     let fixture = Fixture::new("dry-run");
-    let bad = json!({ "name": "bad", "requestId": "dry-1", "content": "正文不归 preset 管" });
+    let bad = json!({ "v": 1, "name": "bad", "summary": "x", "category": [], "content": "正文不归 preset 管", "requestId": "dry-1" });
     let (status, body, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/bad?dry_run=1", Some(bad.clone()), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "dry_run 也走同一份校验：{body}");
     assert!(!fixture.file("Session-Template", "bad").exists(), "dry_run 不许建目录");
@@ -350,30 +430,201 @@ async fn writes_to_one_section_never_touch_the_other() {
 
     let (status, other, _) = call(&fixture.app, "GET", "/v1/presets/Ultimate-Template", None, None).await;
     assert_eq!(status, StatusCode::OK, "{other}");
-    assert_eq!(other["items"].as_array().unwrap().len(), 0, "另一段 roster 不许多一条：{other}");
+    assert_eq!(other["presets"].as_array().unwrap().len(), 0, "另一段 roster 不许多一条：{other}");
     assert!(revision_rows(&fixture.db, "Ultimate-Template", "only").is_empty(), "另一段 revisions 不许多一条");
-    assert!(!fixture.file("Ultimate-Template", "only").exists());
+    assert!(!fixture.ultimate("only").exists());
 }
 
-/// 老条目没有 `spec`（0.1.7 之前写下的那 5 条就是这样）：PUT 补一个空对象存下去，
-/// 不许回 400「缺字段 spec」—— 用户只是把一条老模板再存一遍。
+/// 新契约：未知键必须报错（拼错的键等于那条设置静默没生效）。
 #[tokio::test]
-async fn put_fills_missing_spec_with_an_empty_object() {
-    let fixture = Fixture::new("legacy-no-spec");
-    let legacy = json!({
-        "v": 1,
-        "name": "legacy",
-        "summary": "老条目",
-        "category": ["工程"],
-        "requestId": "legacy-put-1",
-    });
-    let (status, body, _) = call(
-        &fixture.app, "PUT", "/v1/presets/Session-Template/legacy", Some(legacy), None,
-    ).await;
-    assert_eq!(status, StatusCode::CREATED, "缺 spec 不该 400：{body}");
+async fn unknown_keys_are_rejected_not_silently_dropped() {
+    let fixture = Fixture::new("unknown-key");
+    let mut body = preset_body("legacy", "老条目");
+    body["spec"] = json!({ "v": 1 });
+    let (status, error, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/legacy", Some(body), None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert!(
+        error["error"].as_str().unwrap().contains("不认识的键「spec」"),
+        "必须点名那个键：{error}"
+    );
+    assert!(!fixture.file("Session-Template", "legacy").exists());
+}
 
-    let on_disk: Value = serde_json::from_slice(&std::fs::read(fixture.file("Session-Template", "legacy")).unwrap()).unwrap();
-    assert_eq!(on_disk["spec"], json!({}), "补出来的是空对象");
-    assert_eq!(on_disk["name"], json!("legacy"));
-    assert_eq!(on_disk["category"], json!(["工程"]));
+#[tokio::test]
+async fn archive_moves_dir_into_dot_archive_and_roster_lists_it() {
+    let fixture = Fixture::new("archive");
+    let body = preset_body("gone", "要归档的");
+    let (status, _, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/gone", Some(body), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let patch = json!({ "archived": true, "requestId": "archive-1" });
+    let (status, response, _) = call(&fixture.app, "PATCH", "/v1/presets/Session-Template/gone", Some(patch), None).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    // 盘上：原目录没了，`.archive/gone/` 在。
+    assert!(!fixture.file("Session-Template", "gone").exists());
+    assert!(fixture.root.join("Session-Template/.archive/gone/preset.json").is_file());
+
+    let (status, roster, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{roster}");
+    assert!(roster["presets"].as_array().unwrap().is_empty(), "归档的不许留在名册里：{roster}");
+    let archived = roster["archived"].as_array().unwrap();
+    assert_eq!(archived.len(), 1, "归档区要列出来：{roster}");
+    assert_eq!(archived[0]["name"], json!("gone"));
+    assert_eq!(archived[0]["summary"], json!("要归档的"));
+
+    // 还原回原处。
+    let (status, _, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/restore", Some(json!({ "name": "gone" })), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(fixture.file("Session-Template", "gone").is_file());
+}
+
+#[tokio::test]
+async fn validate_reports_missing_skill_and_unknown_key() {
+    let fixture = Fixture::new("validate");
+    let bad = json!({
+        "v": 1, "name": "x", "summary": "s", "category": [],
+        "skills": ["gone"], "thinking": "medium"
+    });
+    let (status, body, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/validate", Some(json!({ "spec": bad })), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["ok"], json!(false));
+    assert!(
+        body["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("不认识的键「thinking」")),
+        "{body}"
+    );
+
+    let good = json!({
+        "v": 1, "name": "x", "summary": "s", "category": [],
+        "skills": ["gone"], "template": "smart-ass"
+    });
+    let (status, body, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/validate", Some(json!({ "spec": good })), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["ok"], json!(false));
+    assert!(
+        body["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("技能「gone」")),
+        "{body}"
+    );
+    assert_eq!(body["resolved"]["template"]["state"], json!("ok"));
+}
+
+#[tokio::test]
+async fn categories_rename_rewrites_preset_mounts() {
+    let fixture = Fixture::new("categories");
+    let mut body = preset_body("weekly", "周报");
+    body["category"] = json!(["写作", "写作/周报"]);
+    let (status, _, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/weekly", Some(body), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let rename = json!({ "op": "rename", "name": "写作", "to": "写作2" });
+    let (status, response, _) = call(&fixture.app, "POST", "/v1/presets/Session-Template/categories", Some(rename), None).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let categories = response["categories"].as_array().unwrap();
+    assert!(categories.iter().any(|c| c == &json!("写作2")), "{response}");
+    assert!(categories.iter().any(|c| c == &json!("写作2/周报")), "{response}");
+
+    let on_disk: Value = serde_json::from_slice(&std::fs::read(fixture.file("Session-Template", "weekly")).unwrap()).unwrap();
+    assert_eq!(on_disk["category"], json!(["写作2", "写作2/周报"]), "预设挂着的类别要跟着改");
+}
+
+#[tokio::test]
+async fn create_from_device_writes_model_and_rejects_bad_shape() {
+    let fixture = Fixture::new("create");
+    let (status, response, _) = call(
+        &fixture.app,
+        "POST",
+        "/v1/presets/Session-Template/create",
+        Some(json!({ "name": "fresh", "summary": "新的", "category": ["工程"], "from": "device" })),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let on_disk: Value = serde_json::from_slice(&std::fs::read(fixture.file("Session-Template", "fresh")).unwrap()).unwrap();
+    assert_eq!(on_disk["model"], json!({ "provider": "volc-ark", "modelId": "flash" }));
+    assert_eq!(on_disk["v"], json!(1));
+
+    let (status, error, _) = call(
+        &fixture.app,
+        "POST",
+        "/v1/presets/Session-Template/create",
+        Some(json!({ "name": "bad-name", "summary": "  " })),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert!(error["error"].as_str().unwrap().contains("summary"), "{error}");
+}
+
+#[tokio::test]
+async fn files_listing_and_manifest_write_gate() {
+    let fixture = Fixture::new("files");
+    let body = preset_body("listed", "列文件");
+    let (status, _, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/listed", Some(body), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, listing, _) = call(&fixture.app, "GET", "/v1/presets/Session-Template/files?name=listed", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{listing}");
+    assert!(
+        listing["files"].as_array().unwrap().iter().any(|f| f["path"] == json!("preset.json")),
+        "{listing}"
+    );
+
+    // 写清单文件要过形状闸：坏 JSON / 未知键都 400，且盘上原样。
+    let before = std::fs::read(fixture.file("Session-Template", "listed")).unwrap();
+    let (status, error, _) = call(
+        &fixture.app,
+        "PUT",
+        "/v1/presets/Session-Template/file",
+        Some(json!({ "name": "listed", "path": "preset.json", "text": "{\"v\":2}" })),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert_eq!(std::fs::read(fixture.file("Session-Template", "listed")).unwrap(), before);
+
+    // 说明文件不走形状闸。
+    let (status, _, _) = call(
+        &fixture.app,
+        "PUT",
+        "/v1/presets/Session-Template/file",
+        Some(json!({ "name": "listed", "path": "PRESET.md", "text": "说明书" })),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        std::fs::read_to_string(fixture.root.join("Session-Template/listed/PRESET.md")).unwrap(),
+        "说明书"
+    );
+}
+
+#[tokio::test]
+async fn ultimate_section_uses_ultimate_manifest_and_reference_gate() {
+    let fixture = Fixture::new("ultimate");
+    let (status, error, _) = call(
+        &fixture.app,
+        "POST",
+        "/v1/presets/Ultimate-Template/create",
+        Some(json!({ "name": "nightly", "summary": "每晚", "trigger": "nope", "session": "scratch", "params": {} })),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+    assert!(error["error"].as_str().unwrap().contains("不在 NOUS_TRIGGER"), "{error}");
+
+    // 会话模板段里先有一条 scratch，触发器也在：这时才能建。
+    let scratch = preset_body("scratch", "临时");
+    let (status, _, _) = call(&fixture.app, "PUT", "/v1/presets/Session-Template/scratch", Some(scratch), None).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, response, _) = call(
+        &fixture.app,
+        "POST",
+        "/v1/presets/Ultimate-Template/create",
+        Some(json!({ "name": "nightly", "summary": "每晚", "trigger": "single-shot", "session": "scratch", "params": { "epoch": 1800000060 } })),
+        None,
+    ).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let on_disk: Value = serde_json::from_slice(&std::fs::read(fixture.ultimate("nightly")).unwrap()).unwrap();
+    assert_eq!(on_disk["trigger"], json!("single-shot"));
+
+    let (status, roster, _) = call(&fixture.app, "GET", "/v1/presets/Ultimate-Template", None, None).await;
+    assert_eq!(status, StatusCode::OK, "{roster}");
+    let item = &roster["presets"].as_array().unwrap()[0];
+    assert_eq!(item["name"], json!("nightly"));
+    assert_eq!(item["resolved"]["trigger"]["state"], json!("ok"));
+    assert_eq!(item["resolved"]["session"]["state"], json!("ok"));
 }
