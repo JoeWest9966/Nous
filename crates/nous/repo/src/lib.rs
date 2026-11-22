@@ -21,7 +21,7 @@ pub use upstream::{AdoptResult, CheckCache, ComparedFile, Source, SourceVersion,
 pub use variants::{
     variants, BindVariant, BoundVariant, PruneVariant, PrunedVariant, PublishedVariant, VariantFamily,
 };
-pub use views::{Diff, PendingUnit, RepoStatus};
+pub use views::{ArchivedUnit, Diff, PendingUnit, RepoStatus};
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -129,6 +129,12 @@ impl Repo {
     pub fn purge(&self, name: &str, request_id: Option<&str>) -> Result<publish::LifecycleResult> {
         let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
         publish::purge(&self.root, name, request_id)
+    }
+
+    /// 归档区（`.archive/`）里的单元名。写端点早就有（archive / restore / purge），
+    /// 没有读就等于「归档了就再也看不见」—— 客户端只能猜。
+    pub fn archived(&self) -> Result<Vec<ArchivedUnit>> {
+        views::archived(&self.root)
     }
 
     /// 异步写者共用的锁 future：同一仓排队，不等价于返回 429（票面允许排队）。

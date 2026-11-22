@@ -165,6 +165,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history", module: "repo" },
     RegisteredRoute { method: "GET", path: "/v1/repos/:repo/history/diff", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/commit", module: "repo" },
+    RegisteredRoute { method: "GET", path: "/v1/repos/:repo/archive", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/archive", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/restore", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/purge", module: "repo" },
