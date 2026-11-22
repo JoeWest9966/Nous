@@ -54,14 +54,32 @@ async fn all_three_stats_routes_and_openapi_are_declared_and_live() {
     let db = temp_db("declare");
     let app = app(&db);
 
-    // 三条路径都是 200（空库也 200，判据 6 的 HTTP 面）。
-    for path in ["/v1/stats/usage", "/v1/stats/tasks", "/v1/stats/db"] {
+    // 八条路径都是 200（空库也 200，判据 6 的 HTTP 面）。conversation/:id 要一个存在的会话。
+    for path in [
+        "/v1/stats/usage",
+        "/v1/stats/tasks",
+        "/v1/stats/db",
+        "/v1/stats/overview",
+        "/v1/stats/conversations",
+        "/v1/stats/conversation/1",
+        "/v1/stats/cost",
+        "/v1/stats/health",
+    ] {
         let (status, body) = get(&app, path).await;
         assert_eq!(status, StatusCode::OK, "GET {path} 应 200：{body}");
     }
     let (_, openapi) = get(&app, "/v1/openapi.json").await;
     let paths = openapi["paths"].as_object().unwrap();
-    for path in ["/v1/stats/usage", "/v1/stats/tasks", "/v1/stats/db"] {
+    for path in [
+        "/v1/stats/usage",
+        "/v1/stats/tasks",
+        "/v1/stats/db",
+        "/v1/stats/overview",
+        "/v1/stats/conversations",
+        "/v1/stats/conversation/:id",
+        "/v1/stats/cost",
+        "/v1/stats/health",
+    ] {
         assert!(paths.contains_key(path), "openapi.json 缺 {path}");
         assert!(paths[path]["get"].is_object());
     }
@@ -81,7 +99,7 @@ async fn all_three_stats_routes_and_openapi_are_declared_and_live() {
     let route_paths: Vec<&str> = routes["routes"].as_array().unwrap()
         .iter().filter(|r| r["module"] == json!("stats"))
         .map(|r| r["path"].as_str().unwrap()).collect();
-    assert_eq!(route_paths.len(), 3);
+    assert_eq!(route_paths.len(), 8);
     std::fs::remove_file(&db).ok();
 }
 

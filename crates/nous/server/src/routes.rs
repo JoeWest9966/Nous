@@ -109,6 +109,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/stats/usage", get(crate::stats::usage))
         .route("/v1/stats/tasks", get(crate::stats::tasks))
         .route("/v1/stats/db", get(crate::stats::db))
+        .route("/v1/stats/overview", get(crate::stats::overview))
+        .route("/v1/stats/conversations", get(crate::stats::conversations))
+        .route("/v1/stats/conversation/{id}", get(crate::stats::conversation))
+        .route("/v1/stats/cost", get(crate::stats::cost))
+        .route("/v1/stats/health", get(crate::stats::health))
         .route("/v1/openapi.json", get(crate::stats::openapi))
         // #90：原先挂在 documents::attach 上的自省端点，下线后归主路由。
         .route("/v1/_routes", get(routes_view));

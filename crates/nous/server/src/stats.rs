@@ -81,6 +81,63 @@ pub async fn db(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
 
+/// `GET /v1/stats/overview`：durable 库的 X 光片（解剖屏）。
+pub async fn overview(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let runtime = runtime(&state)?;
+    nous_stats::overview(&runtime.durable_db)
+        .map(Json)
+        .map_err(|error| ServerError::Internal(error.to_string()))
+}
+
+/// `GET /v1/stats/conversations`：会话树（会话树屏）。
+pub async fn conversations(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let runtime = runtime(&state)?;
+    nous_stats::conversations(&runtime.durable_db)
+        .map(Json)
+        .map_err(|error| ServerError::Internal(error.to_string()))
+}
+
+/// `GET /v1/stats/conversation/:id`：一条会话的明细（回放屏，含 prompt 重建）。
+pub async fn conversation(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<Value>> {
+    let runtime = runtime(&state)?;
+    let id: i64 = id
+        .parse()
+        .map_err(|_| ServerError::BadRequest(format!("session id is not a number: {id:?}")))?;
+    match nous_stats::conversation(&runtime.durable_db, id)
+        .map_err(|error| ServerError::Internal(error.to_string()))?
+    {
+        Some(value) => Ok(Json(value)),
+        None => Err(ServerError::NotFound(format!("session {id} not found"))),
+    }
+}
+
+/// `GET /v1/stats/cost`：账单屏（四组桶 + note）。
+pub async fn cost(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let runtime = runtime(&state)?;
+    nous_stats::cost(&runtime.durable_db)
+        .map(Json)
+        .map_err(|error| ServerError::Internal(error.to_string()))
+}
+
+/// `GET /v1/stats/health`：维修屏（任务 / 提交 / 文档 / WAL / 空闲页 / 工单）。
+pub async fn health(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    let runtime = runtime(&state)?;
+    nous_stats::health(&runtime.durable_db, now_ms())
+        .map(Json)
+        .map_err(|error| ServerError::Internal(error.to_string()))
+}
+
+/// 健康屏的「卡住」判据要一个时钟；时间由端点注入（`nous-stats` 层零时钟）。
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
+}
+
 /// `GET /v1/openapi.json`：从 `meta::ROUTES` 生成的只读机读视图。
 pub async fn openapi() -> Json<Value> {
     Json(json!({

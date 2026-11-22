@@ -16,6 +16,11 @@ use nous_chord::sqlite::{LocalDatabase, SqliteExecutor, SqliteValue};
 use serde_json::{json, Value};
 
 pub mod db;
+pub mod util;
+pub mod overview;
+pub mod conversations;
+pub mod cost;
+pub mod health;
 
 /// 聚合错误：读口失败一律带路径与原因，端点层映射成 `{error}`。
 #[derive(Debug)]
@@ -269,4 +274,29 @@ pub fn tasks(durable_db: &Path) -> Result<Value> {
 /// `GET /v1/stats/db`：两库读数（见 [`db`] 模块）。
 pub fn db(durable_db: &Path, plugins_db: &Path) -> Result<Value> {
     db::report(durable_db, plugins_db)
+}
+
+/// `GET /v1/stats/overview`：durable 库的 X 光片（见 [`overview`] 模块）。
+pub fn overview(durable_db: &Path) -> Result<Value> {
+    overview::overview(durable_db)
+}
+
+/// `GET /v1/stats/conversations`：会话树（见 [`conversations`] 模块）。
+pub fn conversations(durable_db: &Path) -> Result<Value> {
+    conversations::conversations(durable_db)
+}
+
+/// `GET /v1/stats/conversation/:id`：一条会话的明细（含 prompt 重建）。
+pub fn conversation(durable_db: &Path, id: i64) -> Result<Option<Value>> {
+    conversations::conversation(durable_db, id)
+}
+
+/// `GET /v1/stats/cost`：tokens / 钱，按天 / 小时 / 模型 / 会话四组桶。
+pub fn cost(durable_db: &Path) -> Result<Value> {
+    cost::cost(durable_db)
+}
+
+/// `GET /v1/stats/health`：任务 / 提交 / 文档 / WAL / 空闲页 / 维修工单。
+pub fn health(durable_db: &Path, now_ms: i64) -> Result<Value> {
+    health::health(durable_db, now_ms)
 }

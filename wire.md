@@ -164,6 +164,67 @@ durable 这一份与 `nous-app --check` 共用 `nous_durable::ops::check` 的读
 plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store` 的只读读口。
 `nous-plugins.db` 不存在时按空插件库读（schema/rows 为 0），不 404/500。
 
+### GET /v1/stats/overview
+
+数据监控室「解剖」屏：durable 库的一整份 X 光片。字段族与 TS 面板 `d6s4v1/api/overview` 对齐：
+
+- `target`：`{id, path}`（库文件名与路径）。
+- `file`：`{db, wal, shm, mtime, walMtime}`（主文件 + `-wal` / `-shm` 旁件字节与 mtime）。
+- `pragmas`：`{pageSize, pageCount, freelist, journalMode, schemaVersion}`（`schemaVersion` 取
+  `durable_schema.version`）。
+- `bytes`：`{db, wal, shm, free, used, onDisk}`（`free = freelist × pageSize`）。
+- `counts`：表名 → 行数（`sqlite_master` 里所有非 `sqlite_` 表）。
+- `tables`：`[{name, bytes, pages, rows}]`，`bytes` / `pages` 来自 `dbstat`（**真页数**），按字节降序。
+- `indexes`：`[{name, bytes, pages, table}]`（`dbstat` + `sqlite_master`）。
+- `entriesByKind`：`[{kind, count, bytes}]`（`json_extract(record,'$.kind')` 分组）。
+- `integrity`：`{checked, ok, messages}`（库 < 64 MiB 才跑 `PRAGMA integrity_check`）。
+- `attention`：字符串提示（WAL 大 / 空闲页多 / schema 旧）。
+- `dbstatOk`：`dbstat` 虚表是否可用；不可用时 `tables[].bytes/pages` 为 0 且带 `dbstatWhy`。
+
+只读：不建索引、不 VACUUM、不写库。
+
+### GET /v1/stats/conversations
+
+数据监控室「会话树」屏：`{count, list, totals}`。`list[]` 每会话一行：
+`{id, ownerConv, ownerTask, entries, tokens, cost, toolCalls, models, firstAt, lastAt, title}`；
+`totals`：`{entries, tokens, cost}`。`tokens` = 该会话所有 assistant entry 的 `usage.totalTokens` 之和；
+`models` 去重；`title` 取首条 `pi.user` 的正文（无用户输入时 `(没有用户输入)`）。
+
+### GET /v1/stats/conversation/:id
+
+数据监控室「回放」屏：一条会话的明细，含 prompt 重建。
+
+- `entries[]`：形状对齐 TS 面板 `shapeEntry`（`id/conv/seq/head/kind/bytes/at/role/model/provider/
+  tokens/cost/usage/tool/toolCalls/isError/ms/stopReason/toolsAdded/chars/text`），按时间正序。
+- `tasks[]`：`{id, kind, status, startedAt, endedAt, ms, conv, outcome}`（`kind` 去 JSON 引号）。
+- `documents[]`：`{id, kind, key, revisions, bytes, createdAt, retired}`（会话作用域）。
+- `submissions[]`：`{id, status, requestId}`。
+- `prompt`：`{messages: [{id, label, kind, bytes, chars, tokens, cost, head, text}],
+  totals: {messages, chars, toolChars, approxTokens, realInputTokens}}` ——「此刻模型看到了什么」。
+
+会话不存在时 404（不假装空会话）。
+
+### GET /v1/stats/cost
+
+数据监控室「账单」屏：`{totals, byDay, byHour, byModel, byConv, note}`。
+
+- `totals`：`{entries, tokens, input, output, cacheRead, cacheWrite, reasoning, cost}`。
+- 四组桶每桶 `{label, tokens, cost, calls, input, output, cacheRead}`；`byModel` / `byConv` 按 tokens 降序。
+- `note`：固定一句「cost 为 0 不代表免费」—— provider 不回 price 时 `cost` 记 0，`tokens` 才是真数。
+
+`/v1/stats/usage` 是**单** `group_by` 四元组；`cost` 是**四组一起**带 usage 分项 + `byHour`，两者不重复。
+
+### GET /v1/stats/health
+
+数据监控室「维修」屏：`{tasks, submissions, documents, walBytes, freelist, maintenance}`。
+
+- `tasks`：`{total, byStatus: [{status, count, sample}], stuck, sleeping, avgMs, p95, slowest}`。
+  `stuck` = 超过 10 分钟仍未终态的 `running/completing/waiting`；`now_ms` 由端点注入（`nous-stats` 零时钟）。
+- `submissions`：`{total, byStatus: [{status, n}], unanswered: [{id, conv, status}]}`。
+- `documents`：`{documents, byKind, revisions, base, delta, deltaRatio}`。
+- `walBytes` / `freelist`：`{free, bytes}`。
+- `maintenance[]`：`{label, why, cmd, danger}` —— 维修命令**只给文本不执行**（这页只读）。
+
 ### GET /v1/sessions/:id/entries
 
 历史。返回 `{ items: [{id, kind, text, parent}], next }`，**新的在前**，客户端要翻正。
