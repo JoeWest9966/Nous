@@ -35,11 +35,16 @@ pub fn check(path: &Path) -> Result<i64> {
     store.schema_version()
 }
 
-/// 只读数还没到终态的任务（判据 11：`status <> 'terminal'`，只许这一个条件）。
+/// 只数**在飞**的任务：`pending` / `running` / `waiting` / `completing`。
+///
+/// 不算 `sleeping`（触发器排队 —— 它排着队不代表有活在跑；#57 上线后库里能攒到几千条，
+/// 按「非 terminal」数会让升级永久被拒，2026-11-22 实测 7,805 条）与 `terminal`（已收尾）。
+/// 状态域见 `storage/sqlite/migrations.rs` 的 CHECK 约束，这里是它的读口（#91）。
 pub fn active_tasks(path: &str) -> Result<i64> {
     let store = SqliteStore::open_read_only(path)?;
     let row = store.db().get(
-        "SELECT count(*) AS n FROM tasks WHERE status <> 'terminal'",
+        "SELECT count(*) AS n FROM tasks \
+         WHERE status IN ('pending', 'running', 'waiting', 'completing')",
         &[],
     )?;
     row.and_then(|row| row.get("n").and_then(SqliteValue::as_i64))

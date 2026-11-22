@@ -1182,6 +1182,16 @@ if [ "$WHAT" = all ] || [ "$WHAT" = deploy ]; then
 		fi
 	fi
 
+	# #91 判据 1：prune 必须按 mtime 保最新，不按名字。
+	# 判据本体在 deploy.sh 的 `--selftest-prune`（本地临时目录，不碰 j1900）；
+	# 这里只跑它并看输出 —— 名字顺序与时间顺序故意相反，按名字排会删掉"最新"那个。
+	PRUNE_OUT=$(./scripts/deploy.sh --selftest-prune 2>&1) || true
+	if [ -n "$PRUNE_OUT" ] && printf '%s' "$PRUNE_OUT" | grep -q '^kept: '; then
+		ok "#91 prune 按 mtime 保最新：$(printf '%s' "$PRUNE_OUT" | tr '\n' ' ')"
+	else
+		bad "#91 prune selftest 未通过或没有 kept/removed 输出：$(printf '%s' "$PRUNE_OUT" | head -3 | tr '\n' ' ')"
+	fi
+
 	# 检查者自己那一行 pattern 不算命中（与 c10 排除 verify.sh 同一手法）。
 	CRED=$(git grep -inE 'ssh(PASS)|pass(word)|se(cret)|crab(port)' -- scripts/ | grep -v '零凭据（' || true)
 	if [ -z "$CRED" ]; then

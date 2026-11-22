@@ -348,3 +348,11 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 **根因**：`documents::attach` 顺手注册了 `_routes` 并做了 `with_state`；删模块时那两件事也必须归位到主 Router，顺带的职责不会自己搬家。
 
 **怎么防**：删一个 `attach` 前先看它注册了哪些路由 / 做了哪种 state 收敛，逐条找新家；判据必须包含 `_routes` 与 capabilities 的一致性，不能只测被删的路径 404。
+
+## 2026-11-22 · 同批写入里 id 撞了不会报错，是静默 refused（#91）
+
+**症状**：测试里提交 `Conversation{id:1}` + `Task{id:1..6}`，`commit` 返回 `Ok`，库里的 `tasks` 却是空的，`--active-tasks` 数出 0。
+
+**根因**：`record_ids` 是**跨表**的唯一表，同批里 task id 撞上 conversation id 时那一笔按「重复」处理，进 `refused` 而不是报错。
+
+**怎么防**：造种子数据时各表 id 错开（conversation 1 / task 10+）；断言要落到「库里真有几行」，不能只看 `commit` 返回 Ok。

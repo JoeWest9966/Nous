@@ -110,6 +110,80 @@ fn active_tasks_uses_terminal_gate() {
     assert_eq!(stdout(&output).trim(), "0", "新库没有未收尾的任务");
 }
 
+/// #91 判据 2：闸门只数**在飞**的任务。
+///
+/// `sleeping` 是触发器排队（库里 7,805 条的历史就是这么来的），`terminal` 已收尾 ——
+/// 两者都不算"有活"。把 `sleeping` 算进去会让升级永久被拒（2026-11-22 实测）。
+#[test]
+fn active_tasks_ignores_sleeping_and_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("gated.db");
+    let session = nous_durable::session::Session::open(&path).unwrap();
+    let task = |id: i64, status: &str| {
+        nous_durable::StorageWrite::Task(json!({
+            "id": id,
+            "conversationId": 1,
+            "kind": "pi.generation",
+            "version": 1,
+            "input": {},
+            "background": false,
+            "abortRequested": false,
+            "state": { "status": status },
+        }))
+    };
+    // 六个状态各一条：只有 pending / running / waiting / completing 在飞。
+    let writes = vec![
+        nous_durable::StorageWrite::Conversation(json!({ "id": 1 })),
+        task(10, "pending"),
+        task(11, "running"),
+        task(12, "waiting"),
+        task(13, "sleeping"),
+        task(14, "completing"),
+        task(15, "terminal"),
+    ];
+    futures::executor::block_on(session.commit(
+        writes,
+        nous_durable::session::CommitOptions::default(),
+    ))
+    .expect("种子提交失败");
+
+    let output = app()
+        .arg("--active-tasks")
+        .env("NOUS_DB", &path)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output).trim(),
+        "4",
+        "六条任务里只有 4 条在飞（pending/running/waiting/completing）；sleeping 与 terminal 不算"
+    );
+
+    // 只剩 sleeping 时必须是 0 —— 这正是 j1900 升级被拒的那一库。
+    let only_sleeping = dir.path().join("only-sleeping.db");
+    let session = nous_durable::session::Session::open(&only_sleeping).unwrap();
+    futures::executor::block_on(session.commit(
+        vec![
+            nous_durable::StorageWrite::Conversation(json!({ "id": 1 })),
+            task(10, "sleeping"),
+            task(11, "sleeping"),
+        ],
+        nous_durable::session::CommitOptions::default(),
+    ))
+    .unwrap();
+    let output = app()
+        .arg("--active-tasks")
+        .env("NOUS_DB", &only_sleeping)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output).trim(),
+        "0",
+        "只有 sleeping（触发器排队）时不许拦住升级"
+    );
+}
+
 /// #58 判据 4：`nous-app --triggers` 与 HTTP 端点**逐字节相同**（同一函数、同一序列化）。
 ///
 /// CLI 的 lastTickAt 恒为 null（CLI 里没有调度循环），now_ms 也随时间漂 —— 所以把

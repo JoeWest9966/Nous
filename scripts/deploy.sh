@@ -37,6 +37,7 @@ usage() {
   scripts/deploy.sh --uninstall              停服务 + 摘 unit + 删 /opt/nous-app
   scripts/deploy.sh --purge --yes-i-mean-it  卸载后删 /var/lib/nous + /etc/nous/token
   scripts/deploy.sh --rotate-token           重建 /etc/nous/token（root:nous 0640）
+  scripts/deploy.sh --selftest-prune         prune 选择逻辑自测（本地临时目录，不碰远端）
 EOF
 }
 
@@ -206,10 +207,56 @@ backup_and_manifest() {
 	BACKUP_DIR=$base
 }
 
+# 保留**最新** $3 个（按 mtime），删其余。选择逻辑只有这一份：远端 prune 与本地
+# `--selftest-prune` 跑的是同一个字符串（#91：上一版按目录名 `sort -r`，刚装好的
+# 新目录字典序最大时会被自己删掉，上一版还跟着陪葬）。
+prune_command() {
+	local dir=$1 pattern=$2 keep=$3
+	# `ls -1dt` = 按 mtime 新→旧；`tail -n +N` 从第 N 个开始 = 只留前 keep 个。
+	printf 'set -e; ls -1dt %s/%s 2>/dev/null | tail -n +%s | while IFS= read -r p; do rm -rf -- "$p"; done' \
+		"$dir" "$pattern" "$((keep + 1))"
+}
+
 prune_keep_two() {
 	local dir=$1 pattern=$2 out rc=0
-	out=$(rs sh -c "set -e; ls -1d $dir/$pattern 2>/dev/null | sort -r | tail -n +3 | while IFS= read -r p; do rm -rf -- \"\$p\"; done" 2>&1) || rc=$?
+	out=$(rs sh -c "$(prune_command "$dir" "$pattern" 2)" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "prune $dir/$pattern 失败：$out"
+}
+
+# #91 判据 1：prune 的选择逻辑对「名字顺序 ≠ 时间顺序」必须保最新。
+# 四个版本目录 + 一个非匹配文件 + 一个非匹配目录；保 2 个。
+# 期望：留下 mtime 最新的两个（04e43eb8 / acb57535），删掉 7a461960 / b75daf6a；
+# 按名字排（旧实现）会留下 acb57535 / b75daf6a、删掉 04e43eb8 —— 正好红。
+selftest_prune() {
+	local tmp rc=0
+	tmp=$(mktemp -d) || return 1
+	mkdir -p "$tmp/nous-app-7a461960" "$tmp/nous-app-b75daf6a" \
+		"$tmp/nous-app-acb57535" "$tmp/nous-app-04e43eb8" "$tmp/other-dir"
+	touch "$tmp/nous-app.service.20260101T000000Z"
+	# mtime：7a461960 最旧 → 04e43eb8 最新（与名字顺序故意相反）
+	touch -t 202601010101 "$tmp/nous-app-7a461960"
+	touch -t 202601020202 "$tmp/nous-app-b75daf6a"
+	touch -t 202601030303 "$tmp/nous-app-acb57535"
+	touch -t 202601040404 "$tmp/nous-app-04e43eb8"
+
+	sh -c "$(prune_command "$tmp" 'nous-app-*' 2)" || rc=1
+	local kept removed
+	kept=$(ls -1d "$tmp"/nous-app-* 2>/dev/null | xargs -r -n1 basename | sort | tr '\n' ' ')
+	removed=$(ls -1d "$tmp"/nous-app-* 2>/dev/null | wc -l)
+
+	if [ "$kept" != "nous-app-04e43eb8 nous-app-acb57535 " ] || [ "$removed" -ne 2 ]; then
+		printf '\n✗ prune 选择错了：期望留下 nous-app-04e43eb8 / nous-app-acb57535，实得「%s」（%s 个）\n' "$kept" "$removed" >&2
+		rc=1
+	fi
+	if [ ! -d "$tmp/other-dir" ] || [ ! -f "$tmp/nous-app.service.20260101T000000Z" ]; then
+		printf '\n✗ prune 删到了非匹配项（other-dir 或 service 快照不见了）\n' >&2
+		rc=1
+	fi
+	rm -rf "$tmp"
+	if [ $rc -eq 0 ]; then
+		printf 'kept: nous-app-04e43eb8 nous-app-acb57535\nremoved: nous-app-7a461960 nous-app-b75daf6a\n'
+	fi
+	return $rc
 }
 
 install_unit_and_link() {
@@ -356,11 +403,11 @@ do_deploy() {
 				rs systemctl start nous-app >/dev/null 2>&1 || true
 				die "有活跃任务，拒绝升级（task id + conversation id 见上）"
 			fi
-			# 闸门口径见票面：当前数 status <> 'terminal'；
-			# 触发器上线后要改为「有 owned work 没收尾」（sleeping 是排队，不是在跑）。
+			# 闸门口径（#91）：只数在飞的任务（pending/running/waiting/completing）；
+			# `sleeping` 是触发器排队，不算在跑 —— 按 "非 terminal" 数会让升级永久被拒。
 			if printf '%s' "$tasks" | grep -qE '^[1-9][0-9]*$'; then
 				rs systemctl start nous-app >/dev/null 2>&1 || true
-				die "有 $tasks 个活跃任务（status <> 'terminal'），拒绝升级"
+				die "有 $tasks 个在飞的任务（pending/running/waiting/completing），拒绝升级"
 			fi
 		fi
 		backup_and_manifest "$TS" "${bin_old:-$REMOTE_ROOT/$BIN_NAME/nous-app}"
@@ -428,6 +475,7 @@ while [ $# -gt 0 ]; do
 	--purge) MODE=purge ;;
 	--yes-i-mean-it) PURGE_CONFIRM=1 ;;
 	--rotate-token) MODE=rotate-token ;;
+	--selftest-prune) MODE=selftest-prune ;;
 	-h|--help) usage; exit 0 ;;
 	*) die "未知参数：$1（--help 看用法）" ;;
 	esac
@@ -435,6 +483,7 @@ while [ $# -gt 0 ]; do
 done
 
 case "$MODE" in
+selftest-prune) selftest_prune; exit $? ;;
 deploy) do_deploy ;;
 uninstall) do_uninstall ;;
 purge) do_purge ;;

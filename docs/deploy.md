@@ -70,8 +70,9 @@ ssh j1900 sudo -n curl -s -H "authorization: Bearer $(sudo cat /etc/nous/token)"
 不同 sha 走升级：
 
 1. `stop nous-app`
-2. `--active-tasks` 查 `status <> 'terminal'`；有活就打印 task id + conversation id 并拒升级
-   （判据 11；触发器上线前 `sleeping` 还不会出现，届时闸门口径改为「有 owned work 没收尾」）
+2. `--active-tasks` 查**在飞**的任务（`pending` / `running` / `waiting` / `completing`）；
+   `sleeping`（触发器排队）与 `terminal`（已收尾）不算 —— 否则触发器一上线就永远升不了级（#91）；
+   库里只有 `sleeping` 时闸门打印 `0`
 3. `--backup` 单库到 `backups/nous-<ts>.db`，`--check` 打出两行
    `quick_check=ok` / `schema=<n>`；manifest 里的 `schema_version` 必须等于那一行（判据 6）
 4. 新版本目录 → `ln -sfn current` → unit 快照 → `start`

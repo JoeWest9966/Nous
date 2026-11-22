@@ -16,6 +16,11 @@ use nous_server::{router, AppState};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
+/// `NOUS_TEST_COMBOS_WRITE_FAIL` 是**进程级**注入开关：谁把它打开，同一进程里所有 PATCH
+/// 都会写失败。所以凡是打 PATCH 的判据都得排它（否则全量并发跑时，别的判据会随机红 ——
+/// 2026-11-22 实测过）。与 `capabilities_shapes.rs` 的 `CONTENT_ENV_LOCK` 同一手法。
+static PATCH_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn temp_dir(_tag: &str) -> tempfile::TempDir {
     tempfile::tempdir().expect("临时目录")
 }
@@ -161,6 +166,7 @@ async fn enabled_tracks_reference_validity_not_just_the_switch() {
 /// 判据 3+4：PATCH 只翻这一位（别的组合 / 另一段不动）；If-Match 412；requestId 幂等。
 #[tokio::test]
 async fn patch_is_scoped_versioned_and_idempotent() {
+    let _env_guard = PATCH_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = temp_dir("patch");
     let root = dir.path();
     write_preset(root, "Ultimate-Template", "nightly", &ultimate(true, "daily", "morning"));
@@ -242,6 +248,7 @@ async fn patch_is_scoped_versioned_and_idempotent() {
 /// PATCH 参数/名字的错误形状：`{error}`，状态码跟着语义走。
 #[tokio::test]
 async fn patch_rejects_bad_input_with_the_wire_error_shape() {
+    let _env_guard = PATCH_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = temp_dir("bad-input");
     let root = dir.path();
     write_preset(root, "Ultimate-Template", "nightly", &ultimate(true, "daily", "morning"));
@@ -310,6 +317,7 @@ async fn symlink_escape_is_rejected_without_writing_outside_the_root() {
 /// 重放不会拿到一份「变更没发生却说发生了」的回执。
 #[tokio::test]
 async fn a_failed_preset_write_does_not_leave_an_orphan_receipt() {
+    let _env_guard = PATCH_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let dir = temp_dir("receipt-fail");
     let root = dir.path();
     write_preset(root, "Ultimate-Template", "nightly", &ultimate(true, "daily", "morning"));
