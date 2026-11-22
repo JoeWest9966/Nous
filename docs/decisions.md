@@ -1044,3 +1044,24 @@ server 只做 HTTP ↔ 盘面翻译。归档改成 TS 的**搬目录**（`<段>/
 **另一条**：句柄代读现在跳过 `.git` / `node_modules` / `target` / `artifacts`
 （`handle::skipped_dir`）。不跳的话技能仓库的 `.git` 一动就是几 MB，
 64 KiB 的句柄预算被它吃光，扩展拿到的 `files` 里一条 `SKILL.md` 都没有。
+## 2026-11-23 · 元素库 = 第六套私库（不是 ext 插件），写一次提交一次
+
+**决定**：旧面板 `k3skws` 的元素库（组 / 包）在 Rust 侧落成 `crates/nous/elements`
+（app 层）+ 第五套私库 `NOUS_ELEMENTS`（默认 `/opt/Nous-Elements`）。盘上真相仍是
+`groups/<id>.json` / `packages/<id>.json`，一份 JSON 一个元素；`/v1/elements*` 由
+`server::elements` 只做 HTTP 翻译，写事务在 `nous-repo`：新增 `write_and_commit`
+（一次持锁完成原子写 → 提交 → 尽力推）与 `find_request_id`（幂等回执）。同一个
+`requestId` 只提交一次，重放回 `replay:true`、`commit:null`，一个字节都不写。
+
+**为什么**：元素是**内容**，不是进程 —— `ext` 是「一扩展一进程 + 帧协议」，把一份 JSON
+做成 ext 等于让它变成要编译、要监管的二进制；而旧面板的「块」这一层在 #49 已经砍了，
+`content/` 块目录不是 Rust 侧的落点。做成第六套私库后，`/v1/repos/elements/*` 的文件面、
+`pending` / `history` / 变体都不必重写，`capabilities` 由注册表自动带出。`write_and_commit`
+放在 repo 层，是因为「唯一 git 进程调用面」必须在那一处；幂等靠提交信息里的
+`Request-Id:` trailer，不引入第二个回执库（`nous.db` 是会话与触发器的事，元素库的历史
+在 git 里，客户端重拉一次 `GET /v1/elements` 就是真相）。
+
+**反悔点**：如果元素库真的需要「运行」（包里的 body 被注入会话或被执行），先看看是不是
+该做成技能 / 提示词的内容（现有私库已覆盖那种用法），再考虑 ext；无论如何不要在
+elements 里 spawn。若 `find_request_id` 的 1000 条窗口被证明不够（提交量远超预期），
+改成按 trailer 建索引的本地缓存，窗口常量留在 `nous-repo`。
