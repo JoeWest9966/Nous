@@ -89,35 +89,6 @@
       ]
     },
     {
-      "name": "documents",
-      "version": "0.1.4",
-      "kind": "编译期",
-      "layer": "app",
-      "required": true,
-      "crate": "`nous-documents`",
-      "description": "#48：一个实现生成 presets / prompts 两套端点",
-      "enabled": true,
-      "endpoints": [
-        "GET /v1/documents/{kind}",
-        "GET /v1/documents/{kind}/{section}/{name}",
-        "PUT /v1/documents/{kind}/{section}/{name}",
-        "POST /v1/documents/{kind}/{section}",
-        "POST /v1/documents/{kind}/{section}/{name}/rename",
-        "POST /v1/documents/{kind}/{section}/{name}/publish",
-        "POST /v1/documents/{kind}/{section}/{name}/reload",
-        "GET /v1/documents/{kind}/{section}/{name}/validate",
-        "GET /v1/documents/{kind}/{section}/{name}/history",
-        "GET /v1/documents/{kind}/{section}/{name}/history/diff",
-        "GET /v1/documents/{kind}/{section}/{name}/pending",
-        "GET /v1/documents/{kind}/{section}/{name}/pending/diff",
-        "POST /v1/documents/tree/{section}/{name}/move",
-        "POST /v1/documents/tree/{section}/{name}/trash",
-        "POST /v1/documents/tree/{section}/{name}/restore",
-        "POST /v1/documents/tree/{section}/{name}/purge",
-        "POST /v1/documents/tree/{section}/{name}/import"
-      ]
-    },
-    {
       "name": "presets",
       "version": "0.1.4",
       "kind": "编译期",

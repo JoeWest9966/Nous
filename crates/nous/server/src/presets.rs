@@ -695,9 +695,9 @@ pub async fn rollback(
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
-/// 把 presets 的 13 条路由挂到同一份 state 上。
-pub fn attach(state: SharedStore, router: Router) -> Router {
-    let presets = Router::new()
+/// presets 的 13 条路由，自带 SharedStore state，由调用方合并进主 Router。
+pub fn routes(state: SharedStore) -> Router<()> {
+    let presets: Router<()> = Router::new()
         .route("/v1/presets", axum::routing::get(sections))
         .route("/v1/presets/model", axum::routing::get(model))
         .route("/v1/presets/{section}", axum::routing::get(roster))
@@ -715,5 +715,5 @@ pub fn attach(state: SharedStore, router: Router) -> Router {
         .route("/v1/presets/{section}/{name}/revisions/{n}", axum::routing::get(get_revision))
         .route("/v1/presets/{section}/{name}/rollback", axum::routing::post(rollback))
         .with_state(state);
-    router.merge(presets)
+    presets
 }

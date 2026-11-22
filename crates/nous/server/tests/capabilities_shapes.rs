@@ -463,7 +463,7 @@ async fn capabilities_declares_modules_and_reasons() {
 
     let modules = body["modules"].as_array().unwrap();
     // #88：每个 module（含未启用的）都带六列，且 enum 闭集。
-    assert_eq!(modules.len(), 13, "capabilities 必须吐出全部 13 个 module");
+    assert_eq!(modules.len(), 12, "#90 下线 documents 后 capabilities 应吐出 12 个 module");
     for module in modules {
         let name = module["name"].as_str().unwrap();
         let where_ = format!("capabilities.modules[{name}]");
@@ -499,7 +499,6 @@ async fn capabilities_declares_modules_and_reasons() {
         "sessions",
         "env",
         "repo",
-        "documents",
         "presets",
         "archive",
         "combos",
@@ -644,23 +643,8 @@ async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
         tally(registry),
         "_routes 与 endpoints 必须是同一个多重集"
     );
-    // documents 已落地：清单打开，且 12 条端点都在声明里。
-    let documents = capabilities["modules"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["name"] == "documents")
-        .unwrap();
-    assert_eq!(documents["enabled"], json!(true));
-    assert_eq!(
-        documents["endpoints"].as_array().unwrap().len(),
-        nous_documents::routes::DOCUMENT_ROUTES.len(),
-        "documents 的实际端点数 == 注册源条数"
-    );
-
     // 负向哨兵：注册表里每条声明都得真能在 Router 上打到 handler。
-    // 404 可能是 handler 的「资源不存在」（documents 的 missing-name），只有 405/500
-    // 才说明路由没注册或 handler 炸了 —— 与 documents_routes.rs 的判据同口径。
+    // 405/500 才说明路由没注册或 handler 炸了；404 可能是资源的「不存在」语义。
     for route in nous_server::meta::ROUTES {
         if !nous_server::meta::route_enabled(route.module) {
             continue;

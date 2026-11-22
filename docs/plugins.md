@@ -43,7 +43,7 @@
 | `store` | nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
 | `device` | nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
 | `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
-| `documents` | nous | `nous-documents` | app | 编译期 | `DocumentKind` + 泛型文档端点 + 路由注册表 | 是 | #48：一个实现生成 presets / prompts 两套端点 |
+| `documents` | nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
 | `prompts` | nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟） | 是 | 今天 `prompts/index.js` |
 | `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 / 管理面（create / duplicate / install / uninstall / categories / category / usage，#84） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划 |
 | `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
@@ -96,7 +96,7 @@
 ## 注：与 `ls -d crates/*/*/` 的一一对应
 
 今天 `crates/nous/` 下 18 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 18 行：
-`wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry` `documents`
+`wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
 `store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `stats` `fixture`。新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用

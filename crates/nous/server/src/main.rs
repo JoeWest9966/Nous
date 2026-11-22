@@ -333,12 +333,6 @@ async fn run() -> Result<(), RunError> {
     } else {
         state
     };
-    // #48：documents 端点与 sessions 共用同一条 `Session` 写者（同一把锁、同一份广播），
-    // 不另开第二个 Storage。
-    let state = state.with_documents_backend(
-        std::path::PathBuf::from(&db),
-        commands.session().clone(),
-    );
     // #81: 扩展运行时在监听之前装配完; 后续观测/重载都打同一个实例.
     let state = assemble_extensions(state);
 

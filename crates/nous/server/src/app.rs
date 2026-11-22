@@ -10,9 +10,7 @@ use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCo
 use nous_wire::RemoteEvent;
 
 use crate::commands::{CommandSource, DurableCommands, ReadOnlyCommands};
-use crate::documents::{DurableDocumentBackend, EmptyBackend};
 use crate::runtime::AssembledRuntime;
-use nous_documents::service::DocumentService;
 use crate::error::Result;
 use crate::hub::Hub;
 use crate::observer::SessionObserver;
@@ -32,7 +30,6 @@ pub struct AppState {
     /// 显式注入的编目（faux 验收 / 测试快照）优先于文件来源。
     injected_models: bool,
     runtime: std::sync::Mutex<Option<Arc<AssembledRuntime>>>,
-    documents: Option<DocumentService>,
     /// `capabilities.services[engine].base` 的单一来源：环境变量优先，绑定后由 `main` 覆盖。
     origin: String,
     /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
@@ -72,10 +69,6 @@ impl AppState {
             catalog_env: nous_device::CatalogEnvironment::from_env(),
             injected_models: false,
             runtime: std::sync::Mutex::new(None),
-            documents: Some(DocumentService::new(
-                Arc::new(EmptyBackend),
-                Some(Arc::new(EmptyBackend)),
-            )),
             origin: std::env::var("NOUS_ORIGIN")
                 .ok()
                 .filter(|value| !value.is_empty())
@@ -106,7 +99,6 @@ impl AppState {
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
@@ -154,7 +146,6 @@ impl AppState {
             catalog_env: nous_device::CatalogEnvironment::from_env(),
             injected_models: false,
             runtime: std::sync::Mutex::new(None),
-            documents: None,
             origin: std::env::var("NOUS_ORIGIN")
                 .ok()
                 .filter(|value| !value.is_empty())
@@ -210,10 +201,6 @@ impl AppState {
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
-            documents: self.documents.as_ref().map(|_| DocumentService::new(
-                Arc::new(EmptyBackend),
-                Some(Arc::new(EmptyBackend)),
-            )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
@@ -264,10 +251,6 @@ impl AppState {
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
-            documents: self.documents.as_ref().map(|_| DocumentService::new(
-                Arc::new(EmptyBackend),
-                Some(Arc::new(EmptyBackend)),
-            )),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
@@ -308,7 +291,6 @@ impl AppState {
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
-            documents: self.documents.clone(),
             origin,
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
@@ -360,11 +342,6 @@ impl AppState {
         self.runtime().map(|runtime| runtime.models.clone())
     }
 
-    /// documents 端点的泛型服务。生产装配里它持有同一个 `Session` 的写者。
-    pub fn document_service(&self) -> Option<DocumentService> {
-        self.documents.clone()
-    }
-
     /// #75：按私库名取 repository（未装配返回 None，由路由报 400/500）。
     pub fn repo(&self, kind: &str) -> Option<std::sync::Arc<nous_repo::Repo>> {
         self.repos.get(kind).cloned()
@@ -383,7 +360,7 @@ impl AppState {
             refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: Some(data.as_ref().to_path_buf()),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
@@ -403,7 +380,7 @@ impl AppState {
             refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: crate::repos::from_path(kind, root.as_ref()),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
@@ -430,7 +407,7 @@ impl AppState {
             refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(), variant_tables: tables,
             presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(), combos: self.combos.clone(), combo_action: self.combo_action.clone(),
             ext_admin: self.ext_admin.clone(),
@@ -453,7 +430,6 @@ impl AppState {
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: Some(triggers),
             repos: self.repos.clone(),
@@ -488,7 +464,6 @@ impl AppState {
             catalog_env: self.catalog_env.clone(),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             repos: self.repos.clone(),
@@ -522,7 +497,6 @@ impl AppState {
             runtime: std::sync::Mutex::new(
                 self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
-            documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             repos: self.repos.clone(),
@@ -565,7 +539,6 @@ impl AppState {
             refreshed: std::sync::Mutex::new(
                 self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
-            documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             presets: self.presets.clone(),
@@ -596,7 +569,7 @@ impl AppState {
             refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
             injected_models: self.injected_models,
             runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: self.documents.clone(), origin: self.origin.clone(), triggers: self.triggers.clone(),
+            origin: self.origin.clone(), triggers: self.triggers.clone(),
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(), stats: self.stats.clone(),
@@ -632,7 +605,6 @@ impl AppState {
             refreshed: std::sync::Mutex::new(
                 self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone(),
             ),
-            documents: self.documents.clone(),
             origin: self.origin.clone(),
             triggers: self.triggers.clone(),
             ext: self.ext.clone(),
@@ -649,36 +621,6 @@ impl AppState {
 
     pub fn combos(&self) -> Option<&crate::combos::ComboStore> {
         self.combos.as_ref()
-    }
-
-    /// 把 documents 的读写后端接到已有的库路径与同一条 `Session` 上。
-    pub fn with_documents_backend(self: Arc<Self>, path: std::path::PathBuf, session: Arc<nous_durable::session::Session>) -> Arc<Self> {
-        let backend = DurableDocumentBackend::new(path, session);
-        Arc::new(Self {
-            source: self.source.clone(),
-            commands: self.commands.clone(),
-            hub: self.hub.clone(),
-            models: self.models.clone(),
-            refreshed: std::sync::Mutex::new(self.refreshed.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            catalog_env: self.catalog_env.clone(),
-            injected_models: self.injected_models,
-            runtime: std::sync::Mutex::new(self.runtime.lock().unwrap_or_else(|p| p.into_inner()).clone()),
-            documents: Some(DocumentService::new(
-                Arc::new(backend.clone()) as Arc<dyn nous_documents::store::DocumentReader>,
-                Some(Arc::new(backend) as Arc<dyn nous_documents::service::DocumentWriter>),
-            )),
-            origin: self.origin.clone(),
-            triggers: self.triggers.clone(),
-            ext: self.ext.clone(),
-            ext_admin: self.ext_admin.clone(),
-            repos: self.repos.clone(),
-            upstream_data: self.upstream_data.clone(),
-            variant_tables: self.variant_tables.clone(),
-            presets: self.presets.clone(),
-            stats: self.stats.clone(),
-            combos: self.combos.clone(),
-            combo_action: self.combo_action.clone(),
-        })
     }
 
     /// 一次提交 → 帧，发给**每个改动自己所属**的会话。

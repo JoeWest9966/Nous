@@ -187,7 +187,6 @@ impl DurableCommands {
         }))
     }
 
-    /// 同一条 `Session` 的只读句柄，给 #48 的 documents 写后端复用（不另开写者）。
     pub fn session(&self) -> &Arc<Session> {
         &self.session
     }
