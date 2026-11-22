@@ -314,6 +314,25 @@
         "POST /v1/extensions/trash/purge",
         "POST /v1/extensions/category"
       ]
+    },
+    {
+      "name": "elements",
+      "version": "0.1.15",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-elements`",
+      "description": "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/elements",
+        "GET /v1/elements/{kind}",
+        "GET /v1/elements/{kind}/{id}",
+        "PUT /v1/elements/{kind}/{id}",
+        "POST /v1/elements/{kind}",
+        "DELETE /v1/elements/{kind}/{id}",
+        "POST /v1/elements/push"
+      ]
     }
   ],
   "runtime": {
