@@ -14,8 +14,14 @@ pub(crate) fn git(root: &Path, args: &[&str]) -> Result<Output> {
         .args(args)
         .current_dir(root)
         .env("GIT_TERMINAL_PROMPT", "0")
+        // 隔离系统/全局配置（可复现），所以身份也只能自己给：不给的话 `git commit`
+        // 在服务账号下会「作者身份未知」直接失败（j1900 实测，nous 没有 ~/.gitconfig）。
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_AUTHOR_NAME", "nous")
+        .env("GIT_AUTHOR_EMAIL", "nous@nous.local")
+        .env("GIT_COMMITTER_NAME", "nous")
+        .env("GIT_COMMITTER_EMAIL", "nous@nous.local")
         .output()
         .map_err(|e| RepoError::Io(format!("git {:?}: {e}", args.first())))?;
     Ok(output)

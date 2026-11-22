@@ -286,6 +286,35 @@ async fn categories_add_rename_remove_rewrite_manifests() {
 }
 
 #[tokio::test]
+async fn publish_commits_without_a_repo_identity() {
+    // j1900 实测：服务账号没有 ~/.gitconfig，而 nous_repo 隔离了全局配置。
+    // 身份必须由 git() 自己注入，否则发布卡在「作者身份未知」。
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("triggers");
+    std::fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "-q"]);
+    std::fs::write(root.join("README.md"), "init\n").unwrap();
+    git(&root, &["add", "README.md"]);
+    // 初始化提交显式带身份；之后仓里**不留**任何 user.name/email 配置。
+    git(&root, &["-c", "user.name=T", "-c", "user.email=t@e", "commit", "-qm", "init"]);
+    let listed = git(&root, &["config", "--local", "--list"]);
+    assert!(!listed.contains("user.name"), "夹具不该带身份：{listed}");
+
+    project(&root, "no-identity");
+    let app = app_with(&root);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/trigger-projects/publish",
+        Some(json!({ "name": "no-identity" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["committed"], true, "{body}");
+    assert!(body["commit"].as_str().unwrap_or_default().len() >= 7, "{body}");
+}
+
+#[tokio::test]
 async fn untracked_project_makes_the_repo_dirty() {
     let (_tmp, root) = fixture();
     let app = app_with(&root);
