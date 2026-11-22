@@ -372,3 +372,14 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 **根因**：`arm_next_tick` 拿拍号（进程内 0、1、2…）当 tick 任务行的 `id` 直接提交；`record_ids` 是**跨表**全局唯一表，这些 id 早被真实会话 / 文档 / entry 占了，`check_ids` 整批拒绝。单测用的空库没有这些行，所以一直是绿的。
 
 **怎么防**：id 只能来自 `Storage::mint_id`（新增 `nous_durable::session::commands::arm_sleeping_tick` 统一铸造 + 提交），拍号只住 `input.seq`；回归判据是「先建两条会话占掉 id 2/3，再写第 2 拍必须成功」——直接复现线上拒绝，不许再拿空库测 tick。
+
+## 2026-11-22 · 页面上凭空多一条「加载失败：read …/data/nous.json: No such file」
+
+**症状**：扩展清单里冒出一条名字叫 `data` 的「坏插件」，错误是读不到 `nous.json`；去查那条
+扩展本身永远查不出问题（因为它根本不是扩展）。
+
+**根因**：变体绑定表住在 `<NOUS_EXTEND>/data/extensions.local.json`（`repos::variant_tables_from_env`），
+而 `manifest::scan` 把扩展根下的**每个目录**都当成候选扩展。运行时的数据目录被当成坏插件上报。
+
+**怎么防**：`manifest::RESERVED_DIRS = ["data", "artifacts", "trash"]` 在扫描时跳过（点开头照旧跳过）；
+判据 `runtime_data_dir_is_not_an_extension`——根下同时放 `data/` 和一条真扩展，只许扫出真扩展。
