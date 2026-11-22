@@ -988,7 +988,7 @@ restore 方向相反：闭包先写回活库，抹墓碑失败时**保留 genera
 **反悔点**：如果会话模板真的要带「默认触发器」（比如新建会话时自动跑一次），先改 `wire.md`
 把那段语义写清，再放开白名单 —— 放开的同时必须让 `problem` 能区分「不是组合」与「组合坏了」。
 
-## 2026-11-24 · 资源仓管理面（三个编辑页）落在 server 翻译层，文件与 git 全部复用 `nous-repo`
+## 2026-11-22 · 资源仓管理面（三个编辑页）落在 server 翻译层，文件与 git 全部复用 `nous-repo`
 
 **决定**：`/v1/{skills,prompts,extensions}/{files,file,create,publish}` 由
 `crates/nous/server/src/resource_admin.rs` 做 HTTP ↔ 盘面翻译（三仓共用一副骨架），
