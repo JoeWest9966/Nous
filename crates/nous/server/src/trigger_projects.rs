@@ -166,7 +166,7 @@ fn list_value(repo: &Repo) -> Result<Value> {
             .and_then(Value::as_str)
             .cmp(&b.get("name").and_then(Value::as_str))
     });
-    let categories = read_vocab(repo.root());
+    let categories = vocab_with_usage(repo.root());
     Ok(json!({
         "triggers": triggers,
         "repo": {
@@ -560,7 +560,10 @@ async fn publish(
         .and_then(Value::as_str)
         .unwrap_or("0.1.0");
     let message = format!("trigger({}): v{}", body.name, version);
-    let paths = vec![format!("{}/", body.name), "index.json".to_string()];
+    // 显式文件清单，不给目录 pathspec：旧仓可能没有 .gitignore，`git add <name>/`
+    // 会把 `target/` 一起带进提交。也只 add 这一个项目（不搭车）。
+    let mut paths = project_files(&dir, &body.name);
+    paths.push("index.json".to_string());
     let commit = match repo.commit(&paths, &message, None) {
         Ok(commit) => commit,
         Err(error) => return Ok(unprocessable("commit", error.to_string())),
@@ -605,6 +608,33 @@ async fn run_cargo(step: &str, dir: &Path, target_dir: &Path) -> std::result::Re
     let stderr = String::from_utf8_lossy(&output.stderr);
     let tail: String = stderr.chars().skip(stderr.chars().count().saturating_sub(2000)).collect();
     Err(format!("cargo {step} 失败：\n{}", tail.trim()))
+}
+
+/// 项目内所有该提交的文件（相对仓根），跳过 target / .git / 隐藏项。
+fn project_files(dir: &Path, name: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(dir: &Path, name: &str, prefix: &str, out: &mut Vec<String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let file = entry.file_name().to_string_lossy().to_string();
+            if file.starts_with('.') || SKIP_DIRS.contains(&file.as_str()) {
+                continue;
+            }
+            let rel = if prefix.is_empty() {
+                file.clone()
+            } else {
+                format!("{prefix}/{file}")
+            };
+            if entry.path().is_dir() {
+                walk(&entry.path(), name, &rel, out);
+            } else if entry.path().is_file() {
+                out.push(format!("{name}/{rel}"));
+            }
+        }
+    }
+    walk(dir, name, "", &mut out);
+    out.sort();
+    out
 }
 
 /// 根目录 `index.json`：一个触发器一行投影。旧版由 `index.mjs` 生成，现在同一进程里写。
@@ -713,6 +743,48 @@ fn read_vocab(root: &Path) -> Vec<String> {
     out
 }
 
+/// 词表 = `categories.json` ∪ 所有 `nous.json` 的 category ∪ 它们的每一级前缀。
+///
+/// 旧仓（j1900 的 `/opt/Nous-Trigger`）根本没有 `categories.json`，类别只写在每条
+/// `nous.json` 里；只读文件会让类别树空掉。前缀祖先也要登记，否则 `日常/摘要` 挂不上 `日常`。
+fn vocab_with_usage(root: &Path) -> Vec<String> {
+    let mut set = BTreeSet::new();
+    for category in read_vocab(root) {
+        insert_with_parents(&mut set, &category);
+    }
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let Some(manifest) = read_manifest(&path) else { continue };
+            let Some(categories) = manifest.get("category").and_then(Value::as_array) else {
+                continue;
+            };
+            for category in categories.iter().filter_map(Value::as_str) {
+                insert_with_parents(&mut set, category);
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+fn insert_with_parents(set: &mut BTreeSet<String>, category: &str) {
+    let mut acc = String::new();
+    for part in category.split('/').filter(|part| !part.is_empty()) {
+        if !acc.is_empty() {
+            acc.push('/');
+        }
+        acc.push_str(part);
+        set.insert(acc.clone());
+    }
+}
+
 fn write_vocab(root: &Path, vocab: &[String]) -> Result<()> {
     let text = serde_json::to_string_pretty(vocab)
         .map_err(|e| ServerError::Internal(format!("词表序列化失败：{e}")))?;
@@ -770,7 +842,7 @@ fn rewrite_manifests(root: &Path, old: &str, new: Option<&str>) -> Result<()> {
 
 async fn categories(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let repo = repo(&state)?;
-    Ok(Json(json!({ "categories": read_vocab(repo.root()) })))
+    Ok(Json(json!({ "categories": vocab_with_usage(repo.root()) })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -788,7 +860,7 @@ async fn edit_vocab(
 ) -> Result<Json<Value>> {
     let repo = repo(&state)?;
     let root = repo.root();
-    let mut vocab = read_vocab(root);
+    let mut vocab = vocab_with_usage(root);
     match body.op.as_str() {
         "add" => {
             if !vocab.iter().any(|c| c == &body.name) {
@@ -865,7 +937,7 @@ async fn set_category(
     std::fs::write(&manifest_path, text + "\n")
         .map_err(|e| ServerError::Internal(format!("写 nous.json 失败：{e}")))?;
 
-    let mut vocab = read_vocab(repo.root());
+    let mut vocab = vocab_with_usage(repo.root());
     for category in &body.category {
         if !vocab.iter().any(|c| c == category) {
             vocab.push(category.clone());

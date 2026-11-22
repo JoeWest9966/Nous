@@ -286,6 +286,35 @@ async fn categories_add_rename_remove_rewrite_manifests() {
 }
 
 #[tokio::test]
+async fn categories_come_from_manifests_when_file_is_missing() {
+    let (_tmp, root) = fixture();
+    project(&root, "daily-digest");
+    let manifest_path = root.join("daily-digest/nous.json");
+    let mut value: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    value["category"] = json!(["日常", "日常/摘录"]);
+    std::fs::write(&manifest_path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+    // 旧仓没有 categories.json；类别只写在 nous.json 里。
+    assert!(!root.join("categories.json").exists());
+    let app = app_with(&root);
+    let (status, body) = call(&app, "GET", "/v1/trigger-projects/categories", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let categories: Vec<&str> = body["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert!(categories.contains(&"日常"), "在用类别要进词表：{body}");
+    assert!(categories.contains(&"日常/摘录"), "前缀祖先要进词表：{body}");
+    let (_, list) = call(&app, "GET", "/v1/trigger-projects", None).await;
+    assert!(list["categories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "日常"));
+}
+
+#[tokio::test]
 async fn archive_restore_purge_round_trip() {
     let (_tmp, root) = fixture();
     project(&root, "daily-digest");
@@ -365,6 +394,9 @@ async fn broken_manifest_is_a_card_error_not_a_500() {
 async fn publish_runs_cargo_generates_index_and_commits() {
     let (_tmp, root) = fixture();
     project(&root, "tiny-trigger");
+    // 项目里有一个没被 .gitignore 的 target/ 垃圾文件：发布只按显式文件清单 add。
+    std::fs::create_dir_all(root.join("tiny-trigger/target")).unwrap();
+    std::fs::write(root.join("tiny-trigger/target/junk"), "junk").unwrap();
     let app = app_with(&root);
 
     let (status, body) = call(
@@ -382,6 +414,7 @@ async fn publish_runs_cargo_generates_index_and_commits() {
     assert!(names.contains("tiny-trigger/nous.json"), "{names}");
     assert!(names.contains("index.json"), "{names}");
     assert!(!names.contains("target/"), "target 不许进提交：{names}");
+    assert!(!names.contains("junk"), "target 里的文件不许进提交：{names}");
 
     // 再发布一次：没有改动 → commit 失败按 stage=commit 回 422，不假装成功。
     let (status, body) = call(
