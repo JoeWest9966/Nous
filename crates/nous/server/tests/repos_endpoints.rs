@@ -156,6 +156,38 @@ async fn archive_restore_purge_are_one_unified_route_family() {
     }
 }
 
+/// 归档区必须有读面：写面（archive / restore / purge）早就在，没有 GET 的话
+/// 「归档了就再也看不见」—— 客户端只能猜着恢复，Desk 的「已归档」档因此一直是空的。
+#[tokio::test]
+async fn archived_units_are_listed_after_archive_and_gone_after_restore() {
+    let (_tmp, root) = fixture("extend");
+    let app = app_with("extend", &root);
+    std::fs::create_dir_all(root.join("unit")).unwrap();
+    std::fs::write(root.join("unit/nous.json"), r#"{"name":"unit"}"#).unwrap();
+    git(&root, &["add", "unit/nous.json"]);
+    git(&root, &["commit", "-qm", "seed"]);
+
+    let (status, body) = call(&app, "GET", "/v1/repos/extend/archive", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(0), "开始是空表：{body}");
+
+    let (status, _) = call(&app, "POST", "/v1/repos/extend/archive",
+        Some(json!({"name": "unit", "requestId": "r-a"}))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = call(&app, "GET", "/v1/repos/extend/archive", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"][0]["name"], "unit", "{body}");
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(1), "{body}");
+
+    let (status, _) = call(&app, "POST", "/v1/repos/extend/restore",
+        Some(json!({"name": "unit", "requestId": "r-r"}))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, body) = call(&app, "GET", "/v1/repos/extend/archive", None).await;
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(0), "恢复后归档区要空：{body}");
+}
+
 #[tokio::test]
 async fn invalid_repo_name_is_400() {
     let app = router(AppState::with_source(common::FakeSource::two_sessions()));

@@ -89,6 +89,14 @@ impl LoadedManifest {
 }
 
 /// 扫一个根目录：一个子目录一个扩展。顺序按目录名（确定性）。
+/// 私库根下**不是扩展**的目录名（运行时自己要用）。
+///
+/// `data/` 尤其要紧：变体绑定表就住在 `<ext-root>/data/extensions.local.json`
+/// （见 `server::repos::variant_tables_from_env`）。不排除它，页面上会凭空多一条
+/// 「加载失败：read …/data/nous.json: No such file」——把运行时的数据目录当成坏插件，
+/// 最容易把人引去查插件本身。
+pub const RESERVED_DIRS: &[&str] = &["data", "artifacts", "trash"];
+
 pub fn scan(root: &Path) -> Vec<(PathBuf, ExtResult<LoadedManifest>)> {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(root)
         .into_iter()
@@ -97,6 +105,11 @@ pub fn scan(root: &Path) -> Vec<(PathBuf, ExtResult<LoadedManifest>)> {
         .filter(|path| path.is_dir())
         // 私库根的 .git（以及其它点开头目录）不是扩展，不许当装载失败项上报。
         .filter(|path| !path.file_name().is_some_and(|name| name.to_string_lossy().starts_with('.')))
+        .filter(|path| {
+            !path
+                .file_name()
+                .is_some_and(|name| RESERVED_DIRS.contains(&name.to_string_lossy().as_ref()))
+        })
         .collect();
     dirs.sort();
     dirs.into_iter()
@@ -199,6 +212,27 @@ mod loader_tests {
         assert!(text.contains("legacy-js"), "{text}");
         assert!(text.contains("nous-ext-sdk"), "要指出重写方向：{text}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 运行时的数据目录（`data/` 放变体绑定表）不许被当成一条扩展 ——
+    /// 它会以「读不到 nous.json」的样子冒充坏插件。
+    #[test]
+    fn runtime_data_dir_is_not_an_extension() {
+        let root = scratch("scan-reserved");
+        std::fs::create_dir_all(root.join("data")).expect("mkdir data");
+        std::fs::write(root.join("data/extensions.local.json"), "{}").expect("write");
+        std::fs::create_dir_all(root.join("real")).expect("mkdir real");
+        std::fs::write(
+            root.join("real/nous.json"),
+            r#"{"name":"real","version":"0.1.0","protocol":1,"file":"real","entry":"real","sections":[{"key":"a","tag":"a"}]}"#,
+        )
+        .expect("write");
+        let names: Vec<String> = scan(&root)
+            .into_iter()
+            .map(|(dir, _)| dir.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["real".to_string()], "data/ 不是扩展");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// 缺字段但不是老形状（比如漏了 protocol 的普通笔误）仍按清单问题报。

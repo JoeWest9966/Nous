@@ -64,6 +64,7 @@
         "GET /v1/repos/:repo/history",
         "GET /v1/repos/:repo/history/diff",
         "POST /v1/repos/:repo/commit",
+        "GET /v1/repos/:repo/archive",
         "POST /v1/repos/:repo/archive",
         "POST /v1/repos/:repo/restore",
         "POST /v1/repos/:repo/purge",
