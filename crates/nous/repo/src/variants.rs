@@ -23,13 +23,21 @@ pub enum VariantFamily {
 }
 
 impl VariantFamily {
+    /// 绑定表里的族名 —— **与私库名一致**（`/v1/repos/skills` → `skills`，
+    /// `/v1/repos/extend` → `extend`）。
+    ///
+    /// 以前这里是 `skill` / `extension`：绑定表写成 `extension`，而路径是 `extend`、
+    /// 表文件又叫 `extensions.local.json`，三种叫法各活一处。客户端照路径名去读
+    /// （`variants.extend`）永远读不到内核写的那一条 —— 页面上一片空，还以为没变体。
     fn key(self) -> &'static str {
         match self {
-            Self::Skill => "skill",
-            Self::Extension => "extension",
+            Self::Skill => "skills",
+            Self::Extension => "extend",
         }
     }
 
+    /// 分支前缀（`variant/<prefix>/<id>`）：这是 git 上的命名，与表里的族名无关，
+    /// 保持单数读起来顺。
     fn branch_prefix(self) -> &'static str {
         match self {
             Self::Skill => "skill",
