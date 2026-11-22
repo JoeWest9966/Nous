@@ -356,3 +356,11 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 **根因**：`record_ids` 是**跨表**的唯一表，同批里 task id 撞上 conversation id 时那一笔按「重复」处理，进 `refused` 而不是报错。
 
 **怎么防**：造种子数据时各表 id 错开（conversation 1 / task 10+）；断言要落到「库里真有几行」，不能只看 `commit` 返回 Ok。
+
+## 2026-11-22 · 老模板没有 `spec`：combos 写开关 400，presets 再存一遍也 400
+
+**症状**：`PATCH /v1/combos/:section/:name` 回 `400 preset.json 没有 spec 对象`；对同一条走 `PUT /v1/presets/:section/:name` 回 `400 preset.json 缺字段 spec`。库里 5 条 0.1.7 之前写下的模板就是这样（顶层 `v/name/summary/category/...`，没有 `spec`）。
+
+**根因**：`spec` 从「扩展位」被当成了必需字段；combos 的 `view` 用 `unwrap_or(Null)` 兜住了，写路径却直接 400 —— 读宽容、写严格，两边不一致。
+
+**怎么防**：写路径与读路径同宽：`spec` 缺了就补 `{}` 再写（combos `patch`、presets `validate_body` 两处），`name`/`summary`/`category` 才保持必需；判据是「老形状能读、能改、能存」三条一起测。

@@ -354,3 +354,26 @@ async fn writes_to_one_section_never_touch_the_other() {
     assert!(revision_rows(&fixture.db, "Ultimate-Template", "only").is_empty(), "另一段 revisions 不许多一条");
     assert!(!fixture.file("Ultimate-Template", "only").exists());
 }
+
+/// 老条目没有 `spec`（0.1.7 之前写下的那 5 条就是这样）：PUT 补一个空对象存下去，
+/// 不许回 400「缺字段 spec」—— 用户只是把一条老模板再存一遍。
+#[tokio::test]
+async fn put_fills_missing_spec_with_an_empty_object() {
+    let fixture = Fixture::new("legacy-no-spec");
+    let legacy = json!({
+        "v": 1,
+        "name": "legacy",
+        "summary": "老条目",
+        "category": ["工程"],
+        "requestId": "legacy-put-1",
+    });
+    let (status, body, _) = call(
+        &fixture.app, "PUT", "/v1/presets/Session-Template/legacy", Some(legacy), None,
+    ).await;
+    assert_eq!(status, StatusCode::CREATED, "缺 spec 不该 400：{body}");
+
+    let on_disk: Value = serde_json::from_slice(&std::fs::read(fixture.file("Session-Template", "legacy")).unwrap()).unwrap();
+    assert_eq!(on_disk["spec"], json!({}), "补出来的是空对象");
+    assert_eq!(on_disk["name"], json!("legacy"));
+    assert_eq!(on_disk["category"], json!(["工程"]));
+}
