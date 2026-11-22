@@ -136,3 +136,74 @@ pub fn history_diff(root: &Path, name: &str, hash: &str, path: &str) -> Result<D
     let after = git::git_ok(root, &["cat-file", "-p", &after_ref]).unwrap_or_default();
     Ok(Diff { before, after })
 }
+
+/// 归档区里的一个单元。**只有名字**：`.archive/` 里没有清单、没有版本 ——
+/// 想知道它是什么，恢复回来再读。多编的字段就是又一份会说谎的账。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchivedUnit {
+    pub name: String,
+}
+
+/// `GET /v1/repos/{repo}/archive` 的投影：`.archive/` 下的目录名，按名字排序。
+///
+/// 点开头的跳过（`.git` 之类混进来过一次），不是目录的也跳过 —— 归档物一定是目录，
+/// 恢复端点要的是 `git mv .archive/<name> <name>`，散落文件恢复不了。
+pub fn archived(root: &Path) -> Result<Vec<ArchivedUnit>> {
+    let dir = root.join(".archive");
+    if !dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(&dir).map_err(|error| crate::RepoError::Io(error.to_string()))? {
+        let entry = entry.map_err(|error| crate::RepoError::Io(error.to_string()))?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(name) = path.file_name() else { continue };
+        let name = name.to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        out.push(ArchivedUnit { name });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+#[cfg(test)]
+mod archived_tests {
+    use super::*;
+
+    fn 临时仓() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "repo-archived-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".archive").join("b")).expect("mkdir b");
+        std::fs::create_dir_all(dir.join(".archive").join("a")).expect("mkdir a");
+        std::fs::create_dir_all(dir.join(".archive").join(".inner")).expect("mkdir .inner");
+        std::fs::write(dir.join(".archive").join("散件.md"), "x").expect("write");
+        dir
+    }
+
+    #[test]
+    fn 只列目录_按名字排序_点开头的跳过() {
+        let dir = 临时仓();
+        let names: Vec<String> = archived(&dir).expect("archived").into_iter().map(|u| u.name).collect();
+        assert_eq!(names, vec!["a".to_string(), "b".to_string()]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn 没有归档区就是空表不是错误() {
+        let dir = std::env::temp_dir().join(format!("repo-noarchive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        assert!(archived(&dir).expect("archived").is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

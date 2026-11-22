@@ -136,7 +136,7 @@ pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         .route("/v1/repos/{repo}/commit", axum::routing::post(commit))
         .route("/v1/repos/{repo}/history", axum::routing::get(history))
         .route("/v1/repos/{repo}/history/diff", axum::routing::get(history_diff))
-        .route("/v1/repos/{repo}/archive", axum::routing::post(archive))
+        .route("/v1/repos/{repo}/archive", axum::routing::get(archived).post(archive))
         .route("/v1/repos/{repo}/restore", axum::routing::post(restore))
         .route("/v1/repos/{repo}/purge", axum::routing::post(purge))
         // #76：变体（只给 skills / extend；其余四值回 400）。
@@ -261,6 +261,15 @@ async fn pending(State(state): State<Arc<AppState>>, AxumPath(kind): AxumPath<St
     let repo = select(&state, &kind)?;
     let units = repo.pending().map_err(repo_error)?;
     Ok(Json(json!({ "units": units })))
+}
+
+/// `GET /v1/repos/{repo}/archive`：`.archive/` 里的单元名（归档区的读面）。
+///
+/// 写面早在（`archive` / `restore` / `purge`）：没有这条，客户端只能「猜着恢复」。
+async fn archived(State(state): State<Arc<AppState>>, AxumPath(kind): AxumPath<String>) -> std::result::Result<Json<Value>, ServerError> {
+    let repo = select(&state, &kind)?;
+    let items = repo.archived().map_err(repo_error)?;
+    Ok(Json(json!({ "items": items })))
 }
 
 async fn pending_diff(State(state): State<Arc<AppState>>, AxumPath(kind): AxumPath<String>, Query(q): Query<DiffQuery>) -> std::result::Result<Json<Value>, ServerError> {

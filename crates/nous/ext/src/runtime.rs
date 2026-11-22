@@ -1017,6 +1017,8 @@ impl Runtime {
     ///   清单的 `category`，把「是什么」和「挂在哪类」混成一个字段，翻页时两边都对不上。
     /// - `category` / `summary`：清单原文。界面画分类树、列表副标题要这两样，
     ///   以前只能空着。只有清单合法时才有值。
+    /// - `core`：核心三条（`nous` / `skills` / `prompts`）—— 卸载会 403。以前这条信息
+    ///   只在 403 的文案里，界面只能等用户点一次才知道。
     pub fn items(&self) -> Vec<Value> {
         let mut items = Vec::new();
         for (dir, loaded) in crate::admin::scan_active(&self.config.exts_root) {
@@ -1086,6 +1088,7 @@ impl Runtime {
                 "kind": kind,
                 "category": category,
                 "summary": summary,
+                "core": crate::admin::CORE_EXTENSIONS.contains(&name.as_str()),
                 "loaded": loaded_ok,
                 "pid": pid,
                 "state": state,
@@ -1667,6 +1670,34 @@ mod items_tests {
             "{}",
             legacy["error"]
         );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 「内置」那一档的判据：核心三条在源码根里也照样存在，只能靠 `core` 区分。
+    /// 没这个字段，界面要么把核心三条当普通条目画（卸载点下去 403），要么硬编码三个名字。
+    #[test]
+    fn core_is_flagged_on_the_three_engine_extensions() {
+        let root = scratch("core");
+        for name in ["nous", "mine"] {
+            std::fs::create_dir_all(root.join(name)).expect("mkdir");
+            std::fs::write(
+                root.join(name).join("nous.json"),
+                format!(
+                    r#"{{"name":"{name}","version":"0.1.0","protocol":1,"file":"{name}","entry":"{name}","sections":[{{"key":"a","tag":"a"}}]}}"#
+                ),
+            )
+            .expect("write");
+        }
+
+        let config = crate::config::RuntimeConfig::new(root.clone(), root.join("artifacts"));
+        let runtime = Runtime::new(config);
+        let items = runtime.items();
+
+        let core = items.iter().find(|item| item["name"] == "nous").expect("nous");
+        assert_eq!(core["core"], true);
+        let mine = items.iter().find(|item| item["name"] == "mine").expect("mine");
+        assert_eq!(mine["core"], false);
 
         let _ = std::fs::remove_dir_all(&root);
     }
