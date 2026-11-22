@@ -24,7 +24,6 @@ pub mod coalesce;
 pub mod commands;
 pub mod combos;
 pub mod combos_actions;
-pub mod documents;
 pub mod error;
 pub mod hub;
 pub mod meta;

@@ -1461,7 +1461,6 @@ dependencies = [
  "nous-ai",
  "nous-device",
  "nous-dispatcher",
- "nous-documents",
  "nous-durable",
  "nous-env",
  "nous-env-ssh",

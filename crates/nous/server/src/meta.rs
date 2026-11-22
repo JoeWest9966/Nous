@@ -4,8 +4,7 @@
 //! 这里只做**数据装配**，没有第二份事实源：进程配置来自环境，能力声明是这张表本身。
 //! 形状以 `wire.md` + `NousDesk/crates/nous-engine/src/types.rs` 为准；未知字段透传给客户端。
 //!
-//! `ROUTES` 是 `/v1/*` 端点的唯一真相：`router()` 从这里装配真路由（documents 那一族由
-//! `documents::DOCUMENT_ROUTES` 生成，逐条登记在这里）、`capabilities()` 从这里生成
+//! `ROUTES` 是 `/v1/*` 端点的唯一真相：`router()` 从这里装配真路由、`capabilities()` 从这里生成
 //! `endpoints`、`_routes` 从这里吐调试视图。三处同源，才撑得住「声明不许说谎」。
 //!
 //! #65：device 段（机器 / 模型 / 默认模型）已经搬到 `nous-device` 插件，这里只留转发。
@@ -146,9 +145,6 @@ pub struct RegisteredRoute {
 }
 
 /// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
-///
-/// documents 一族既在 `documents::DOCUMENT_ROUTES`（泛型 handler 的注册源），也在这里
-/// 逐条登记；`documents_routes.rs` 的判据守住两张表不漂移。
 pub const ROUTES: &[RegisteredRoute] = &[
     // #61：combos 两条端点（开关是引擎算出来的，Desk 只显示 + 写穿）；#82 补试跑。
     RegisteredRoute { method: "GET", path: "/v1/combos/:section", module: "combos" },
@@ -252,25 +248,6 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "stats" },
     RegisteredRoute { method: "GET", path: "/v1/stats/db", module: "stats" },
     RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
-    // #48：documents 的 12 条端点（模板原文来自 nous_documents::DOCUMENT_ROUTES）。
-    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}", module: "documents" },
-    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}", module: "documents" },
-    RegisteredRoute { method: "PUT", path: "/v1/documents/{kind}/{section}/{name}", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}/{name}/rename", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}/{name}/publish", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/{kind}/{section}/{name}/reload", module: "documents" },
-    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/validate", module: "documents" },
-    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history", module: "documents" },
-    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/history/diff", module: "documents" },
-    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending", module: "documents" },
-    RegisteredRoute { method: "GET", path: "/v1/documents/{kind}/{section}/{name}/pending/diff", module: "documents" },
-    // #87：盘面树动作端点和注册源逐字一致（documents_routes.rs 双向判）。
-    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/move", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/trash", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/restore", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/purge", module: "documents" },
-    RegisteredRoute { method: "POST", path: "/v1/documents/tree/{section}/{name}/import", module: "documents" },
     // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
     RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/model", module: "presets" },
@@ -397,8 +374,6 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "env", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-env`", description: "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`" },
     // #75：四套私库共用的 git 发布 / 归档 / pending / diff / history。
     ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "唯一的 git 进程调用面；四条私库路径解析沿用 `env`" },
-    // #48 已落地：12 条 documents 端点在 ROUTES 里，清单也打开。
-    ManifestEntry { name: "documents", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-documents`", description: "#48：一个实现生成 presets / prompts 两套端点" },
     // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。
     ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
     ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行" },

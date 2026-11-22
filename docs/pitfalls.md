@@ -340,3 +340,11 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 **症状**：generation 已写好但墓碑提交失败 → 盘上有 `gen-*.db`，库里没墓碑；restore 反向失败 → 行已写回但墓碑还在。
 **根因**：generation 是独立 SQLite 文件，墓碑是活库文档写，`Storage::commit` 的事务只覆盖后者。
 **解**：按顺序写（临时文件 → rename → 墓碑），失败补偿反向删除；restore 失败保留 generation。注入哨兵验盘/库都不留半截。
+
+## 2026-11-22 · 删插件装配时把别的端点一起带走了（#90）
+
+**症状**：删掉 `documents::attach` 后 `/v1/_routes` 变 404，`route_registry_and_enabled_endpoints_are_the_same_multiset` 红，而改动看起来只是删 documents。
+
+**根因**：`documents::attach` 顺手注册了 `_routes` 并做了 `with_state`；删模块时那两件事也必须归位到主 Router，顺带的职责不会自己搬家。
+
+**怎么防**：删一个 `attach` 前先看它注册了哪些路由 / 做了哪种 state 收敛，逐条找新家；判据必须包含 `_routes` 与 capabilities 的一致性，不能只测被删的路径 404。

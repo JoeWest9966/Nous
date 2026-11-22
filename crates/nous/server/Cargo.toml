@@ -28,7 +28,6 @@ nous-repo = { workspace = true }
 nous-prompts = { workspace = true }
 nous-skills = { workspace = true }
 nous-env-ssh = { workspace = true }
-nous-documents = { workspace = true }
 nous-ext = { workspace = true }
 nous-sessions = { workspace = true }
 nous-stats = { workspace = true }

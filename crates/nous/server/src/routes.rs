@@ -109,20 +109,25 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/stats/usage", get(crate::stats::usage))
         .route("/v1/stats/tasks", get(crate::stats::tasks))
         .route("/v1/stats/db", get(crate::stats::db))
-        .route("/v1/openapi.json", get(crate::stats::openapi));
-    // #75：repo 路由与 documents 路由都在同一份 state 上；documents::attach 统一应用 state。
-    // #48 的 documents 路由与 _routes 自省挂在同一份 state 上；两条分支的端点都保留。
-    // #75：repo 路由先挂在带 state 的 Router 上（与 #48 documents 同一份 state）。
+        .route("/v1/openapi.json", get(crate::stats::openapi))
+        // #90：原先挂在 documents::attach 上的自省端点，下线后归主路由。
+        .route("/v1/_routes", get(routes_view));
+    // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);
     // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。
     let router = crate::upstream::attach(router);
-    let router = crate::documents::attach(state.clone(), router);
     // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
-    let router = match state.presets() {
-        Some(store) => crate::presets::attach(store.clone(), router),
+    // presets 子路由自带 SharedStore state；合并进主 Router 不动其余端点的 AppState。
+    let router = router.with_state(state.clone());
+    match state.presets() {
+        Some(store) => router.merge(crate::presets::routes(store.clone())),
         None => router,
-    };
-    router
+    }
+}
+
+/// `GET /v1/_routes`：与 capabilities 同源的注册表视图（#47）。
+async fn routes_view() -> axum::Json<serde_json::Value> {
+    axum::Json(crate::meta::routes_view())
 }
 
 /// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
