@@ -198,7 +198,12 @@
       "endpoints": [
         "GET /v1/stats/usage",
         "GET /v1/stats/tasks",
-        "GET /v1/stats/db"
+        "GET /v1/stats/db",
+        "GET /v1/stats/overview",
+        "GET /v1/stats/conversations",
+        "GET /v1/stats/conversation/:id",
+        "GET /v1/stats/cost",
+        "GET /v1/stats/health"
       ]
     },
     {
