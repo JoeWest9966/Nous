@@ -64,7 +64,18 @@ impl LoadedManifest {
             .map_err(|error| ExtError::Spawn(format!("read {}: {error}", path.display())))?;
         let raw: Value = serde_json::from_str(&text)
             .map_err(|error| ExtError::Spawn(format!("parse {}: {error}", path.display())))?;
-        let manifest = Manifest::parse(&raw).map_err(ExtError::Manifest)?;
+        let manifest = match Manifest::parse(&raw) {
+            Ok(manifest) => manifest,
+            Err(problems) => {
+                // 先问「是不是 TS 时代的 JS 插件」再报字段问题：后者会把读者引向
+                // 「改 JSON」，而 JS 插件根本不在新运行时的装载形态里。
+                return Err(if nous_ext_sdk::manifest::legacy_js_shape(&raw) {
+                    ExtError::LegacyJsExtension
+                } else {
+                    ExtError::Manifest(problems)
+                });
+            }
+        };
         if manifest.is_empty() {
             return Err(ExtError::EmptyExtension);
         }
@@ -155,4 +166,52 @@ pub fn resolve_artifact(config: &RuntimeConfig, manifest: &Manifest) -> ExtResul
     }
 
     Ok(Artifact { path, meta })
+}
+
+#[cfg(test)]
+mod loader_tests {
+    use super::*;
+    use crate::error::ExtError;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nous-ext-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        dir
+    }
+
+    /// 盘上真实的 TS 时代清单：load 必须报 `LegacyJsExtension`，不是 `Manifest(..)`。
+    /// 报错文案要把「JS 插件」和「需按 SDK 重写」都说到，别只说缺字段。
+    #[test]
+    fn legacy_js_manifest_reports_legacy_not_missing_field() {
+        let dir = scratch("legacy");
+        std::fs::write(
+            dir.join("nous.json"),
+            r#"{"name":"skills","version":"0.2.0","file":"index.js","entry":"createSkills","sections":["skills"],"default":true,"summary":"s","category":["工具"]}"#,
+        )
+        .expect("write");
+        let error = LoadedManifest::load(&dir).expect_err("老 JS 清单必须拒载");
+        assert!(
+            matches!(error, ExtError::LegacyJsExtension),
+            "报成 Manifest(..) 会把人引去改 JSON：{error:?}"
+        );
+        let text = error.to_string();
+        assert!(text.contains("legacy-js"), "{text}");
+        assert!(text.contains("nous-ext-sdk"), "要指出重写方向：{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 缺字段但不是老形状（比如漏了 protocol 的普通笔误）仍按清单问题报。
+    #[test]
+    fn plain_missing_field_stays_manifest_error() {
+        let dir = scratch("plain");
+        std::fs::write(
+            dir.join("nous.json"),
+            r#"{"name":"x","version":"0.1.0","file":"bin","entry":"x","sections":[{"key":"a","tag":"a"}]}"#,
+        )
+        .expect("write");
+        let error = LoadedManifest::load(&dir).expect_err("缺 protocol 必须拒载");
+        assert!(matches!(error, ExtError::Manifest(_)), "{error:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

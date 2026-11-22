@@ -1011,6 +1011,12 @@ impl Runtime {
     ///
     /// 观测只来自运行时自己持有的事实：清单、进程 pid、状态机、最近一次错误。
     /// 装载失败的那一项也留在这里（`loaded=false` + `error`），不许静默消失。
+    ///
+    /// 字段语义：
+    /// - `kind`：**装载形态**（`native` / `legacy-js` / `invalid`）。以前这里塞的是
+    ///   清单的 `category`，把「是什么」和「挂在哪类」混成一个字段，翻页时两边都对不上。
+    /// - `category` / `summary`：清单原文。界面画分类树、列表副标题要这两样，
+    ///   以前只能空着。只有清单合法时才有值。
     pub fn items(&self) -> Vec<Value> {
         let mut items = Vec::new();
         for (dir, loaded) in crate::admin::scan_active(&self.config.exts_root) {
@@ -1018,16 +1024,30 @@ impl Runtime {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| dir.display().to_string());
-            let load_error = loaded.as_ref().err().map(|error| error.to_string());
-            let loaded_manifest = loaded.ok();
-            let name = loaded_manifest
-                .as_ref()
-                .map(|loaded| loaded.manifest.name.clone())
-                .unwrap_or_else(|| dirname.clone());
-            let version = loaded_manifest
-                .as_ref()
-                .map(|loaded| loaded.manifest.version.clone())
-                .unwrap_or_default();
+            // 三种形态用一次匹配定下来：清单合法 / 老 JS 插件 / 其它不合法。
+            let (name, version, category, summary, kind, load_error) = match &loaded {
+                Ok(manifest) => (
+                    manifest.manifest.name.clone(),
+                    manifest.manifest.version.clone(),
+                    manifest.manifest.category.clone(),
+                    manifest.manifest.summary.clone(),
+                    "native",
+                    None,
+                ),
+                Err(error) => (
+                    dirname.clone(),
+                    String::new(),
+                    None,
+                    None,
+                    if matches!(error, ExtError::LegacyJsExtension) {
+                        "legacy-js"
+                    } else {
+                        "invalid"
+                    },
+                    Some(error.to_string()),
+                ),
+            };
+            let loaded_ok = loaded.is_ok();
             let (pid, state, error) = match self.extension(&name) {
                 Some(arc) => {
                     let ext = arc.lock().expect("ext");
@@ -1063,8 +1083,10 @@ impl Runtime {
             items.push(json!({
                 "name": name,
                 "version": version,
-                "kind": loaded_manifest.as_ref().map(|loaded| loaded.manifest.category.clone().unwrap_or_else(|| "native".to_string())).unwrap_or_else(|| "unknown".to_string()),
-                "loaded": loaded_manifest.is_some(),
+                "kind": kind,
+                "category": category,
+                "summary": summary,
+                "loaded": loaded_ok,
                 "pid": pid,
                 "state": state,
                 "error": error,
@@ -1588,4 +1610,64 @@ pub fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod items_tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nous-ext-items-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        dir
+    }
+
+    /// `items()` 是 Desk 画扩展页的唯一数据源：`summary` / `category` 必须在，
+    /// `kind` 说的是装载形态而不是分类。老 JS 插件单列成 `legacy-js`，别混进 `invalid`。
+    #[test]
+    fn items_carry_summary_category_and_kind() {
+        let root = scratch("mixed");
+        // 一份合法的新清单
+        std::fs::create_dir_all(root.join("native-one")).expect("mkdir");
+        std::fs::write(
+            root.join("native-one/nous.json"),
+            r#"{"name":"native-one","version":"0.1.0","protocol":1,"file":"native-one","entry":"native-one","sections":[{"key":"a","tag":"a"}],"summary":"原生那条","category":"工具"}"#,
+        )
+        .expect("write");
+        // 一份 TS 时代的老清单
+        std::fs::create_dir_all(root.join("old-js")).expect("mkdir");
+        std::fs::write(
+            root.join("old-js/nous.json"),
+            r#"{"name":"old-js","version":"0.1.0","file":"index.js","entry":"default","sections":["preamble"]}"#,
+        )
+        .expect("write");
+
+        let config = crate::config::RuntimeConfig::new(root.clone(), root.join("artifacts"));
+        let runtime = Runtime::new(config);
+        let items = runtime.items();
+
+        let native = items
+            .iter()
+            .find(|item| item["name"] == "native-one")
+            .expect("合法清单要在清单里");
+        assert_eq!(native["kind"], "native");
+        assert_eq!(native["summary"], "原生那条");
+        assert_eq!(native["category"], "工具");
+        assert_eq!(native["loaded"], true);
+
+        let legacy = items
+            .iter()
+            .find(|item| item["name"] == "old-js")
+            .expect("老 JS 插件也要出现在清单里，不许静默消失");
+        assert_eq!(legacy["kind"], "legacy-js", "{}", legacy["error"]);
+        assert_eq!(legacy["loaded"], false);
+        assert!(
+            legacy["error"].as_str().unwrap_or_default().contains("legacy-js"),
+            "{}",
+            legacy["error"]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

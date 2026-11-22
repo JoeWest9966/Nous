@@ -61,6 +61,34 @@ impl std::fmt::Display for ManifestProblem {
 /// 四件能力全空 ⇒ 拒载，并指名"这个扩展什么都不提供"（EX-03）。
 pub const EMPTY_REASON: &str = "这个扩展什么都不提供";
 
+/// TS 时代（`qrd3wh`）JS 插件的清单读出来应该看见的话。
+///
+/// 报 `missing-field` 等于告诉人去改 JSON —— 那条路是死的：新运行时 `spawn` 的是
+/// 原生产物，`index.js` 没有解释器可跑。所以先把「这是换代，不是笔误」说清楚。
+pub const LEGACY_JS_REASON: &str = "TS 时代的 JS 插件（index.js + defineExtension）新运行时装载不了：
+扩展已换成原生进程 + 协议握手，需按 nous-ext-sdk 重写";
+
+/// 这份清单是不是 TS 时代 JS 插件的形状。
+///
+/// 三个记号里占两个才算 —— 单看 `file` 以 `.js` 结尾可能是别的东西，单看没有
+/// `protocol` 可能只是漏写。两个同时成立，才不是"字段笔误"而是换了一整套装载形态。
+pub fn legacy_js_shape(raw: &serde_json::Value) -> bool {
+    let file_is_js = raw
+        .get("file")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|file| file.ends_with(".js") || file.ends_with(".mjs"));
+    let sections_are_strings = raw
+        .get("sections")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| items.iter().any(serde_json::Value::is_string));
+    let no_protocol = raw.get("protocol").is_none();
+    [file_is_js, sections_are_strings, no_protocol]
+        .iter()
+        .filter(|hit| **hit)
+        .count()
+        >= 2
+}
+
 /// 清单里被禁止的字段（`E7`）。出现即拒载。
 pub const FORBIDDEN_KEYS: [&str; 5] = ["kernel", "timeout", "concurrency", "rss", "budget"];
 
@@ -184,5 +212,63 @@ fn walk_strings(value: &serde_json::Value, visit: &mut impl FnMut(&str)) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod legacy_tests {
+    use super::*;
+
+    /// TS 时代（qrd3wh）真实的 `nous.json`：`file` 是 JS、`sections` 是字符串数组、
+    /// 没有 `protocol`。三个记号全中 —— 必须认出来，否则报 `missing-field` 把人引去改
+    /// JSON，而改 JSON 也跑不起来（没有 JS 解释器）。
+    #[test]
+    fn old_js_manifest_is_legacy() {
+        let raw = serde_json::json!({
+            "name": "skills",
+            "version": "0.2.0",
+            "file": "index.js",
+            "entry": "createSkills",
+            "sections": ["skills"],
+            "default": true,
+            "summary": "扫私库里的技能目录",
+            "needs": { "dir": "…" },
+            "category": ["工具", "Basics"]
+        });
+        assert!(legacy_js_shape(&raw));
+    }
+
+    /// 新清单（原生产物 + protocol + 结构化 sections）不能被误判。
+    #[test]
+    fn native_manifest_is_not_legacy() {
+        let raw = serde_json::json!({
+            "name": "skills",
+            "version": "0.3.0",
+            "protocol": 1,
+            "file": "skills",
+            "entry": "skills",
+            "sections": [{ "key": "skills", "tag": "skills" }],
+            "handles": ["skills"]
+        });
+        assert!(!legacy_js_shape(&raw));
+    }
+
+    /// 只有一个记号成立时不下结论：`.js` 可能是别的东西，缺 `protocol` 可能只是漏写。
+    /// 这种该照常报 `missing-field`，别把人误导到「要重写插件」上。
+    #[test]
+    fn single_marker_is_not_enough() {
+        let only_js = serde_json::json!({
+            "name": "x", "version": "0.1.0", "protocol": 1,
+            "file": "index.js", "entry": "x",
+            "sections": [{ "key": "a", "tag": "a" }]
+        });
+        assert!(!legacy_js_shape(&only_js));
+
+        let only_no_protocol = serde_json::json!({
+            "name": "x", "version": "0.1.0",
+            "file": "bin", "entry": "x",
+            "sections": [{ "key": "a", "tag": "a" }]
+        });
+        assert!(!legacy_js_shape(&only_no_protocol));
     }
 }
