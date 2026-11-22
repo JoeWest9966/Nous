@@ -168,62 +168,64 @@ plugins 这一份与 `nous-app --check` 之后那条插件库检查共用 `Store
 
 数据监控室「解剖」屏：durable 库的一整份 X 光片。字段族与 TS 面板 `d6s4v1/api/overview` 对齐：
 
-- `target`：`{id, path}`（库文件名与路径）。
-- `file`：`{db, wal, shm, mtime, walMtime}`（主文件 + `-wal` / `-shm` 旁件字节与 mtime）。
-- `pragmas`：`{pageSize, pageCount, freelist, journalMode, schemaVersion}`（`schemaVersion` 取
-  `durable_schema.version`）。
-- `bytes`：`{db, wal, shm, free, used, onDisk}`（`free = freelist × pageSize`）。
-- `counts`：表名 → 行数（`sqlite_master` 里所有非 `sqlite_` 表）。
-- `tables`：`[{name, bytes, pages, rows}]`，`bytes` / `pages` 来自 `dbstat`（**真页数**），按字节降序。
-- `indexes`：`[{name, bytes, pages, table}]`（`dbstat` + `sqlite_master`）。
-- `entriesByKind`：`[{kind, count, bytes}]`（`json_extract(record,'$.kind')` 分组）。
-- `integrity`：`{checked, ok, messages}`（库 < 64 MiB 才跑 `PRAGMA integrity_check`）。
-- `attention`：字符串提示（WAL 大 / 空闲页多 / schema 旧）。
-- `dbstatOk`：`dbstat` 虚表是否可用；不可用时 `tables[].bytes/pages` 为 0 且带 `dbstatWhy`。
+- 库身份：库文件名与路径。
+- 文件：主文件 + `-wal` / `-shm` 旁件的字节与 mtime。
+- pragma 读数：页大小、页数、freelist、日志模式、schema 版本（取 `durable_schema.version`）。
+- 字节账：主库 / WAL / SHM 各占多少，空闲页、已用页、落盘总量。
+- 表行数：`sqlite_master` 里所有非 `sqlite_` 表，表名 → 行数。
+- 表账：每表的字节、页数、行数；字节 / 页数来自 `dbstat`（**真页数**），按字节降序。
+- 索引账：每索引的字节、页数、所属表（`dbstat` + `sqlite_master`）。
+- 条目分布：按 `json_extract(record,'$.kind')` 分组的条数与字节。
+- 完整性：是否跑过、是否 ok、消息（库 < 64 MiB 才跑 `PRAGMA integrity_check`）。
+- 提示：WAL 大 / 空闲页多 / schema 旧，人读的一句话。
+- `dbstat` 可用性：不可用时表账的字节 / 页数为 0，并带一句原因。
 
 只读：不建索引、不 VACUUM、不写库。
 
 ### GET /v1/stats/conversations
 
-数据监控室「会话树」屏：`{count, list, totals}`。`list[]` 每会话一行：
-`{id, ownerConv, ownerTask, entries, tokens, cost, toolCalls, models, firstAt, lastAt, title}`；
-`totals`：`{entries, tokens, cost}`。`tokens` = 该会话所有 assistant entry 的 `usage.totalTokens` 之和；
-`models` 去重；`title` 取首条 `pi.user` 的正文（无用户输入时 `(没有用户输入)`）。
+数据监控室「会话树」屏：总数、每会话一行、一份合计。每会话给的是会话 id、所属会话与任务、
+entry 条数、tokens 与 cost、工具调用数、用过的模型集合、首末时间、标题。
+
+`tokens` = 该会话所有 assistant entry 的 `usage.totalTokens` 之和；`models` 去重；
+`title` 取首条 `pi.user` 的正文（无用户输入时 `(没有用户输入)`）。
 
 ### GET /v1/stats/conversation/:id
 
 数据监控室「回放」屏：一条会话的明细，含 prompt 重建。
 
-- `entries[]`：形状对齐 TS 面板 `shapeEntry`（`id/conv/seq/head/kind/bytes/at/role/model/provider/
-  tokens/cost/usage/tool/toolCalls/isError/ms/stopReason/toolsAdded/chars/text`），按时间正序。
-- `tasks[]`：`{id, kind, status, startedAt, endedAt, ms, conv, outcome}`（`kind` 去 JSON 引号）。
-- `documents[]`：`{id, kind, key, revisions, bytes, createdAt, retired}`（会话作用域）。
-- `submissions[]`：`{id, status, requestId}`。
-- `prompt`：`{messages: [{id, label, kind, bytes, chars, tokens, cost, head, text}],
-  totals: {messages, chars, toolChars, approxTokens, realInputTokens}}` ——「此刻模型看到了什么」。
+- `entries[]`：形状对齐 TS 面板 `shapeEntry`，按时间正序（id、会话、序号、head、kind、字节、
+  时间、role/model/provider、tokens/cost/usage、工具与工具调用、是否出错、耗时、stopReason、
+  追加的工具、字符数、正文）。
+- `tasks[]`：任务的 id / kind / status / 起止时间 / 耗时 / 会话 / 结局（`kind` 去 JSON 引号）。
+- `documents[]`：会话作用域文档的 id / kind / key / 修订数 / 字节 / 创建时间 / 是否退役。
+- `submissions[]`：提交的 id / 状态 / requestId。
+- `prompt`：**此刻模型看到了什么** —— 逐条消息的 id、label、kind、字节、字符、tokens、cost、
+  head、正文，加一份合计（消息数、字符、工具字符、估算 tokens、真实输入 tokens）。
 
 会话不存在时 404（不假装空会话）。
 
 ### GET /v1/stats/cost
 
-数据监控室「账单」屏：`{totals, byDay, byHour, byModel, byConv, note}`。
+数据监控室「账单」屏：合计、按天 / 按小时 / 按模型 / 按会话四组桶，外加一句备注。
 
-- `totals`：`{entries, tokens, input, output, cacheRead, cacheWrite, reasoning, cost}`。
-- 四组桶每桶 `{label, tokens, cost, calls, input, output, cacheRead}`；`byModel` / `byConv` 按 tokens 降序。
-- `note`：固定一句「cost 为 0 不代表免费」—— provider 不回 price 时 `cost` 记 0，`tokens` 才是真数。
+- 合计：entry 数、tokens，以及 input / output / cacheRead / cacheWrite / reasoning 分项和 cost。
+- 四组桶每桶：label、tokens、cost、调用数，以及 input / output / cacheRead 分项；
+  按模型 / 按会话两组按 tokens 降序。
+- 备注固定一句「cost 为 0 不代表免费」—— provider 不回 price 时 `cost` 记 0，`tokens` 才是真数。
 
-`/v1/stats/usage` 是**单** `group_by` 四元组；`cost` 是**四组一起**带 usage 分项 + `byHour`，两者不重复。
+`/v1/stats/usage` 是**单** `group_by` 四元组；`cost` 是**四组一起**带 usage 分项 + 按小时，两者不重复。
 
 ### GET /v1/stats/health
 
-数据监控室「维修」屏：`{tasks, submissions, documents, walBytes, freelist, maintenance}`。
+数据监控室「维修」屏：任务、提交、文档、WAL 字节、freelist、维修命令六块。
 
-- `tasks`：`{total, byStatus: [{status, count, sample}], stuck, sleeping, avgMs, p95, slowest}`。
-  `stuck` = 超过 10 分钟仍未终态的 `running/completing/waiting`；`now_ms` 由端点注入（`nous-stats` 零时钟）。
-- `submissions`：`{total, byStatus: [{status, n}], unanswered: [{id, conv, status}]}`。
-- `documents`：`{documents, byKind, revisions, base, delta, deltaRatio}`。
-- `walBytes` / `freelist`：`{free, bytes}`。
-- `maintenance[]`：`{label, why, cmd, danger}` —— 维修命令**只给文本不执行**（这页只读）。
+- 任务：总数、按状态分组（每组带样本）、卡住数、休眠数、平均与 p95 耗时、最慢一条。
+  `stuck` = 超过 10 分钟仍未终态的 `running/completing/waiting`；时钟由端点注入（`nous-stats` 零时钟）。
+- 提交：总数、按状态分组、尚未回执的那几条（id / 会话 / 状态）。
+- 文档：文档数、按 kind 分组、修订数、base / delta 与比例。
+- WAL 与 freelist：各自的空闲量与字节数。
+- 维修命令：label / 原因 / 命令 / 危险级别 —— **只给文本不执行**（这页只读）。
 
 ### GET /v1/sessions/:id/entries
 
