@@ -1,7 +1,8 @@
-//! 技能管理面（`/v1/skills/{files,file,create,publish}`）的 HTTP 形状。
+//! 资源仓管理面（`/v1/{skills,prompts,extensions}/{files,file,create,publish}`）的 HTTP 形状。
 //!
 //! 判据打在公共接缝：真 Router + 真 git 仓（临时目录），不走内部函数。
-//! Desk 的编辑页就是按这五条接线：清单 → 读 → 存（带 base）→ 新建 → 发布。
+//! Desk 的编辑页就是按这四条接线：清单 → 读 → 存（带 base）→ 新建 → 发布；
+//! 提示词 / 扩展与技能共用一副骨架，只是私库键与骨架文件不同。
 
 mod common;
 
@@ -32,21 +33,31 @@ fn git(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// 一个已提交的 skills 私库：`demo/SKILL.md` + 附件 + 嵌套参考文档 + 点开头的目录。
-fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
+/// 一个已提交的资源私库。`kind` 是 AppState 的私库键（`skills` / `prompts` / `extend`），
+/// 每个仓铺一条真实条目 + 一个点开头的目录 + 一个二进制附件。
+fn fixture(kind: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let (entry, primary, primary_text) = match kind {
+        "skills" => (
+            "demo",
+            "SKILL.md",
+            "---\nname: demo\ndescription: 演示\n---\n\n# demo\n",
+        ),
+        "prompts" => ("demo", "PROMPT.md", "# 演示\n\n正文\n"),
+        _ => ("123", "main.js", "// 扩展入口\n"),
+    };
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("skills");
-    std::fs::create_dir_all(root.join("demo/references")).unwrap();
-    std::fs::create_dir_all(root.join("demo/.cache")).unwrap();
+    let root = tmp.path().join(kind);
+    std::fs::create_dir_all(root.join(entry).join("references")).unwrap();
+    std::fs::create_dir_all(root.join(entry).join(".cache")).unwrap();
+    std::fs::write(root.join(entry).join(primary), primary_text).unwrap();
     std::fs::write(
-        root.join("demo/SKILL.md"),
-        "---\nname: demo\ndescription: 演示\n---\n\n# demo\n",
+        root.join(entry).join("nous.json"),
+        "{\n  \"name\": \"demo\"\n}\n",
     )
     .unwrap();
-    std::fs::write(root.join("demo/nous.json"), "{\n  \"name\": \"demo\"\n}\n").unwrap();
-    std::fs::write(root.join("demo/references/a.md"), "参考\n").unwrap();
-    std::fs::write(root.join("demo/.cache/x.md"), "缓存\n").unwrap();
-    std::fs::write(root.join("demo/logo.png"), [0u8, 1, 2, 3]).unwrap();
+    std::fs::write(root.join(entry).join("references/a.md"), "参考\n").unwrap();
+    std::fs::write(root.join(entry).join(".cache/x.md"), "缓存\n").unwrap();
+    std::fs::write(root.join(entry).join("logo.png"), [0u8, 1, 2, 3]).unwrap();
     git(&root, &["init", "-q"]);
     git(&root, &["config", "user.email", "t@e"]);
     git(&root, &["config", "user.name", "T"]);
@@ -57,9 +68,9 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     (tmp, root)
 }
 
-fn app_with(root: &Path) -> Router {
-    let state = AppState::with_source(common::FakeSource::two_sessions())
-        .with_repos_for_test("skills", root);
+fn app_with(kind: &str, root: &Path) -> Router {
+    let state =
+        AppState::with_source(common::FakeSource::two_sessions()).with_repos_for_test(kind, root);
     router(state)
 }
 
@@ -86,8 +97,8 @@ async fn call(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (St
 
 #[tokio::test]
 async fn files_lists_recursively_and_skips_hidden_and_node_modules() {
-    let (_tmp, root) = fixture();
-    let app = app_with(&root);
+    let (_tmp, root) = fixture("skills");
+    let app = app_with("skills", &root);
     let (status, body) = call(&app, "GET", "/v1/skills/files?name=demo", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["name"], json!("demo"));
@@ -121,8 +132,8 @@ async fn files_lists_recursively_and_skips_hidden_and_node_modules() {
 
 #[tokio::test]
 async fn read_returns_text_and_etag_and_refuses_binary() {
-    let (_tmp, root) = fixture();
-    let app = app_with(&root);
+    let (_tmp, root) = fixture("skills");
+    let app = app_with("skills", &root);
     let (status, body) = call(
         &app,
         "GET",
@@ -158,8 +169,8 @@ async fn read_returns_text_and_etag_and_refuses_binary() {
 
 #[tokio::test]
 async fn save_writes_with_base_and_rejects_stale_base() {
-    let (_tmp, root) = fixture();
-    let app = app_with(&root);
+    let (_tmp, root) = fixture("skills");
+    let app = app_with("skills", &root);
     let (_, before) = call(&app, "GET", "/v1/skills/file?name=demo&path=SKILL.md", None).await;
     let base = before["etag"].as_str().unwrap().to_string();
 
@@ -209,9 +220,9 @@ async fn save_writes_with_base_and_rejects_stale_base() {
 }
 
 #[tokio::test]
-async fn create_lands_skill_md_and_manifests_and_never_half_writes() {
-    let (_tmp, root) = fixture();
-    let app = app_with(&root);
+async fn create_skill_lands_skill_md_and_manifests_and_never_half_writes() {
+    let (_tmp, root) = fixture("skills");
+    let app = app_with("skills", &root);
 
     let (status, body) = call(
         &app,
@@ -266,9 +277,132 @@ async fn create_lands_skill_md_and_manifests_and_never_half_writes() {
 }
 
 #[tokio::test]
+async fn create_prompt_lands_prompt_md_and_summary() {
+    let (_tmp, root) = fixture("prompts");
+    let app = app_with("prompts", &root);
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/prompts/create",
+        Some(json!({ "name": "strict-review", "summary": "更严格", "category": ["工程"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    // 不给正文就落一个标题 —— 新建模板唯一「先有个能用的东西、但不是空壳」的落点。
+    assert_eq!(
+        std::fs::read_to_string(root.join("strict-review/PROMPT.md")).unwrap(),
+        "# strict-review\n"
+    );
+    let manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("strict-review/nous.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["name"], json!("strict-review"));
+    assert_eq!(manifest["summary"], json!("更严格"));
+    assert_eq!(manifest["category"], json!(["工程"]));
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/prompts/create",
+        Some(json!({ "name": "with-body", "summary": "s", "body": "真正文\n" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("with-body/PROMPT.md")).unwrap(),
+        "真正文\n"
+    );
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/prompts/create",
+        Some(json!({ "name": "no-summary", "summary": "" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "summary 必填：{body}");
+}
+
+#[tokio::test]
+async fn prompts_and_extensions_share_the_same_file_shape() {
+    let (_tmp, root) = fixture("prompts");
+    let app = app_with("prompts", &root);
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/v1/prompts/file?name=demo&path=PROMPT.md",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("正文")),
+        "{body}"
+    );
+    let (status, saved) = call(
+        &app,
+        "PUT",
+        "/v1/prompts/file",
+        Some(json!({ "name": "demo", "path": "PROMPT.md", "text": "# 新版\n" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+
+    let (_tmp, root) = fixture("extend");
+    let app = app_with("extend", &root);
+    let (status, body) = call(&app, "GET", "/v1/extensions/files?name=123", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let paths: Vec<&str> = body["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|file| file["path"].as_str().unwrap())
+        .collect();
+    assert!(paths.contains(&"main.js"), "扩展也列文件：{paths:?}");
+    let (status, body) = call(
+        &app,
+        "GET",
+        "/v1/extensions/file?name=123&path=main.js",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["text"], json!("// 扩展入口\n"));
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/v1/extensions/file",
+        Some(json!({ "name": "123", "path": "main.js", "text": "// 改过\n" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("123/main.js")).unwrap(),
+        "// 改过\n"
+    );
+    // 扩展的 create 仍归 ext_admin：这条路由不该被资源面接走。
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/v1/extensions/create",
+        Some(json!({ "name": "x" })),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CONFLICT,
+        "没装配 ext_admin 时诚实 409（不是 404）"
+    );
+}
+
+#[tokio::test]
 async fn publish_commits_dirty_paths_and_reports_nothing_to_do() {
-    let (_tmp, root) = fixture();
-    let app = app_with(&root);
+    let (_tmp, root) = fixture("skills");
+    let app = app_with("skills", &root);
     std::fs::write(
         root.join("demo/SKILL.md"),
         "---\nname: demo\ndescription: 已发布\n---\n",
@@ -289,4 +423,15 @@ async fn publish_commits_dirty_paths_and_reports_nothing_to_do() {
 
     let (status, body) = call(&app, "POST", "/v1/skills/publish", Some(json!({}))).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "没改动不发假成功：{body}");
+}
+
+#[tokio::test]
+async fn prompt_publish_writes_the_right_default_message() {
+    let (_tmp, root) = fixture("prompts");
+    let app = app_with("prompts", &root);
+    std::fs::write(root.join("demo/PROMPT.md"), "# 改过\n").unwrap();
+    let (status, body) = call(&app, "POST", "/v1/prompts/publish", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let message = git(&root, &["log", "-1", "--pretty=%s"]);
+    assert_eq!(message, "prompt: 更新模板仓库");
 }

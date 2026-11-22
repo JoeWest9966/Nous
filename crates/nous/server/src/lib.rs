@@ -33,7 +33,7 @@ pub mod presets;
 pub mod project;
 pub mod routes;
 pub mod repos;
-pub mod skills_admin;
+pub mod resource_admin;
 pub mod runtime;
 pub mod source;
 pub mod stats;

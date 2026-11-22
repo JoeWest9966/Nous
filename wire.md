@@ -614,24 +614,28 @@ body `{ provider, modelId }`，写回同一份编目的 `default` 字段，回 `
 - `?usage=1`（#85）：反查模式，回 `{ <技能名>: [<会话 id>, ...] }` —— 谁在用这个技能。
   没人用就回 `{}`（空映射，**不是 404**）。不带该参数仍是上面的技能目录形状。
 
-### 技能管理面：files / file / create / publish
+### 资源仓管理面：`/v1/{skills,prompts,extensions}/{files,file,create,publish}`
 
-Desk 的「技能 → 编辑」那一页按这四条接线；文件读写与 git 语义都复用 `nous_repo`
-（`/v1/repos/skills/*` 的同一套），这里只是按技能目录切片的翻译层。**所有写端点都不自动
-commit**：落盘归 PUT，提交归 publish。
+Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：列清单 → 读 → 存 → 新建 → 发布。
+文件读写与 git 语义都复用 `nous_repo`（`/v1/repos/:repo/*` 的同一套），这里只是按条目目录
+切片的翻译层。**所有写端点都不自动 commit**：落盘归 PUT，提交归 publish。
 
 | 方法 + 路径 | 语义 |
 |---|---|
-| `GET /v1/skills/files?name=` | 回 `{name, files:[{path, size}]}`。`path` 是**技能目录内**的相对路径，递归到底（不截层数），跳过点开头与 `node_modules`，单次最多 200 个、单文件 >512KB 的不列。技能不存在 404。 |
-| `GET /v1/skills/file?name=&path=` | 回 `{name, path, text, etag}`。`etag` 是内容 sha256（写回时当 `base`）。二进制（含 NUL）/ 非 UTF-8 → 400，路径含 `..` / 绝对路径 → 400。 |
-| `PUT /v1/skills/file` | body `{name, path, text, base?}`。`base` 给上就是 If-Match：与磁盘现状不符回 409（不静默覆盖）；省掉 = 新建/硬写。回 `{name, path, etag, created}`。 |
-| `POST /v1/skills/create` | body `{name, description, category?}`。落 `<name>/SKILL.md`（frontmatter 带 `name`/`description`）+ `<name>/nous.json`（`summary` 是空串）。201 回 `{name, path, files}`；重名 409，`description` 空 400。先写点开头的暂存目录再 rename，失败不留半截技能。 |
-| `POST /v1/skills/publish` | body `{message?}`（可省）。把私库里 dirty 的路径交给 `nous_repo::commit`（内容闸 + pathspec 防搭车 + push 都在那层）。回 `{commit, pushed, refs}`；只有「已提交没推」时只 push（`commit:null`）；没有改动回 400。 |
+| `GET /v1/{kind}/files?name=` | 回 `{name, files:[{path, size}]}`。`path` 是**条目目录内**的相对路径，递归到底（不截层数），跳过点开头与 `node_modules`，单次最多 200 个、单文件 >512KB 的不列。条目不存在 404。 |
+| `GET /v1/{kind}/file?name=&path=` | 回 `{name, path, text, etag}`。`etag` 是内容 sha256（写回时当 `base`）。二进制（含 NUL）/ 非 UTF-8 → 400，路径含 `..` / 绝对路径 → 400。 |
+| `PUT /v1/{kind}/file` | body `{name, path, text, base?}`。`base` 给上就是 If-Match：与磁盘现状不符回 409（不静默覆盖）；省掉 = 新建/硬写。回 `{name, path, etag, created}`。 |
+| `POST /v1/prompts/create` | body `{name, summary, category?, body?}`。落 `<name>/PROMPT.md`（不给正文就写 `# <name>`）+ `<name>/nous.json`（`summary` 在这里）。201 回 `{name, path, files}`；重名 409，`summary` 空 400。 |
+| `POST /v1/skills/create` | body `{name, description, category?}`。落 `<name>/SKILL.md`（frontmatter 带 `name`/`description`）+ `<name>/nous.json`（`summary` 是空串）。201 回 `{name, path, files}`；重名 409，`description` 空 400。 |
+| `POST /v1/{kind}/publish` | body `{message?}`（可省）。把私库里 dirty 的路径交给 `nous_repo::commit`（内容闸 + pathspec 防搭车 + push 都在那层）。回 `{commit, pushed, refs}`；只有「已提交没推」时只 push（`commit:null`）；没有改动回 400。默认文案随仓：`skill: 更新技能仓库` / `prompt: 更新模板仓库` / `extend: 更新扩展仓库`。 |
 
+- `{kind}` 三值：`skills`（私库 `NOUS_SKILLS`）/ `prompts`（`NOUS_PROMPTS`）/
+  `extensions`（私库键是 `extend`，根 `NOUS_EXTEND`）。扩展的 `create` 不在这里 ——
+  它在 `/v1/extensions/create`（#84，带骨架与运行时），`files` / `file` / `publish` 共用本表。
 - 名字规矩沿用旧面板 `checkName`：`^[a-z0-9][a-z0-9._-]*$`、≤64 字，且不许撞仓库根
-  的保留名（`index.json` / `nous.json` / `SKILL.md` / `sources.json` / `node_modules` …）。
-- 私库没装配（`NOUS_SKILLS` 指向的目录不存在）→ 409，不退回空 200。
-- 判据见 `crates/nous/server/tests/skills_admin_endpoints.rs`。
+  的保留名（`index.json` / `nous.json` / `SKILL.md` / `PROMPT.md` / `sources.json` / `node_modules` …）。
+- 私库没装配（对应的 `NOUS_*` 目录不存在）→ 409，不退回空 200。
+- 判据见 `crates/nous/server/tests/resource_admin_endpoints.rs`。
 
 ### GET /v1/extensions
 

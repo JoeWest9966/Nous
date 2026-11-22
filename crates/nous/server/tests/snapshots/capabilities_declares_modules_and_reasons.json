@@ -230,6 +230,11 @@
       "description": "今天 `prompts/index.js`",
       "enabled": true,
       "endpoints": [
+        "GET /v1/prompts/files",
+        "GET /v1/prompts/file",
+        "PUT /v1/prompts/file",
+        "POST /v1/prompts/create",
+        "POST /v1/prompts/publish",
         "GET /v1/prompts"
       ]
     },
@@ -243,6 +248,10 @@
       "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划",
       "enabled": true,
       "endpoints": [
+        "GET /v1/extensions/files",
+        "GET /v1/extensions/file",
+        "PUT /v1/extensions/file",
+        "POST /v1/extensions/publish",
         "GET /v1/extensions",
         "POST /v1/extensions/reload",
         "POST /v1/extensions/create",

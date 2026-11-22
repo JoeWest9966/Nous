@@ -1,6 +1,6 @@
 name = "repo"
 vendor = "nous"
-version = "0.1.7"
+version = "0.1.8"
 layer = "platform"
 crate = "nous-repo"
 

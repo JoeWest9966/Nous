@@ -212,12 +212,21 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
-    // 技能管理面：编辑页要的文件清单 / 单文件读写 / 新建 / 发布。
+    // 资源仓管理面：编辑页要的文件清单 / 单文件读写 / 新建 / 发布（三仓共用一副骨架）。
     RegisteredRoute { method: "GET", path: "/v1/skills/files", module: "skills" },
     RegisteredRoute { method: "GET", path: "/v1/skills/file", module: "skills" },
     RegisteredRoute { method: "PUT", path: "/v1/skills/file", module: "skills" },
     RegisteredRoute { method: "POST", path: "/v1/skills/create", module: "skills" },
     RegisteredRoute { method: "POST", path: "/v1/skills/publish", module: "skills" },
+    RegisteredRoute { method: "GET", path: "/v1/prompts/files", module: "prompts" },
+    RegisteredRoute { method: "GET", path: "/v1/prompts/file", module: "prompts" },
+    RegisteredRoute { method: "PUT", path: "/v1/prompts/file", module: "prompts" },
+    RegisteredRoute { method: "POST", path: "/v1/prompts/create", module: "prompts" },
+    RegisteredRoute { method: "POST", path: "/v1/prompts/publish", module: "prompts" },
+    RegisteredRoute { method: "GET", path: "/v1/extensions/files", module: "ext" },
+    RegisteredRoute { method: "GET", path: "/v1/extensions/file", module: "ext" },
+    RegisteredRoute { method: "PUT", path: "/v1/extensions/file", module: "ext" },
+    RegisteredRoute { method: "POST", path: "/v1/extensions/publish", module: "ext" },
     RegisteredRoute { method: "GET", path: "/v1/prompts", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
     // #81：热重载按盘上现状重装（不是原地假装修）。
