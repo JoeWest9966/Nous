@@ -346,3 +346,29 @@ async fn a_failed_preset_write_does_not_leave_an_orphan_receipt() {
     assert_eq!(status, StatusCode::OK, "重放应该重新执行一次：{replay}");
     assert_eq!(read_preset(root, "Ultimate-Template", "nightly")["spec"]["enabled"], json!(false));
 }
+
+/// 旧条目（0.1.7 之前写下的）没有 `spec` 键：PATCH 不许 400，
+/// 补 `spec: {}` 再写 `spec.enabled` —— 人只是想翻个开关，不该被形状挡在门外。
+#[tokio::test]
+async fn patch_on_a_legacy_file_without_spec_fills_it() {
+    let _env_guard = PATCH_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let dir = temp_dir("legacy-no-spec");
+    let root = dir.path();
+    write_preset(root, "Session-Template", "legacy", &json!({
+        "v": 1, "name": "legacy", "summary": "老条目", "category": ["工程"],
+    }));
+    let app = app_with(root);
+
+    let (_, before) = get(&app, "Session-Template").await;
+    let etag = find(&before, "legacy")["version"].as_str().unwrap().to_string();
+    let (status, receipt) = call(
+        &app, "PATCH", "/v1/combos/Session-Template/legacy",
+        Some(json!({ "enabled": false, "requestId": "legacy-1" })), Some(&etag),
+    ).await;
+    assert_eq!(status, StatusCode::OK, "缺 spec 不该 400：{receipt}");
+
+    let after = read_preset(root, "Session-Template", "legacy");
+    assert_eq!(after["spec"]["enabled"], json!(false), "补出来的 spec 里写 enabled");
+    assert_eq!(after["name"], json!("legacy"), "别的字段一个不动");
+    assert_eq!(after["category"], json!(["工程"]));
+}
