@@ -41,6 +41,7 @@ env -u CARGO_TARGET_DIR ./scripts/verify.sh     # 唯一的"做完了"定义（�
 ./scripts/judge.sh                              # 附录 A 的 case 执行器（SKIP 不是绿）
 ./scripts/layer-paths.sh kernel                 # 取某一层的模块路径
 env -u CARGO_TARGET_DIR ./scripts/deploy.sh     # 编 musl → 送 j1900 → 装 unit → 重启
+NOUS_APP_BIN=/path/nous-app ./scripts/deploy.sh # 用现成静态产物（编译在别处做），跳过编译
 ssh j1900 '…' scripts/deploy-check.sh --wait=20 # 部署后的真行为判据（在 j1900 上跑）
 ```
 
@@ -111,6 +112,8 @@ Environment=NOUS_DB=/var/lib/nous/nous.db
 - **密钥只在内存**：不落盘、不进日志、不进会话记录、不进库。
 - `fixtures/agent.sqlite` 只读；`/var/lib/nous/` 只经 CLI 动。
 - 不为过判据开第二条写通道；协议加字段先改 `wire.md` 与类型，再让客户端跟。
+- **编译丢给专用开发机，本机只跑产物**：`ssh <开发机>` 上 `CARGO_TARGET_DIR` 指到工作区盘
+  （512G），别让它落根分区（256G，容易满）；产物拿回来用 `NOUS_APP_BIN=… scripts/deploy.sh` 部署。
 - 只做 Linux（开发机是 Debian 13 + Wayland）。Windows 的源码与打包配置原地冻结：不改、不删、不出包。
 - 踩一个坑就往 `docs/pitfalls.md` 追加一条（症状 / 根因 / 解，三行以内）；选了什么、为什么、
   什么时候该反悔，写进 `docs/decisions.md`。两份都是追加式：冲突时**两边都留**，不许整份取一边。

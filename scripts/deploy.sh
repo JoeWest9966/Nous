@@ -25,7 +25,10 @@ OLD_COUNT=2
 HEALTH_TRIES=6
 HEALTH_WAIT=5
 BUILD_DIR=target/x86_64-unknown-linux-musl/release
-BIN_LOCAL=$BUILD_DIR/nous-app
+# `NOUS_APP_BIN`：用现成产物，跳过编译。给「编译在开发机、部署在这台」的用法 ——
+# 这台可能没有 musl-gcc，或者干脆不想为了一个静态二进制把整仓编一遍。
+# 与 `check-desk.sh` 同名同义，别再发明第二个名字。
+BIN_LOCAL=${NOUS_APP_BIN:-$BUILD_DIR/nous-app}
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 MODE=deploy
 PURGE_CONFIRM=0
@@ -70,6 +73,14 @@ rs_out() { remote "$@"; }
 
 require_local() {
 	local c
+	# 用现成产物时不需要本机有 cargo/musl-gcc，只留「搬过去 + 记账」要用的。
+	if [ -n "${NOUS_APP_BIN:-}" ]; then
+		for c in ssh sha256sum cut date mktemp jq python3 file; do
+			command -v "$c" >/dev/null 2>&1 || die "本机缺 $c"
+		done
+		[ -f "$UNIT_SRC" ] || die "缺 $UNIT_SRC"
+		return 0
+	fi
 	for c in ssh cargo sha256sum cut date mktemp jq python3; do
 		command -v "$c" >/dev/null 2>&1 || die "本机缺 $c"
 	done
@@ -92,6 +103,25 @@ preflight_remote() {
 unit_sha() { sha256sum "$UNIT_SRC" | awk '{print $1}'; }
 
 build_binary() {
+	if [ -n "${NOUS_APP_BIN:-}" ]; then
+		# 现成产物也要过同一道闸：静态链接、ELF、能跑。不然「部署成功」其实是
+		# 把一个要 .so 的二进制塞进了没有那个 .so 的机器。
+		local info_out
+		[ -x "$BIN_LOCAL" ] || die "NOUS_APP_BIN 不可执行：$BIN_LOCAL"
+		info_out=$(file -b "$BIN_LOCAL" 2>/dev/null || true)
+		case "$info_out" in
+		*ELF*) : ;;
+		*) die "NOUS_APP_BIN 不是 ELF：$BIN_LOCAL（$info_out）" ;;
+		esac
+		case "$info_out" in
+		*statically\ linked*|*static-pie*) : ;;
+		*) die "NOUS_APP_BIN 不是静态链接：$info_out（j1900 上没有 glibc 运行时）" ;;
+		esac
+		BIN_SHA=$(sha256sum "$BIN_LOCAL" | cut -c1-8)
+		BIN_NAME="nous-app-$BIN_SHA-$TARGET"
+		info "用现成产物 $BIN_LOCAL（跳过编译）→ $BIN_NAME"
+		return 0
+	fi
 	info "编译 musl 静态产物（$TARGET）"
 	# 要装的是 $TARGET 的 std，不是 `rustc -vV` 里那串 commit 哈希
 	# （原来从 `rustc -vV` split 出 `want`，拿到的是 "58cf8f9c3 2026-10-13)\nbinary: rustc…"，

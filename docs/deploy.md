@@ -1,6 +1,14 @@
 # 部署 nous-app（issue #52）
 
 一句版：在 asus 上 `scripts/deploy.sh`，一条命令装好；j1900 上 `scripts/deploy-check.sh --wait=300` 验收。
+
+**编译可以不在 asus 做**：静态产物在别的机器上编好后，`NOUS_APP_BIN=/path/to/nous-app scripts/deploy.sh`
+直接部署（跳过 `cargo build`，仍会校验「ELF + 静态链接」再搬）。这条给两种场合用：asus 上没装
+`musl-tools`，或者为了一个静态二进制不想把整仓编一遍。产物 sha 与 `--version` 仍写进 manifest，
+所以「部署的是什么」照样能对账。
+
+开发机磁盘分根分区（256G）与工作区盘（512G）：`CARGO_TARGET_DIR` 一律指到工作区，
+否则一个 release 构建就能把根分区吃掉一大半。
 绑 `0.0.0.0:4789` + `NOUS_TOKEN_FILE`（成对；缺 token 进程拒绝启动、退出 78）。
 旧面板 `nous-panel`（4790）已于 2026-11-18 停用并 disable，`content/` 已归档到 j1900 的
 `/var/backups/nous-panel/` 并从仓里移除。
