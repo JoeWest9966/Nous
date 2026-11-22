@@ -19,6 +19,9 @@ pub const PRESETS_DEFAULT: &str = "/opt/Nous-Template";
 /// 自研扩展源码（只登记路径；`ext` 仍 frozen）。
 pub const EXTEND_VAR: &str = "NOUS_EXTEND";
 pub const EXTEND_DEFAULT: &str = "/opt/Nous-extend";
+/// 触发器工程仓（n8qkkj 时代的 `/opt/Nous-Trigger`：一个触发器一个 cargo 项目）。
+pub const TRIGGERS_VAR: &str = "NOUS_TRIGGERS";
+pub const TRIGGERS_DEFAULT: &str = "/opt/Nous-Trigger";
 
 /// 一条私库路径的配置：环境变量名 + 默认值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +35,7 @@ pub const SKILLS: ContentPath = ContentPath { var: SKILLS_VAR, default: SKILLS_D
 pub const PROMPTS: ContentPath = ContentPath { var: PROMPTS_VAR, default: PROMPTS_DEFAULT };
 pub const PRESETS: ContentPath = ContentPath { var: PRESETS_VAR, default: PRESETS_DEFAULT };
 pub const EXTEND: ContentPath = ContentPath { var: EXTEND_VAR, default: EXTEND_DEFAULT };
+pub const TRIGGERS: ContentPath = ContentPath { var: TRIGGERS_VAR, default: TRIGGERS_DEFAULT };
 
 impl ContentPath {
     /// 环境变量给了就用它（包括空串 —— 那是调用方显式说"根就是这里"），没给就用默认值。
@@ -42,8 +46,8 @@ impl ContentPath {
     }
 }
 
-/// 四条路径的清单（给文档/测试枚举用；顺序与 TS 版一致）。
-pub const ALL: &[ContentPath] = &[SKILLS, PROMPTS, PRESETS, EXTEND];
+/// 五条路径的清单（给文档/测试枚举用；前四条顺序与 TS 版一致，triggers 是 #95 加的第五条）。
+pub const ALL: &[ContentPath] = &[SKILLS, PROMPTS, PRESETS, EXTEND, TRIGGERS];
 
 #[cfg(test)]
 mod tests {
@@ -56,6 +60,7 @@ mod tests {
             (PROMPTS_VAR, "/opt/Nous-prompts"),
             (PRESETS_VAR, "/opt/Nous-Template"),
             (EXTEND_VAR, "/opt/Nous-extend"),
+            (TRIGGERS_VAR, "/opt/Nous-Trigger"),
         ];
         for (path, (var, default)) in ALL.iter().zip(expected) {
             assert_eq!(path.var, var);

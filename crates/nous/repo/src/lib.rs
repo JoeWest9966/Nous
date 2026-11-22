@@ -16,7 +16,7 @@ mod views;
 pub use error::{RepoError, Result};
 pub use git::materialize_head_dir;
 pub use files::{WriteFile, WrittenFile, MAX_FILE_BYTES};
-pub use publish::{CommitDetail, CommitResult, CommitFile, LifecycleResult, Pushed};
+pub use publish::{validate_manifest, CommitDetail, CommitResult, CommitFile, LifecycleResult, Pushed};
 pub use upstream::{AdoptResult, CheckCache, ComparedFile, Source, SourceVersion, TreeItem, Upstream, UpstreamFile, UpstreamStatus};
 pub use variants::{
     variants, BindVariant, BoundVariant, PruneVariant, PrunedVariant, PublishedVariant, VariantFamily,

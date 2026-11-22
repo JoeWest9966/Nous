@@ -138,6 +138,9 @@ fn validate(root: &Path, paths: &[String]) -> Result<()> {
                     }
                 }
             }
+            "triggers" if path.ends_with("nous.json") => trigger_manifest_issue(&full),
+            "triggers" if path.ends_with("Cargo.toml") => None,
+            "triggers" if path.ends_with("src/main.rs") => None,
             "extend" if path.ends_with("nous.json") => {
                 match serde_json::from_str::<serde_json::Value>(&content) {
                     Err(_) => Some(("nous.json".into(), "不是合法 JSON".into())),
@@ -164,9 +167,70 @@ fn validate(root: &Path, paths: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// 触发器清单的内容闸：字段齐全、类型合法、目录名对上、骨架三件在。
+///
+/// 只校验 `nous.json` 这一份声明；`Cargo.toml` / `src/main.rs` 的存在性一并查，
+/// 因为「清单写好了但项目编不了」在触发器页上就是一条坏卡。
+pub fn validate_manifest(dir: &Path) -> Option<String> {
+    trigger_manifest_issue(&dir.join("nous.json"))
+        .map(|(field, problem)| format!("{field}：{problem}"))
+}
+
+fn trigger_manifest_issue(full: &Path) -> Option<(String, String)> {
+    const TYPES: [&str; 6] = ["epoch", "number", "string", "text", "boolean", "select"];
+    let text = std::fs::read_to_string(full).ok()?;
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(value) => value,
+        Err(error) => return Some(("nous.json".into(), format!("不是合法 JSON：{error}"))),
+    };
+    let object = match value.as_object() {
+        Some(object) => object,
+        None => return Some(("nous.json".into(), "顶层必须是对象".into())),
+    };
+    let dir = full.parent()?.file_name()?.to_string_lossy().into_owned();
+    for field in ["name", "version", "summary"] {
+        if object.get(field).and_then(|v| v.as_str()).is_none_or(str::is_empty) {
+            return Some((field.into(), format!("缺字段或为空：{field}")));
+        }
+    }
+    if object.get("name").and_then(|v| v.as_str()) != Some(dir.as_str()) {
+        return Some(("name".into(), format!("name 必须等于目录名 {dir}")));
+    }
+    if !object.get("category").is_none_or(|v| v.as_array().is_some()) {
+        return Some(("category".into(), "必须是字符串数组".into()));
+    }
+    let params = match object.get("params") {
+        None => &Vec::new(),
+        Some(serde_json::Value::Array(params)) => params,
+        Some(_) => return Some(("params".into(), "必须是数组".into())),
+    };
+    for (i, param) in params.iter().enumerate() {
+        let kind = param.get("type").and_then(|v| v.as_str()).unwrap_or_default();
+        if param.get("name").and_then(|v| v.as_str()).is_none_or(str::is_empty) {
+            return Some((format!("params[{i}].name"), "缺字段".into()));
+        }
+        if !TYPES.contains(&kind) {
+            return Some((format!("params[{i}].type"), format!("不认识：{kind}")));
+        }
+        if kind == "select"
+            && !param.get("options").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty())
+        {
+            return Some((format!("params[{i}].options"), "select 必须给非空 options".into()));
+        }
+    }
+    let project = full.parent()?;
+    if !project.join("Cargo.toml").is_file() {
+        return Some(("Cargo.toml".into(), "缺 Cargo.toml".into()));
+    }
+    if !project.join("src/main.rs").is_file() {
+        return Some(("src/main.rs".into(), "缺 src/main.rs".into()));
+    }
+    None
+}
+
 fn detect_kind(root: &Path) -> String {
     let name = root.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
-    for kind in ["presets", "skills", "prompts", "extend"] {
+    for kind in ["presets", "skills", "prompts", "extend", "trigger"] {
         if name.contains(kind) { return kind.to_string(); }
     }
     String::new()

@@ -110,6 +110,45 @@
 - 类别词表是字符串数组，**没有 id**。`POST category` 给一个触发器挂单值类别；类别不在词表里
   时自动登记（与 skills 的「词表 ∪ 在用」同规矩），`null` 只清该行的挂值、不删词表条目。
 
+### 触发器工程面（#95：trigger-projects）
+
+**和上面那层不是一回事。** `/v1/triggers` 是「库里一行定义 + 调度 + 点火账」；
+`/v1/trigger-projects` 是 **n8qkkj 的宿主**：盘上一个触发器 = 一个独立 cargo 项目，
+有 `nous.json` / `Cargo.toml` / `src/main.rs`，能编译、能发布、能归档。两层共用同一个
+地址和 token，路径分开，互不改写对方的数据。
+
+- 数据根：`NOUS_TRIGGERS`，默认 `/opt/Nous-Trigger`（必须是 git 工作树）。目录形状：
+  `<root>/<name>/…`、`<root>/categories.json`、`<root>/index.json`、`<root>/.archive/<name>/`。
+- 文件读写 / etag / git / 归档三代全部走 `nous-repo`（唯一 git 进程面），这一层只做翻译。
+
+| 方法 + 路径 | 语义 |
+|---|---|
+| `GET /v1/trigger-projects` | 清单：`{triggers, repo, categories, archived}`。坏清单不 500，进 `error` 字段。 |
+| `GET /v1/trigger-projects/files?name=` | 项目文件清单（路径相对项目目录），带 size / changed / added / removed。 |
+| `GET /v1/trigger-projects/file?name=&path=` | 正文 + `etag` + `base`（HEAD 版本，未跟踪为 null）。 |
+| `PUT /v1/trigger-projects/file` | 保存：body `{name, path, text, base}`；`base` 是上次的 etag，不符 → **409**，不落盘。 |
+| `POST /v1/trigger-projects/create` | body `{name, summary, category[]}`；生成骨架，**不提交**（建完是「未发布」）。 |
+| `POST /v1/trigger-projects/publish` | 五步同步长请求；成功 200，失败 **422 + `stage`**（`check`/`build`/`index`/`commit`）。 |
+| `POST /v1/trigger-projects/archive` | `git mv` 进 `.archive/`，提交 + 推送。 |
+| `POST /v1/trigger-projects/restore` | 从 `.archive/` 搬回，提交 + 推送。 |
+| `POST /v1/trigger-projects/purge` | 真删备份；**先归档才能 purge**，否则 404。 |
+| `GET /v1/trigger-projects/categories` | 词表：`{categories: [...]}`（`categories.json`，两种历史写法都认）。 |
+| `POST /v1/trigger-projects/categories` | body `{op: add|rename|remove, name, to?}`；改词表并重写各 `nous.json`，**不提交**。 |
+| `POST /v1/trigger-projects/category` | body `{name, category[]}`；给一条挂类别，回 `{catalog, categories}`。 |
+| `POST /v1/trigger-projects/sync` | 只提交词表 / 清单（`categories.json`、`index.json`、各 `nous.json`），不碰 `.rs`。 |
+
+- **保存 ≠ 发布**：`PUT file` 只落盘；`POST publish` 才
+  `cargo check → cargo build → index.json → commit（只 add 这一个项目 + index.json）→ push`。
+  构建在系统临时目录（`${TMPDIR}/nous-trigger-build/<name>`），`target/` 永不进提交。
+- 发布失败停在出错那一步：422 `{error, stage}`，后面的步骤不跑、不提交。push 被拒时提交已在本地，
+  回包 `pushed:false` + `pushError`，客户端提示「拉一下再点一次」。
+- 名字 `^[a-z][a-z0-9._-]{2,63}$`，目录名 = `nous.json.name` = 二进制名，**建完不可变**；
+  目录 / 归档里已有同名 → 409，`code` 永不复用。
+- 发布闸（`nous-repo` 的 `validate_manifest`）：`name/version/summary` 非空、`name` 等于目录名、
+  `category` 是字符串数组、`params[].type ∈ epoch|number|string|text|boolean|select`、
+  `select` 必须有非空 `options`、`Cargo.toml` 与 `src/main.rs` 存在。坏清单在清单里标 `error`，
+  不挡列表。
+
 ### GET /v1/sessions
 
 会话**树**（不是列表）。返回 `{ items: [...] }`，**新的在前**。

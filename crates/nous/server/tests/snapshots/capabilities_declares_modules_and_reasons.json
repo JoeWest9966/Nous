@@ -183,7 +183,20 @@
         "POST /v1/triggers/{code}/fire",
         "GET /v1/triggers/{code}/fires",
         "PATCH /v1/triggers/{code}",
-        "PUT /v1/triggers/{code}"
+        "PUT /v1/triggers/{code}",
+        "GET /v1/trigger-projects",
+        "GET /v1/trigger-projects/files",
+        "GET /v1/trigger-projects/file",
+        "PUT /v1/trigger-projects/file",
+        "POST /v1/trigger-projects/create",
+        "POST /v1/trigger-projects/publish",
+        "POST /v1/trigger-projects/archive",
+        "POST /v1/trigger-projects/restore",
+        "POST /v1/trigger-projects/purge",
+        "GET /v1/trigger-projects/categories",
+        "POST /v1/trigger-projects/categories",
+        "POST /v1/trigger-projects/category",
+        "POST /v1/trigger-projects/sync"
       ]
     },
     {

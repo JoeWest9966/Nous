@@ -16,7 +16,7 @@ use crate::app::AppState;
 use crate::error::ServerError;
 
 /// 四套私库的名字。`:repo` 不是任意字符串，未知值必须 400。
-pub const REPO_KINDS: &[&str] = &["presets", "skills", "prompts", "extend"];
+pub const REPO_KINDS: &[&str] = &["presets", "skills", "prompts", "extend", "triggers"];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitBody {
@@ -324,6 +324,7 @@ pub fn from_env() -> std::collections::BTreeMap<String, Arc<Repo>> {
         ("skills", nous_env::SKILLS.resolve()),
         ("prompts", nous_env::PROMPTS.resolve()),
         ("extend", nous_env::EXTEND.resolve()),
+        ("triggers", nous_env::TRIGGERS.resolve()),
     ] {
         if let Ok(repo) = Repo::open(&path) {
             map.insert(name.to_string(), Arc::new(repo));

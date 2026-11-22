@@ -116,6 +116,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     let router = router.merge(crate::resource_admin::attach(Router::new()));
     // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);
+    // #95：触发器工程面（n8qkkj 的宿主，路径与 `/v1/triggers` 定义面分开）。
+    let router = router.merge(crate::trigger_projects::attach(Router::new()));
     // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。
     let router = crate::upstream::attach(router);
     // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
