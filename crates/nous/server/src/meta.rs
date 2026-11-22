@@ -258,6 +258,21 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "PATCH", path: "/v1/triggers/{code}", module: "triggers" },
     // #80：PUT /v1/triggers/{code} —— 整份改定义（schedule/on/params/session/enabled）。
     RegisteredRoute { method: "PUT", path: "/v1/triggers/{code}", module: "triggers" },
+    // #95：触发器工程面（n8qkkj 的宿主）—— 盘上一个触发器一个 cargo 项目，
+    // 与上面「定义 + 调度 + 点火账」不是同一层。文件读写 / git / 归档在 nous_repo。
+    RegisteredRoute { method: "GET", path: "/v1/trigger-projects", module: "triggers" },
+    RegisteredRoute { method: "GET", path: "/v1/trigger-projects/files", module: "triggers" },
+    RegisteredRoute { method: "GET", path: "/v1/trigger-projects/file", module: "triggers" },
+    RegisteredRoute { method: "PUT", path: "/v1/trigger-projects/file", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/create", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/publish", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/archive", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/restore", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/purge", module: "triggers" },
+    RegisteredRoute { method: "GET", path: "/v1/trigger-projects/categories", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/categories", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/category", module: "triggers" },
+    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/sync", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
     // #62：stats 三条只读观测端点。
     RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
