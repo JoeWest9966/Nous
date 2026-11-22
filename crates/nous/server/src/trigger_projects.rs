@@ -167,6 +167,9 @@ fn list_value(repo: &Repo) -> Result<Value> {
             .cmp(&b.get("name").and_then(Value::as_str))
     });
     let categories = vocab_with_usage(repo.root());
+    // `nous_repo::status().dirty` 只看已跟踪文件的改动；未跟踪的新项目（旧仓里
+    // single-shot 就没提交过）也得算脏，否则顶栏说「干净」、卡片却说「有改动」。
+    let dirty_count = pending.iter().map(|unit| unit.paths.len()).sum::<usize>();
     Ok(json!({
         "triggers": triggers,
         "repo": {
@@ -175,8 +178,8 @@ fn list_value(repo: &Repo) -> Result<Value> {
             "branch": status.branch,
             "ahead": status.ahead,
             "behind": status.behind,
-            "dirty": status.dirty,
-            "dirtyCount": pending.iter().map(|unit| unit.paths.len()).sum::<usize>(),
+            "dirty": status.dirty || dirty_count > 0,
+            "dirtyCount": dirty_count,
         },
         "categories": categories,
         "archived": archived,

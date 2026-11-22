@@ -286,6 +286,21 @@ async fn categories_add_rename_remove_rewrite_manifests() {
 }
 
 #[tokio::test]
+async fn untracked_project_makes_the_repo_dirty() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+    let (_, clean) = call(&app, "GET", "/v1/trigger-projects", None).await;
+    assert_eq!(clean["repo"]["dirty"], false);
+    project(&root, "fresh-one");
+    let (_, dirty) = call(&app, "GET", "/v1/trigger-projects", None).await;
+    assert_eq!(dirty["repo"]["dirty"], true, "未跟踪的新项目也要算脏：{dirty}");
+    assert!(
+        dirty["repo"]["dirtyCount"].as_u64().unwrap_or(0) >= 1,
+        "脏路径数要跟着算：{dirty}"
+    );
+}
+
+#[tokio::test]
 async fn categories_come_from_manifests_when_file_is_missing() {
     let (_tmp, root) = fixture();
     project(&root, "daily-digest");
