@@ -345,8 +345,12 @@ async fn uninstall_trashes_source_and_install_restores_a_running_extension() {
     assert!(!root.join("alpha").exists(), "源码目录消失");
     let trashed = PathBuf::from(body["trashed"].as_str().unwrap());
     assert!(trashed.is_dir() && trashed.join("nous.json").is_file(), "垃圾站里有它：{body}");
+    // 卸载过的**仍在清单里**，只是变成了 `absent`：界面上「安装」这个入口就靠它
+    // （目录搬进垃圾站、源码根里没有，扫不出来就等于这条扩展消失了）。
     let (_, list) = call(&app, Method::GET, "/v1/extensions", None).await;
-    assert!(!list["items"].as_array().unwrap().iter().any(|i| i["name"] == json!("alpha")), "卸载后清单没有 alpha：{list}");
+    let alpha = list["items"].as_array().unwrap().iter().find(|i| i["name"] == json!("alpha")).cloned();
+    assert_eq!(alpha.as_ref().map(|i| i["kind"].clone()), Some(json!("absent")), "卸载后清单里是 absent：{list}");
+    assert_eq!(alpha.as_ref().map(|i| i["state"].clone()), Some(json!("absent")), "{list}");
     let deleted: Value = serde_json::from_str(&std::fs::read_to_string(root.join("deleted-extensions.json")).unwrap()).unwrap();
     assert_eq!(deleted, json!(["alpha"]), "删除名单记下来，防 git pull 复活：{deleted}");
 
@@ -354,7 +358,8 @@ async fn uninstall_trashes_source_and_install_restores_a_running_extension() {
     std::fs::create_dir_all(root.join("alpha")).unwrap();
     std::fs::copy(&trashed.join("nous.json"), root.join("alpha/nous.json")).unwrap();
     let (_, list) = call(&app, Method::GET, "/v1/extensions", None).await;
-    assert!(!list["items"].as_array().unwrap().iter().any(|i| i["name"] == json!("alpha")), "git pull 不能让删除名单里的扩展复活：{list}");
+    let alpha = list["items"].as_array().unwrap().iter().find(|i| i["name"] == json!("alpha")).cloned();
+    assert_eq!(alpha.as_ref().map(|i| i["kind"].clone()), Some(json!("absent")), "git pull 不能让删除名单里的扩展复活成 native：{list}");
 
     // 装回时清掉名单，目录才真的重新可见。
     let (status, body) = call(&app, Method::POST, "/v1/extensions/install", Some(json!({"name":"alpha"}))).await;
@@ -365,6 +370,7 @@ async fn uninstall_trashes_source_and_install_restores_a_running_extension() {
     let (_, list) = call(&app, Method::GET, "/v1/extensions", None).await;
     let item = list["items"].as_array().unwrap().iter().find(|i| i["name"] == json!("alpha")).unwrap();
     assert_eq!(item["state"], json!("running"), "清单投影也是 running：{item}");
+    assert_eq!(item["kind"], json!("native"), "装回来了就不是 absent 了：{item}");
 }
 
 /// review 8：垃圾站清空、但私库 HEAD 里还有 → install 从 HEAD 装回，state=running。
