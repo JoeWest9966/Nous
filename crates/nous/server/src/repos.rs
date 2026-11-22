@@ -15,8 +15,8 @@ use serde_json::{json, Value};
 use crate::app::AppState;
 use crate::error::ServerError;
 
-/// 四套私库的名字。`:repo` 不是任意字符串，未知值必须 400。
-pub const REPO_KINDS: &[&str] = &["presets", "skills", "prompts", "extend", "triggers"];
+/// 六套私库的名字。`:repo` 不是任意字符串，未知值必须 400。
+pub const REPO_KINDS: &[&str] = &["presets", "skills", "prompts", "extend", "triggers", "elements"];
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitBody {
@@ -326,6 +326,8 @@ pub fn from_env() -> std::collections::BTreeMap<String, Arc<Repo>> {
         ("prompts", nous_env::PROMPTS.resolve()),
         ("extend", nous_env::EXTEND.resolve()),
         ("triggers", nous_env::TRIGGERS.resolve()),
+
+        ("elements", nous_env::ELEMENTS.resolve()),
     ] {
         if let Ok(repo) = Repo::open(&path) {
             map.insert(name.to_string(), Arc::new(repo));

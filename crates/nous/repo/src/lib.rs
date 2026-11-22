@@ -17,6 +17,10 @@ pub use error::{RepoError, Result};
 pub use git::materialize_head_dir;
 pub use files::{WriteFile, WrittenFile, MAX_FILE_BYTES};
 pub use publish::{validate_manifest, CommitDetail, CommitResult, CommitFile, LifecycleResult, Pushed};
+
+pub use publish::{
+    CommitDetail, CommitFile, CommitResult, LifecycleResult, Pushed, WriteCommit, WriteCommitResult,
+};
 pub use upstream::{AdoptResult, CheckCache, ComparedFile, Source, SourceVersion, TreeItem, Upstream, UpstreamFile, UpstreamStatus};
 pub use variants::{
     variants, BindVariant, BoundVariant, PruneVariant, PrunedVariant, PublishedVariant, VariantFamily,
@@ -84,6 +88,23 @@ impl Repo {
     pub fn commit(&self, paths: &[String], message: &str, request_id: Option<&str>) -> Result<CommitResult> {
         let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
         publish::commit(&self.root, paths, message, request_id)
+    }
+
+    /// 同一个 `requestId` 提交过没有？有就给那条提交的 hash（幂等回执的判据）。
+    ///
+    /// 只看最近 [`publish::REQUEST_ID_WINDOW`] 条提交 —— 私库是内容仓，不是审计库；
+    /// 一个重试进来的 `requestId` 不会比这更旧。
+    pub fn find_request_id(&self, request_id: &str) -> Result<Option<String>> {
+        publish::find_request_id(&self.root, request_id)
+    }
+
+    /// 「写/删 + 提交 + 尽力推」一次做完：一个 `requestId` 一个事务。
+    ///
+    /// 这是「写一次提交一次」的原子形态：同一个 `requestId` 重放不会二次提交；
+    /// 内容与盘上一致时不制造空提交（回 `commit: None`），也不假装写了什么。
+    pub fn write_and_commit(&self, input: WriteCommit<'_>) -> Result<WriteCommitResult> {
+        let _guard = self.write_lock.lock().map_err(|_| RepoError::LockPoisoned)?;
+        publish::write_and_commit(&self.root, input)
     }
 
     /// 把已 commit 未 push 的提交推上去（``sync``）。无远端返回 `Pushed::Unknown`。

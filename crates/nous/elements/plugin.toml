@@ -1,0 +1,12 @@
+name = "elements"
+vendor = "nous"
+version = "0.1.15"
+layer = "app"
+crate = "nous-elements"
+
+[requires]
+nous-repo = "^0.1"
+
+[provides]
+capability = "elements"
+endpoints  = []

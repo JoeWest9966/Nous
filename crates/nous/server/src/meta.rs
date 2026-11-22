@@ -321,6 +321,14 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/presets/{section}/sync", module: "presets-admin" },
     RegisteredRoute { method: "POST", path: "/v1/presets/{section}/publish", module: "presets-admin" },
     RegisteredRoute { method: "POST", path: "/v1/presets/{section}/reload", module: "presets-admin" },
+    // 元素库（组 / 包）：盘上真相在私库，写一次提交一次。
+    RegisteredRoute { method: "GET", path: "/v1/elements", module: "elements" },
+    RegisteredRoute { method: "GET", path: "/v1/elements/{kind}", module: "elements" },
+    RegisteredRoute { method: "GET", path: "/v1/elements/{kind}/{id}", module: "elements" },
+    RegisteredRoute { method: "PUT", path: "/v1/elements/{kind}/{id}", module: "elements" },
+    RegisteredRoute { method: "POST", path: "/v1/elements/{kind}", module: "elements" },
+    RegisteredRoute { method: "DELETE", path: "/v1/elements/{kind}/{id}", module: "elements" },
+    RegisteredRoute { method: "POST", path: "/v1/elements/push", module: "elements" },
     RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
 
@@ -446,6 +454,8 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "今天 `prompts/index.js`" },
     ManifestEntry { name: "ext", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划" },
+    // 元素库：旧面板 `k3skws` 块的 Rust 落点；盘上真相 = 第五套私库。
+    ManifestEntry { name: "elements", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-elements`", description: "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点" },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
