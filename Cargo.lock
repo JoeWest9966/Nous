@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ai"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ai-types"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "futures",
  "serde",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "nous-chord"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -1298,7 +1298,7 @@ dependencies = [
 
 [[package]]
 name = "nous-device"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "reqwest",
  "serde",
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "nous-dispatcher"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "nous-chord",
@@ -1322,7 +1322,7 @@ dependencies = [
 
 [[package]]
 name = "nous-documents"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "nous-durable",
@@ -1333,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "nous-durable"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "nous-ai",
@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "nous-env"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "nous-chord",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "nous-env-ssh"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1372,7 +1372,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ext"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "libc",
  "nous-durable",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ext-probe"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "axum",
  "libc",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ext-sdk"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -1409,7 +1409,7 @@ dependencies = [
 
 [[package]]
 name = "nous-fixture"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "nous-durable",
  "serde_json",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "nous-prompts"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -1426,7 +1426,7 @@ dependencies = [
 
 [[package]]
 name = "nous-repo"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "nous-env",
  "serde",
@@ -1436,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "nous-runtime"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "indexmap 2.14.2",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "nous-server"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "axum",
@@ -1486,7 +1486,7 @@ dependencies = [
 
 [[package]]
 name = "nous-sessions"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "nous-ai",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "nous-skills"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -1511,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "nous-stats"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "nous-chord",
  "nous-durable",
@@ -1525,7 +1525,7 @@ dependencies = [
 
 [[package]]
 name = "nous-store"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "rusqlite",
  "serde",
@@ -1535,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "nous-telemetry"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "serde",
@@ -1545,7 +1545,7 @@ dependencies = [
 
 [[package]]
 name = "nous-tools"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1577,7 +1577,7 @@ dependencies = [
 
 [[package]]
 name = "nous-wire"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "serde",
  "serde_json",
