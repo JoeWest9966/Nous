@@ -572,7 +572,7 @@ async fn publish(
     let push_error = match commit.pushed {
         Pushed::Yes => Value::Null,
         Pushed::Unknown => Value::String("没有远端，没推".into()),
-        Pushed::No => Value::String("push 被拒：本地提交保留，拉一下再点一次".into()),
+        Pushed::No => Value::String("推送未成功：本地提交已保留（查 git 凭据 / 远端）".into()),
     };
     Ok(Json(json!({
         "committed": true,
@@ -705,7 +705,7 @@ async fn lifecycle(
     let push_error = match result.pushed {
         Pushed::Yes => Value::Null,
         Pushed::Unknown => Value::String("没有远端，没推".into()),
-        Pushed::No => Value::String("push 被拒：本地提交保留".into()),
+        Pushed::No => Value::String("推送未成功：本地提交已保留（查 git 凭据 / 远端）".into()),
     };
     Ok(Json(json!({
         "pushed": pushed_json(result.pushed),
@@ -983,7 +983,7 @@ async fn sync(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let push_error = match commit.pushed {
         Pushed::Yes => Value::Null,
         Pushed::Unknown => Value::String("没有远端，没推".into()),
-        Pushed::No => Value::String("push 被拒：本地提交保留".into()),
+        Pushed::No => Value::String("推送未成功：本地提交已保留（查 git 凭据 / 远端）".into()),
     };
     Ok(Json(json!({
         "committed": true,
