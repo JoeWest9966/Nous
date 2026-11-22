@@ -223,6 +223,34 @@ async fn one_tick_records_heartbeat_and_fires_exactly_one_turn() {
     assert_eq!(ticks[0]["state"]["status"], json!("sleeping"));
 }
 
+/// 线上回归（2026-11-22）：tick 的 id 不许拿拍号顶替 —— `record_ids` 是全库唯一的，
+/// 拍号 2 早就被真实会话占了；旧实现整批写被 `IdAlreadyBelongs` 拒掉，心跳一条都记不上。
+#[tokio::test]
+async fn tick_task_id_is_minted_not_the_tick_sequence() {
+    let fixture = fixture("tick-id");
+    // 先把 2、3 两个 id 分给真实会话，再让调度器写第 2 拍（旧实现 id=2 必撞）。
+    let session = Session::open(&fixture.durable_db).unwrap();
+    for name in ["first", "second"] {
+        session.create_conversation(json!({"name": name})).await.unwrap();
+    }
+    let id = nous_dispatcher::arm_next_tick(
+        &session,
+        &(fixture.clock.clone() as Arc<dyn Clock>),
+        2,
+        1_000,
+    )
+    .await
+    .expect("拍号 2 已被会话占用时，tick 也必须写得进去");
+    assert!(id > 0 && id != 2, "tick 的 id 必须由 durable 铸造，不能等于拍号：{id}");
+
+    let storage = Storage::open_read_only(&fixture.durable_db).unwrap();
+    let ticks = nous_dispatcher::read_sleeping_ticks(&storage).unwrap();
+    assert_eq!(ticks.len(), 1, "一拍一条 tick 行：{ticks:?}");
+    assert_eq!(ticks[0]["id"], json!(id), "写进去的 id 就是返回的铸造值");
+    assert_eq!(ticks[0]["input"]["seq"], json!(2), "拍号住在 input.seq，不占 id");
+    assert_eq!(nous_dispatcher::tick_history_count(&fixture.durable_db).unwrap(), 1);
+}
+
 /// 判据 3：同一 tick id 重放 → fires / sessions 都不增。
 #[tokio::test]
 async fn replaying_the_same_tick_does_not_double_fire() {
