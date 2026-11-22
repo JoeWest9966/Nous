@@ -973,3 +973,19 @@ restore 方向相反：闭包先写回活库，抹墓碑失败时**保留 genera
 **反悔点**：出现下列事实时重开 documents 并先改 `wire.md`：① 没有 git 私库却要编辑内容
 （便携包 / 只读介质）；② 引擎必须持有半成品草稿而私库里不能出现；③ 私库文件被外部改坏，
 需要引擎侧第二副本恢复。反悔时先回答「两个写者谁签字」——只能双读单写，不许两条链同时写。
+
+## 2026-11-24 · 技能管理面（编辑页）落在 server 翻译层，文件与 git 全部复用 `nous-repo`
+
+**决定**：`/v1/skills/{files,file,create,publish}` 由 `crates/nous/server/src/skills_admin.rs`
+做 HTTP ↔ 盘面翻译，不新建 `nous-skills-admin` crate；文件读写 / etag 撞闸 / 提交 / push
+一律走 `nous_repo::Repo`（`/v1/repos/skills/*` 的同一套）。publish 先问 `pending()` 拿
+dirty 路径再 `commit()`，不自己拼 `git add`。
+
+**为什么**：`skills-admin` 那张表行剩的是「装/卸/variant」，编辑页要的四件事只是把既有
+`repo` 能力按技能目录切片；另建 crate 会造第二套路径校验与第二个 git 调用面
+（`AGENTS.md` 红线：`nous-repo` 是唯一的 git 进程调用面）。名字 / 路径规则沿用旧面板
+`skills-api.js` 的 `checkName` / `resolveInside`，不发明第二套。
+
+**反悔点**：出现「技能管理要走变体的独立 worktree / 独立分支」或「编辑页要的东西 repo 层
+表达不了（例如目录级原子改名）」时，把写面提成 `nous-skills-admin` crate，并在
+`docs/plugins.md` 把该行从 `(待建)` 改成真 crate；那时 `skills` 模块只留只读投影。

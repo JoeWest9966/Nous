@@ -112,6 +112,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/openapi.json", get(crate::stats::openapi))
         // #90：原先挂在 documents::attach 上的自省端点，下线后归主路由。
         .route("/v1/_routes", get(routes_view));
+    // 技能管理面（编辑页的文件读写 / 新建 / 发布）：翻译层在独立模块。
+    let router = router.merge(crate::skills_admin::attach(Router::new()));
     // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);
     // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。

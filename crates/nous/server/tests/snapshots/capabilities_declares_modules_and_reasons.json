@@ -120,10 +120,15 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-skills`",
-      "description": "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git；管理面见下一行",
+      "description": "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`）",
       "enabled": true,
       "endpoints": [
-        "GET /v1/skills"
+        "GET /v1/skills",
+        "GET /v1/skills/files",
+        "GET /v1/skills/file",
+        "PUT /v1/skills/file",
+        "POST /v1/skills/create",
+        "POST /v1/skills/publish"
       ]
     },
     {

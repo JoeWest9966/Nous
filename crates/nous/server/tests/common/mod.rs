@@ -23,7 +23,10 @@ impl FakeSource {
     /// 两条会话：id 2（有名字、有 model）在前，id 1 在后。
     pub fn two_sessions() -> Arc<Self> {
         let mut live = HashMap::new();
-        live.insert(1, json!({"role": "assistant", "content": [{"type": "text", "text": "streaming"}]}));
+        live.insert(
+            1,
+            json!({"role": "assistant", "content": [{"type": "text", "text": "streaming"}]}),
+        );
         let mut entries = HashMap::new();
         entries.insert(
             1,
