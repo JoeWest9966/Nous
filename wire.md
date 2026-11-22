@@ -112,6 +112,12 @@
 
 ### 触发器工程面（#95：trigger-projects）
 
+> 语义备忘（j1900 真机验过）：`repo.dirty` 只说**工作树**脏（含未跟踪）；`ahead` 是
+> 「提交了没推」，两者不混。`tracked` 看 HEAD 里有没有这个项目的文件。发布是幂等的：
+> 没有新改动时回 `committed:false`（200），不报 422。`git` 身份由内核注入
+> （`nous` / `nous@nous.local`），服务账号不需要 `~/.gitconfig`；push 失败回
+> `pushed:false` + `pushError`，本地提交保留。
+
 **和上面那层不是一回事。** `/v1/triggers` 是「库里一行定义 + 调度 + 点火账」；
 `/v1/trigger-projects` 是 **n8qkkj 的宿主**：盘上一个触发器 = 一个独立 cargo 项目，
 有 `nous.json` / `Cargo.toml` / `src/main.rs`，能编译、能发布、能归档。两层共用同一个
