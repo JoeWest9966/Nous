@@ -9,8 +9,7 @@ use std::sync::Arc;
 
 use nous_chord::sqlite::{SqliteExecutor, SqliteValue as Cell};
 use nous_durable::harness::clock::Clock;
-use nous_durable::session::{CommitOptions, Session};
-use nous_durable::StorageWrite;
+use nous_durable::session::Session;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
@@ -46,7 +45,7 @@ pub fn tick_from_rows(rows: &[Value]) -> Option<TickRecord> {
                 == Some("sleeping")
         })
         .filter_map(|row| {
-            let seq = row.get("id")?.as_i64()? as u64;
+            let seq = row.get("input")?.get("seq")?.as_u64()?;
             let due_at_ms = row.get("state")?.get("wakeAt")?.as_i64()? as u64;
             Some(TickRecord { seq, due_at_ms })
         })
@@ -79,9 +78,9 @@ pub fn scheduler_lag_with_tick_ms(now_ms: u64, last_tick_at: Option<u64>, tick_m
 }
 
 /// 一条 `sleeping` 任务的 record：形状照 `TaskRecord`，状态写在 `state`（durable 不解释）。
-fn sleeping_tick_record(id: i64, seq: u64, due_at_ms: u64) -> Value {
+/// **不带 id**：id 由 durable 铸造（拍号只住 `input.seq`，不许拿去当 id）。
+fn sleeping_tick_record(seq: u64, due_at_ms: u64) -> Value {
     json!({
-        "id": id,
         "conversationId": 0,
         "kind": "nous.dispatcher.tick",
         "version": 1,
@@ -103,21 +102,12 @@ pub async fn arm_next_tick(
     period_ms: u64,
 ) -> Result<i64, String> {
     let at_ms = clock.now_ms();
-    let committed = session
-        .commit(
-            vec![StorageWrite::Task(sleeping_tick_record(
-                seq as i64,
-                seq,
-                at_ms + period_ms,
-            ))],
-            CommitOptions::default(),
-        )
-        .await
-        .map_err(|error| error.to_string())?;
-    if committed.stored == 0 {
-        return Err(format!("tick task commit refused: {:?}", committed.refused));
-    }
-    Ok(seq as i64)
+    nous_durable::session::commands::arm_sleeping_tick(
+        session,
+        sleeping_tick_record(seq, at_ms + period_ms),
+    )
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// 常驻节拍：每拍由注入的 Clock 等待到点 → 把 `sleeping` 待办与 tick 记录写进 durable。
@@ -195,9 +185,12 @@ mod tests {
     #[test]
     fn tick_is_read_back_from_sleeping_rows_only() {
         let rows = vec![
-            json!({"id": 1, "kind": "nous.dispatcher.tick", "state": {"status": "terminal"}}),
-            json!({"id": 2, "kind": "pi.generation", "state": {"status": "sleeping", "wakeAt": 9}}),
-            json!({"id": 3, "kind": "nous.dispatcher.tick", "state": {"status": "sleeping", "wakeAt": 60_000}}),
+            json!({"id": 10, "input": {"seq": 1}, "kind": "nous.dispatcher.tick",
+                   "state": {"status": "terminal"}}),
+            json!({"id": 11, "input": {"seq": 2}, "kind": "pi.generation",
+                   "state": {"status": "sleeping", "wakeAt": 9}}),
+            json!({"id": 12, "input": {"seq": 3}, "kind": "nous.dispatcher.tick",
+                   "state": {"status": "sleeping", "wakeAt": 60_000}}),
         ];
         assert_eq!(tick_from_rows(&rows), Some(TickRecord { seq: 3, due_at_ms: 60_000 }));
     }

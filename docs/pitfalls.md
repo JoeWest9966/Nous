@@ -364,3 +364,11 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 **根因**：`spec` 从「扩展位」被当成了必需字段；combos 的 `view` 用 `unwrap_or(Null)` 兜住了，写路径却直接 400 —— 读宽容、写严格，两边不一致。
 
 **怎么防**：写路径与读路径同宽：`spec` 缺了就补 `{}` 再写（combos `patch`、presets `validate_body` 两处），`name`/`summary`/`category` 才保持必需；判据是「老形状能读、能改、能存」三条一起测。
+
+## 2026-11-22 · 调度器每一拍都写库失败：`IdAlreadyBelongs { id: N, table: Conversation }`
+
+**症状**：j1900 日志每 60s 一条 `nous-dispatcher: 第 N 拍写库失败：tick task commit refused: Some(IdAlreadyBelongs { id: 2, table: Conversation })`；`lastTickAt` 永远 null、`lagMs` 恒 0，但服务本身不报错 —— 健康判据是假绿。
+
+**根因**：`arm_next_tick` 拿拍号（进程内 0、1、2…）当 tick 任务行的 `id` 直接提交；`record_ids` 是**跨表**全局唯一表，这些 id 早被真实会话 / 文档 / entry 占了，`check_ids` 整批拒绝。单测用的空库没有这些行，所以一直是绿的。
+
+**怎么防**：id 只能来自 `Storage::mint_id`（新增 `nous_durable::session::commands::arm_sleeping_tick` 统一铸造 + 提交），拍号只住 `input.seq`；回归判据是「先建两条会话占掉 id 2/3，再写第 2 拍必须成功」——直接复现线上拒绝，不许再拿空库测 tick。

@@ -758,6 +758,19 @@ pub async fn record_origin(session: &Session, origin: OriginRecord) -> Result<()
     Ok(())
 }
 
+/// 调度器一拍：把「下一拍」的等待写成一条 `sleeping` 任务（`kind = nous.dispatcher.tick`）。
+///
+/// **id 必须由 `Storage::mint_id` 铸造**：`record_ids` 是全库唯一的，拿拍号当 id 会撞上
+/// 真实会话 / 文档 / entry（线上表现为整批写被 `IdAlreadyBelongs` 拒掉，心跳一条都记不上）。
+/// 拍号住在调用方给的 `input.seq` 里，不占 id；记录的其余字段（状态、wakeAt）原样落库。
+pub async fn arm_sleeping_tick(session: &Session, mut record: Value) -> Result<Id, CommandError> {
+    let mut guard = session.storage.lock().await;
+    let id = storage_mut(&mut guard)?.mint_id()?;
+    record["id"] = json!(id);
+    commit_and_publish(session, &mut guard, vec![StorageWrite::Task(record)]).await?;
+    Ok(id)
+}
+
 /// 一条会话当前挂的模板名（#72：建会话时记下的单值，重启后仍在）。
 /// 放在 commands 面而不是 `Session`：后者的 async 公共面被 A3 判据钉死六条。
 pub async fn session_template(session: &Session, id: Id) -> Result<Option<String>, CommandError> {
