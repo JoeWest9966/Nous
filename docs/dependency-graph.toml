@@ -39,9 +39,14 @@ nous-server = [
   "nous-repo",
   # #62 只读观测聚合
   "nous-stats",
+  # #60 模板管理的判定层（形状 / 引用解析 / 名册投影）
+  "nous-presets-admin",
   # #73 60s 节拍与 evaluate 在 app 装配处启动
   "nous-dispatcher",
 ]
 
 # #56 Nous 自己的库，没有内部依赖（尤其没有 nous-durable）—— 多一条边就是判据 1 破。
 nous-store = []
+
+# #60 模板管理：纯判定，零 IO（盘面与 HTTP 都在 server）。
+nous-presets-admin = []

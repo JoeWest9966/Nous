@@ -1,0 +1,14 @@
+[package]
+name = "nous-presets-admin"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "模板管理：形状闸 / 引用解析 / 名册投影（app 层，纯函数，不碰盘）"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

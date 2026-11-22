@@ -278,6 +278,26 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/{section}/{name}/revisions/{n}", module: "presets" },
     RegisteredRoute { method: "POST", path: "/v1/presets/{section}/{name}/rollback", module: "presets" },
+    // `presets-admin`（TS 内核 `presets-api.js` 的归位）：校验 / 起手式 / 文件 / 发布面。
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/order", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/categories", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/category", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/create", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/rename", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/archive", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/restore", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/purge", module: "presets-admin" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/validate", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/validate", module: "presets-admin" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/resolve", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/resolve", module: "presets-admin" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/files", module: "presets-admin" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/file", module: "presets-admin" },
+    RegisteredRoute { method: "PUT", path: "/v1/presets/{section}/file", module: "presets-admin" },
+    RegisteredRoute { method: "GET", path: "/v1/presets/{section}/pending", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/sync", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/publish", module: "presets-admin" },
+    RegisteredRoute { method: "POST", path: "/v1/presets/{section}/reload", module: "presets-admin" },
     RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
 
@@ -391,7 +411,9 @@ pub const MANIFEST: &[ManifestEntry] = &[
     // #75：四套私库共用的 git 发布 / 归档 / pending / diff / history。
     ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "唯一的 git 进程调用面；四条私库路径解析沿用 `env`" },
     // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。
-    ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判" },
+    ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`）" },
+    // #60：模板管理的判定层（TS 内核 `presets.js` / `presets-api.js` 的归位）。
+    ManifestEntry { name: "presets-admin", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-presets-admin`", description: "从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json`" },
     ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`）" },
     ManifestEntry { name: "archive", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票" },
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。

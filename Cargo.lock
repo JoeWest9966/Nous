@@ -1416,6 +1416,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-presets-admin"
+version = "0.1.10"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "nous-prompts"
 version = "0.1.13"
 dependencies = [
@@ -1465,6 +1474,7 @@ dependencies = [
  "nous-env",
  "nous-env-ssh",
  "nous-ext",
+ "nous-presets-admin",
  "nous-prompts",
  "nous-repo",
  "nous-runtime",

@@ -400,133 +400,126 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
   这个约束是引擎强制的，不是产品挑的。
 - 四个动作的回包都是同一形状 `{<动作过去分词>: [ids], gen, rows}`，客户端一律不读。
 
-### presets：模板 / 预设（#60）
+### presets：模板 / 预设（#60 · TS 内核同形）
 
-`presets` 是资源化的端点族（13 条 + 生成式 OpenAPI），**盘是唯一真相**，文件住在模板私库
-（`NOUS_PRESETS`，默认 `/opt/Nous-Template`）：`<root>/<section>/<name>/preset.json`。
-段只有两个：`Session-Template`、`Ultimate-Template`，**没有第三种**。没有进程内常驻的
-`name → preset` map —— roster 由扫目录得出，盘上有目录 = 这条存在。
+模板私库（`NOUS_PRESETS`，默认 `/opt/Nous-Template`）的 HTTP 面。**盘是唯一真相**：
+`<root>/sections.json` 定段，每条住在 `<root>/<段>/<名>/<该段的清单文件>`。
+段清单里 `manifest` / `checker` 两列决定用哪个文件、跑哪套形状闸：
 
-端点表（OpenAPI 生成物 `/v1/openapi.json` 是它的机器可读版本，字段形状以
-`crates/nous/server/tests/presets_endpoints.rs` 为准）：
+```
+{ v: 1, sections: [ { id, title, manifest, checker, summary? } ] }
+```
+
+`Session-Template` → `preset.json` / `preset`；`Ultimate-Template` → `ultimate.json` / `ultimate`。
+段 ID **就是文件夹名**（目录名 = git 路径 = URL 段），没有「默认段」这种隐式状态：
+认不出来的段一律 `404`，不猜、不退回第一段。没有 `sections.json` 的老仓按目录名兜底两段。
+
+#### 端点表
 
 | 方法 + 路径 | 语义 |
 |---|---|
-| `GET /v1/presets` | 段清单，每段带 `count` |
-| `GET /v1/presets/:section` | roster：`name` / `sha` / `version` / `category` / `order` / `archived` / `problem`（**清单即详情**） |
+| `GET /v1/presets` | 段清单：`{ root, sections: [{ id, title, count, manifest, checker }] }` |
 | `GET /v1/presets/model` | 预设能引用的模型清单（只读，沿用原状） |
-| `GET /v1/presets/:section/categories` | 段内类别名册 |
+| `GET /v1/presets/:section` | overview（名册 + 归档 + 词表 + 仓状态），见下 |
+| `GET /v1/presets/:section/order` | 盘上的排序表 `{ order: [...] }` |
 | `PUT /v1/presets/:section/order` | 整段顺序，一次写全（幂等） |
+| `GET /v1/presets/:section/categories` | 段内类别名册（含零计数类别）+ 每条挂着的类别 |
+| `POST /v1/presets/:section/categories` | 词表增 / 删 / 改名：`{ op, name, to? }`，连带改预设挂着的类别 |
+| `POST /v1/presets/:section/category` | 改**一条**预设挂着的类别：`{ name, category }` |
+| `POST /v1/presets/:section/create` | 起手式三种：`spec` / `from: "device"` / 空白，见下 |
+| `POST /v1/presets/:section/rename` | 改名：目录 + 清单 `name` + 引用它的终极模板 `session`，一次做完 |
+| `POST /v1/presets/:section/archive` | 归档：搬进 `<段>/.archive/<名>/`，body `{ name }` |
+| `POST /v1/presets/:section/restore` | 从归档搬回，body `{ name }` |
+| `POST /v1/presets/:section/purge` | 彻底删除归档副本（不可逆），body `{ name }` |
+| `GET /v1/presets/:section/validate` | 只读校验（`?name=` 或 POST `{ spec }`）：形状 + 引用，回 `{ ok, errors, warnings, spec, resolved }` |
+| `POST /v1/presets/:section/validate` | 同上（草稿用 `spec`） |
+| `GET /v1/presets/:section/resolve` | 只要解析结果：`{ ok, errors, warnings, resolved }` |
+| `POST /v1/presets/:section/resolve` | 同上 |
+| `GET /v1/presets/:section/files` | 一条预设目录里的文件：`?name=` → `{ files: [{ path, size }] }` |
+| `GET /v1/presets/:section/file` | 单个文件原文：`?name=&path=` → `{ text, etag }` |
+| `PUT /v1/presets/:section/file` | 写回单个文件：`{ name, path, text, base? }`；写清单先过形状闸 |
+| `GET /v1/presets/:section/pending` | 仓状态 + 待提交单元（一条预设一个 unit） |
+| `POST /v1/presets/:section/sync` | 提交这一段（可给 `paths` / `message`） |
+| `POST /v1/presets/:section/publish` | 形状闸 → 提交这一段；闸不过一个字节都不动 |
+| `POST /v1/presets/:section/reload` | 重扫（本库没有常驻名册，重扫 = 每次读都扫） |
 | `GET /v1/presets/:section/:name` | 单条原文 + `ETag`（= `version`） |
-| `PUT /v1/presets/:section/:name` | 建或覆盖；`If-Match` 缺失=新建、匹配=覆盖、不匹配=412；`?dry_run=1` 校验不落盘（validate 走同一条路） |
-| `PATCH /v1/presets/:section/:name` | 只改元数据位：`{archived}` / `{name}` / `{category}` / `{order}` |
-| `DELETE /v1/presets/:section/:name` | 删（软删即 `archived`） |
-| `POST /v1/presets/:section/:name/copy` | 复制成新名，body `{name, requestId}` |
-| `GET /v1/presets/:section/:name/revisions` | 修订清单：`n` / 时间 / `actor` / `sha` / 摘要 |
+| `PUT /v1/presets/:section/:name` | 建或覆盖；`If-Match` 缺失=新建、匹配=覆盖、不匹配=412；`?dry_run=1` 校验不落盘 |
+| `PATCH /v1/presets/:section/:name` | 元数据位：`{ archived }` / `{ name }` / `{ category }` / `{ order }` |
+| `DELETE /v1/presets/:section/:name` | 软删 = 搬进 `.archive/`（盘保留） |
+| `POST /v1/presets/:section/:name/copy` | 复制成新名，body `{ name, requestId }` |
+| `GET /v1/presets/:section/:name/revisions` | 引擎内修订清单：`n` / 时间 / `actor` / `sha` / 摘要 |
 | `GET /v1/presets/:section/:name/revisions/:n` | 某一版原文（diff 由 Desk 算，无状态） |
+| `POST /v1/presets/:section/:name/rollback` | 回到第 `n` 版，原子写一次修订，body `{ n, requestId }` |
 | `POST /v1/presets/Ultimate-Template/launch` | #82：手动起一条终极模板（跳过触发器判定，`forced:true`） |
-| `POST /v1/presets/:section/:name/rollback` | 回到第 `n` 版，原子写一次修订，body `{n, requestId}` |
-| `GET /v1/openapi.json` | 从路由注册表生成的机器可读契约（presets 第一个接入方） |
 
-- `sha` 是 `preset.json` **文件字节**的 sha256（不是清单里某个字段），roster 的 sha 必须
-  等于读文件算出的值。
-- `version` 是乐观锁的 ETag；`If-Match` 不匹配 → 412 且磁盘字节不变。
-- `?dry_run=1` 与真 PUT 共用同一份校验：坏 JSON 都是 400，区别只在 dry_run 不写盘。
-- **`spec` 可缺省**：老条目（0.1.7 之前写下的）没有这个键，PUT 会补一个 `{}` 再存；
-  `name` / `summary` / `category` 仍然必需。不把「再存一遍老模板」卡在 400。
-- 写端点整段串行锁；`requestId` 是幂等锚：重放回第一次的回执，`version` 不涨，
-  幂等证据看 `version` 与磁盘，不看 `changed`。
+#### `GET /v1/presets/:section` 的回包
+
+```
+{ section, title, root, repo: { head, dirty, ahead, behind, remote, error? },
+  presets: [...], archived: [...], categories: [...] }
+```
+
+每条 preset（**清单即详情**）：
+
+```
+{ name, summary, description, category, spec, specError, tracked, dir, resolved,
+  version, sha, order }
+```
+
+- `spec` 是**整份清单 body**（扁平：`model` / `thinkingLevel` / `skills` / … 在顶层），
+  不是再包一层 `spec` 键。老条目里如果真有一个嵌套 `spec` 键，形状闸会报「不认识的键」。
+- `specError` 非空 = 这条**自己写坏了**（JSON / 形状），红；`null` = 形状通过。
+  **引用失效不算 `specError`** —— 那是「现在开不了」，由 `resolved` 报 `invalid`。
+- `tracked` = HEAD 里有 `<段>/<名>`；`false` = 盘上有、仓里没（未发布）。
+  没有 git 仓时一律 `false`（诚实：无从判「仓里有没有」）。
+- `dir` 是预设目录的真实绝对路径。
+- `resolved` 是引擎算好的解析结果，形状见下。形状坏了的条目不 resolve（`null`）。
+- `version` 是乐观锁的 ETag；`sha` 是清单**文件字节**的 sha256（不是某个字段）。
+- `order` 是排序表里的位置；表里没有的是 `i64::MAX`。
+
+`resolved`（会话模板）是七个维度 + 两个附加位：`model` / `thinking` / `skills` /
+`extensions` / `template` / `cwd` / `machine`，每维都带 `state`（`ok` / `auto` / `invalid`）
+和 `ref` / `value`；`model` 另带 `thinkingLevels`（编目里那几档），`template` / `cwd` /
+`machine` 另带 `mode`（`default` / `none` / `picked`）；`readOnly` 是布尔；`absence` 是
+八个「键在不在」的布尔值（给面板画 chip 用，不参与判定）。字段名以
+`crates/nous/presets-admin/src/resolve.rs` 为准 —— 这里不抄第二份。
+
+- `state` 只有三值：`ok`（钉住了 / 走默认，两种都成立）、`auto`（**只有 `model`**：
+  没钉模型，跟设备默认走）、`invalid`（引用失效，现在开不了）。
+- 三态展开成四种可读形状：`template` / `cwd` / `machine` 的 `mode` 是
+  `default`（键缺席）/ `none`（显式 `null`）/ `picked`（字符串）。`template: "auto"`
+  归一成 `default`（唯一被规范化掉的魔法值）。
+- 档位钉了模型但不在它那几档里 → `thinking.state = "invalid"`，**值不改**（不静默夹档）。
+- 名牌（`prompt:<名>` / `skill:<名>`）混进 `extensions` → `invalid`。
+- **能否启动的判据全是引擎算好的**：`resolved.*.state === "invalid"` 或 `specError` 非空
+  → 不开。客户端不自己拼规则。
+
+`resolved`（终极模板）：`{ name, trigger: { state, ref, value, version, params: [...], unknown: [] },
+session: { state, ref }, enabled }`。`params[].state` 是 `ok` / `invalid` / `missing` / `default`；
+`unknown` 是「触发器已经没有这个参数了」的键名。
+
+`archived[]` 是 `{ name, summary, category, archivedAt }`（`archivedAt` = 目录 mtime，epoch ms）。
+
+`categories` = 词表（`<段>/categories.json`）∪ 每条挂着的类别，去重后**父在子前**。
+本库没有 ICU，同级按码点排（TS 内核用 `localeCompare('zh-CN')` 按拼音）；层级关系一致，
+客户端按路径建树，不靠绝对序。
+
+#### 写端点的共同约束
+
+- 形状闸与 TS 内核同一套：未知键必须报错（拼错的键 = 那条设置静默没生效）、`v` 必须是 `1`、
+  `name` 必须等于目录名、`category` 必须是字符串数组。`model` 只能有 `provider` / `modelId`。
+- 写端点整段串行锁；`requestId` 是幂等锚：重放回第一次的回执，`version` 不涨。
 - 修订落在 `nous-plugins.db` 的 `presets_revisions` 表（`section` / `name` / `n` / `sha` /
-  `body` / `actor` / `at` / `request_id`），**不是私库 git 历史**（那个是 #75 的 `history`）。
-  不 spawn `git`；`rollback` 替代 `git revert`。
-- 人手 `scp` 改文件仍可行：那条路走内部重扫，下一版 PUT 看到新盘面。
-- `publish` 不在这里：`POST /v1/repos/presets/commit` 是 #75。
-- 字段形状以 `crates/nous/server/tests/presets_endpoints.rs::put_writes_real_file_and_roster_sha_matches_file_bytes` 为准（本文件只索引端点与约束）。
-
-下面这段是 2026-11-19 前的旧形状，留作迁移背景；**新契约以上表为准**，
-旧 `files` / `pending` / `history` / `POST rename` / `GET|POST order` 已删：
-
-### 旧 GET /v1/presets/:section（存档）
-
-模板（通讯录）那一页的数据。**段（section）不是只有一个**：同一个私仓按段放，
-`Session-Template`（会话模板）和 `Ultimate-Template`（终极模板）各自一套端点、一套数据、
-**一套类别词表**（`categories.json` 住在段目录里）。
-
-返回 `{ section, title, repo, presets: [...], archived, categories, ... }`。
-
-每条 preset：
-
-```
-{ name, summary, description, category, spec, specError, tracked, dir, resolved }
-```
-
-我们依赖：`name` `summary` `category` `spec` `specError` `tracked` `resolved`
-\+ 顶层的 `categories` `repo`。
-
-- `categories` 是**这一段的全部类别路径**，引擎已排好序（父在子前、逐段 `localeCompare('zh-CN')`），
-  里面**包含零计数的类别**（词表里先建好、还没挂东西的）—— 客户端不许滤掉。
-- `category` 是字符串数组，`/` 表示层级：`写作/周报` 自动蕴含父级 `写作`。一条可以挂多个。
-- `repo` 是**这一段的**仓状态 `{ head, dirty, ahead, behind, error }`；`dirty` 按段算，
-  `ahead`/`behind` 是整仓的。`head` 可能是 `null`（仓读不了）—— 别拿它当字符串硬切。
-- `specError` → 这条自己写坏了，红（字段名 + 一句原因）。本库按形状校验填，不 spawn git。
-- `tracked` 在本库恒 `null`：不 spawn git，无从判「仓里有没有」；`null` 不是 `false`。
-  `dir` 是文档根下的真实绝对路径（`<root>/<kind>/<section>`）。
-- `resolved.*.state === "invalid"` → 引用失效，现在开不了。
-- `tracked === false` → 盘上有、仓里没。
-- **能否启动的判据全是引擎算好的**，客户端不自己拼规则。加了规则就等于可以跟引擎吵起来。
-  （唯一客户端自己算的是**类别计数**：引擎不给，算法是「含后代 + 同一条预设按路径去重」。
-  那是派生量，不是第二份事实源。）
-- 能开的行：`POST /v1/sessions { preset: "Session-Template/<name>", name }`，`name` 带时间。
-
-#### 终极模板那一段是另一种东西（`spec` 里长这样）
-
-```
-{ v, name, summary, description, category, trigger, params, session, enabled }
-```
-
-- `trigger` 是触发器名字，`params` 是它的参数（对象：字符串 / 数字 / 布尔）。
-- `session` 指向 `Session-Template` 段里的一条会话模板。
-- **这一段现在只读**：`enabled` 怎么切、`trigger` 用哪个端点启用，协议都还没定。
-  桌面端只显示（`⚡ trigger` / `→ session`），点它什么也不发生。要动它先定端点。
-
-#### POST /v1/presets/:section/rename
-
-改一条模板的名字。body `{ name, to }`。
-
-名字 = 目录名 = 主键（形状校验要求 `preset.json` 里的 `name` **等于**目录名），所以
-**一次改名引擎同时动三处**，客户端一件都不许自己动手：
-
-1. 目录 —— `git mv`，git 认得出是改名（历史不断）；未发布的（盘上有、HEAD 里没）退回直接搬。
-2. 清单里的 `name`。
-3. **引用了它的终极模板的 `session`** —— `ultimate.json` 的 `session` 是**名字字符串**，
-   不改的话那条终极模板立刻是「会话模板不在 Session-Template 里」，而改名的人不知道去哪修。
-
-回包 `{ ok, commit, pushed, name, to, refs }`，`refs` 是**被动到的终极模板名**（连带改的）。
-界面要把 `refs` 说出来 —— 改名顺手动了别人的东西，不说一声就是偷偷改。
-**本库不 spawn git**：`commit` 与 `pushed` 一律 `null`，不拿 `{}` 冒充「有一笔提交」。
-单条文档不存在与不认识的 kind 一律 `404`，body 带可用值清单，不许 `500`。
-
-- 只有 POST；`to` 走和新建同一套名字规则（`400`）、目标已存在 `409`、源不存在 `404`。
-#### GET / POST /v1/presets/:section/order
-
-手动排序。**全局一份**（所有类别共用一套顺序），跟通讯录一样。
-
-`order.json` 住在段目录里，`{ v: 1, order: ["第一条", "第二条", …] }`。
-
-- **它不能写进 `preset.json`**：`PRESET_KEYS` / `ULTIMATE_KEYS` 是白名单，多一个键就报
-  「不认识这个键」—— 而它们报得对（拼错的键等于那条设置静默没生效）。
-- 是**文件不是目录**：`scan` 和仓里的 `index.mjs` 都只认目录，不会把它当成一条模板。
-- `GET` 回 `{ order: [...] }`；`POST` 收 `{ order: [...] }` —— **完整顺序**，不是「谁挪到
-  谁前面」。一次落盘、一次提交，服务端不重放移动。
-- 回包的 `order` 是**盘上真正存下来的那份**（服务端会把盘上已经不存在的名字滤掉）。
-- `GET /presets/:section` 的 `presets[]` **已经按它排好** —— 客户端别自己再排一遍。
-  表里没有的条目排在后面、按名字（新模板位置稳定，不会每次刷新换一处）。
-- 读不到 / 读坏的 `order.json` 一律当「没有顺序」：排序挂了不该让整段打不开。
-
-- **索引不跟着这次提交走**：`regenIndex` 会把「新建了还没发布」的条目也扫进 `index.json`，
-  一起提交就成了「仓说我有它、实际推不上去」。留成 `M index.json`，下次发布收。
-
----
+  `body` / `actor` / `at` / `request_id`），**不是私库 git 历史**。`rollback` 替代 `git revert`。
+- 归档是**搬目录**：`<段>/<名>` ↔ `<段>/.archive/<名>`。归档不删文件，还原就是搬回来。
+- 排序表是 `<段>/order.json` 的 `{ v: 1, order: [...] }`（文件不是目录，扫描器不把它当条目）。
+  `GET /presets/:section` 的 `presets[]` **已经按它排好** —— 客户端别自己再排一遍。
+- `publish` / `sync` 走 `nous_repo`（唯一的 git 进程面）。没有 git 仓时 `pushed: null`，
+  不拿 `{}` 冒充「有一笔提交」。
+- `create` 的起手式：`spec` 整份原样落 → 再盖 `v` / `name` / `summary` / `category`；
+  `from: "device"` 时补上设备默认模型；什么都没有 = 空白（可选键都不写）。
+  终极模板还要 `trigger` / `session`，并在落盘前过**引用闸**（触发器在不在、参数对不对得上、
+  会话模板在不在）—— 存一条引用已经坏掉的行等于造一条红卡。
 
 ### GET /v1/combos/:section · PATCH /v1/combos/:section/:name
 

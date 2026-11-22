@@ -1004,3 +1004,23 @@ dirty 路径再 `commit()`，不自己拼 `git add`。
 **反悔点**：出现「技能管理要走变体的独立 worktree / 独立分支」或「编辑页要的东西 repo 层
 表达不了（例如目录级原子改名）」时，把写面提成 `nous-skills-admin` crate，并在
 `docs/plugins.md` 把该行从 `(待建)` 改成真 crate；那时 `skills` 模块只留只读投影。
+
+## 2026-11-22 · 模板面回到 TS 内核同形，判定归 `nous-presets-admin`
+
+**决定**：`/v1/presets` 的契约以 TS 内核（`presets.js` 750 + `presets-api.js` 947）为准：
+`preset.json` 是**扁平**配置（`model` / `thinkingLevel` / `skills` / … 在顶层，不再包一层
+`spec`），roster 回 `{ section, title, root, repo, presets, archived, categories }`，每行带
+`spec` / `specError` / `tracked` / `dir` / `resolved`；段清单读 `<root>/sections.json`
+（`manifest` / `checker` 决定 `preset.json` 还是 `ultimate.json`）。形状闸、引用解析、
+名册投影落进新 crate `nous-presets-admin`（`docs/plugins.md` 里登记了很久的待建行），
+server 只做 HTTP ↔ 盘面翻译。归档改成 TS 的**搬目录**（`<段>/<名>` ↔ `<段>/.archive/<名>`），
+不再用 `archived.json`。
+
+**为什么**：`#60`/Desk#11 把契约收窄成 13 条端点时，顺手把 `resolved` 与扁平 `spec` 丢了 ——
+桌面端模板页因此画不出关系图，「开一条新对话」对引用失效的模板也照亮（判据没了）。
+判定必须由引擎给（要查 skills / extensions / prompts / 模型编目，客户端查不了），所以
+不是「客户端补算」，而是把 TS 时代的解析层归位。
+
+**反悔点**：如果 `resolved` 的逐条查盘在 j1900 上成为 roster 的性能瓶颈（每段 N 条 × 4 个根），
+先加按段缓存 + 写盘失效，别退化成「客户端自己算」。`sections.json` 若被证明是过度设计
+（永远只有两段），可以退回目录名硬编码，但 `manifest` / `checker` 两列要保留在代码里的同一处。

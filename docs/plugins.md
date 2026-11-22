@@ -59,13 +59,13 @@
 | `archive` | nous | — | app | 编译期 | `archive` / `purge` / `archive_list` / `restore`；端点族 `POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票 |
 | `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
-| `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：13 条资源化端点 + 修订表） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判 |
+| `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
 | `combos` | nous | — | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读 |
 | `skills` | nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71）+ 管理面 `/v1/skills/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`） |
 | `prompt-text` | nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
 | `trigger-spec` | nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
-| `presets-admin` | nous | (待建) `nous-presets-admin` | app | 声明式 + 管理 API | 模板管理 | 否 | 今天 `presets-api.js` 947 + `presets.js` 750 |
+| `presets-admin` | nous | `nous-presets-admin` | app | 编译期 | 模板管理：形状闸 / 引用解析（`resolved`）/ 名册投影；`/v1/presets` 的判定全走它（#60 端点面复用） | 否 | 从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json` |
 | `trigger-catalog` | nous | — | app | 运行时外挂 | 触发器清单（列/改/发布）：`POST /v1/triggers`、`PUT /v1/triggers/{code}`（#80：schedule/on/params/session/enabled 整份改）、`POST /v1/triggers/{code}/{archive,restore,purge}`（墓碑语义）、`GET /v1/triggers/categories` + `POST /v1/triggers/category`（类别词表），写入闸校验 cron 与 on | 否 | 今天 `n8qkkj` 块；实现落 `crates/nous/server/src/triggers*`，与 #73 的 PATCH 同一处 |
 
 ## 待判（还没归位，归位前不许进仓）

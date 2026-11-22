@@ -23,7 +23,7 @@ fn doc_cells(module: &str) -> Vec<Vec<String>> {
 #[test]
 fn manifest_metadata_matches_the_plugins_table_cell_by_cell() {
     let manifest = nous_server::meta::MANIFEST;
-    assert_eq!(manifest.len(), 12, "#90 下线 documents 后 MANIFEST 应为 12 行");
+    assert_eq!(manifest.len(), 13, "#90 下线 documents、#60 补 presets-admin 后 MANIFEST 应为 13 行");
     for entry in manifest {
         // 表头：`| module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |`
         // split('|') → ["", module, vendor, crate, layer, 形态, API, 必需, 备注, ""]
@@ -48,7 +48,7 @@ fn manifest_metadata_matches_the_plugins_table_cell_by_cell() {
 fn manifest_covers_every_user_facing_module_and_no_dev_module() {
     let manifest = nous_server::meta::MANIFEST;
     let names: Vec<&str> = manifest.iter().map(|e| e.name).collect();
-    for name in ["sessions", "env", "repo", "presets", "skills", "archive",
+    for name in ["sessions", "env", "repo", "presets", "presets-admin", "skills", "archive",
                  "combos", "triggers", "stats", "device", "prompts", "ext"] {
         assert!(names.contains(&name), "MANIFEST 缺 {name}");
     }

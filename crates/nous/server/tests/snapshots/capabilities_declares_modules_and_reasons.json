@@ -96,7 +96,7 @@
       "layer": "app",
       "required": false,
       "crate": "—",
-      "description": "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63，#60 端点复用；路径解析归 `env`）；Rust 版名册是否保留待判",
+      "description": "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`）",
       "enabled": true,
       "endpoints": [
         "GET /v1/presets",
@@ -112,6 +112,37 @@
         "GET /v1/presets/{section}/{name}/revisions",
         "GET /v1/presets/{section}/{name}/revisions/{n}",
         "POST /v1/presets/{section}/{name}/rollback"
+      ]
+    },
+    {
+      "name": "presets-admin",
+      "version": "0.1.10",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`nous-presets-admin`",
+      "description": "从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json`",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/presets/{section}/order",
+        "POST /v1/presets/{section}/categories",
+        "POST /v1/presets/{section}/category",
+        "POST /v1/presets/{section}/create",
+        "POST /v1/presets/{section}/rename",
+        "POST /v1/presets/{section}/archive",
+        "POST /v1/presets/{section}/restore",
+        "POST /v1/presets/{section}/purge",
+        "GET /v1/presets/{section}/validate",
+        "POST /v1/presets/{section}/validate",
+        "GET /v1/presets/{section}/resolve",
+        "POST /v1/presets/{section}/resolve",
+        "GET /v1/presets/{section}/files",
+        "GET /v1/presets/{section}/file",
+        "PUT /v1/presets/{section}/file",
+        "GET /v1/presets/{section}/pending",
+        "POST /v1/presets/{section}/sync",
+        "POST /v1/presets/{section}/publish",
+        "POST /v1/presets/{section}/reload"
       ]
     },
     {
