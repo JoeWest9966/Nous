@@ -8,6 +8,7 @@ use std::process::Command;
 
 use nous_elements::{check_id, get, put, remove, resolve, scan, Kind};
 use nous_repo::{Pushed, Repo, RepoError};
+use serde_json::json;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")
