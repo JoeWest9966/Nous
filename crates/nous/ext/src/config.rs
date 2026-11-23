@@ -128,7 +128,12 @@ impl RuntimeConfig {
             handles: BTreeMap::new(),
             data_dir: std::env::temp_dir(),
             db: None,
-            host_triples: vec!["x86_64-unknown-linux-gnu".to_string()],
+            // EX-50 要的是「这个产物能不能在这台机器上跑」，不是字符串相等。
+            // 同一架构上 `-musl` 产物是静态链接的，任何 Linux 内核都跑得动（部署的
+            // 内核自己就是 musl 编出来的）；`-gnu` 产物只要能跑起内核的这台机器就认。
+            // 写死只认 gnu，等于把「静态产物」这条唯一可靠的路堵死 —— 扩展市场上
+            // 几乎没人会愿意为 x86_64-unknown-linux-gnu 发一个跟 glibc 版本绑死的东西。
+            host_triples: host_triples(),
             limits: Limits::default(),
             isolation: Isolation::default(),
         }
@@ -137,3 +142,36 @@ impl RuntimeConfig {
 
 /// 一段 section 的声明（清单里的有序项）。重导出，省得每个模块都引 SDK。
 pub type Section = SectionDecl;
+
+/// 这台机器接受的产物 triple（EX-50：兼容，不是相等）。
+///
+/// 同架构的 `-musl` 与 `-gnu` 都收：前者静态、后者只要能跑起内核就一样能跑起它。
+/// 别的架构仍然拒 —— 那是真的装不上。
+fn host_triples() -> Vec<String> {
+    let arch = std::env::consts::ARCH;
+    vec![
+        format!("{arch}-unknown-linux-musl"),
+        format!("{arch}-unknown-linux-gnu"),
+    ]
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    /// EX-50 的默认口径：同架构的 musl / gnu 都收，别的架构拒。
+    /// 写死只认 gnu 的话，静态产物（唯一能在精简镜像里跑的形状）会被自己的内核拒载 ——
+    /// 2026-11-23 在 j1900 上就撞到了这条（`triple=x86_64-unknown-linux-musl` 被拒）。
+    #[test]
+    fn default_host_triples_accept_static_and_gnu_of_same_arch() {
+        let config = RuntimeConfig::new("/tmp/exts", "/tmp/artifacts");
+        let arch = std::env::consts::ARCH;
+        assert!(config.host_triples.iter().any(|t| t == &format!("{arch}-unknown-linux-musl")));
+        assert!(config.host_triples.iter().any(|t| t == &format!("{arch}-unknown-linux-gnu")));
+        assert!(
+            !config.host_triples.iter().any(|t| t.starts_with("aarch64") && arch != "aarch64"),
+            "别的架构仍然收不了：{:?}",
+            config.host_triples
+        );
+    }
+}
