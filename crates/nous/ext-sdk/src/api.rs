@@ -16,6 +16,10 @@ use crate::frame::{read_frame, write_frame, FrameError, PROTOCOL};
 
 /// 一次 section 调用的入参。**帧里只有三样**：`conversationId` / `cwd` / `extensions`
 /// （EX-08）；`shown` / `read` / `model` 不进帧（EX-12）。
+///
+/// `extensions` 是**本会话选中的名字**，不是装载名：`skill:<名>` / `prompt:<名>`，顺序即
+/// 选中顺序。内核从会话的 `pi.agent` 文档里拼（技能清单 + 模板名），扩展只按名字挑自己
+/// 那几条 —— 装载名（`skills` / `prompts` 这种进程名）对扩展没有信息量，它自己就是其中之一。
 #[derive(Debug, Clone)]
 pub struct SectionInput {
     pub conversation_id: i64,

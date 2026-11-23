@@ -894,7 +894,8 @@ async fn inject_prompt_section(
     )).ok()?;
     let durable = state.durable_session()?;
     let entry = serde_json::json!({
-        "id": submitted.entry_id + 4,
+        // +4 让给扩展（它先合并，preamble 排在技能正文前）；模板/技能用 +5。
+        "id": submitted.entry_id + 5,
         "conversationId": session_id,
         "kind": "pi.system",
         "model": [message_value],
@@ -906,6 +907,75 @@ async fn inject_prompt_section(
     ).await;
     Some(nous_ai::Message::System(Box::new(
         nous_ai::transform::system::section_patch(&[("prompts", Some(text.as_str()))], 0),
+    )))
+}
+
+/// 本会话的选中项 → 帧里的名字（`skill:<名>` / `prompt:<名>`，顺序即选中顺序）。
+///
+/// 名字是**内容的身份**，不是扩展的身份：`skills` 扩展靠 `skill:` 前缀挑自己要渲染的几条，
+/// `prompts` 扩展靠 `prompt:` 前缀认模板。装载名（`skills` / `prompts` 这种进程名）
+/// 不进这条清单 —— 扩展自己就是其中之一，列出来对它没有信息量。
+fn session_selection(skills: Vec<String>, template: Option<String>) -> Vec<String> {
+    let mut selected: Vec<String> = skills.into_iter().map(|name| format!("skill:{name}")).collect();
+    if let Some(template) = template {
+        selected.push(format!("prompt:{template}"));
+    }
+    selected
+}
+
+/// 扩展的段进系统提示词（EX-08 那一侧的落地）。
+///
+/// 三件事：拼出本会话的选中项 → 问运行时渲染每一段（`render_turn_with`，1s 总预算）→
+/// 落一条 `pi.system`（`sections.extensions`）并塞进本轮 context。
+///
+/// 什么时候什么都不做：没装扩展运行时（测试 / 精简装配）、所有扩展都渲染出空串
+/// （比如只装了不产出段的扩展）。**不因为「没选任何东西」就跳过** —— `nous` 那条
+/// 扩展产出的正是基础 preamble，它跟选中项无关。
+async fn inject_extension_section(
+    state: &Arc<AppState>,
+    session_id: i64,
+    submitted: &crate::commands::SubmitResult,
+) -> Option<nous_ai::Message> {
+    let runtime = state.ext()?.clone();
+    let skills = state.commands().skills(session_id).await.ok().unwrap_or_default();
+    let template = state.commands().template(session_id).await.ok().flatten();
+    let selected = session_selection(skills, template);
+    // cwd 取进程 cwd（跟工具执行环境同一个）—— 扩展不许碰盘，但要能说「你在哪个目录」。
+    let cwd = std::env::current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
+    // `render_turn` 会起线程等子进程（最多 1s），不许占着异步执行器。
+    let turn = tokio::task::spawn_blocking(move || {
+        // generation 目前不进帧（`render_turn_with` 里丢掉），留给将来的历史裁剪。
+        runtime.render_turn_with(session_id, 0, &cwd, &selected)
+    })
+    .await
+    .ok()?;
+    let text = turn.text.trim_end().to_string();
+    if text.trim().is_empty() {
+        return None;
+    }
+    let message_value = serde_json::to_value(nous_ai::transform::system::section_patch(
+        &[("extensions", Some(text.as_str()))],
+        0,
+    ))
+    .ok()?;
+    let durable = state.durable_session()?;
+    let entry = serde_json::json!({
+        // 与 inject_prompt_section 同一段 id 区间：+2 assistant、+3 live、+4 扩展、+5 模板/技能。
+        // 扩展排在前：段是按 entry 顺序合并的，preamble 必须在技能正文之前。
+        "id": submitted.entry_id + 4,
+        "conversationId": session_id,
+        "kind": "pi.system",
+        "model": [message_value],
+        "actor": { "kind": "system", "id": "extensions" },
+    });
+    let _ = durable.commit(
+        vec![nous_durable::StorageWrite::Entry(entry)],
+        nous_durable::session::CommitOptions::default(),
+    ).await;
+    Some(nous_ai::Message::System(Box::new(
+        nous_ai::transform::system::section_patch(&[("extensions", Some(text.as_str()))], 0),
     )))
 }
 
@@ -992,7 +1062,12 @@ async fn messages(
         // #72：会话 template 的单值投影，在起轮前落一条 pi.system（与 #74 回放同一条线）。
         // 缺模板只记诊断，不阻断轮次。注入失败也照跑（诊断可查，不让用户卡住）。
         let system_message = inject_prompt_section(&state, session, &submitted).await;
+        // 扩展的段排在模板/技能之后：preamble 在最前，条目细节在后。
+        let extension_message = inject_extension_section(&state, session, &submitted).await;
         let mut turn_context = nous_ai::Context::new(Vec::new());
+        if let Some(message) = extension_message {
+            turn_context.messages.push(message);
+        }
         if let Some(message) = system_message {
             turn_context.messages.push(message);
         }
@@ -1300,6 +1375,22 @@ fn parse_session(raw: &str) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 帧里的名字是「选中项」，不是「装载名」：技能加 `skill:`，模板加 `prompt:`，
+    /// 顺序照选中顺序；没选就是空表（扩展照跑，`nous` 那种跟选中无关的段不受影响）。
+    #[test]
+    fn session_selection_prefixes_choices_in_order() {
+        assert_eq!(
+            session_selection(vec!["tdd".into(), "code-review".into()], Some("weekly".into())),
+            vec!["skill:tdd", "skill:code-review", "prompt:weekly"]
+        );
+        assert_eq!(session_selection(Vec::new(), None), Vec::<String>::new());
+        assert_eq!(
+            session_selection(Vec::new(), Some("weekly".into())),
+            vec!["prompt:weekly"],
+            "只选了模板也有名字"
+        );
+    }
 
     /// 超限帧在序列化途中就中止：没有先分配它的全尺寸副本。
     #[test]

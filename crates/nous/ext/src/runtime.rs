@@ -513,7 +513,25 @@ impl Runtime {
     }
 
     /// 一次 section 装配：并发取段，整轮合计 1s 预算。
+    ///
+    /// 不知道本会话选了什么（探测 / 判据）时用它 —— 帧里的 `extensions` 是空的。
     pub fn render_turn(&self, conversation: i64, generation: i64, cwd: &str) -> Turn {
+        self.render_turn_with(conversation, generation, cwd, &[])
+    }
+
+    /// 同上，但把**本会话选中的名字**（`skill:<名>` / `prompt:<名>`）原样递进帧的
+    /// `input.extensions`（EX-08 的三样之一）。
+    ///
+    /// 为什么不是装载名：扩展自己就是那些名字的其中一个，列出来对扩展没有信息量；
+    /// 它真正需要知道的是「这条会话要哪几条技能 / 哪个提示词」。名字由内核拼（内容真相
+    /// 在会话的 `pi.agent` 文档里），扩展只按名字挑自己那几条。
+    pub fn render_turn_with(
+        &self,
+        conversation: i64,
+        generation: i64,
+        cwd: &str,
+        selected: &[String],
+    ) -> Turn {
         let _ = generation;
         let names = self.names();
         let deadline = Instant::now() + Duration::from_millis(self.config.limits.section_budget_ms);
@@ -547,7 +565,9 @@ impl Runtime {
                 let name = name.clone();
                 scope.spawn(move || {
                     let result = match self.ensure_process(&name) {
-                        Ok(process) => self.call_section(&name, &process, conversation, cwd, deadline),
+                        Ok(process) => {
+                            self.call_section(&name, &process, conversation, cwd, selected, deadline)
+                        }
                         Err(error) => Err(error),
                     };
                     let _ = sender.send((name, result));
@@ -661,6 +681,7 @@ impl Runtime {
         process: &Arc<ProcExt>,
         conversation: i64,
         cwd: &str,
+        selected: &[String],
         deadline: Instant,
     ) -> ExtResult<Vec<Value>> {
         let call = self.next_call();
@@ -671,7 +692,8 @@ impl Runtime {
             "input": {
                 "conversationId": conversation,
                 "cwd": cwd,
-                "extensions": self.names(),
+                // 本会话选中的名字，不是装载名（见 `render_turn_with`）。
+                "extensions": selected,
             }
         });
         self.record_frame(&frame);
