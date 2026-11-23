@@ -1047,7 +1047,7 @@ server 只做 HTTP ↔ 盘面翻译。归档改成 TS 的**搬目录**（`<段>/
 ## 2026-11-23 · 元素库 = 第六套私库（不是 ext 插件），写一次提交一次
 
 **决定**：旧面板 `k3skws` 的元素库（组 / 包）在 Rust 侧落成 `crates/nous/elements`
-（app 层）+ 第五套私库 `NOUS_ELEMENTS`（默认 `/opt/Nous-Elements`）。盘上真相仍是
+（app 层）+ 第六套私库 `NOUS_ELEMENTS`（默认 `/opt/Nous-Elements`）。盘上真相仍是
 `groups/<id>.json` / `packages/<id>.json`，一份 JSON 一个元素；`/v1/elements*` 由
 `server::elements` 只做 HTTP 翻译，写事务在 `nous-repo`：新增 `write_and_commit`
 （一次持锁完成原子写 → 提交 → 尽力推）与 `find_request_id`（幂等回执）。同一个
