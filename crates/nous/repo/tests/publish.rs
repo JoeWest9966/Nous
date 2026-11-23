@@ -6,7 +6,7 @@ fn git_bin() -> String { String::from("git") }
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use nous_repo::{Pushed, Repo, WriteFile};
+use nous_repo::{Pushed, Repo, RepoError, WriteCommit, WriteFile};
 use serde_json::json;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -138,4 +138,70 @@ fn commit_without_remote_reports_pushed_null_instead_of_lying() {
         b"still committed\n",
         "没有远端也不许动用户改动"
     );
+}
+
+/// 提交失败（`pre-commit` 钩子拒了）= **这次写什么都没发生**。
+///
+/// 这条是「写一次提交一次」的另一半：写下去了但没提交，等于盘上多了一份谁也追不到的
+/// 改动 —— 锁最怕它（`locked: true` 在盘上、`git log` 里查不到谁锁的、推也推不上去）。
+#[test]
+fn a_failed_commit_puts_the_file_and_the_index_back() {
+    let f = fixture();
+    let repo = Repo::open(&f.root).unwrap();
+    repo.write_and_commit(WriteCommit {
+        path: "skills/a.md",
+        content: Some(b"one\n"),
+        base_etag: None,
+        message: "feat: a",
+        request_id: None,
+    })
+    .unwrap();
+    let before = git(&f.root, &["rev-list", "--count", "HEAD"]).trim().to_string();
+
+    let hook = f.root.join(".git/hooks/pre-commit");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    git(&f.root, &["config", "core.hooksPath", ".git/hooks"]);
+    assert!(Command::new("chmod").args(["+x", hook.to_str().unwrap()]).status().unwrap().success());
+
+    // 改内容：报错，盘上还是老那份，工作区干净，提交数不动。
+    let err = repo
+        .write_and_commit(WriteCommit {
+            path: "skills/a.md",
+            content: Some(b"two\n"),
+            base_etag: None,
+            message: "feat: a",
+            request_id: None,
+        })
+        .unwrap_err();
+    assert!(matches!(&err, RepoError::Io(_)), "{err:?}");
+    assert_eq!(std::fs::read_to_string(f.root.join("skills/a.md")).unwrap(), "one\n");
+    assert_eq!(git(&f.root, &["status", "--porcelain"]).trim(), "", "别留下半成品");
+    assert_eq!(git(&f.root, &["rev-list", "--count", "HEAD"]).trim(), before);
+
+    // 删也算一次写：失败了，文件得还在。
+    let err = repo
+        .write_and_commit(WriteCommit {
+            path: "skills/a.md",
+            content: None,
+            base_etag: None,
+            message: "chore: rm a",
+            request_id: None,
+        })
+        .unwrap_err();
+    assert!(matches!(&err, RepoError::Io(_)), "{err:?}");
+    assert_eq!(std::fs::read_to_string(f.root.join("skills/a.md")).unwrap(), "one\n");
+
+    // 新建也算：失败了不该在盘上留一份未跟踪的影子。
+    let err = repo
+        .write_and_commit(WriteCommit {
+            path: "skills/b.md",
+            content: Some(b"new\n"),
+            base_etag: None,
+            message: "feat: b",
+            request_id: None,
+        })
+        .unwrap_err();
+    assert!(matches!(&err, RepoError::Io(_)), "{err:?}");
+    assert!(!f.root.join("skills/b.md").exists(), "没提交成功的文件不该留在盘上");
+    assert_eq!(git(&f.root, &["status", "--porcelain"]).trim(), "");
 }

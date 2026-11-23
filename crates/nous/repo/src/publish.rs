@@ -455,6 +455,9 @@ pub fn write_and_commit(root: &Path, input: WriteCommit<'_>) -> Result<WriteComm
     }
 
     let path = input.path.to_string();
+    // 动手之前先记下原来那份：提交失败时要用它把盘上和索引还原。
+    // （提交会失败：pre-commit 钩子、磁盘满、身份没配 —— 都不是「半成功」的理由。）
+    let previous = crate::files::read(root, input.path).ok().map(|read| read.content);
     let (etag, changed) = match input.content {
         Some(content) => {
             // 内容与盘上逐字节相同 = 没有改动，不制造空提交（回执里 commit 为 null）。
@@ -483,6 +486,35 @@ pub fn write_and_commit(root: &Path, input: WriteCommit<'_>) -> Result<WriteComm
         return Ok(WriteCommitResult { etag, commit: None, replay: false });
     }
 
-    let commit = commit(root, &[path], input.message, input.request_id)?;
+    let commit = match commit(root, &[path.clone()], input.message, input.request_id) {
+        Ok(commit) => commit,
+        Err(error) => {
+            // **提交失败 = 这次什么也没发生**：把内容和索引都还原回去，再把错误交出去。
+            // 不还原的话，调用方收到的是错误、盘上却已经是新的那份 —— 锁最怕这个：
+            // 盘上写着 `locked: true`，`git log` 里找不到谁锁的，`push` 也永远带不上去。
+            restore_after_failed_commit(root, &path, previous.as_deref());
+            return Err(error);
+        }
+    };
     Ok(WriteCommitResult { etag, commit: Some(commit), replay: false })
+}
+
+/// 提交失败之后把一条路径还原成「动手之前」的样子：索引退回，内容写回 / 删掉。
+///
+/// 尽力而为：**它自己的失败不盖住原来那个错误** —— 用户要看的是「为什么没提交成功」。
+fn restore_after_failed_commit(root: &Path, path: &str, previous: Option<&[u8]>) {
+    // 先把索引退回（`git add` 过的那一份），否则下次提交会捎上这次的半成品。
+    let _ = git::git_ok(root, &["reset", "-q", "--", path]);
+    let full = root.join(path);
+    match previous {
+        Some(bytes) => {
+            if let Some(parent) = full.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&full, bytes);
+        }
+        None => {
+            let _ = std::fs::remove_file(&full);
+        }
+    }
 }
