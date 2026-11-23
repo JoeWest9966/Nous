@@ -95,6 +95,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/extensions/uninstall", post(crate::ext_admin::uninstall))
         .route("/v1/extensions/categories", get(crate::ext_admin::get_categories).post(crate::ext_admin::post_categories))
         .route("/v1/extensions/category", post(crate::ext_admin::category))
+        .route("/v1/extensions/trash", get(crate::ext_admin::get_trash))
+        .route("/v1/extensions/trash/purge", post(crate::ext_admin::purge_trash))
         .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers).post(crate::triggers::create_trigger))
         .route("/v1/triggers/categories", get(crate::triggers::categories))
