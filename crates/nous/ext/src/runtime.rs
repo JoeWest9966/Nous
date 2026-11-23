@@ -395,7 +395,18 @@ impl Runtime {
         artifact: &Artifact,
         content: &Handles,
     ) -> ExtResult<Arc<ProcExt>> {
-        let uid = if self.config.isolation.enabled {
+        // 专用 uid 只有在**能降权**的时候才有意义：非 root 的宿主（部署时它就是
+        // `nous` 用户）调 setuid 一定 EPERM，spawn 直接失败 —— 扩展一个都起不来，
+        // 报出来的还是「Operation not permitted」，看起来像文件权限问题。
+        // spec 7.1 要的是「三种可验证的隔离形式之一」：这里退到 fd 表 + environ 白名单，
+        // 是**降级**不是取消（close_fds 照旧）。
+        if self.config.isolation.enabled && !crate::spawn::can_drop_privileges() {
+            eprintln!(
+                "nous-ext: {}: uid 隔离不可用（宿主不是 root）—— 退到 fd 表 + environ 白名单",
+                loaded.manifest.name
+            );
+        }
+        let uid = if self.config.isolation.enabled && crate::spawn::can_drop_privileges() {
             let index = self.uid_counter.fetch_add(1, Ordering::SeqCst);
             Some(self.config.isolation.base_uid + index)
         } else {

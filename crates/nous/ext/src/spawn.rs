@@ -26,6 +26,15 @@ use serde_json::{json, Value};
 use crate::config::Isolation;
 use crate::error::{ExtError, ExtResult};
 
+/// 当前进程能不能把子进程降到别的 uid（只有 root 行）。
+///
+/// 非 root 时 `setgroups`/`setgid`/`setuid` 一律 EPERM，而那是**在 `pre_exec` 里**，
+/// 报出来的就是 `spawn: Operation not permitted` —— 看起来像文件权限，其实是隔离要求
+/// 太高。调用方拿这个判断「降权能不能做」，能就降、不能就退到 fd 表 + environ 白名单。
+pub fn can_drop_privileges() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+
 /// 帧通道上的一条消息。错误是字符串（`FrameError` 不 Clone，跨线程只传形状）。
 pub type FrameMsg = Result<Value, String>;
 
