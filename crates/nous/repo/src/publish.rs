@@ -413,7 +413,16 @@ pub fn find_request_id(root: &Path, request_id: &str) -> Result<Option<String>> 
     }
     let window = REQUEST_ID_WINDOW.to_string();
     // `%B` 是多行正文：用 0x1e 作记录分隔、0x1f 作字段分隔，不能靠换行切。
-    let out = git::git_ok(root, &["log", "--format=%H%x1f%B%x1e", "-n", &window])?;
+    //
+    // **空仓也是合法状态**：`git log` 在「还没有任何提交」时退出码 128
+    // （`your current branch 'master' does not have any commits yet`）。
+    // 那不是「回执查不到」，是「根本没有历史」—— 按 `None` 处理，让第一次写能成功。
+    // 踩过：用空私库验元素库的新建，PUT 直接回「git log 失败」（Desk 只看到一句红字）。
+    let out = match git::git_ok(root, &["log", "--format=%H%x1f%B%x1e", "-n", &window]) {
+        Ok(out) => out,
+        Err(_) if !has_commits(root)? => return Ok(None),
+        Err(e) => return Err(e),
+    };
     let trailer = format!("Request-Id: {request_id}");
     for record in out.split('\u{1e}') {
         let Some((hash, body)) = record.split_once('\u{1f}') else { continue };
@@ -426,6 +435,14 @@ pub fn find_request_id(root: &Path, request_id: &str) -> Result<Option<String>> 
         }
     }
     Ok(None)
+}
+
+/// 这个仓有没有提交（空仓的 `git log` 会失败，那是状态不是错误）。
+fn has_commits(root: &Path) -> Result<bool> {
+    match git::git_ok(root, &["rev-parse", "--verify", "-q", "HEAD"]) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
 }
 
 /// 写 / 删一条路径，再提交它（写一次提交一次）；同一个 `requestId` 只做一次。

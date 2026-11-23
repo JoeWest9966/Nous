@@ -239,3 +239,47 @@ fn id_rule_matches_the_old_panel() {
     assert!(check_id("react-rules").is_ok());
     assert!(check_id("React").is_err());
 }
+
+/// 空私库（还没有任何提交）也要能写进去。
+///
+/// 踩过：用刚 `git init` 的目录验 Desk 的「新建」，PUT 直接失败在
+/// `git log ... your current branch 'master' does not have any commits yet` ——
+/// 幂等回执的查询把「没有历史」当成了错误，于是**第一次写永远写不进去**。
+#[test]
+fn a_repo_without_commits_accepts_the_first_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("empty-elements");
+    std::fs::create_dir_all(root.join("groups")).unwrap();
+    git(&root, &["init", "-q"]);
+    git(&root, &["config", "user.email", "t@e"]);
+    git(&root, &["config", "user.name", "T"]);
+    git(&root, &["config", "commit.gpgsign", "false"]);
+
+    let repo = Repo::open(&root).unwrap();
+    let outcome = put(
+        &repo,
+        Kind::Groups,
+        "first",
+        json!({"id": "first", "name": "第一个", "packages": []}),
+        None,
+        Some("rid-first"),
+    )
+    .expect("空仓的第一次写要成功");
+    assert!(outcome.created, "没有旧文件 → created");
+    assert!(!outcome.replay);
+    assert!(outcome.commit.is_some(), "写完必须有一条提交");
+    assert_eq!(count(&repo), "1");
+
+    // 同一锚重放仍然不二次提交。
+    let again = put(
+        &repo,
+        Kind::Groups,
+        "first",
+        json!({"id": "first", "name": "第一个", "packages": []}),
+        None,
+        Some("rid-first"),
+    )
+    .unwrap();
+    assert!(again.replay, "同一个 requestId 重放要认出来");
+    assert_eq!(count(&repo), "1");
+}
