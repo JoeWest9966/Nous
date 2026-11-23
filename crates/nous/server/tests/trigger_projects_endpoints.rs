@@ -457,19 +457,19 @@ async fn publish_runs_cargo_generates_index_and_commits() {
     let names = git(&root, &["show", "--pretty=format:", "--name-only", "HEAD"]);
     assert!(names.contains("tiny-trigger/nous.json"), "{names}");
     assert!(names.contains("index.json"), "{names}");
-    assert!(!names.contains("target/"), "target 不许进提交：{names}");
-    assert!(!names.contains("junk"), "target 里的文件不许进提交：{names}");
-
-    // 再发布一次：没有改动 → commit 失败按 stage=commit 回 422，不假装成功。
-    let (status, body) = call(
+    // 再发一次：源码与清单都没变，是幂等的 200，而不是「nothing to commit」422。
+    let (again, body) = call(
         &app,
         "POST",
         "/v1/trigger-projects/publish",
         Some(json!({ "name": "tiny-trigger" })),
     )
     .await;
-    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
-    assert_eq!(body["stage"], json!("commit"));
+    assert_eq!(again, StatusCode::OK, "{body}");
+    assert_eq!(body["committed"], json!(false), "{body}");
+    assert!(!names.contains("target/"), "target 不许进提交：{names}");
+    assert!(!names.contains("junk"), "target 里的文件不许进提交：{names}");
+
 }
 
 #[tokio::test]

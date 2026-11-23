@@ -132,14 +132,19 @@ async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
 fn list_value(repo: &Repo) -> Result<Value> {
     let status = repo.status().map_err(repo_error)?;
     let pending = repo.pending().map_err(repo_error)?;
-    let mut tracked_units: BTreeSet<String> = BTreeSet::new();
+    // `state == "unpushed"` 是「提交了没推上去」（`ahead`），不是工作树脏 —— 旧版
+    // 顶栏把这两件事分成两个 chip，别把未推送算成「有改动」。
     let mut dirty_files: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut dirty_count = 0usize;
     for unit in &pending {
+        if unit.state == "unpushed" {
+            continue;
+        }
         for path in &unit.paths {
             let name = path.split('/').next().unwrap_or(path).to_string();
             *dirty_files.entry(name).or_default() += 1;
+            dirty_count += 1;
         }
-        tracked_units.insert(unit.name.clone());
     }
 
     let mut triggers = Vec::new();
@@ -167,9 +172,6 @@ fn list_value(repo: &Repo) -> Result<Value> {
             .cmp(&b.get("name").and_then(Value::as_str))
     });
     let categories = vocab_with_usage(repo.root());
-    // `nous_repo::status().dirty` 只看已跟踪文件的改动；未跟踪的新项目（旧仓里
-    // single-shot 就没提交过）也得算脏，否则顶栏说「干净」、卡片却说「有改动」。
-    let dirty_count = pending.iter().map(|unit| unit.paths.len()).sum::<usize>();
     Ok(json!({
         "triggers": triggers,
         "repo": {
@@ -178,7 +180,7 @@ fn list_value(repo: &Repo) -> Result<Value> {
             "branch": status.branch,
             "ahead": status.ahead,
             "behind": status.behind,
-            "dirty": status.dirty || dirty_count > 0,
+            "dirty": status.dirty,
             "dirtyCount": dirty_count,
         },
         "categories": categories,
@@ -246,10 +248,10 @@ fn item_of(repo: &Repo, name: &str, dirty_files: usize) -> Value {
             )
         }
     };
-    // tracked = HEAD 里有这个目录的清单；建完没发布就是 false。
+    // tracked = HEAD 里有这个目录的任何文件；建完没发布就是 false。
     let tracked = repo
-        .pending_diff(&format!("{name}/nous.json"))
-        .map(|diff| !diff.before.trim().is_empty())
+        .tracked_paths(name)
+        .map(|paths| !paths.is_empty())
         .unwrap_or(false);
     json!({
         "name": name,
@@ -263,6 +265,17 @@ fn item_of(repo: &Repo, name: &str, dirty_files: usize) -> Value {
         "dirtyFiles": dirty_files,
         "error": error,
     })
+}
+
+/// 这批路径里有没有和 HEAD 不同的内容（用于「重复发布」的幂等判定）。
+fn has_changes(repo: &Repo, paths: &[String]) -> Result<bool> {
+    for path in paths {
+        let diff = repo.pending_diff(path).map_err(repo_error)?;
+        if diff.before != diff.after {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn read_manifest(dir: &Path) -> Option<Value> {
@@ -562,14 +575,50 @@ async fn publish(
         .get("version")
         .and_then(Value::as_str)
         .unwrap_or("0.1.0");
-    let message = format!("trigger({}): v{}", body.name, version);
     // 显式文件清单，不给目录 pathspec：旧仓可能没有 .gitignore，`git add <name>/`
     // 会把 `target/` 一起带进提交。也只 add 这一个项目（不搭车）。
     let mut paths = project_files(&dir, &body.name);
     paths.push("index.json".to_string());
+    // 重复发布同一条（源码与清单都没变）不该红：没有新提交就如实回执。
+    // 只看这清单里的文件 —— 仓里别处的 untracked（比如项目下的 target/）不影响。
+    if !has_changes(repo.as_ref(), &paths)? {
+        let snapshot = repo.status().map_err(repo_error)?;
+        return Ok(Json(json!({
+            "committed": false,
+            "pushed": Value::Null,
+            "pushError": Value::Null,
+            "head": snapshot.head.map(short_head),
+            "branch": snapshot.branch,
+            "ahead": snapshot.ahead,
+            "version": version,
+            "note": "没有改动：源码与清单都和 HEAD 一致，未产生新提交",
+        }))
+        .into_response());
+    }
+    let message = format!("trigger({}): v{}", body.name, version);
     let commit = match repo.commit(&paths, &message, None) {
         Ok(commit) => commit,
-        Err(error) => return Ok(unprocessable("commit", error.to_string())),
+        Err(error) => {
+            // 这批路径 add 完 staged 没变化时 `git commit` 会把提示写到 stdout，
+            // 错误串只剩前缀 —— 那说明「没东西可提交」，按幂等回执，不冒充失败。
+            let text = error.to_string();
+            let empty = text.trim_end().ends_with('：') || text.contains("nothing to commit");
+            if empty {
+                let snapshot = repo.status().map_err(repo_error)?;
+                return Ok(Json(json!({
+                    "committed": false,
+                    "pushed": Value::Null,
+                    "pushError": Value::Null,
+                    "head": snapshot.head.map(short_head),
+                    "branch": snapshot.branch,
+                    "ahead": snapshot.ahead,
+                    "version": version,
+                    "note": "没有改动：未产生新提交",
+                }))
+                .into_response());
+            }
+            return Ok(unprocessable("commit", text));
+        }
     };
     let status = repo.status().map_err(repo_error)?;
     let push_error = match commit.pushed {
