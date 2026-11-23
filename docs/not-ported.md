@@ -36,16 +36,24 @@
 | `packages/durable/src/testing/storage-benchmark.ts` | pi@v1.5.2 | 500 行 benchmark，`createCase(` 调用点 **0** —— 不是规范，与 `FLOOR.tsv` 的用例数下限无关。本库的性能基线是 `docs/bench-commit.md` 里那几条，按本库的写路径重写（1,000 次即时提交、每 100 次打一次 base、链长 200/400/800 的单次提交中位数）；照抄上游 benchmark 量的是上游实现（决定：#15） | 2026-11-17 |
 | `packages/durable/src/testing/{assertions,runner,types,index,commit-writes}.ts` | pi@v1.5.2 | 五个**工具**文件（共 169 行）：断言门面 / 用例注册器 / 用例类型 / 出口 / 提交写入辅助，`createCase(` 调用点 0。本库只有一张规范文件，夹具与断言就内联在 `conformance/storage_conformance.rs` 顶部（`backend` / `conversation` / `count` / `revision_count` / `delta` …），照抄注册器等于给不存在的东西造一层间接（决定：#15） | 2026-11-17 |
 
-## 扩展的段还没接进真会话（2026-11-23 发现）
+## 扩展的段进真会话（2026-11-23 发现，当天接上）
 
-`nous-ext` 的 `Runtime::render_turn` 只有 `ext-probe` 在调；`server` 的轮次驱动器**没有调**。
-所以扩展的 section 目前不会进系统提示词：扩展装得上、跑得稳、`items` 里是 `running`，
-但模型看不到那几段。
+**发现**：`nous-ext` 的 `Runtime::render_turn` 只有 `ext-probe` 在调，`server` 的轮次驱动器
+没调 —— 扩展装得上、跑得稳、`items` 里是 `running`，但模型看不到那几段。
 
-要接的两处（都不是「改扩展」）：
+**接法**（两处都在内核，一处都不在扩展）：
 
-1. 轮次装配处调 `runtime.render_turn(conversation, generation, cwd)`，把 `Turn.text` 拼进系统提示词；
-2. 帧里的 `input.extensions` 现在给的是**已装载的扩展名**（`nous` / `skills` / …），
-   应该是**本会话选中的名字**（`agent.extensions` / `agent.skills`，形如 `skill:tdd`）——
-   否则扩展没法知道「这条会话要哪些技能」。`skills` / `prompts` 两条扩展已按这套名字写好，
-   内核把选择递进帧之后它们自动就对。
+1. `routes.rs::messages` 组装轮次时调 `inject_extension_section`：它把本会话的选中项拼成
+   名字（`session_selection`：技能 → `skill:<名>`、模板 → `prompt:<名>`），在
+   `spawn_blocking` 里调 `Runtime::render_turn_with`（1s 段预算，不能占异步执行器），
+   把 `Turn.text` 落一条 `pi.system`（`sections.extensions`，entry id = `entry_id + 4`，
+   模板/技能顺延到 `+5`）并塞进本轮 context。**没装运行时 / 渲染出空串**才跳过，
+   「没选任何东西」不跳过 —— `nous` 那条扩展产出的就是基础 preamble。
+2. 帧里的 `input.extensions` 从「装载名」改成**本会话选中的名字**（`skill:` / `prompt:`，
+   顺序即选中顺序）。装载名对扩展没有信息量 —— 它自己就是其中之一。
+
+**判据**：`crates/nous/server/tests/extension_injection.rs`（真进程，段文本逐字进
+`sections.extensions`）+ `nous-ext-probe frame-selection`（帧里就是那两份名字）。
+
+**还没做的**：`triggers.rs` 的 faux 轮次（`submission_to_turn` 拿不到 `AppState`）没有扩展段；
+触发器只跑 faux 回声，先不接。

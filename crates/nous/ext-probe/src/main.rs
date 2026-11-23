@@ -54,6 +54,7 @@ fn main() {
         // section / 帧（EX-07…16、55、78、79、80、28）
         "one-process-per-extension" => cases_section::one_process_per_extension(),
         "frame-keys" => cases_section::frame_keys(),
+        "frame-selection" => cases_section::frame_selection(),
         "frame-forbidden-keys" => cases_section::frame_forbidden_keys(dirty),
         "calls-per-turn" => cases_section::calls_per_turn(),
         "truncated-frame" => cases_section::truncated_frame(),

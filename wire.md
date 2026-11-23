@@ -299,6 +299,12 @@ entry 条数、tokens 与 cost、工具调用数、用过的模型集合、首�
   超时回 202（答案仍走 SSE）。真实等待绑在轮次完成信号上，不是 sleep 轮询。
 - `whenBusy`：`queue`（默认，忙时排队）或 `interrupt`（先停当前轮次再受理）；
   非法值 400。忙时判定以服务端会话状态为准，客户端不自己猜。
+- 起轮时除了模板/技能（`sections.prompts`，#72/#83），还会把**扩展渲染出来的段**落成一条
+  `pi.system`，段名 `sections.extensions`（entry id = `entry_id + 4`，模板/技能是 `+5`：
+  扩展先合并，preamble 排在技能正文前面）。扩展进程拿到的帧里 `input.extensions` 是
+  **本会话选中的名字**（`skill:<名>` / `prompt:<名>`，顺序即选中顺序），不是装载名。
+  没有扩展运行时（精简装配）时这一条不出现，轮次照跑。判据：
+  `crates/nous/server/tests/extension_injection.rs`、`nous-ext-probe frame-selection`。
 
 ### GET /v1/sessions/:id/events —— SSE
 

@@ -106,6 +106,42 @@ pub fn frame_keys() -> i32 {
     }
 }
 
+/// 帧里的 `input.extensions` 是**本会话选中的名字**（`skill:<名>` / `prompt:<名>`），
+/// 不是装载名 —— 装载名（`section` 这种进程名）对扩展没有信息量，它自己就是其中之一。
+///
+/// 观测：把两份选中项递给 `render_turn_with`，读回最后一帧的 `input.extensions`。
+pub fn frame_selection() -> i32 {
+    let sandbox = Sandbox::new("frame-selection");
+    section_ext(&sandbox, "section");
+    let runtime = sandbox.runtime();
+    let _ = runtime.start_all();
+    let selected = vec!["skill:tdd".to_string(), "prompt:weekly".to_string()];
+    let _ = runtime.render_turn_with(7, 1, "/tmp/work", &selected);
+    let frame = runtime
+        .frames()
+        .into_iter()
+        .filter(|frame| frame.get("kind").and_then(Value::as_str) == Some("section"))
+        .next_back()
+        .expect("a section frame");
+    let sent: Vec<String> = frame
+        .get("input")
+        .and_then(|input| input.get("extensions"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    kv(&[
+        ("extensions", sent.join(",")),
+        ("matches", if sent == selected { "1" } else { "0" }.to_string()),
+    ]);
+    if sent == selected { 0 } else { 1 }
+}
+
 /// `shown` / `read` / `model` / 句柄值路径都不进帧（EX-12）。
 pub fn frame_forbidden_keys(dirty: bool) -> i32 {
     let sandbox = Sandbox::new("frame-forbidden");
