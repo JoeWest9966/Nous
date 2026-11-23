@@ -1024,3 +1024,23 @@ server 只做 HTTP ↔ 盘面翻译。归档改成 TS 的**搬目录**（`<段>/
 **反悔点**：如果 `resolved` 的逐条查盘在 j1900 上成为 roster 的性能瓶颈（每段 N 条 × 4 个根），
 先加按段缓存 + 写盘失效，别退化成「客户端自己算」。`sections.json` 若被证明是过度设计
 （永远只有两段），可以退回目录名硬编码，但 `manifest` / `checker` 两列要保留在代码里的同一处。
+
+## 2026-11-23 · 产物 triple 按架构收、隔离在非 root 下降级到 fd 表
+
+**决定**：
+1. `RuntimeConfig.host_triples` 默认给**同架构**的 `-musl` 与 `-gnu` 两条，别人架构照拒。
+2. `spawn_one` 只在 `euid == 0` 时要求专用 uid；不是 root 就退到 fd 表 +
+   `environ` 白名单，并打一行「uid 隔离不可用（宿主不是 root）」。
+
+**为什么**：部署的内核是 `x86_64-unknown-linux-musl` 编的、跑在 `nous` 用户下。
+`host_triples` 写死只认 `-gnu` 时，现成的静态扩展一个都装不上（`triple=…-musl` 被拒）；
+就算 triple 放行，`pre_exec` 里的 `setuid(60001)` 也必然 EPERM，报出来是
+`spawn: Operation not permitted`，看着像文件权限问题。两条都是「在 j1900 上真撞到」的。
+
+**代价 / 反悔点**：非 root 宿主上扩展与内核同 uid，隔离只剩 fd 表与 `environ` ——
+够挡「顺着 `/proc/self/fd` 写库」，挡不住「扩展自己去读别的文件」。要真 hardening 的做法是
+给内核 `CAP_SETUID` 或改用 user namespace；那时把这段降级删掉、恢复「必须降权」即可。
+
+**另一条**：句柄代读现在跳过 `.git` / `node_modules` / `target` / `artifacts`
+（`handle::skipped_dir`）。不跳的话技能仓库的 `.git` 一动就是几 MB，
+64 KiB 的句柄预算被它吃光，扩展拿到的 `files` 里一条 `SKILL.md` 都没有。

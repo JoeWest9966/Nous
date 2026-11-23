@@ -35,3 +35,17 @@
 | `packages/durable/src/testing/env-conformance.ts` | pi@v1.5.2 | 633 行 / 20 个 `createCase(` —— **是规范，但没有可测的真后端**：本库 `nous-env` 只有 trait（`FileSystem` / `Shell` / `ExecutionEnv`），一个实现都没有，而 conformance 测的正是真后端。造个假后端让它绿，什么也证明不了，那就是「绿得浅」。等本地 `FileSystem` + `Shell` 实现落地再抄（决定：#15） | 2026-11-17 |
 | `packages/durable/src/testing/storage-benchmark.ts` | pi@v1.5.2 | 500 行 benchmark，`createCase(` 调用点 **0** —— 不是规范，与 `FLOOR.tsv` 的用例数下限无关。本库的性能基线是 `docs/bench-commit.md` 里那几条，按本库的写路径重写（1,000 次即时提交、每 100 次打一次 base、链长 200/400/800 的单次提交中位数）；照抄上游 benchmark 量的是上游实现（决定：#15） | 2026-11-17 |
 | `packages/durable/src/testing/{assertions,runner,types,index,commit-writes}.ts` | pi@v1.5.2 | 五个**工具**文件（共 169 行）：断言门面 / 用例注册器 / 用例类型 / 出口 / 提交写入辅助，`createCase(` 调用点 0。本库只有一张规范文件，夹具与断言就内联在 `conformance/storage_conformance.rs` 顶部（`backend` / `conversation` / `count` / `revision_count` / `delta` …），照抄注册器等于给不存在的东西造一层间接（决定：#15） | 2026-11-17 |
+
+## 扩展的段还没接进真会话（2026-11-23 发现）
+
+`nous-ext` 的 `Runtime::render_turn` 只有 `ext-probe` 在调；`server` 的轮次驱动器**没有调**。
+所以扩展的 section 目前不会进系统提示词：扩展装得上、跑得稳、`items` 里是 `running`，
+但模型看不到那几段。
+
+要接的两处（都不是「改扩展」）：
+
+1. 轮次装配处调 `runtime.render_turn(conversation, generation, cwd)`，把 `Turn.text` 拼进系统提示词；
+2. 帧里的 `input.extensions` 现在给的是**已装载的扩展名**（`nous` / `skills` / …），
+   应该是**本会话选中的名字**（`agent.extensions` / `agent.skills`，形如 `skill:tdd`）——
+   否则扩展没法知道「这条会话要哪些技能」。`skills` / `prompts` 两条扩展已按这套名字写好，
+   内核把选择递进帧之后它们自动就对。
