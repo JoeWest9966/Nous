@@ -294,8 +294,8 @@ fn a_locked_element_cannot_be_overwritten_or_removed() {
     assert!(outcome.changed);
     assert!(outcome.commit.is_some(), "上锁本身就是一次提交");
     assert_eq!(count(&repo), (before.parse::<i32>().unwrap() + 1).to_string());
-    let log = log(&repo);
-    assert!(log.contains("chore(group): lock frontend"), "{log}");
+    let history = log(&repo);
+    assert!(history.contains("chore(group): lock frontend"), "{history}");
 
     // 盘上多了 locked，其余字段一个没动。
     let locked = get(&repo, Kind::Groups, "frontend").unwrap();
@@ -312,11 +312,11 @@ fn a_locked_element_cannot_be_overwritten_or_removed() {
         None,
     )
     .unwrap_err();
-    assert!(matches!(err, RepoError::Locked(_)), "{err:?}");
+    assert!(matches!(&err, RepoError::Locked(_)), "{err:?}");
 
     // 删：拒。
     let err = remove(&repo, Kind::Groups, "frontend", None, None).unwrap_err();
-    assert!(matches!(err, RepoError::Locked(_)), "{err:?}");
+    assert!(matches!(&err, RepoError::Locked(_)), "{err:?}");
 
     // 解锁 → 能删。
     let unlocked = set_lock(&repo, Kind::Groups, "frontend", false, None, None).unwrap();
@@ -341,7 +341,7 @@ fn the_lock_cannot_be_flipped_by_a_plain_write() {
         None,
     )
     .unwrap_err();
-    assert!(matches!(err, RepoError::Validation { field, .. } if field == "locked"), "{err:?}");
+    assert!(matches!(&err, RepoError::Validation { field, .. } if field == "locked"), "{err:?}");
 
     // 不带 locked → 能写。
     put(&repo, Kind::Packages, "fresh", json!({ "id": "fresh", "name": "新的" }), None, None)
@@ -368,7 +368,7 @@ fn the_lock_cannot_be_flipped_by_a_plain_write() {
         None,
     )
     .unwrap_err();
-    assert!(matches!(err, RepoError::Validation { field, .. } if field == "locked"), "{err:?}");
+    assert!(matches!(&err, RepoError::Validation { field, .. } if field == "locked"), "{err:?}");
 }
 
 #[test]
@@ -382,7 +382,7 @@ fn locking_twice_is_a_noop_and_missing_elements_are_404() {
     assert_eq!(count(&repo), before, "不造空提交");
 
     let err = set_lock(&repo, Kind::Packages, "nope", true, None, None).unwrap_err();
-    assert!(matches!(err, RepoError::NotFound(_)), "{err:?}");
+    assert!(matches!(&err, RepoError::NotFound(_)), "{err:?}");
 }
 
 #[test]
