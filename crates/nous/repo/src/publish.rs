@@ -486,7 +486,7 @@ pub fn write_and_commit(root: &Path, input: WriteCommit<'_>) -> Result<WriteComm
         return Ok(WriteCommitResult { etag, commit: None, replay: false });
     }
 
-    let commit = match commit(root, &[path.clone()], input.message, input.request_id) {
+    let commit = match commit(root, std::slice::from_ref(&path), input.message, input.request_id) {
         Ok(commit) => commit,
         Err(error) => {
             // **提交失败 = 这次什么也没发生**：把内容和索引都还原回去，再把错误交出去。
