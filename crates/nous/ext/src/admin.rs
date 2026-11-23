@@ -20,6 +20,18 @@ pub const REPO_CATEGORIES_FILE: &str = "categories.json";
 /// 三个核心扩展：引擎自己需要，不能本地删。
 pub const CORE_EXTENSIONS: &[&str] = &["nous", "skills", "prompts"];
 
+/// 把垃圾站条目名拆回 `(扩展名, 卸载毫秒)`。名字里可能带 `-`，所以只按最后一个
+/// `-<数字>` 切；拆不出来就整串当名字、时间记 0（旧垃圾站条目也不许变成看不见的黑洞）。
+fn split_trash_entry(entry: &str) -> (String, u64) {
+    match entry.rsplit_once('-') {
+        Some((name, stamp)) if !name.is_empty() => match stamp.parse::<u64>() {
+            Ok(ms) => (name.to_string(), ms),
+            Err(_) => (entry.to_string(), 0),
+        },
+        _ => (entry.to_string(), 0),
+    }
+}
+
 /// 扫描扩展目录时跳过删除名单里的名字（名单住在私库根，随发布走）。
 pub fn scan_active(root: &Path) -> Vec<(PathBuf, ExtResult<crate::manifest::LoadedManifest>)> {
     let deleted = deleted_names(root);
@@ -190,6 +202,43 @@ impl AdminStore {
             "trashed": trashed.to_string_lossy().into_owned(),
             "deleted": deleted,
         }))
+    }
+
+    /// 垃圾站里有什么。`uninstall` 把源码目录 rename 成 `<name>-<ms>`，
+    /// 名字里就带着卸载时间 —— 不用额外记一份索引，垃圾站本身是唯一真相。
+    /// 界面上「装回来 / 彻底删除」都要先能看见它，否则点了卸载就等于扔了。
+    pub fn trash_items(&self) -> Vec<Value> {
+        let Ok(entries) = fs::read_dir(&self.trash) else { return Vec::new() };
+        let mut items = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() { continue; }
+            let entry_name = entry.file_name().to_string_lossy().into_owned();
+            let (name, trashed_at) = split_trash_entry(&entry_name);
+            items.push(json!({
+                "name": name,
+                "entry": entry_name,
+                "trashed_at": trashed_at,
+                "has_manifest": path.join("nous.json").is_file(),
+                "dir": path.to_string_lossy().into_owned(),
+            }));
+        }
+        // 新的在前：一次卸载留下好几份时，人想装回的是最近那份。
+        items.sort_by_key(|item| std::cmp::Reverse(item["trashed_at"].as_u64().unwrap_or(0)));
+        items
+    }
+
+    /// 彻底删掉垃圾站里的**一份**（按 `entry`，不按名字）。
+    /// 按名字删会把同一个扩展的每一次卸载都铲掉 —— 那是不可逆的，得人指着哪份删哪份。
+    pub fn purge_trash(&self, entry: &str) -> ExtResult<Value> {
+        let safe = valid_name(entry).map_err(|_| ExtError::Spawn(format!("垃圾站条目不合法：{entry}")))?;
+        let path = self.trash.join(&safe);
+        if !path.is_dir() {
+            return Err(ExtError::Spawn(format!("垃圾站里没有 {entry}")));
+        }
+        fs::remove_dir_all(&path)
+            .map_err(|error| ExtError::Spawn(format!("删除 {} 失败：{error}", path.display())))?;
+        Ok(json!({ "entry": safe, "removed": true }))
     }
 
     /// 安装：优先垃圾站最新一份，没有就读 HEAD（由调用方先 `git restore`）。

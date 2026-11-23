@@ -780,6 +780,8 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
 | `GET /v1/extensions/categories` | 回 `{categories:[...]}`，读私库根的 `categories.json`（在私库里，随发布进历史）。文件不存在回空表。 |
 | `POST /v1/extensions/categories` | body `{op:"add"\|"rename"\|"remove", name, to?}`。`rename` 同时改写所有挂它的扩展的 `nous.json.category`。回 `{categories, affected}`。 |
 | `POST /v1/extensions/category` | body `{name, category}`。给一个扩展挂/改单值类别（`null` 清除），写 `nous.json`。回 `{name, category}`。 |
+| `GET /v1/extensions/trash` | 回 `{items:[{name, entry, trashed_at, has_manifest, dir}]}`，读 `<data>/extend-trash/`。`entry` 是目录名 `<name>-<epochms>`，`name` 从它切出来。新的在前。垃圾站不在私库里、不随发布走。 |
+| `POST /v1/extensions/trash/purge` | body `{entry}`。**按条目删**（不按名字：同一扩展卸载过几次就有几份）。回 `{entry, removed}`，没有这份 400。不可逆。 |
 | pending 三件 | **没有** `/v1/extensions/pending` 端点：**直接复用** `/v1/repos/extend/pending` / `/pending/diff` / `/pending/commit`，不另开实现。 |
 
 - `deleted-extensions.json` 是删除名单而不是墓碑表：名字在里面，扫描就跳过这个扩展，

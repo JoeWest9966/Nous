@@ -239,6 +239,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/extensions/uninstall", module: "ext" },
     RegisteredRoute { method: "GET", path: "/v1/extensions/categories", module: "ext" },
     RegisteredRoute { method: "POST", path: "/v1/extensions/categories", module: "ext" },
+    RegisteredRoute { method: "GET", path: "/v1/extensions/trash", module: "ext" },
+    RegisteredRoute { method: "POST", path: "/v1/extensions/trash/purge", module: "ext" },
     RegisteredRoute { method: "POST", path: "/v1/extensions/category", module: "ext" },
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
     RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },

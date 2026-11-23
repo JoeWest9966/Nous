@@ -426,3 +426,114 @@ async fn install_falls_back_to_head_when_trash_is_empty() {
         "两边都没有要给明确错误，不该 200：{status:?} {body}");
     assert!(body["error"].is_string(), "错误体形状：{body}");
 }
+
+/// 判据：词表 `remove` 不只是从表里划掉 —— 挂着它的扩展清单里的 `category` 也要清掉，
+/// 否则界面上会留一个「词表里没有的类别」，等于两条真相。
+#[tokio::test]
+async fn categories_remove_also_clears_manifests() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("extends");
+    std::fs::create_dir_all(&root).unwrap();
+    init_repo(&root);
+    let _env = EnvGuard::new(&[("NOUS_EXTEND", root.clone())]);
+    let app = app_with(&root, &tmp.path().join("extend-trash"));
+
+    call(&app, Method::POST, "/v1/extensions/create", Some(json!({"name":"alpha"}))).await;
+    call(&app, Method::POST, "/v1/extensions/create", Some(json!({"name":"beta"}))).await;
+    call(&app, Method::POST, "/v1/extensions/categories", Some(json!({"op":"add","name":"旧类别"}))).await;
+    call(&app, Method::POST, "/v1/extensions/category", Some(json!({"name":"alpha","category":"旧类别"}))).await;
+
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/categories", Some(json!({"op":"remove","name":"旧类别"}))).await;
+    assert_eq!(status, StatusCode::OK, "词表删除：{body}");
+    assert_eq!(body["categories"], json!([]), "词表空了：{body}");
+    assert_eq!(body["affected"], json!(["alpha"]), "只有挂着它的那条被改写：{body}");
+
+    let manifest: Value = serde_json::from_str(&std::fs::read_to_string(root.join("alpha/nous.json")).unwrap()).unwrap();
+    assert!(manifest.get("category").is_none(), "清单里的 category 要摘掉：{manifest}");
+    let beta: Value = serde_json::from_str(&std::fs::read_to_string(root.join("beta/nous.json")).unwrap()).unwrap();
+    assert!(beta.get("category").is_none(), "没挂类别的别长出一个空串：{beta}");
+    let (_, list) = call(&app, Method::GET, "/v1/extensions/categories", None).await;
+    assert_eq!(list["categories"], json!([]), "GET 也是空：{list}");
+}
+
+/// 词表操作对不存在的名字要报错，不许静默成功 —— 静默成功等于「我改了」但什么都没改。
+#[tokio::test]
+async fn categories_unknown_name_and_op_are_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("extends");
+    std::fs::create_dir_all(&root).unwrap();
+    init_repo(&root);
+    let _env = EnvGuard::new(&[("NOUS_EXTEND", root.clone())]);
+    let app = app_with(&root, &tmp.path().join("extend-trash"));
+
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/categories", Some(json!({"op":"rename","name":"不存在","to":"新"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "改名不存在的类别要 400：{body}");
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/categories", Some(json!({"op":"rename","name":"x"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "rename 缺 to 要 400：{body}");
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/categories", Some(json!({"op":"explode","name":"x"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "未知 op 要 400：{body}");
+    // `add` 幂等：重复加同一类别不报错、也不长出两条。
+    call(&app, Method::POST, "/v1/extensions/categories", Some(json!({"op":"add","name":"a"}))).await;
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/categories", Some(json!({"op":"add","name":"a"}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["categories"], json!(["a"]), "重复 add 不许重复：{body}");
+}
+
+/// 判据：垃圾站能看见 + 能按条目彻底删。
+/// 卸载不是删除 —— 目录还在 `data/extend-trash/` 里，界面得能列出来，也得能真的扔掉。
+#[tokio::test]
+async fn trash_lists_uninstalled_entries_and_purge_removes_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("extends");
+    std::fs::create_dir_all(&root).unwrap();
+    init_repo(&root);
+    let trash = tmp.path().join("data/extend-trash");
+    let _env = EnvGuard::new(&[("NOUS_EXTEND", root.clone())]);
+    let app = app_with(&root, &trash);
+
+    let (_, empty) = call(&app, Method::GET, "/v1/extensions/trash", None).await;
+    assert_eq!(empty["items"], json!([]), "空垃圾站回空表：{empty}");
+
+    call(&app, Method::POST, "/v1/extensions/create", Some(json!({"name":"alpha"}))).await;
+    let (_, body) = call(&app, Method::POST, "/v1/extensions/uninstall", Some(json!({"name":"alpha"}))).await;
+    let entry = body["trashed"].as_str().unwrap().rsplit('/').next().unwrap().to_string();
+
+    let (status, list) = call(&app, Method::GET, "/v1/extensions/trash", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let items = list["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "垃圾站里有一条：{list}");
+    assert_eq!(items[0]["name"], json!("alpha"), "名字从条目名切回来：{list}");
+    assert_eq!(items[0]["entry"], json!(entry));
+    assert!(items[0]["trashed_at"].as_u64().unwrap() > 0, "条目名里的毫秒要解析出来：{list}");
+    assert_eq!(items[0]["has_manifest"], json!(true), "清单还在：{list}");
+
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/trash/purge", Some(json!({"entry":entry}))).await;
+    assert_eq!(status, StatusCode::OK, "彻底删：{body}");
+    assert_eq!(body["removed"], json!(true));
+    assert!(!trash.join(&entry).exists(), "目录真的没了");
+    let (_, list) = call(&app, Method::GET, "/v1/extensions/trash", None).await;
+    assert_eq!(list["items"], json!([]), "删完就空：{list}");
+
+    // 删掉的这份再装不回来（垃圾站没了、HEAD 里也没有），但 404/400 要响得明显。
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/install", Some(json!({"name":"alpha"}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "垃圾站和 HEAD 都没有 → 400：{body}");
+    let (status, body) = call(&app, Method::POST, "/v1/extensions/trash/purge", Some(json!({"entry":entry}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "同一份删两次 400：{body}");
+}
+
+/// 条目名是外部输入：`../` 之类的必须被挡在垃圾站外。
+#[tokio::test]
+async fn trash_purge_rejects_path_traversal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("extends");
+    std::fs::create_dir_all(&root).unwrap();
+    init_repo(&root);
+    let _env = EnvGuard::new(&[("NOUS_EXTEND", root.clone())]);
+    let app = app_with(&root, &tmp.path().join("data/extend-trash"));
+
+    for entry in ["../extends", "..", "a/b"] {
+        let (status, body) = call(&app, Method::POST, "/v1/extensions/trash/purge", Some(json!({"entry":entry}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{entry} 必须 400：{body}");
+    }
+    assert!(root.is_dir(), "私库根没被铲");
+}

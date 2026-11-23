@@ -68,6 +68,8 @@ pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         .route("/v1/extensions/uninstall", axum::routing::post(uninstall))
         .route("/v1/extensions/categories", axum::routing::get(get_categories).post(post_categories))
         .route("/v1/extensions/category", axum::routing::post(category))
+        .route("/v1/extensions/trash", axum::routing::get(get_trash))
+        .route("/v1/extensions/trash/purge", axum::routing::post(purge_trash))
 }
 
 fn store(state: &AppState) -> Result<&nous_ext::AdminStore> {
@@ -137,4 +139,19 @@ pub async fn post_categories(State(state): State<Arc<AppState>>, Json(body): Jso
 pub async fn category(State(state): State<Arc<AppState>>, Json(body): Json<CategoryBody>) -> Result<Json<Value>> {
     let store = store(&state)?;
     json(store.set_category(&body.name, body.category.as_deref()))
+}
+
+/// 垃圾站。卸载不是删除 —— 这些目录还在 `data/extend-trash/` 里，界面上得能看见。
+pub async fn get_trash(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
+    Ok(Json(json!({ "items": store(&state)?.trash_items() })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TrashPurgeBody {
+    pub entry: String,
+}
+
+pub async fn purge_trash(State(state): State<Arc<AppState>>, Json(body): Json<TrashPurgeBody>) -> Result<Json<Value>> {
+    let store = store(&state)?;
+    json(store.purge_trash(&body.entry))
 }
