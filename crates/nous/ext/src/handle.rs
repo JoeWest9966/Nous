@@ -121,11 +121,34 @@ pub fn validate(handles: &Handles) -> Vec<String> {
     problems
 }
 
+/// 扫目录时跳过的名字：版本库、依赖、产物。
+///
+/// 句柄交付的是「给扩展读的内容」，不是一份文件系统快照：`/opt/Nous-skills` 里的
+/// `.git` 一动就是几 MB 的 object，64 KiB 的句柄预算会被它吃光 —— 扩展拿到的
+/// `files` 里一条 `SKILL.md` 都没有，看起来像「技能仓库是空的」。跳过是唯一说得通的
+/// 口径，且它和「隐藏文件不给外读」不冲突。
+fn skipped_dir(name: &str) -> bool {
+    name.starts_with('.') || matches!(name, "node_modules" | "target" | "artifacts")
+}
+
 fn walk(root: &Path, dir: &Path, out: &mut Vec<String>, diagnostics: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let mut names: Vec<PathBuf> = entries.filter_map(|entry| entry.ok().map(|item| item.path())).collect();
+    let mut names: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|item| item.path()))
+        .filter(|path| {
+            let skip = path
+                .file_name()
+                .map(|name| skipped_dir(&name.to_string_lossy()))
+                .unwrap_or(false);
+            if skip {
+                let relative = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace('\\', "/");
+                diagnostics.push(format!("skipped={relative} reason=not-content"));
+            }
+            !skip
+        })
+        .collect();
     names.sort();
     for path in names {
         let relative = match path.strip_prefix(root) {
@@ -168,5 +191,62 @@ fn collect_file(root: &Path, relative: &str, out: &mut Vec<(String, String)>, di
             "unreadable={relative} reason={}",
             error.kind()
         )),
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::fs;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("nous-handle-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 句柄交付的是「给扩展读的内容」，不是文件系统快照：`.git` / `node_modules` /
+    /// `target` 一律不交付。不跳的话，技能仓库的 `.git` 一动就是几 MB，64 KiB 的预算
+    /// 会被它吃光 —— 扩展看到的 `files` 里一条 `SKILL.md` 都没有，像「仓库是空的」。
+    #[test]
+    fn skips_vcs_and_dependency_dirs() {
+        let root = scratch("skip");
+        fs::create_dir_all(root.join(".git/objects")).unwrap();
+        fs::write(root.join(".git/objects/pack"), "x".repeat(200)).unwrap();
+        fs::create_dir_all(root.join("node_modules/dep")).unwrap();
+        fs::write(root.join("node_modules/dep/index.js"), "junk").unwrap();
+        fs::create_dir_all(root.join("tdd")).unwrap();
+        fs::write(root.join("tdd/SKILL.md"), "---\nname: tdd\n---\n").unwrap();
+
+        let mut values = BTreeMap::new();
+        values.insert("skills".to_string(), HandleValue::dir(&root));
+        let delivery = deliver(&["skills".to_string()], &values, 64 * 1024).unwrap();
+        let content = &delivery.handles["skills"];
+        let paths: Vec<&str> = content.files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["tdd/SKILL.md"], "只交付内容文件：{paths:?}");
+        assert!(!content.truncated, "跳完之后不该被截断");
+        assert!(
+            delivery.diagnostics.iter().any(|d| d.contains(".git") && d.contains("not-content")),
+            "跳了要说一声：{:?}",
+            delivery.diagnostics
+        );
+    }
+
+    /// 越界路径在**代读时**就拒（EX-60）：`entries` 里写 `../x` 不许被读出来。
+    #[test]
+    fn rejects_escaping_entries() {
+        let root = scratch("escape");
+        fs::write(root.join("ok.md"), "fine").unwrap();
+        let mut values = BTreeMap::new();
+        values.insert(
+            "skills".to_string(),
+            HandleValue::entries(&root, vec!["ok.md".into(), "../etc/passwd".into()]),
+        );
+        let delivery = deliver(&["skills".to_string()], &values, 64 * 1024).unwrap();
+        let paths: Vec<&str> = delivery.handles["skills"].files.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, vec!["ok.md"]);
+        assert!(delivery.diagnostics.iter().any(|d| d.contains("越界")), "{:?}", delivery.diagnostics);
     }
 }
