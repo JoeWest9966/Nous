@@ -25,6 +25,9 @@ pub enum ServerError {
     Validation { field: String, problem: String },
     /// HTTP 412：If-Match 乐观锁不匹配（#60 / #61）。409 是「现在不行」，412 是「你手里的版本过期了」。
     PreconditionFailed(String),
+    /// HTTP 423：目标被锁定（元素库的 `locked`）。不是 403 —— 403 是「你没权限」，
+    /// 而锁恰恰是「谁都得先解锁」，换个人、换台机器也一样。
+    Locked(String),
     /// 没有任何可用资源（#70：一个模型来源都没有），503。
     ServiceUnavailable(String),
     Internal(String),
@@ -40,6 +43,7 @@ impl ServerError {
             ServerError::Conflict(_) => StatusCode::CONFLICT,
             ServerError::Validation { .. } => StatusCode::BAD_REQUEST,
             ServerError::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
+            ServerError::Locked(_) => StatusCode::LOCKED,
             ServerError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ServerError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -53,6 +57,7 @@ impl ServerError {
             | ServerError::NotFound(message)
             | ServerError::Conflict(message)
             | ServerError::PreconditionFailed(message)
+            | ServerError::Locked(message)
             | ServerError::ServiceUnavailable(message)
             | ServerError::Internal(message) => message,
             ServerError::Validation { .. } => "内容闸未过",

@@ -108,6 +108,7 @@ fn repo_error(error: RepoError) -> ServerError {
             "{message} —— 文件被别处改过了，先重新读盘再存"
         )),
         RepoError::Busy(m) => ServerError::Conflict(m),
+        RepoError::Locked(m) => ServerError::Locked(m),
         RepoError::Io(m) => ServerError::Internal(m),
         RepoError::LockPoisoned => ServerError::Internal("触发器仓写锁中毒".into()),
     }

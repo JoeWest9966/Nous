@@ -101,6 +101,7 @@ pub(crate) fn repo_error(error: RepoError) -> ServerError {
         RepoError::Validation { field, problem } => ServerError::Validation { field, problem },
         RepoError::NotFound(m) => ServerError::NotFound(m),
         RepoError::Busy(m) => ServerError::Conflict(m),
+        RepoError::Locked(m) => ServerError::Locked(m),
         RepoError::Conflict { message, current, etag } => {
             let mut value = json!({ "error": message });
             if let Some(content) = current {

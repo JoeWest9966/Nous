@@ -301,3 +301,95 @@ async fn capabilities_declare_the_elements_module_with_its_endpoints() {
     assert!(endpoints.iter().any(|line| line == "PUT /v1/elements/{kind}/{id}"));
     assert!(endpoints.iter().any(|line| line == "POST /v1/elements/push"));
 }
+
+#[tokio::test]
+async fn a_locked_element_refuses_writes_and_deletes_with_423() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+
+    // 上锁。
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/elements/groups/frontend/lock",
+        Some(json!({ "locked": true, "requestId": "lock-1" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["locked"], true);
+    assert_eq!(body["kind"], "groups");
+    assert_eq!(body["changed"], true);
+    assert!(body["commit"].as_str().unwrap().len() >= 7);
+    assert_eq!(git(&root, &["log", "-1", "--format=%s"]), "chore(group): lock frontend");
+
+    // 存：423，且盘上那份没被改。
+    let before = std::fs::read_to_string(root.join("groups/frontend.json")).unwrap();
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/v1/elements/groups/frontend",
+        Some(json!({ "fields": { "id": "frontend", "name": "改名", "packages": [] } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::LOCKED, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("已锁定"), "{body}");
+    assert!(body["error"].as_str().unwrap().contains("/lock"), "要说清楚下一步怎么解");
+    assert_eq!(
+        std::fs::read_to_string(root.join("groups/frontend.json")).unwrap(),
+        before
+    );
+
+    // 删：423。
+    let (status, body) = call(&app, "DELETE", "/v1/elements/groups/frontend", None).await;
+    assert_eq!(status, StatusCode::LOCKED, "{body}");
+    assert_eq!(
+        call(&app, "GET", "/v1/elements/groups/frontend", None).await.0,
+        StatusCode::OK,
+        "删不掉 = 还在"
+    );
+
+    // 已经锁着再锁一次：changed=false，不造提交。
+    let commits_before = commits(&root);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/elements/groups/frontend/lock",
+        Some(json!({ "locked": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["changed"], false);
+    assert_eq!(commits(&root), commits_before);
+
+    // 解锁 → 能删。
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/elements/groups/frontend/lock",
+        Some(json!({ "locked": false })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["locked"], false);
+    assert_eq!(git(&root, &["log", "-1", "--format=%s"]), "chore(group): unlock frontend");
+    let (status, _) = call(&app, "DELETE", "/v1/elements/groups/frontend", None).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn the_lock_endpoint_needs_locked_and_404s_on_unknown_ids() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+    let (status, body) = call(&app, "POST", "/v1/elements/groups/frontend/lock", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("locked"));
+
+    let (status, _) = call(
+        &app,
+        "POST",
+        "/v1/elements/groups/nope/lock",
+        Some(json!({ "locked": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "不存在的元素不许凭空锁出一个来");
+}

@@ -17,6 +17,9 @@
 //!   `Request-Id` trailer 就是回执）。
 //! - **id 就是文件名**：只收 `[a-z0-9-]`、字母数字开头、最长 64。改名 = 换 id，
 //!   引用会断 —— 所以没有 rename，改名是「新建一份 + 删掉旧的」。
+//! - **锁**：`locked: true` 的元素**改不了内容、删不掉**（`RepoError::Locked` → 423）。
+//!   锁状态只能由 [`set_lock`] 改，`put` / `remove` 只读它 —— 否则「锁」就等于一个
+//!   客户端说了算的复选框。
 //!
 //! 这一层不 spawn 进程、不读环境变量：路径由 `nous-env` 解析，git 只在 `nous-repo` 里。
 
@@ -97,6 +100,48 @@ pub fn check_id(raw: &str) -> std::result::Result<String, String> {
 
 fn file_path(kind: Kind, id: &str) -> String {
     format!("{}/{id}.json", kind.dir())
+}
+
+/// 盘上那个「锁」字段。**唯一能改它的地方是 [`set_lock`]**。
+///
+/// 它不是 schema 的一部分（引擎其余字段一概不校验），是库自己的一个保留键：
+/// 写进 JSON 就跟着 git 提交走 —— 谁锁的、什么时候锁的，看 `git log` 就有。
+pub const LOCK_FIELD: &str = "locked";
+
+/// 这份元素锁没锁。缺省 / 非布尔一律当没锁（老数据不会因为少一个键就打不开）。
+pub fn is_locked(fields: &Value) -> bool {
+    fields.get(LOCK_FIELD).and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// 锁着的元素被改/被删时的那句话：告诉调用方下一步该做什么，不只说「不行」。
+fn locked_error(kind: Kind, id: &str) -> RepoError {
+    RepoError::Locked(format!(
+        "{} {} 已锁定：先解锁（POST /v1/elements/{}/{}/lock）再改或删",
+        kind.label(),
+        id,
+        kind.dir(),
+        id
+    ))
+}
+
+/// body 里带来的 `locked` 必须与盘上一致：锁只能由 [`set_lock`] 改。
+///
+/// 客户端整份回写时会把 `locked` 一起带回来（Desk 的 JSON 视图就是这样），
+/// 所以「带回来且没变」要放行；「带回来且想改」是绕锁，拒掉。
+fn check_lock_field(kind: Kind, id: &str, body: &Value, on_disk: bool) -> Result<()> {
+    let Some(wanted) = body.get(LOCK_FIELD) else { return Ok(()) };
+    if wanted.as_bool() == Some(on_disk) {
+        return Ok(());
+    }
+    Err(RepoError::Validation {
+        field: LOCK_FIELD.into(),
+        problem: format!(
+            "锁定状态只能通过 POST /v1/elements/{}/{}/lock 改（现在盘上是 {}）",
+            kind.dir(),
+            id,
+            if on_disk { "locked" } else { "unlocked" }
+        ),
+    })
 }
 
 /// 一份读得出来的元素：`fields` 是整份 JSON（含未知字段），`etag` 是内容指纹。
@@ -197,7 +242,15 @@ pub fn put(
     let id = check_id(id).map_err(RepoError::BadRequest)?;
     validate_fields(kind, &id, &fields)?;
     let path = file_path(kind, &id);
-    let existed = repo.read_file(&path).is_ok();
+    // 盘上那一份（读不出来当不存在：坏 JSON 只影响扫描，不拦覆盖写）。
+    let disk_read = repo.read_file(&path).ok();
+    let existed = disk_read.is_some();
+    let on_disk = disk_read.and_then(|read| parse_object(&read.content).ok());
+    let was_locked = on_disk.as_ref().is_some_and(is_locked);
+    if was_locked {
+        return Err(locked_error(kind, &id));
+    }
+    check_lock_field(kind, &id, &fields, was_locked)?;
     let body = serialize(&fields);
     let message = format!("feat({}): {id}", kind.singular());
     let result = repo.write_and_commit(WriteCommit {
@@ -232,13 +285,17 @@ pub fn remove(
 ) -> Result<DeleteOutcome> {
     let id = check_id(id).map_err(RepoError::BadRequest)?;
     let path = file_path(kind, &id);
-    if repo.read_file(&path).is_err() {
+    let Ok(read) = repo.read_file(&path) else {
         return Err(RepoError::NotFound(format!(
             "没有这份{}：{}/{}",
             kind.label(),
             kind.dir(),
             id
         )));
+    };
+    // 锁是「防误删」：连删除请求都不往下走，别让它落到 git 那一层。
+    if parse_object(&read.content).is_ok_and(|fields| is_locked(&fields)) {
+        return Err(locked_error(kind, &id));
     }
     let message = format!("chore({}): rm {id}", kind.singular());
     let result = repo.write_and_commit(WriteCommit {
@@ -249,6 +306,69 @@ pub fn remove(
         request_id,
     })?;
     Ok(DeleteOutcome { commit: result.commit, replay: result.replay })
+}
+
+#[derive(Debug, Clone)]
+pub struct LockOutcome {
+    pub id: String,
+    /// 这次操作之后的状态。
+    pub locked: bool,
+    /// 状态本来就对：没写盘、没提交。
+    pub changed: bool,
+    pub etag: Option<String>,
+    pub commit: Option<CommitResult>,
+    pub replay: bool,
+}
+
+/// 上锁 / 解锁：改 `locked` 一个键 → 落盘 → 提交（`chore(group): lock <id>`）。
+///
+/// **它是唯一能改锁的入口**，所以它自己不能被锁拦住（否则锁死就再也解不开了）。
+/// 已经是目标状态 = 什么都不做（`changed: false`，不造空提交）。
+pub fn set_lock(
+    repo: &Repo,
+    kind: Kind,
+    id: &str,
+    locked: bool,
+    base: Option<&str>,
+    request_id: Option<&str>,
+) -> Result<LockOutcome> {
+    let id = check_id(id).map_err(RepoError::BadRequest)?;
+    let item = get(repo, kind, &id)?;
+    if is_locked(&item.fields) == locked {
+        return Ok(LockOutcome {
+            id,
+            locked,
+            changed: false,
+            etag: None,
+            commit: None,
+            replay: false,
+        });
+    }
+    let mut fields = match item.fields {
+        Value::Object(map) => map,
+        // `get` 已经把顶层不是对象的挡在外面了，这里只是不 panic。
+        _ => return Err(RepoError::Io("这份元素不是 JSON 对象".into())),
+    };
+    fields.insert(LOCK_FIELD.to_string(), Value::Bool(locked));
+    let body = serialize(&Value::Object(fields));
+    let action = if locked { "lock" } else { "unlock" };
+    let message = format!("chore({}): {action} {id}", kind.singular());
+    let path = file_path(kind, &id);
+    let result = repo.write_and_commit(WriteCommit {
+        path: &path,
+        content: Some(body.as_bytes()),
+        base_etag: base,
+        message: &message,
+        request_id,
+    })?;
+    Ok(LockOutcome {
+        id,
+        locked,
+        changed: result.commit.is_some() || result.etag.is_some(),
+        etag: result.etag,
+        commit: result.commit,
+        replay: result.replay,
+    })
 }
 
 /// 手动补推（网络恢复后页面上的「重试推送」）。

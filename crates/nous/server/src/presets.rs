@@ -558,6 +558,7 @@ fn repo_error(error: nous_repo::RepoError) -> ServerError {
         E::NotFound(message) => ServerError::NotFound(message),
         E::Conflict { message, .. } => ServerError::Conflict(message),
         E::Busy(message) => ServerError::Conflict(message),
+        E::Locked(message) => ServerError::Locked(message),
         E::LockPoisoned | E::Io(_) => ServerError::Internal(error.to_string()),
     }
 }

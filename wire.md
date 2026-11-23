@@ -940,7 +940,8 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 | `GET /v1/elements/{kind}/{id}` | `{ kind, id, fields, etag }` |
 | `PUT /v1/elements/{kind}/{id}` | `{ fields, base?, requestId? }` → 写一次提交一次 |
 | `POST /v1/elements/{kind}` | 同 PUT，`id` 从 `fields.id` 取，201 |
-| `DELETE /v1/elements/{kind}/{id}` | `?base=&requestId=` → 删掉并提交 |
+| `DELETE /v1/elements/{kind}/{id}` | `?base=&requestId=` → 删掉并提交；锁着 423 |
+| `POST /v1/elements/{kind}/{id}/lock` | `{ locked, base?, requestId? }` → 上锁 / 解锁 |
 | `POST /v1/elements/push` | 手动补推 → `{ kind:"elements", pushed, repo }` |
 
 - `{kind}` 只认 `groups` / `packages`（单数 `group` / `package` 也收）；别的 400，不猜。
@@ -959,6 +960,14 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 - **幂等**：同一个 `requestId` 只提交一次；重放回 `replay:true`、`commit:null`，一个字节都不写。
 - 内容与盘上一致时不制造空提交：`commit:null`、`etag` 照给（不是错误）。
 - `base` = `If-Match`：与磁盘内容指纹不符 → 409（不静默覆盖）。
+- **锁**（`locked: true`）：那一份 JSON 里多一个 `"locked": true`，跟着提交走（谁锁的、
+  什么时候锁的看 `git log`）。锁着时 **PUT / POST / DELETE 一律 423**（`{ error }` 里点名
+  解锁地址），盘上那份一个字节都不动。**只有 `/lock` 能改锁**：`PUT` 的 `fields.locked`
+  与盘上不一致 → 400 `{field:"locked"}`（客户端整份回写时带回同一个值是允许的）。
+  解锁 = 同一个端点 `{ locked: false }`，它**不受锁约束**（否则锁死就再也解不开）。
+  回执：`{ kind, id, locked, changed, etag, commit, pushed, refs, replay }`；
+  `changed:false` = 状态本来就对，没写盘、没提交。锁的提交是
+  `chore(group): lock <id>` / `chore(group): unlock <id>`。
 
 ### GET /v1/fs/dirs?path=&machine=&hidden=
 
