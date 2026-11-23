@@ -310,6 +310,8 @@
         "POST /v1/extensions/uninstall",
         "GET /v1/extensions/categories",
         "POST /v1/extensions/categories",
+        "GET /v1/extensions/trash",
+        "POST /v1/extensions/trash/purge",
         "POST /v1/extensions/category"
       ]
     }
