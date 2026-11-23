@@ -1095,6 +1095,26 @@ impl Runtime {
                 "error": error,
             }));
         }
+        // 卸载过的扩展不在源码根里（目录被搬进 `<data>/extend-trash`），但删除名单记着名字。
+        // 不把它们列出来，界面上就永远没有「安装」这个入口 —— 装过又卸掉的东西等于消失，
+        // 而「装回来」正是卸载的另一半。`kind`/`state` 都叫 `absent`：它不是坏，是不在。
+        for name in crate::admin::deleted_names(&self.config.exts_root) {
+            if items.iter().any(|item| item["name"] == name.as_str()) {
+                continue;
+            }
+            items.push(json!({
+                "name": name,
+                "version": "",
+                "kind": "absent",
+                "category": null,
+                "summary": null,
+                "core": crate::admin::CORE_EXTENSIONS.contains(&name.as_str()),
+                "loaded": false,
+                "pid": null,
+                "state": "absent",
+                "error": null,
+            }));
+        }
         items
     }
 
@@ -1624,6 +1644,34 @@ mod items_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("mkdir");
         dir
+    }
+
+    /// 卸载过的那条要留在清单里、`kind/state = absent`：不然界面上没有「安装」入口，
+    /// 卸掉就等于消失（装回来的路在 `install`，它会从垃圾站取回目录）。
+    #[test]
+    fn uninstalled_shows_up_as_absent() {
+        let root = scratch("absent");
+        std::fs::create_dir_all(root.join("old-card")).expect("mkdir");
+        std::fs::write(
+            root.join("old-card/nous.json"),
+            r#"{"name":"old-card","version":"0.1.0","protocol":1,"file":"old-card","entry":"old-card","sections":[{"key":"a","tag":"a"}]}"#,
+        )
+        .expect("write");
+        // 删除名单 + 源码根里没有这个目录 = 装过又卸掉了
+        std::fs::write(root.join("deleted-extensions.json"), r#"["gone-one"]"#).expect("write");
+
+        let config = crate::config::RuntimeConfig::new(root.clone(), root.join("artifacts"));
+        let runtime = Runtime::new(config);
+        let items = runtime.items();
+
+        let absent = items
+            .iter()
+            .find(|item| item["name"] == "gone-one")
+            .expect("卸载过的也要在清单里");
+        assert_eq!(absent["kind"], "absent");
+        assert_eq!(absent["state"], "absent");
+        assert_eq!(absent["loaded"], false);
+        assert!(items.iter().any(|item| item["name"] == "old-card"), "根里那条不受影响");
     }
 
     /// `items()` 是 Desk 画扩展页的唯一数据源：`summary` / `category` 必须在，
