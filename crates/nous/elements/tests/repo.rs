@@ -396,3 +396,51 @@ fn a_replayed_lock_request_does_not_commit_twice() {
     assert!(!replay.changed);
     assert_eq!(count(&repo), before);
 }
+
+/// 锁和 `If-Match` 同时撞上时，**锁先说**：423 而不是 409。
+///
+/// 顺序是刻意的：409 说「你手里这份旧了，拉一遍再来」，言下之意是「再来就能写」——
+/// 而锁着的东西拉多少遍也写不进去。先回 423，客户端就知道得先解锁，白跑一趟 409 只会
+/// 让人以为「刷新一下就好了」。
+#[test]
+fn a_lock_wins_over_a_stale_if_match() {
+    let (_tmp, repo) = fixture();
+    set_lock(&repo, Kind::Groups, "frontend", true, None, None).unwrap();
+    let before = count(&repo);
+
+    let stale = "0".repeat(64);
+    let err = put(
+        &repo,
+        Kind::Groups,
+        "frontend",
+        json!({ "id": "frontend", "name": "改过" }),
+        Some(&stale),
+        Some("put-locked"),
+    )
+    .unwrap_err();
+    assert!(matches!(&err, RepoError::Locked(_)), "{err:?}");
+    let err = remove(&repo, Kind::Groups, "frontend", Some(&stale), Some("rm-locked")).unwrap_err();
+    assert!(matches!(&err, RepoError::Locked(_)), "{err:?}");
+    assert_eq!(count(&repo), before, "两条被拒的请求一个提交都没造");
+}
+
+/// `/lock` 自己不被锁拦，但**照样认 `If-Match`**：拿着旧指纹去解锁 → 409。
+///
+/// 这条不是抬杠：解锁是写内容（把 `locked` 从 true 改成 false），手里那份旧了就说明
+/// 别人刚动过 —— 先让人拉一遍再决定，比闷头改成自己想象的样子安全。
+#[test]
+fn unlocking_still_honours_if_match() {
+    let (_tmp, repo) = fixture();
+    set_lock(&repo, Kind::Groups, "frontend", true, None, None).unwrap();
+    let before = count(&repo);
+    let stale = "0".repeat(64);
+    let err = set_lock(&repo, Kind::Groups, "frontend", false, Some(&stale), Some("unlock-stale"))
+        .unwrap_err();
+    assert!(matches!(&err, RepoError::Conflict { .. }), "{err:?}");
+    assert_eq!(count(&repo), before);
+    // 指纹对了就解得开。
+    let current = get(&repo, Kind::Groups, "frontend").unwrap().etag;
+    let ok = set_lock(&repo, Kind::Groups, "frontend", false, Some(&current), Some("unlock-ok")).unwrap();
+    assert!(!ok.locked);
+    assert!(ok.changed);
+}
