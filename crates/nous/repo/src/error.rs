@@ -13,6 +13,9 @@ pub enum RepoError {
     NotFound(String),
     /// If-Match 不符 → 409；回包要带磁盘当前内容。
     Conflict { message: String, current: Option<Vec<u8>>, etag: Option<String> },
+    /// 目标被锁定（元素库的 `locked`）→ 423：改内容与删除都拒绝，
+    /// 解锁只能走 `/lock`（谁都能调，所以不能拿 403 骗人）。
+    Locked(String),
     /// 同一仓已有写在进行，且调用方选择不等待 → 429。
     Busy(String),
     LockPoisoned,
@@ -32,6 +35,7 @@ impl std::fmt::Display for RepoError {
             Self::BadRequest(m) | Self::NotFound(m) | Self::Busy(m) | Self::Io(m) | Self::InvalidPath(m) => f.write_str(m),
             Self::Validation { field, problem } => write!(f, "内容闸未过：{field} / {problem}"),
             Self::Conflict { message, .. } => f.write_str(message),
+            Self::Locked(m) => f.write_str(m),
             Self::LockPoisoned => f.write_str("私库写锁中毒"),
         }
     }

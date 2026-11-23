@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use nous_elements::{check_id, get, put, remove, resolve, scan, Kind};
+use nous_elements::{check_id, get, is_locked, put, remove, resolve, scan, set_lock, Kind};
 use nous_repo::{Pushed, Repo, RepoError};
 use serde_json::json;
 
@@ -283,4 +283,116 @@ fn a_repo_without_commits_accepts_the_first_write() {
     .unwrap();
     assert!(again.replay, "同一个 requestId 重放要认出来");
     assert_eq!(count(&repo), "1");
+}
+
+#[test]
+fn a_locked_element_cannot_be_overwritten_or_removed() {
+    let (_tmp, repo) = fixture();
+    let before = count(&repo);
+    let outcome = set_lock(&repo, Kind::Groups, "frontend", true, None, None).unwrap();
+    assert!(outcome.locked);
+    assert!(outcome.changed);
+    assert!(outcome.commit.is_some(), "上锁本身就是一次提交");
+    assert_eq!(count(&repo), (before.parse::<i32>().unwrap() + 1).to_string());
+    let log = log(&repo);
+    assert!(log.contains("chore(group): lock frontend"), "{log}");
+
+    // 盘上多了 locked，其余字段一个没动。
+    let locked = get(&repo, Kind::Groups, "frontend").unwrap();
+    assert!(is_locked(&locked.fields));
+    assert_eq!(locked.fields["packages"], json!(["react-rules", "gone"]));
+
+    // 改内容：拒。
+    let err = put(
+        &repo,
+        Kind::Groups,
+        "frontend",
+        json!({ "id": "frontend", "name": "改名", "packages": [] }),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(err, RepoError::Locked(_)), "{err:?}");
+
+    // 删：拒。
+    let err = remove(&repo, Kind::Groups, "frontend", None, None).unwrap_err();
+    assert!(matches!(err, RepoError::Locked(_)), "{err:?}");
+
+    // 解锁 → 能删。
+    let unlocked = set_lock(&repo, Kind::Groups, "frontend", false, None, None).unwrap();
+    assert!(!unlocked.locked);
+    assert!(unlocked.changed);
+    assert!(log(&repo).contains("chore(group): unlock frontend"));
+    remove(&repo, Kind::Groups, "frontend", None, None).unwrap();
+    assert!(get(&repo, Kind::Groups, "frontend").is_err());
+}
+
+#[test]
+fn the_lock_cannot_be_flipped_by_a_plain_write() {
+    let (_tmp, repo) = fixture();
+
+    // 新建时就想锁上 → 拒（锁只能由 set_lock 改）。
+    let err = put(
+        &repo,
+        Kind::Packages,
+        "fresh",
+        json!({ "id": "fresh", "name": "新的", "locked": true }),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(err, RepoError::Validation { field, .. } if field == "locked"), "{err:?}");
+
+    // 不带 locked → 能写。
+    put(&repo, Kind::Packages, "fresh", json!({ "id": "fresh", "name": "新的" }), None, None)
+        .unwrap();
+
+    // 整份回写时把 locked:false 带回来（Desk 的 JSON 视图就这样）→ 放行。
+    put(
+        &repo,
+        Kind::Packages,
+        "fresh",
+        json!({ "id": "fresh", "name": "改过", "locked": false }),
+        None,
+        None,
+    )
+    .unwrap();
+
+    // 想顺手锁上 → 拒。
+    let err = put(
+        &repo,
+        Kind::Packages,
+        "fresh",
+        json!({ "id": "fresh", "name": "改过", "locked": true }),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert!(matches!(err, RepoError::Validation { field, .. } if field == "locked"), "{err:?}");
+}
+
+#[test]
+fn locking_twice_is_a_noop_and_missing_elements_are_404() {
+    let (_tmp, repo) = fixture();
+    set_lock(&repo, Kind::Packages, "react-rules", true, None, None).unwrap();
+    let before = count(&repo);
+    let again = set_lock(&repo, Kind::Packages, "react-rules", true, None, None).unwrap();
+    assert!(!again.changed, "已经是锁着的，不该再写一次");
+    assert!(again.commit.is_none());
+    assert_eq!(count(&repo), before, "不造空提交");
+
+    let err = set_lock(&repo, Kind::Packages, "nope", true, None, None).unwrap_err();
+    assert!(matches!(err, RepoError::NotFound(_)), "{err:?}");
+}
+
+#[test]
+fn a_replayed_lock_request_does_not_commit_twice() {
+    let (_tmp, repo) = fixture();
+    let first = set_lock(&repo, Kind::Packages, "react-rules", true, None, Some("lock-1")).unwrap();
+    assert!(first.commit.is_some());
+    let before = count(&repo);
+    // 同锚重放：盘上已经是 locked，状态一致 → 不再提交。
+    let replay = set_lock(&repo, Kind::Packages, "react-rules", true, None, Some("lock-1")).unwrap();
+    assert!(!replay.changed);
+    assert_eq!(count(&repo), before);
 }

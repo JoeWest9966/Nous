@@ -266,6 +266,7 @@ pub(crate) fn repo_error(error: RepoError) -> ServerError {
             ServerError::Conflict(format!("{message} —— 先重新打开这个文件，再存一次"))
         }
         RepoError::Busy(m) => ServerError::Conflict(m),
+        RepoError::Locked(m) => ServerError::Locked(m),
         RepoError::Io(m) => ServerError::Internal(m),
         RepoError::LockPoisoned => ServerError::Internal("私库写锁中毒".into()),
     }

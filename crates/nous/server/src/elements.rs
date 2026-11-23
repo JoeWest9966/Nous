@@ -12,7 +12,8 @@
 //! | `GET /v1/elements/{kind}/{id}` | `{ kind, id, fields, etag }` |
 //! | `PUT /v1/elements/{kind}/{id}` | 建或覆盖；`{ fields, base?, requestId? }` |
 //! | `POST /v1/elements/{kind}` | 同 PUT，id 从 `fields.id` 取 |
-//! | `DELETE /v1/elements/{kind}/{id}` | 删掉并提交（`?base=&requestId=`） |
+//! | `DELETE /v1/elements/{kind}/{id}` | 删掉并提交（`?base=&requestId=`）；锁着的 423 |
+//! | `POST /v1/elements/{kind}/{id}/lock` | 上锁 / 解锁；`{ locked, base?, requestId? }` |
 //! | `POST /v1/elements/push` | 手动补推（网络恢复后页面上的「重试推送」） |
 
 use std::sync::Arc;
@@ -46,6 +47,7 @@ pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
                 .put(put)
                 .delete(remove),
         )
+        .route("/v1/elements/{kind}/{id}/lock", axum::routing::post(lock))
 }
 
 /// 私库没装配：写端点诚实 409（编辑器和「没有文件」是两件事）。
@@ -208,6 +210,20 @@ pub struct DeleteQuery {
     pub request_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LockBody {
+    /// `true` 上锁、`false` 解锁。必填：缺了是 400，不猜「反正是切换」。
+    #[serde(default)]
+    pub locked: Option<bool>,
+    /// 内容指纹；给了就是 If-Match，不符回 409。
+    #[serde(default)]
+    pub base: Option<String>,
+    /// 幂等锚；同一个值只提交一次。
+    #[serde(default)]
+    pub request_id: Option<String>,
+}
+
 fn request_id(value: Option<String>) -> Option<String> {
     value.filter(|id| !id.trim().is_empty())
 }
@@ -303,6 +319,45 @@ async fn remove(
     Ok(Json(json!({
         "kind": kind.dir(),
         "id": id,
+        "commit": commit.map(|c| c.commit.clone()),
+        "pushed": commit.map(|c| c.pushed).unwrap_or(Pushed::Unknown),
+        "refs": commit.map(|c| c.refs.clone()).unwrap_or_default(),
+        "replay": outcome.replay,
+    })))
+}
+
+/// `POST /v1/elements/{kind}/{id}/lock`：上锁 / 解锁，改的是盘上那一份 JSON。
+///
+/// 它是**唯一**能改 `locked` 的入口（`PUT` / `DELETE` 遇到锁着的元素直接 423），
+/// 也正因此它自己不被锁拦住 —— 否则锁死就再也解不开了。
+async fn lock(
+    State(state): State<Arc<AppState>>,
+    Path((kind, id)): Path<(String, String)>,
+    Json(body): Json<LockBody>,
+) -> Result<Json<Value>> {
+    let kind = parse_kind(&kind)?;
+    let Some(locked) = body.locked else {
+        return Err(ServerError::BadRequest(
+            "缺 locked（true 上锁 / false 解锁）".into(),
+        ));
+    };
+    let repo = repo(&state)?;
+    let outcome = nous_elements::set_lock(
+        &repo,
+        kind,
+        &id,
+        locked,
+        body.base.as_deref(),
+        request_id(body.request_id).as_deref(),
+    )
+    .map_err(repo_error)?;
+    let commit = outcome.commit.as_ref();
+    Ok(Json(json!({
+        "kind": kind.dir(),
+        "id": outcome.id,
+        "locked": outcome.locked,
+        "changed": outcome.changed,
+        "etag": outcome.etag,
         "commit": commit.map(|c| c.commit.clone()),
         "pushed": commit.map(|c| c.pushed).unwrap_or(Pushed::Unknown),
         "refs": commit.map(|c| c.refs.clone()).unwrap_or_default(),

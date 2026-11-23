@@ -328,6 +328,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "PUT", path: "/v1/elements/{kind}/{id}", module: "elements" },
     RegisteredRoute { method: "POST", path: "/v1/elements/{kind}", module: "elements" },
     RegisteredRoute { method: "DELETE", path: "/v1/elements/{kind}/{id}", module: "elements" },
+    RegisteredRoute { method: "POST", path: "/v1/elements/{kind}/{id}/lock", module: "elements" },
     RegisteredRoute { method: "POST", path: "/v1/elements/push", module: "elements" },
     RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
 ];
