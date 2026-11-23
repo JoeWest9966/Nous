@@ -148,6 +148,50 @@ async fn create_writes_a_compilable_skeleton_without_committing() {
     assert_eq!(item["tracked"], json!(false));
     assert!(item["error"].is_null(), "骨架必须过内容闸：{item}");
     assert_eq!(item["params"].as_array().unwrap().len(), 0);
+    // 骨架是真能编译的（j1900 真机首次发布就是在这里炸的：println! 里裸 `{}`）。
+    let target = _tmp.path().join("skeleton-target");
+    let out = Command::new("cargo")
+        .args(["check", "--quiet", "--manifest-path"])
+        .arg(root.join("morning-review/Cargo.toml"))
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "骨架编不过：{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[tokio::test]
+async fn archive_works_for_an_unpublished_project() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/trigger-projects/create",
+        Some(json!({ "name": "never-published" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // 没发布过（index 里没它）也要能归档 —— `git mv` 之前先把目录纳入跟踪。
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/trigger-projects/archive",
+        Some(json!({ "name": "never-published" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!root.join("never-published").exists());
+    assert!(root.join(".archive/never-published").is_dir());
+    let (_, list) = call(&app, "GET", "/v1/trigger-projects", None).await;
+    assert!(list["archived"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["name"] == "never-published"));
 }
 
 #[tokio::test]

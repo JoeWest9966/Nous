@@ -514,7 +514,7 @@ async fn create(
         (
             "src/main.rs",
             format!(
-                "//! {} —— {}。\n//! 契约：stdin 一行 JSON 进，stdout 一行 JSON 出。\n\nfn main() {{\n    println!(r#\"{{\"fire\":false,\"reason\":\"还没写条件\"}}\"#);\n}}\n",
+                "//! {} —— {}。\n//! 契约：stdin 一行 JSON 进，stdout 一行 JSON 出。\n\nfn main() {{\n    println!(\"{{{{\\\"fire\\\":false,\\\"reason\\\":\\\"还没写条件\\\"}}}}\");\n}}\n",
                 body.name, summary
             ),
         ),

@@ -299,7 +299,8 @@ pub fn history(root: &Path, name: &str, limit: usize) -> Result<Vec<HistoryItem>
 }
 
 fn commit_and_push(root: &Path, pathspecs: &[&str], message: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
-    // git mv 已把目标放进 index；commit 仍按 pathspec 约束，避免无关 staged 文件搭车。
+    // git mv / rm 已把变更放进 index；commit 仍按 pathspec 约束，避免无关 staged 文件搭车。
+    // 注意：pathspec 里只能放「index 里有记录」的路径，否则 git 直接报未匹配。
     let subject = match request_id {
         Some(id) if !id.is_empty() => format!("{message}\n\nRequest-Id: {id}"),
         _ => message.to_string(),
@@ -309,6 +310,11 @@ fn commit_and_push(root: &Path, pathspecs: &[&str], message: &str, request_id: O
     git::git_ok(root, &args)?;
     let hash = git::git_ok(root, &["rev-parse", "HEAD"])?.trim().to_string();
     Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
+}
+
+/// index 里有没有这个路径（未发布过的新单元 = 没有）。
+fn is_tracked(root: &Path, path: &str) -> Result<bool> {
+    Ok(!git::git_ok(root, &["ls-files", "--", path])?.trim().is_empty())
 }
 
 pub fn archive(root: &Path, name: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
@@ -321,9 +327,18 @@ pub fn archive(root: &Path, name: &str, request_id: Option<&str>) -> Result<Life
     let target = archive_root.join(name);
     if target.exists() { return Err(RepoError::Conflict { message: format!("已归档过：{name}"), current: None, etag: None }); }
     let rel = format!(".archive/{name}");
-    git::git_ok(root, &["mv", name, &rel])?;
-    let spec = format!(".archive/{name}");
-    commit_and_push(root, &[name, &spec], &format!("archive: {name}"), request_id)
+    let message = format!("archive: {name}");
+    if is_tracked(root, name)? {
+        // 已跟踪：mv 会同时 stage「删除旧路径 + 新增 .archive 路径」，两条都在 index 里。
+        git::git_ok(root, &["mv", name, &rel])?;
+        commit_and_push(root, &[name, &rel], &message, request_id)
+    } else {
+        // 建完没发布的项目在 index 里一条记录都没有：`git mv` 报「源目录为空」，
+        // 而且 pathspec 放 `name` 也会报未匹配 —— 直接改名 + 只提交新路径。
+        std::fs::rename(&safe, &target).map_err(|e| RepoError::Io(format!("改名失败：{e}")))?;
+        git::git_ok(root, &["add", "-A", "--", &rel])?;
+        commit_and_push(root, &[&rel], &message, request_id)
+    }
 }
 
 pub fn restore(root: &Path, name: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
@@ -334,8 +349,16 @@ pub fn restore(root: &Path, name: &str, request_id: Option<&str>) -> Result<Life
     if root.join(name).exists() {
         return Err(RepoError::Conflict { message: format!("目标已存在：{name}"), current: None, etag: None });
     }
-    git::git_ok(root, &["mv", &archived, name])?;
-    commit_and_push(root, &[name, &archived], &format!("restore: {name}"), request_id)
+    let message = format!("restore: {name}");
+    if is_tracked(root, &archived)? {
+        git::git_ok(root, &["mv", &archived, name])?;
+        commit_and_push(root, &[name, &archived], &message, request_id)
+    } else {
+        std::fs::rename(root.join(&archived), root.join(name))
+            .map_err(|e| RepoError::Io(format!("改名失败：{e}")))?;
+        git::git_ok(root, &["add", "-A", "--", name])?;
+        commit_and_push(root, &[name], &message, request_id)
+    }
 }
 
 pub fn purge(root: &Path, name: &str, request_id: Option<&str>) -> Result<LifecycleResult> {
@@ -343,13 +366,14 @@ pub fn purge(root: &Path, name: &str, request_id: Option<&str>) -> Result<Lifecy
     if !root.join(&archived).is_dir() {
         return Err(RepoError::NotFound(format!("没有归档单元：{name}")));
     }
-    git::git_ok(root, &["rm", "-r", "-q", "--", &archived])?;
-    let subject = match request_id {
-        Some(id) if !id.is_empty() => format!("purge: {name}\n\nRequest-Id: {id}"),
-        _ => format!("purge: {name}"),
-    };
-    git::git_ok(root, &["commit", "-m", &subject, "--", &archived])?;
-    let hash = git::git_ok(root, &["rev-parse", "HEAD"])?;
-    let hash = hash.trim().to_string();
-    Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
+    let message = format!("purge: {name}");
+    if is_tracked(root, &archived)? {
+        git::git_ok(root, &["rm", "-r", "-q", "--", &archived])?;
+        commit_and_push(root, &[&archived], &message, request_id)
+    } else {
+        // 归档时没进过 index 的目录：盘上删掉就行，没有提交可做。
+        std::fs::remove_dir_all(root.join(&archived)).map_err(|e| RepoError::Io(format!("删除失败：{e}")))?;
+        let hash = git::git_ok(root, &["rev-parse", "HEAD"])?.trim().to_string();
+        Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
+    }
 }
