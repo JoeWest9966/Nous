@@ -1,4 +1,4 @@
-//! 私库路径：进程环境 → 四份配置。
+//! 私库路径：进程环境 → 五份配置。
 //!
 //! TS 版 `server.js:77-83` 的净移植：变量名和默认值只有这一处真相（#63）。
 //! 这里只解析路径，**不碰盘、不建目录、不 spawn**：存在性与内容由读取方判断。
@@ -23,6 +23,10 @@ pub const EXTEND_DEFAULT: &str = "/opt/Nous-extend";
 pub const TRIGGERS_VAR: &str = "NOUS_TRIGGERS";
 pub const TRIGGERS_DEFAULT: &str = "/opt/Nous-Trigger";
 
+/// 元素库（组 / 包，一份 JSON 一个元素；旧面板 `k3skws` 块的私库）。
+pub const ELEMENTS_VAR: &str = "NOUS_ELEMENTS";
+pub const ELEMENTS_DEFAULT: &str = "/opt/Nous-Elements";
+
 /// 一条私库路径的配置：环境变量名 + 默认值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContentPath {
@@ -30,12 +34,14 @@ pub struct ContentPath {
     pub default: &'static str,
 }
 
-/// 四个入口集中在同一处；调用方按语义取自己那一条，不许再散落 `std::env::var`。
+/// 五个入口集中在同一处；调用方按语义取自己那一条，不许再散落 `std::env::var`。
 pub const SKILLS: ContentPath = ContentPath { var: SKILLS_VAR, default: SKILLS_DEFAULT };
 pub const PROMPTS: ContentPath = ContentPath { var: PROMPTS_VAR, default: PROMPTS_DEFAULT };
 pub const PRESETS: ContentPath = ContentPath { var: PRESETS_VAR, default: PRESETS_DEFAULT };
 pub const EXTEND: ContentPath = ContentPath { var: EXTEND_VAR, default: EXTEND_DEFAULT };
 pub const TRIGGERS: ContentPath = ContentPath { var: TRIGGERS_VAR, default: TRIGGERS_DEFAULT };
+
+pub const ELEMENTS: ContentPath = ContentPath { var: ELEMENTS_VAR, default: ELEMENTS_DEFAULT };
 
 impl ContentPath {
     /// 环境变量给了就用它（包括空串 —— 那是调用方显式说"根就是这里"），没给就用默认值。
@@ -46,8 +52,9 @@ impl ContentPath {
     }
 }
 
-/// 五条路径的清单（给文档/测试枚举用；前四条顺序与 TS 版一致，triggers 是 #95 加的第五条）。
-pub const ALL: &[ContentPath] = &[SKILLS, PROMPTS, PRESETS, EXTEND, TRIGGERS];
+/// 六条路径的清单（给文档/测试枚举用；前四条顺序与 TS 版一致，triggers 是 #95 加的第五条，
+/// elements 是元素库那条）。
+pub const ALL: &[ContentPath] = &[SKILLS, PROMPTS, PRESETS, EXTEND, TRIGGERS, ELEMENTS];
 
 #[cfg(test)]
 mod tests {
@@ -61,6 +68,8 @@ mod tests {
             (PRESETS_VAR, "/opt/Nous-Template"),
             (EXTEND_VAR, "/opt/Nous-extend"),
             (TRIGGERS_VAR, "/opt/Nous-Trigger"),
+
+            (ELEMENTS_VAR, "/opt/Nous-Elements"),
         ];
         for (path, (var, default)) in ALL.iter().zip(expected) {
             assert_eq!(path.var, var);

@@ -54,7 +54,7 @@ pub mod fs;
 pub mod shell;
 pub mod types;
 
-pub use content::{ContentPath, ALL, EXTEND, PRESETS, PROMPTS, SKILLS, TRIGGERS};
+pub use content::{ContentPath, ALL, ELEMENTS, EXTEND, PRESETS, PROMPTS, SKILLS, TRIGGERS};
 pub use context::{
     Context, ContextExt, ContextKey, Progress, ProgressSink, PROGRESS_KEY,
 };

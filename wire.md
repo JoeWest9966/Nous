@@ -861,7 +861,7 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
 
 ## 私库读写与发布（#75）
 
-四套私库（`:repo` ∈ `presets | skills | prompts | extend`）共用一套端点；文件 CRUD
+六套私库（`:repo` ∈ `presets | skills | prompts | extend | triggers | elements`）共用一套端点；文件 CRUD
 在 `nous-repo` 的公共 API，HTTP 只暴露发布与读视图。字段形状以
 `crates/nous/server/tests/repos_endpoints.rs` 为准（本文件只索引端点与约束）。
 
@@ -918,8 +918,41 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
   `<source>/<path>@<sha>`，`copy` 只写 `copiedFrom` 便条、不写 foot。目标已存在 → 409，
   源不存在 → 400；写盘不提交，发布走 `/commit`。
 
-- `:repo` 不在四值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
+- `:repo` 不在六值里 → 400；`If-Match` 不符 → 409（回包带磁盘当前正文）；内容闸失败 → 400
   且 `{field, problem}`，不 commit 不 push。推送失败不改盘上文件。
+
+### 元素库：组 / 包（`/v1/elements`）
+
+旧面板 `k3skws` 块的 Rust 落点。盘上真相是私库之一 `NOUS_ELEMENTS`
+（默认 `/opt/Nous-Elements`）：`groups/<id>.json`、`packages/<id>.json`，一份 JSON 一个元素。
+写事务（落盘 + 提交 + 尽力推）在 `nous-elements`，git 只在 `nous-repo` 里。
+
+| 端点 | 回包 |
+|---|---|
+| `GET /v1/elements` | `{ kind:"elements", repo, groups[], packages[], resolved }` |
+| `GET /v1/elements/{kind}` | `{ kind, items[] }`（只扫这一段，不解析引用） |
+| `GET /v1/elements/{kind}/{id}` | `{ kind, id, fields, etag }` |
+| `PUT /v1/elements/{kind}/{id}` | `{ fields, base?, requestId? }` → 写一次提交一次 |
+| `POST /v1/elements/{kind}` | 同 PUT，`id` 从 `fields.id` 取，201 |
+| `DELETE /v1/elements/{kind}/{id}` | `?base=&requestId=` → 删掉并提交 |
+| `POST /v1/elements/push` | 手动补推 → `{ kind:"elements", pushed, repo }` |
+
+- `{kind}` 只认 `groups` / `packages`（单数 `group` / `package` 也收）；别的 400，不猜。
+- 一条元素：`{ kind, id, fields, etag, state, detail }`。`fields` 是整份 JSON（含未知字段）；
+  `state ∈ ok | problem`。读不出来的那份 `state:"problem"`、`fields:null`、`detail` 给原文，
+  **只标红它，同一目录里别的照列**。
+- `repo` 块：`{ root, present, missing, head, branch, remote, dirty, ahead, behind }`。
+  私库没装配时 `present:false` 并给 `missing` 一句话：读端点 200 空表，写端点 409。
+- `resolved`：`{ groups: { <组 id>: { <包 id>: { state: "ok" | "missing" } } }, missing: ["<组>/<包>"] }`。
+- **未知字段原样透传**：只校验 `id` / `name` 必填、`id` 与文件名一致、`packages` / `tags` /
+  `body` 的类型；删字段是客户端的活儿，服务端一个键都不删、不补默认值。
+- **`id` 就是文件名**：`[a-z0-9-]`、字母数字开头、最长 64；没有 rename —— 改名 = 新建 + 删旧的。
+- **写一次提交一次**：PUT / POST / DELETE 各 `git commit` 一条
+  （`feat(group): <id>` / `chore(package): rm <id>`）；`push` 尽力而为 —— 推不上去回
+  `pushed:false`，本地提交不回滚。回执：`{ kind, id, created, etag, commit, pushed, refs, replay }`。
+- **幂等**：同一个 `requestId` 只提交一次；重放回 `replay:true`、`commit:null`，一个字节都不写。
+- 内容与盘上一致时不制造空提交：`commit:null`、`etag` 照给（不是错误）。
+- `base` = `If-Match`：与磁盘内容指纹不符 → 409（不静默覆盖）。
 
 ### GET /v1/fs/dirs?path=&machine=&hidden=
 

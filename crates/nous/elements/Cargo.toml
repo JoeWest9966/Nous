@@ -1,0 +1,15 @@
+[package]
+name = "nous-elements"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Nous 元素库（组 / 包）：groups/<id>.json、packages/<id>.json 的读写，写一次提交一次"
+
+[dependencies]
+nous-repo = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

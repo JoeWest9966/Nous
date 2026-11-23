@@ -256,7 +256,7 @@ fn require_entry(repo: &Repo, kind: Kind, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn repo_error(error: RepoError) -> ServerError {
+pub(crate) fn repo_error(error: RepoError) -> ServerError {
     match error {
         RepoError::BadRequest(m) | RepoError::InvalidPath(m) => ServerError::BadRequest(m),
         RepoError::Validation { field, problem } => ServerError::Validation { field, problem },

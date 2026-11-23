@@ -62,6 +62,32 @@ pub struct LifecycleResult {
     pub pushed: Pushed,
 }
 
+/// 「写/删 + 提交 + 尽力推」的入参：一次只碰一条路径。
+#[derive(Debug, Clone)]
+pub struct WriteCommit<'a> {
+    pub path: &'a str,
+    /// `None` = 删除这条路径。
+    pub content: Option<&'a [u8]>,
+    /// Some = If-Match（内容指纹不符回 409）；None = 新建或硬写。
+    pub base_etag: Option<&'a str>,
+    pub message: &'a str,
+    /// 幂等锚：同一个 `requestId` 只提交一次，重放回 `replay: true`。
+    pub request_id: Option<&'a str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WriteCommitResult {
+    /// 写后的内容指纹；删除时为 None。
+    pub etag: Option<String>,
+    /// 真的产生了提交才有；内容没变 / 重放时为 None。
+    pub commit: Option<CommitResult>,
+    /// 同一 `requestId` 之前已提交过：这次一个字节都没写。
+    pub replay: bool,
+}
+
+/// `find_request_id` 只看最近这么多条提交（私库是内容仓，重试不会比这更旧）。
+pub const REQUEST_ID_WINDOW: usize = 1000;
+
 fn lines(out: &str) -> Vec<String> {
     out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect()
 }
@@ -376,4 +402,87 @@ pub fn purge(root: &Path, name: &str, request_id: Option<&str>) -> Result<Lifecy
         let hash = git::git_ok(root, &["rev-parse", "HEAD"])?.trim().to_string();
         Ok(LifecycleResult { commit: hash, pushed: git::git_push(root)? })
     }
+}
+
+/// 最近 [`REQUEST_ID_WINDOW`] 条提交里找 `Request-Id: <id>` trailer，命中给那条提交的 hash。
+///
+/// 幂等回执只认这一处：`commit` 写 trailer，`write_and_commit` 重放前查它。
+pub fn find_request_id(root: &Path, request_id: &str) -> Result<Option<String>> {
+    if request_id.is_empty() {
+        return Ok(None);
+    }
+    let window = REQUEST_ID_WINDOW.to_string();
+    // `%B` 是多行正文：用 0x1e 作记录分隔、0x1f 作字段分隔，不能靠换行切。
+    //
+    // **空仓也是合法状态**：`git log` 在「还没有任何提交」时退出码 128
+    // （`your current branch 'master' does not have any commits yet`）。
+    // 那不是「回执查不到」，是「根本没有历史」—— 按 `None` 处理，让第一次写能成功。
+    // 踩过：用空私库验元素库的新建，PUT 直接回「git log 失败」（Desk 只看到一句红字）。
+    let out = match git::git_ok(root, &["log", "--format=%H%x1f%B%x1e", "-n", &window]) {
+        Ok(out) => out,
+        Err(_) if !has_commits(root)? => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let trailer = format!("Request-Id: {request_id}");
+    for record in out.split('\u{1e}') {
+        let Some((hash, body)) = record.split_once('\u{1f}') else { continue };
+        let hash = hash.trim();
+        if hash.is_empty() {
+            continue;
+        }
+        if body.lines().any(|line| line.trim() == trailer) {
+            return Ok(Some(hash.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+/// 这个仓有没有提交（空仓的 `git log` 会失败，那是状态不是错误）。
+fn has_commits(root: &Path) -> Result<bool> {
+    match git::git_ok(root, &["rev-parse", "--verify", "-q", "HEAD"]) {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
+/// 写 / 删一条路径，再提交它（写一次提交一次）；同一个 `requestId` 只做一次。
+pub fn write_and_commit(root: &Path, input: WriteCommit<'_>) -> Result<WriteCommitResult> {
+    // 幂等：这条 requestId 已经提交过 = 上次的写入就是结果，重放一个字节都不碰。
+    if let Some(request_id) = input.request_id.filter(|id| !id.is_empty()) {
+        if find_request_id(root, request_id)?.is_some() {
+            return Ok(WriteCommitResult { etag: None, commit: None, replay: true });
+        }
+    }
+
+    let path = input.path.to_string();
+    let (etag, changed) = match input.content {
+        Some(content) => {
+            // 内容与盘上逐字节相同 = 没有改动，不制造空提交（回执里 commit 为 null）。
+            let unchanged = crate::files::read(root, input.path)
+                .is_ok_and(|old| old.content == content);
+            let written = crate::files::write(root, crate::files::WriteFile {
+                path: input.path,
+                content,
+                base_etag: input.base_etag,
+            })?;
+            (Some(written.etag), !unchanged)
+        }
+        None => {
+            crate::files::remove(root, input.path, input.base_etag)?;
+            (None, true)
+        }
+    };
+
+    if !changed {
+        return Ok(WriteCommitResult { etag, commit: None, replay: false });
+    }
+    // 工作区里其实没变化（未跟踪被 ignore / 与 HEAD 一致）时 `git commit` 会失败；
+    // 先问一句 status，别把「没有实际改动」报成 500。
+    let dirty = git::git_ok(root, &["status", "--porcelain", "--", &path])?;
+    if dirty.trim().is_empty() {
+        return Ok(WriteCommitResult { etag, commit: None, replay: false });
+    }
+
+    let commit = commit(root, &[path], input.message, input.request_id)?;
+    Ok(WriteCommitResult { etag, commit: Some(commit), replay: false })
 }
