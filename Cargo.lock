@@ -1347,6 +1347,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nous-elements"
+version = "0.1.21"
+dependencies = [
+ "nous-repo",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "nous-env"
 version = "0.1.21"
 dependencies = [
@@ -1471,6 +1481,7 @@ dependencies = [
  "nous-device",
  "nous-dispatcher",
  "nous-durable",
+ "nous-elements",
  "nous-env",
  "nous-env-ssh",
  "nous-ext",
