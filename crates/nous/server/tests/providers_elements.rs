@@ -374,7 +374,7 @@ fn read_rows(path: &PathBuf, table: &str) -> Vec<Value> {
     let output = std::process::Command::new("python3")
         .args([
             "-c",
-            "import json,sqlite3,sys\nc=sqlite3.connect(sys.argv[1])\nrows=c.execute('select record from '+sys.argv[2] order by id').fetchall()\nprint(json.dumps([json.loads(r[0]) for r in rows]))",
+            "import json,sqlite3,sys\nc=sqlite3.connect(sys.argv[1])\nrows=c.execute('select record from '+sys.argv[2]+' order by id').fetchall()\nprint(json.dumps([json.loads(r[0]) for r in rows]))",
             path.to_str().unwrap(),
             table,
         ])
