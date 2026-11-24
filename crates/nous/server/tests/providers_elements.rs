@@ -435,6 +435,9 @@ async fn a_real_turn_answers_through_the_elements_provider() {
     let request = mock.requests.lock().unwrap()[0].clone();
     assert!(request.contains("authorization: bearer e2e-key"), "{request}");
     assert!(request.contains("e2e-model"), "{request}");
+    // 用户那句话必须真的进到请求体里：否则供应商只会对着系统提示自说自话
+    // （真机上这一条踩过：答案答非所问，像「没收到具体任务」）。
+    assert!(request.contains("ping"), "用户消息没进请求体：{request}");
 }
 
 /// 元素组的 default 指向一个没有密钥的供应商：轮次必须收敛成失败，不许静默空转。
