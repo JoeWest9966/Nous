@@ -360,6 +360,20 @@ entry 条数、tokens 与 cost、工具调用数、用过的模型集合、首�
 不是 `null`。`fetchedAt` 是最近一次成功刷新的时刻，`error` 是最近一次失败的原因；
 两者都可能为 `null`（缺席）。字段形状以 `crates/nous/server/tests/catalog_refresh.rs` 为准。
 
+### GET /v1/plugins/:name/readme
+
+`{ module, version, markdown, bytes }`。插件「人话 README」（`docs/plugins.md` 规则 7）的
+只读口；桌面端「关于 → 插件」详情页直接渲染 `markdown`，不在客户端拼文档。
+
+- 正文**不进二进制**：源文件在 `crates/<vendor>/<module>/README.md`，`scripts/deploy.sh`
+  随产物发布到 `<产物目录>/docs/plugins/<module>.md`。改文档跑 `deploy.sh --docs-only`
+  即可生效，不重编译、不发版（目录跟着版本走，回退旧产物时文档也一起回退）。
+- `name` 只认 `capabilities.modules[].name`：不在清单里 → **404**
+  `{ error: "unknown_module", module, hint }`（`..` 之类的路径穿越也落在这里）。
+- 清单里有、产物里没带这份文档 → **404**
+  `{ error: "readme_not_installed", module, hint }`。客户端按「暂无文档」展示，不当错误弹窗。
+- 引擎读盘带 mtime + 长度缓存：文件没动不重读，改了立刻生效（不用重启）。
+
 ### GET /v1/selection · POST /v1/selection
 
 `{ id }` 或 `{ id: null }` —— 「现在盯着哪个对话」。桌面端三栏同屏时，左栏高亮当前会话就用它，

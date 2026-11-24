@@ -26,7 +26,6 @@ import tomllib
 
 ROOT = os.getcwd()
 PLUGINS_DOC = os.path.join(ROOT, 'docs/plugins.md')
-README = os.path.join(ROOT, 'crates/nous/durable/README.md')
 
 printed = []
 fail = []
@@ -131,53 +130,36 @@ def internal_deps(meta, manifest_path):
     return deps
 
 
-def check_readme():
-    if not os.path.exists(README):
-        report('README_MISSING crates/nous/durable/README.md 缺失', True)
-        return
-    with open(README, encoding='utf-8') as handle:
-        text = handle.read()
-    lines = text.splitlines()
-    expected = [
-        '## 1 它是什么 / What it is',
-        '## 2 什么时候用 / When to use',
-        '## 3 清单 / Manifest',
-        '## 4 API',
-        '## 5 权限 / Permissions',
-        '## 6 失败模式 / Failure modes',
-        '## 7 判据 / Judgement',
-        '## 8 反悔点 / Reversal',
-    ]
-    for heading in expected:
-        if not any(line.strip() == heading for line in lines):
-            report(f'README_MISSING_CHAPTER durable: {heading}', True)
-    if sum(1 for line in lines if line.startswith('# ')) != 1:
-        report('README_TITLE durable: `^# ` 必须恰好命中一次', True)
-    for anchor in ('[中文](#zh)', '[English](#en)', '<a id="zh"></a>', '<a id="en"></a>'):
-        if anchor not in text:
-            report(f'README_ANCHOR durable: 缺 {anchor}', True)
-    # 双语：每章下面都要有中文行与英文行（第 3、4 章只写来源 / 待生成，例外）
-    for n in (1, 2, 5, 6, 7, 8):
-        start = next((i for i, line in enumerate(lines) if line.strip().startswith(f'## {n} ')), None)
-        if start is None:
-            continue
-        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('## ')), len(lines))
-        section = '\n'.join(lines[start + 1:end])
-        if not re.search(r'[\u4e00-\u9fff]', section):
-            report(f'README_BILINGUAL durable: 第 {n} 章没有中文', True)
-        if not re.search(r'[A-Za-z]{4,}', section):
-            report(f'README_BILINGUAL durable: 第 {n} 章没有英文', True)
+HAN = re.compile(r'[\u4e00-\u9fff]')
+README_LIMIT = 300
 
-    # 第 4 章：只有一行「待生成」，不许表格
-    start = next((i for i, line in enumerate(lines) if line.strip() == '## 4 API'), None)
-    if start is not None:
-        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith('## ')), len(lines))
-        body = [line for line in lines[start + 1:end] if line.strip()]
-        sentinel = '待生成：见 #48 的 /v1/_routes（禁止手写占位表格）'
-        if len(body) != 1 or sentinel not in body[0]:
-            report('README_API_CHAPTER durable: 第 4 章必须只有一行「待生成」', True)
-        if any(line.lstrip().startswith('|') for line in body):
-            report('README_API_TABLE durable: 第 4 章不许有表格', True)
+
+def check_readme(dirs):
+    """每个插件一份人话 README：存在、恰好一个标题、中文 ≤300 字（docs/plugins.md 规则 7）。
+
+    旧的 8 章双语模板（issue #55）在此作废：它要求的篇幅与「300 字说清是什么」互斥，
+    桌面端插件页只读这一段正文。
+    """
+    for directory in dirs:
+        rel = directory.replace(os.sep, '/')
+        path = os.path.join(directory, 'README.md')
+        if not os.path.isfile(path):
+            report(f'README_MISSING {rel}/README.md', True)
+            continue
+        try:
+            with open(path, encoding='utf-8') as handle:
+                text = handle.read()
+        except OSError as exc:
+            report(f'README_UNREADABLE {rel}/README.md：{exc}', True)
+            continue
+        if not text.strip():
+            report(f'README_EMPTY {rel}/README.md', True)
+            continue
+        if sum(1 for line in text.splitlines() if line.startswith('# ')) != 1:
+            report(f'README_TITLE {rel}/README.md：`^# ` 必须恰好命中一次', True)
+        count = len(HAN.findall(text))
+        if count > README_LIMIT:
+            report(f'README_TOO_LONG {rel}/README.md：汉字={count}（上限 {README_LIMIT}）', True)
 
 
 rows = read_plugins_rows()
@@ -270,7 +252,7 @@ for directory in dirs:
     if failures:
         report(f'{module}: ' + '；'.join(failures), True)
 
-check_readme()
+check_readme(dirs)
 
 for mark, msg in printed:
     print(f'{mark} {msg}')

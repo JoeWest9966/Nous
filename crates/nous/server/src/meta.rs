@@ -275,6 +275,11 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/trigger-projects/category", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/trigger-projects/sync", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
+    // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘。
+    // 归 `device`（不是"server"）：`_routes` / `capabilities` 只吐**清单里开着的模块**，
+    // "server" 不在 MANIFEST 的 14 条里 —— 归它等于这条端点永远不出现在 /v1/_routes，
+    // 客户端会一直报「路由漂移」。device 是 0.1.25 里唯一「宿主级只读」的模块。
+    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "device" },
     // #62：stats 三条只读观测端点。
     RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
     RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "stats" },

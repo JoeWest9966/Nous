@@ -59,6 +59,9 @@ ssh j1900 '…' scripts/deploy-check.sh --wait=20 # 部署后的真行为判据�
   `dev`（夹具与探针，不进任何产品产物）。`kernel` 的依赖闭包里不许出现 `platform` / `app`。
 - **`plugin.toml` 是清单数据，API 章是生成物**：`name` / `layer` 逐字等于 `docs/plugins.md`；
   `capabilities` 的 `enabled` = 清单 ∩ 代码，`reason.code` 四值封闭。`check-plugins.sh` 是判据。
+- **每个插件一份人话 README**：`crates/<vendor>/<module>/README.md`，中文 ≤300 字，说清
+  「它是什么 / 什么时候用 / 不负责什么」。不写 API 表、不抄 `plugin.toml` 摘要；判据在
+  `check-plugins.sh`，桌面端插件页直接读它（随产物发布，改文档不用重编译）。
 - **协议是哑的**：客户端只转发 `/v1/*`，不加业务字段、不在客户端算状态。未知字段用
   `serde_json::Value` 收着原样透传 —— `deny_unknown_fields` 会让引擎每加一个字段这边就编译不过。
   唯一例外：本地配置的 `Spec`（fail-fast）。

@@ -1,34 +1,7 @@
-# nous-ai
+# 模型调用
 
-The unified, provider-agnostic LLM layer: message and content types, the
-`Provider` trait, streaming events, and concrete provider implementations.
+统一的模型层：消息、工具、用量这些类型，流式增量事件，以及各个 provider 的实现。
 
-Every other crate in this library talks in these types. Nothing above this layer
-knows whether it is talking to Anthropic, an OpenAI-compatible gateway, or the
-deterministic in-process `faux` provider.
+**什么时候用**：要发一次模型请求、接流式输出、解析工具调用，或者接一个新供应商时。
 
-**来源**：`bigfish1913/pi-rust@v0.24.2` 的 `crates/rpi-ai`（`src/**` + `tests/**` 原样，
-只把包名换成 `nous-ai`、内部依赖换成 `nous-telemetry`）。归属见仓库根
-`LICENSE.rpi`，提货记录见 `SOURCES.md`。**冻结**：不 pull、不 merge、不追上游新 tag。
-
-## Cargo
-
-```toml
-[dependencies]
-# 类型 + faux provider。没有 HTTP 栈，构建期不碰网络。
-nous-ai = { path = "../nous-ai" }
-
-# 真 HTTP provider（anthropic）
-nous-ai = { path = "../nous-ai", features = ["providers"] }
-```
-
-## 上游原文（保留，讲的是这一层负责什么）
-
-The crate is deliberately split so the core stays network-free:
-
-- **Core** (default): types, schema validation, the event stream, the `faux`
-  scripted provider.
-- **`providers`**: real HTTP providers (`reqwest` + `eventsource-stream`).
-
-Anything provider-specific lives behind the `Provider` trait, so the layer above
-never branches on dialect.
+**不负责**：不建会话、不存历史、不决定重试与调度；那些在上层（sessions、runtime）。

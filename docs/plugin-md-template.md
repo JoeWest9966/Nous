@@ -1,79 +1,37 @@
-# <module>
+# 插件 README 模板（300 汉字以内的人话）
 
-> [中文](#zh) · [English](#en)
+> 每个插件一份：`crates/<vendor>/<module>/README.md`。判据是 `scripts/check-plugins.sh`
+> （`README_MISSING` / `README_TOO_LONG`）；桌面端「关于 → 插件」直接读这份正文。
+
+## 只写三件事
 
 <!--
-插件文档模板（issue #55）。复制本文件到 crates/<vendor>/<module>/README.md，
-替换 <module> 与各章内容。规矩：
-  - 第 3 章由 check-plugins.sh 从相邻 plugin.toml 生成，禁止手写（这里只留指向）。
-  - 第 4 章只写一行「待生成」，等 #48 的 /v1/_routes；禁止手写 API 表格。
-  - 每章中英各一段；先写中文，再写英文。
+规矩（`docs/plugins.md` 规则 7）：
+  - 中文 300 字以内（按汉字计数，英文与标点不计），一段就够，别分章节。
+  - 写给人看，不写给编译器看：不抄 API 表、不写内部实现、不写测试入口。
+  - 不复制 `plugin.toml` 的 `description` —— 那是列表行用的一行摘要，这里是详情页正文。
+  - 判据：`scripts/check-plugins.sh`；改文档不用重编译（随产物发布到 docs/plugins/）。
 -->
 
-<a id="zh"></a>
+```markdown
+# <module>
 
-## 1 它是什么 / What it is
+<一句话：它是什么，属于哪一层。>
 
-<!-- 中文：一句话说清这个模块的身份与边界。 -->
-<!-- EN: one sentence on identity and boundary. -->
+**什么时候用**：<用户/调用方什么场景会用到它；没有它就做不了什么。>
 
-中文：`<module>` 是什么、负责什么、不负责什么。
+**不负责**：<最容易误会的那件事，交给谁。>
+```
 
-EN: What `<module>` is, what it owns, and what it explicitly does not own.
+## 一份填好的样子
 
-## 2 什么时候用 / When to use
+```markdown
+# env
 
-<!-- 中文：该用的场景，以及不该用的场景。 -->
-<!-- EN: when to reach for it, and when not to. -->
+本地与远端执行环境的契约层：文件系统与命令执行两张 trait，外加四个内容根目录的解析。
 
-中文：该用它的场景……；不该用它的场景……。
+**什么时候用**：任何要读写技能库、模板库、扩展库或提示词库的代码，都从这里拿路径和
+读写能力，而不是自己拼 `/opt/...`；本地实现和 SSH 远端实现共用同一张契约。
 
-EN: Reach for it when …; do not reach for it when ….
-
-## 3 清单 / Manifest
-
-由脚本从相邻 `plugin.toml` 生成，禁止手写。
-
-Generated from the adjacent `plugin.toml` by the checker; do not hand-write.
-
-## 4 API
-
-> 待生成：见 #48 的 /v1/_routes（禁止手写占位表格）
-
-## 5 权限 / Permissions
-
-<!-- 中文：谁能调用、需要什么权限、有没有跨层调用限制。 -->
-<!-- EN: who may call it, required permissions, cross-layer limits. -->
-
-中文：调用权限与限制……
-
-EN: Permissions and limits …
-
-## 6 失败模式 / Failure modes
-
-<!-- 中文：出错时怎么表现、怎么恢复。 -->
-<!-- EN: how failures surface and how to recover. -->
-
-中文：失败模式与恢复……
-
-EN: Failure modes and recovery …
-
-## 7 判据 / Judgement
-
-<!-- 中文：怎么判断做完了、测试在哪。 -->
-<!-- EN: how to judge done, where the tests live. -->
-
-中文：判据与测试入口……
-
-EN: Judgement and test entry points …
-
-## 8 反悔点 / Reversal
-
-<!-- 中文：哪些决定可逆、哪些不可逆，回退路径是什么。 -->
-<!-- EN: which decisions are reversible and what the way back is. -->
-
-中文：可反悔处与回退路径……
-
-EN: Reversible decisions and the way back …
-
-<a id="en"></a>
+**不负责**：不决定内容长什么样，不做 git 发布，也不缓存文件。
+```

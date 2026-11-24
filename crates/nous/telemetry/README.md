@@ -1,10 +1,7 @@
-# nous-telemetry
+# 遥测
 
-Minimal span and event contracts, with a no-op default.
+观测契约：请求边界上的 span 与 event 接口，默认实现什么都不做。
 
-**来源**：`bigfish1913/pi-rust@v0.24.2` 的 `crates/rpi-telemetry`（`src/**` 原样，
-只有包名从 `rpi-telemetry` 改成 `nous-telemetry`）。归属见仓库根 `LICENSE.rpi`，
-提货记录见 `SOURCES.md`。**冻结**：不 pull、不 merge、不追上游新 tag。
+**什么时候用**：要在关键路径上埋观测，又不希望为此引入具体后端或全局服务时。
 
-The default `NoopTelemetryContext` does nothing; consumers stay monomorphic by
-holding a `&dyn TelemetryContext` defaulting to `NOOP_TELEMETRY_CONTEXT`.
+**不负责**：不实现采集后端、不做聚合展示；接哪个后端由宿主决定。

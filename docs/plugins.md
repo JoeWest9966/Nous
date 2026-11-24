@@ -22,6 +22,12 @@
 6. **路径选择子**：`scripts/layer-paths.sh <layer>` 只读本表的 `module` / `vendor` /
    `crate` / `layer` 四列，输出 `crates/<vendor>/<module>`（空格分隔），跳过 `crate` 列为
    `(待建) …` 或 `—` 的行。**脚本里不写死任何模块名。**
+7. **每个插件一份人话 README**：`crates/<vendor>/<module>/README.md` 必须有，**中文 300 字
+   以内**（按汉字计数），用大白话说清三件事 —— 它是什么 / 什么时候用它 / 它不负责什么。
+   不写 API 表格、不写内部实现、不复制 `plugin.toml` 的 `description`（那是列表行用的一行摘要）。
+   模板见 `docs/plugin-md-template.md`，判据见 `scripts/check-plugins.sh` 的
+   `README_MISSING` / `README_TOO_LONG`。桌面端「关于 → 插件」直接读这份正文（随产物发布到
+   `<产物目录>/docs/plugins/<module>.md`，换文档不用重编译）。
 
 ## 表
 

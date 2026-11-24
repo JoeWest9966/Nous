@@ -1,13 +1,7 @@
-# nous-runtime
+# 运行时
 
-Host-independent model catalogs, provider-scoped credentials, model/thinking
-selection and private execution bindings. Hosts supply configuration, storage,
-environment values and already-loaded provider implementations. No CLI, terminal
-or dynamic-library loader is required.
+宿主无关的模型配置、凭证解析与 provider 执行绑定。宿主把自己的配置和密钥交给它。
 
-Use `RuntimeConfig::resolve` with a `ModelRequest`, `ProviderRegistry` and
-`ValueSource`. The returned providers implement `nous_ai::Provider` and can be
-registered with an Agent or Harness. Public catalogs omit private request headers.
+**什么时候用**：要在一个新宿主里接上模型调用，但不想让它自己找文件或读终端时。
 
-See `examples/embedded.rs` and `docs/architecture/reusable-runtime.md` in the
-repository for the migration boundary and storage adapters.
+**不负责**：不发现配置文件、不加载插件、不依赖终端，也不发起具体产品路由。

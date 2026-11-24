@@ -40,6 +40,7 @@ usage() {
   scripts/deploy.sh --uninstall              停服务 + 摘 unit + 删 /opt/nous-app
   scripts/deploy.sh --purge --yes-i-mean-it  卸载后删 /var/lib/nous + /etc/nous/token
   scripts/deploy.sh --rotate-token           重建 /etc/nous/token（root:nous 0640）
+  scripts/deploy.sh --docs-only              只同步插件 README（不重编译、不发版、不重启）
   scripts/deploy.sh --selftest-prune         prune 选择逻辑自测（本地临时目录，不碰远端）
   scripts/deploy.sh --selftest-gate          闸门用哪个产物自测（同上）
 EOF
@@ -418,14 +419,43 @@ upload_artifacts() {
 	stage=$(mktemp -d)
 	cp "$BIN_LOCAL" "$stage/$BIN_NAME"
 	cp "$UNIT_SRC" "$stage/nous-app.service.new"
+	# 插件 README 随产物发布：**不进二进制**（改文档不用重编译），落在版本目录的
+	# `docs/plugins/<module>.md`。模块名取 crate 目录名，与 `docs/plugins.md` 的 module 列
+	# 一致由 `check-plugins.sh` 保证。端点 `GET /v1/plugins/{name}/readme` 运行时读盘。
+	mkdir -p "$stage/docs/plugins"
+	for readme in crates/*/*/README.md; do
+		[ -f "$readme" ] || continue
+		cp "$readme" "$stage/docs/plugins/$(basename "$(dirname "$readme")").md"
+	done
 	rsync -a -e "ssh -o BatchMode=yes" "$stage/$BIN_NAME" "$HOST:/tmp/$BIN_NAME" || die "rsync 产物失败"
 	rsync -a -e "ssh -o BatchMode=yes" "$stage/nous-app.service.new" "$HOST:/tmp/nous-app.service.new" || die "rsync unit 失败"
+	rsync -a -e "ssh -o BatchMode=yes" "$stage/docs" "$HOST:/tmp/nous-docs" || die "rsync 文档失败"
 	rm -rf "$stage"
 	# 版本是一**目录**（`nous-app-<sha8>-<target>/nous-app`），`current` 指向目录：
 	# unit 的 ExecStart 是 `/opt/nous-app/current/nous-app`，回退逻辑也是按
 	# `nous-app-*/nous-app` 找上一版。把产物落成裸文件，`current` 就成了指向文件的链接，
 	# 起服务必然 203/EXEC（Not a directory）。
-	rs sh -c "set -e; install -d -m 0755 '$REMOTE_ROOT'; install -d -m 0755 '$REMOTE_ROOT/$BIN_NAME'; install -m 0755 '/tmp/$BIN_NAME' '$REMOTE_ROOT/$BIN_NAME/nous-app'; rm -f '/tmp/$BIN_NAME'" || die "落产物失败"
+	rs sh -c "set -e; install -d -m 0755 '$REMOTE_ROOT'; install -d -m 0755 '$REMOTE_ROOT/$BIN_NAME'; install -m 0755 '/tmp/$BIN_NAME' '$REMOTE_ROOT/$BIN_NAME/nous-app'; install -d -m 0755 '$REMOTE_ROOT/$BIN_NAME/docs'; rm -rf '$REMOTE_ROOT/$BIN_NAME/docs/plugins'; cp -a '/tmp/nous-docs/plugins' '$REMOTE_ROOT/$BIN_NAME/docs/plugins'; rm -rf '/tmp/nous-docs'; rm -f '/tmp/$BIN_NAME'" || die "落产物失败"
+}
+
+# 只同步插件 README 到当前版本目录：改文档不用重编译、不发版、不重启。
+# 文档跟着版本目录走（回退旧产物时文档也一起回退），所以先要一次完整部署。
+do_docs_only() {
+	preflight_remote
+	local target stage out rc=0
+	target=$(rs_out readlink -f /opt/nous-app/current 2>/dev/null || true)
+	[ -n "$target" ] || die "--docs-only 需要 current（先跑一次完整部署）"
+	stage=$(mktemp -d)
+	mkdir -p "$stage/docs/plugins"
+	for readme in crates/*/*/README.md; do
+		[ -f "$readme" ] || continue
+		cp "$readme" "$stage/docs/plugins/$(basename "$(dirname "$readme")").md"
+	done
+	rsync -a -e "ssh -o BatchMode=yes" "$stage/docs" "$HOST:/tmp/nous-docs" || { rm -rf "$stage"; die "rsync 文档失败"; }
+	rm -rf "$stage"
+	out=$(rs sh -c "set -e; install -d -m 0755 '$target/docs'; rm -rf '$target/docs/plugins'; cp -a '/tmp/nous-docs/plugins' '$target/docs/plugins'; rm -rf '/tmp/nous-docs'" 2>&1) || rc=$?
+	[ $rc -eq 0 ] || die "同步文档失败：$out"
+	info "文档已同步到 $target/docs/plugins（无需重编译）"
 }
 
 do_deploy() {
@@ -539,6 +569,7 @@ while [ $# -gt 0 ]; do
 	--purge) MODE=purge ;;
 	--yes-i-mean-it) PURGE_CONFIRM=1 ;;
 	--rotate-token) MODE=rotate-token ;;
+	--docs-only) MODE=docs-only ;;
 	--selftest-prune) MODE=selftest-prune ;;
 	--selftest-gate) MODE=selftest-gate ;;
 	-h|--help) usage; exit 0 ;;
@@ -554,4 +585,5 @@ deploy) do_deploy ;;
 uninstall) do_uninstall ;;
 purge) do_purge ;;
 rotate-token) do_rotate_token ;;
+docs-only) do_docs_only ;;
 esac

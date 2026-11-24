@@ -107,6 +107,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/triggers/{code}/purge", axum::routing::post(crate::triggers::purge_trigger))
         .route("/v1/triggers/{code}", axum::routing::patch(crate::triggers::patch_trigger).put(crate::triggers::put_trigger))
         .route("/v1/capabilities", get(capabilities))
+        // 插件人话 README：随产物发布到 `<产物目录>/docs/plugins/`，运行时读盘（不进二进制）。
+        .route("/v1/plugins/{name}/readme", get(crate::plugin_docs::readme))
         .route("/v1/stats/usage", get(crate::stats::usage))
         .route("/v1/stats/tasks", get(crate::stats::tasks))
         .route("/v1/stats/db", get(crate::stats::db))
