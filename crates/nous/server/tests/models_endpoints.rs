@@ -152,6 +152,40 @@ async fn group_projects_into_catalog_with_override_and_diagnostics() {
 }
 
 #[tokio::test]
+async fn main_models_endpoint_serves_the_elements_group_first() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+    let (status, body) = call(&app, "/v1/models").await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // 编目来自元素组：两条模型、default 用供应商键、来源标 elements。
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{body}");
+    assert_eq!(items[0]["provider"], "wb2api");
+    assert_eq!(items[0]["modelId"], "cn:fast");
+    assert_eq!(body["default"], json!({ "provider": "wb2api", "modelId": "cn:fast" }));
+    assert_eq!(body["catalog"]["state"], "ok");
+    assert_eq!(body["catalog"]["source"], "elements");
+}
+
+#[tokio::test]
+async fn main_models_endpoint_falls_back_to_file_without_the_group() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("Nous-Elements");
+    std::fs::create_dir_all(root.join("groups")).unwrap();
+    std::fs::create_dir_all(root.join("packages")).unwrap();
+    // 组不存在：编目应回落到 file 来源（这里没给文件 → missing），不编数据。
+    let state = AppState::with_source(common::FakeSource::two_sessions())
+        .with_repos_for_test("elements", &root);
+    let app = router(state);
+    let (status, body) = call(&app, "/v1/models").await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"], json!([]));
+    assert_eq!(body["catalog"]["state"], "missing");
+}
+
+#[tokio::test]
 async fn plaintext_key_is_redacted_to_a_shape() {
     let (_tmp, root) = fixture();
     std::fs::write(

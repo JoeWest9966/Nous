@@ -27,6 +27,43 @@ pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
     router.route("/v1/models/elements", axum::routing::get(projection))
 }
 
+/// 约定组 → `GET /v1/models` 的形状（`ModelsResponse`）。组不存在 / 私库未装配 → `None`，
+/// 调用方回落到 device 的文件/内联来源（行为与没有这条线时一致）。
+pub fn group_catalog(state: &Arc<AppState>) -> Option<nous_device::ModelsResponse> {
+    let repo = state.repo(REPO_KEY)?;
+    let groups = nous_elements::scan(&repo, Kind::Groups).ok()?;
+    let group = nous_models::find_group(&groups.items)?;
+    let packages = nous_elements::scan(&repo, Kind::Packages).ok()?;
+    let snapshot = nous_models::load(group, &packages.items);
+    let default = snapshot.default.as_ref().map(|model| nous_device::ModelRef {
+        provider: model.provider.clone(),
+        model_id: model.model_id.clone(),
+    });
+    let items = snapshot
+        .items
+        .iter()
+        .map(|item| nous_device::ModelItem {
+            provider: item.provider.clone(),
+            model_id: item.model_id.clone(),
+            name: item.name.clone(),
+            thinking_levels: item.thinking_levels.clone(),
+            context_window: item.context_window,
+            max_tokens: item.max_tokens,
+        })
+        .collect();
+    Some(nous_device::ModelsResponse {
+        default,
+        items,
+        catalog: nous_device::CatalogDiagnostics {
+            state: "ok",
+            source: Some("elements"),
+            path: repo.root().join("groups"),
+            fetched_at: None,
+            error: None,
+        },
+    })
+}
+
 /// `GET /v1/models/elements`：约定组 → 编目（`items[]` / `default`）+ 诊断。
 ///
 /// 私库没装配 / 组不存在 = `state:"missing"` 空表（不是 404：这是「还没有」，不是「没这个端点」）。

@@ -701,6 +701,10 @@ async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsRespons
     if let Some(refreshed) = state.refreshed_models() {
         return Ok(Json(refreshed));
     }
+    // 元素库的模型入口组优先：有 `nous-models` 组，编目就从组/包投影（来源标 elements）。
+    if let Some(response) = crate::models::group_catalog(&state) {
+        return Ok(Json(response));
+    }
     let response = nous_device::load_models(state.catalog_env())
         .map_err(ServerError::Internal)?;
     Ok(Json(response))
