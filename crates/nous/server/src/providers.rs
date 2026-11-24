@@ -72,40 +72,13 @@ impl KeyLookup for HostKeyLookup<'_> {
     }
 }
 
-/// 跑一条密钥命令，输出取 stdout。有界等待：超时就杀掉并报错，不阻塞启动。
+/// 跑一条密钥命令，输出取 stdout。
+///
+/// 进程创建点不在 `server` 里：走 `nous_tools::os_env::run_capture`（S1 的唯一执行面，
+/// 判据 6 / 12 守的就是这条）。这里只负责把错误翻成「密钥命令 …」那句人话。
 fn run_command(command: &str, timeout: Duration) -> Result<String, String> {
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("密钥命令起不来：{error}"))?;
-    let started = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if started.elapsed() > timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!("密钥命令超时（{} 秒）", timeout.as_secs()));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(error) => return Err(format!("密钥命令等待失败：{error}")),
-        }
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("密钥命令输出读不到：{error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "密钥命令退出码 {}",
-            output.status.code().unwrap_or(-1)
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    nous_tools::os_env::run_capture("sh", &["-c", command], timeout)
+        .map_err(|error| format!("密钥该读的这条命令没成：{error}"))
 }
 
 /// 把一个供应商的密钥引用解成值，并只保留这一个供应商的配置。

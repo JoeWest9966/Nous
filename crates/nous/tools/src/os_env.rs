@@ -396,6 +396,48 @@ pub(crate) async fn run_quick(
     }
 }
 
+/// 「跑一条一次性命令、拿 stdout 和退出码」的通用阻塞版。
+///
+/// 存在的理由只有一条：**进程创建点继续留在这个文件里**（spec ch1 判据 6 / 12）。
+/// 别的 crate 要跑一条有界等待的命令时走这里，不许自己 `Command::new`。
+///
+/// 语义刻意比 `run_quick` 细一点（密钥解析要分辨「起不来 / 超时 / 退出码非零」）：
+/// 成功回 stdout（已 trim），失败回一句能贴进 issue 的话。
+pub fn run_capture(
+    cmd: &str,
+    args: &[&str],
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("命令 {cmd} 起不来：{error}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if started.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("命令 {cmd} 超时（{} 秒）", timeout.as_secs()));
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            Err(error) => return Err(format!("命令 {cmd} 等待失败：{error}")),
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("命令 {cmd} 输出读不到：{error}"))?;
+    if !output.status.success() {
+        return Err(format!("命令 {cmd} 退出码 {}", output.status.code().unwrap_or(-1)));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// `run_quick` 的阻塞版：给**不在 async 上下文**里的调用方用（目前只有
 /// `output_decode::console_code_page` —— Windows 控制台代码页探测，在
 /// `OnceLock` 惰性初始化里跑）。内部起一个一次性 runtime；调用频率是每

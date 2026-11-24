@@ -128,6 +128,10 @@ cargo test --workspace                                       # 全量
 - 元素库扫描失败的行为微调：搬家前走 `ServerError`（`repo_error` 映射），搬家后统一
   `500 {"error": "扫元素库失败：…"}`。形态没变（还是 `{error}` 一句话），状态码在
   极端分支上可能从 4xx 变 500。
+- 进程创建点：`server` 里原本新的 `!cmd` 密钥解析自己 `Command::new("sh")`，
+  已改成调 `nous_tools::os_env::run_capture`（S1 的唯一执行面，判据 6 / 12 的口子）。
+  `crates/nous/server/src/trigger_projects.rs` 里的 `run_cargo` 是同一类欠账（更早就有），
+  本条未动 —— 它要 async 语义，换法另议。
 - 注册表顺序：静态表在前、插件声明在后；`capabilities_declares_modules_and_reasons.json`
   快照会随搬家调整端点顺序（内容不变）。
 

@@ -44,6 +44,10 @@ nous-server = [
   "nous-elements",
   # #62 只读观测聚合
   "nous-stats",
+  # 模型编目插件（元素组 → 编目）：server 调它的投影与端点
+  "nous-element-models",
+  # 端点契约层（插件自带 handler 的声明 = 注册）
+  "nous-routes",
   # #60 模板管理的判定层（形状 / 引用解析 / 名册投影）
   "nous-presets-admin",
   # #73 60s 节拍与 evaluate 在 app 装配处启动
@@ -55,3 +59,9 @@ nous-store = []
 
 # #60 模板管理：纯判定，零 IO（盘面与 HTTP 都在 server）。
 nous-presets-admin = []
+
+# 端点契约层：只认 axum 的 MethodRouter 形状，不依赖任何插件（否则会和 server 成环）。
+nous-routes = []
+
+# 编目插件的依赖：元素库原语、运行时配置形状、宿主能力的类型（repo），以及端点契约层。
+nous-element-models = ["nous-elements", "nous-runtime", "nous-env", "nous-repo", "nous-routes"]
