@@ -1,6 +1,6 @@
 name = "routes"
 vendor = "nous"
-version = "0.1.22"
+version = "0.1.23"
 layer = "platform"
 crate = "nous-routes"
 
