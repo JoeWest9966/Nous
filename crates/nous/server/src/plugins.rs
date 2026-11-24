@@ -35,3 +35,17 @@ impl nous_element_models::routes::Host for AppState {
         self.repo(crate::elements::REPO_KEY)
     }
 }
+
+/// `element-models` 要的另一件事：密钥文件放哪。
+///
+/// `NOUS_SECRETS_FILE` 优先；没配就是 `/var/lib/nous/secrets/providers.env`
+/// （`deploy/nous-app.service` 里那条 `EnvironmentFile=` 读的同一份）。引擎以 `nous` 用户跑，
+/// 所以这个位置必须是 `nous` 可写的 —— `/etc/nous/providers.env` 是 `root:nous 0640`，写不进去。
+impl nous_element_models::routes::Secrets for AppState {
+    fn secrets_file(&self) -> Option<std::path::PathBuf> {
+        Some(match std::env::var("NOUS_SECRETS_FILE") {
+            Ok(path) if !path.trim().is_empty() => std::path::PathBuf::from(path),
+            _ => std::path::PathBuf::from("/var/lib/nous/secrets/providers.env"),
+        })
+    }
+}
