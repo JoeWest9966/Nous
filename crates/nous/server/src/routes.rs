@@ -123,6 +123,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     let router = router.merge(crate::resource_admin::attach(Router::new()));
     // 元素库（组 / 包）：盘上真相与写事务在 `nous-elements`，这里只做 HTTP 翻译。
     let router = router.merge(crate::elements::attach(Router::new()));
+    // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `nous-models`）。
+    let router = router.merge(crate::models::attach(Router::new()));
     // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);
     // #95：触发器工程面（n8qkkj 的宿主，路径与 `/v1/triggers` 定义面分开）。
@@ -689,19 +691,31 @@ async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Valu
 /// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
 /// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
 async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
-    // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
+    // 装配注入的编目（faux 验收 / 测试快照）优先：展示读装配出来的那份，没有再读静态注入的。
     if state.injected_models() {
         if let Some(catalog) = state.assembled_models() {
             return Ok(Json(catalog));
         }
-        return Ok(Json(state.models()));
+    }
+    current_catalog(&state).map(Json).map_err(ServerError::Internal)
+}
+
+/// 「当前编目」只有这一个出处：`GET /v1/models` 和发消息的模型解析都读它，
+/// 不许各读各的（线上因此出过 503：展示读了元素组，解析读的是空的文件来源）。
+///
+/// 顺序：注入的静态编目（测试快照 / faux 验收）→ 远端刷新 → 元素库的模型入口组 → device 文件/内联来源。
+/// 注入时读 `state.models()`，与改动前发消息的行为一致；展示路由在调用前另有「装配编目优先」。
+fn current_catalog(state: &Arc<AppState>) -> std::result::Result<ModelsResponse, String> {
+    if state.injected_models() {
+        return Ok(state.models());
     }
     if let Some(refreshed) = state.refreshed_models() {
-        return Ok(Json(refreshed));
+        return Ok(refreshed);
     }
-    let response = nous_device::load_models(state.catalog_env())
-        .map_err(ServerError::Internal)?;
-    Ok(Json(response))
+    if let Some(response) = crate::models::group_catalog(state) {
+        return Ok(response);
+    }
+    nous_device::load_models(state.catalog_env())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1011,11 +1025,7 @@ async fn messages(
     }
     let faux = state.provider_kind() == "faux";
     // #70：模型解析在**受理之前**。没有来源就 503，不许先 202 再沉默。
-    let catalog = if state.injected_models() {
-        state.models().clone()
-    } else {
-        nous_device::load_models(state.catalog_env()).map_err(ServerError::ServiceUnavailable)?
-    };
+    let catalog = current_catalog(&state).map_err(ServerError::ServiceUnavailable)?;
     let session_model = state
         .source()
         .sessions()?

@@ -1,6 +1,6 @@
 name = "server"
 vendor = "nous"
-version = "0.1.20"          # 必须 == Cargo.toml 的 version
+version = "0.1.21"          # 必须 == Cargo.toml 的 version
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-server"
 
@@ -16,6 +16,7 @@ nous-elements = "^0.1"
 nous-presets-admin = "^0.1"
 nous-prompts = "^0.1"
 nous-env-ssh = "^0.1"
+nous-models = "^0.1"
 nous-skills = "^0.1"
 nous-runtime = "^0.1"
 nous-sessions = "^0.1"

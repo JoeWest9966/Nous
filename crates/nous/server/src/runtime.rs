@@ -151,7 +151,14 @@ pub fn assemble(
     // 构造点：模型注册表从宿主配置解析，工具注册表从本地执行环境装箱。
     // 轮次运行时拿走这两张表，server 保留句柄供编目/诊断使用。
     let mut registry: ProviderRegistry = nous_runtime::ProviderRegistry::default();
-    let config = nous_runtime::RuntimeConfig::default();
+    // 模型入口组优先：元素库里有 `nous-models` 组就用它的组/包投影当宿主配置
+    // （provider 键 / baseUrl / apiKey 引用 / models[]）；没有组就退回空配置，
+    // 行为与没有这条线时一致（编目空表 + 凭证链只认 auth.json / env）。
+    let (config, elements_note) = elements_runtime_config();
+    let config = config.unwrap_or_else(nous_runtime::RuntimeConfig::default);
+    if let Some(note) = elements_note {
+        eprintln!("nous-server: model catalog: {note}");
+    }
     // `NOUS_PROVIDER=faux` 时进入验收模式：跳过真凭证解析，用一个固定脚本的 provider。
     // 只在 runtime 的组装根里做一次，路由和消息层完全不认识 provider。
     let kind = provider_kind(values);
@@ -280,6 +287,40 @@ pub fn assemble_with_provider(
         provider_kind: "faux",
         completions: tokio::sync::broadcast::channel(64).0,
     }
+}
+
+/// 元素库的模型入口组 → 宿主 `RuntimeConfig`。组不存在 / 私库打不开 → `(None, None)`。
+/// 密钥只在这里保持 `$ENV` / `!cmd` 引用字符串；展开发生在 runtime 的凭证链里。
+fn elements_runtime_config(
+) -> (Option<nous_runtime::RuntimeConfig>, Option<String>) {
+    let repo = match nous_repo::Repo::open(nous_env::ELEMENTS.resolve()) {
+        Ok(repo) => repo,
+        Err(_) => return (None, None),
+    };
+    let (Ok(groups), Ok(packages)) = (
+        nous_elements::scan(&repo, nous_elements::Kind::Groups),
+        nous_elements::scan(&repo, nous_elements::Kind::Packages),
+    ) else {
+        return (None, None);
+    };
+    let Some(group) = nous_models::find_group(&groups.items) else {
+        return (None, None);
+    };
+    let models_config = nous_models::runtime_config(group, &packages.items);
+    let note = format!(
+        "elements group `{}`: {} providers / {} models",
+        group.id,
+        models_config.providers.len(),
+        models_config.providers.values().map(|p| p.models.len()).sum::<usize>(),
+    );
+    (
+        Some(nous_runtime::RuntimeConfig {
+            models: models_config,
+            credentials: Default::default(),
+            settings: Default::default(),
+        }),
+        Some(note),
+    )
 }
 
 /// 进程环境变量的只读视图。宿主显式传进来，runtime 自己不读环境。

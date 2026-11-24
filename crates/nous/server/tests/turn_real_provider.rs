@@ -193,6 +193,75 @@ fn app_for_model_resolution(
     router(state)
 }
 
+/// 元素库里放一个 `nous-models` 组（default 指向 faux provider 的模型），
+/// 用来验证发消息的模型解析和 `GET /v1/models` 看的是同一份编目。
+fn elements_root_with_group(default: &str) -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::create_dir_all(root.join("groups")).unwrap();
+    std::fs::create_dir_all(root.join("packages")).unwrap();
+    std::fs::write(
+        root.join("groups/nous-models.json"),
+        json!({
+            "id": "nous-models",
+            "name": "Nous 模型入口",
+            "packages": ["provider-faux"],
+            "default": default,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("packages/provider-faux.json"),
+        json!({
+            "id": "provider-faux",
+            "name": "Faux",
+            "kind": "provider",
+            "provider": "faux",
+            "baseUrl": "http://127.0.0.1:1/v1",
+            "api": "openai-completions",
+            "apiKey": "$FAUX_API_KEY",
+            "models": [{ "id": "echo", "name": "Echo" }],
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@e"]);
+    git(&["config", "user.name", "T"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "init"]);
+    tmp
+}
+
+/// 同 [`app_for_model_resolution`]，但不注入编目、改挂一个元素库根。
+fn app_with_elements(path: &PathBuf, elements: &std::path::Path) -> Router {
+    let session = Arc::new(Session::open(path).unwrap());
+    let mut assembled = nous_server::runtime::assemble_with_provider(
+        echo_model_provider(),
+        Arc::new(BTreeMap::new()),
+        session,
+    );
+    assembled.provider_kind = "real";
+    let state = AppState::durable(path)
+        .unwrap()
+        .with_runtime(Arc::new(assembled))
+        .with_repos_for_test("elements", elements);
+    router(state)
+}
+
 fn catalog_with_default(provider: &str, id: &str) -> nous_device::ModelsResponse {
     nous_device::ModelsResponse {
         default: Some(nous_device::ModelRef {
@@ -282,6 +351,23 @@ async fn with_no_model_anywhere_the_request_is_503_not_202() {
     assert_eq!(body["error"], json!("没有可用模型"));
     assert!(read_rows(&path, "submissions").is_empty(), "503 之前不许写 submission");
     assert!(read_rows(&path, "entries").is_empty(), "503 之前不许写 user entry");
+}
+
+/// 线上 503 的复现：编目只在元素库的组里，device 文件来源是空的。
+/// 发消息的模型解析必须和 `GET /v1/models` 看同一份编目，不能再读一遍空的文件来源。
+#[tokio::test]
+async fn model_resolution_sees_the_elements_group_when_no_catalog_is_injected() {
+    let path = temp_db("model-elements");
+    seed(&path, None).await;
+    let elements = elements_root_with_group("faux/echo");
+    let app = app_with_elements(&path, elements.path());
+
+    let (status, body) = call(&app, "POST", "/v1/sessions/1/messages", Some(json!({"content": "ping"}))).await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "组里有 default，发消息必须受理而不是 503「没有可用模型」：{body}"
+    );
 }
 
 /// 慢 provider：每 20 秒吐一段文本，给 abort 留窗口；同时记录取消信号有没有真的传到 provider。

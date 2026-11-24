@@ -28,6 +28,7 @@ pub mod combos_actions;
 pub mod error;
 pub mod hub;
 pub mod meta;
+pub mod models;
 pub mod records;
 pub mod observer;
 pub mod presets;

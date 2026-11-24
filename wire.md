@@ -976,6 +976,30 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
   `changed:false` = 状态本来就对，没写盘、没提交。锁的提交是
   `chore(group): lock <id>` / `chore(group): unlock <id>`。
 
+### GET /v1/models/elements —— 模型入口组 → 编目
+
+盘上真相还是元素库（上一节），这里只把「约定组」投影成编目。约定：
+
+- **组 id 固定是 `nous-models`**，引擎只读这一个组；别的组与模型无关。
+- 组里 `packages[]` 引两类包：`kind:"provider"`（供应商连接 + `models[]` 清单）和
+  `kind:"model"`（单条模型覆盖，`provider` + `modelId` 定位）。别的 `kind` 只标红，不猜。
+- 组的 `default` 写 `"provider/modelId"`，`provider` 是**供应商键**（`wb2api`），不是包 id
+  （`provider-wb2api` 也收，写进 `default` 时归一成供应商键）。
+- 覆盖包按 `(provider, modelId)` **逐键合并**：两边都是对象就递归，数组与标量整体替换；
+  身份键（`id` / `name` / `kind` / `provider` / `modelId`）不参与合并。
+
+回包：`{ kind:"models", repo, state, group?, default?, items[], providers[], packages[], missing[], problems[] }`。
+
+- `state ∈ ok | missing | problem`：`ok` = 编目能用；`missing` = 组不存在或表为空；
+  `problem` = 有写错的东西（未知 `kind`、悬空覆盖、默认模型不在表里、坏文件）。
+- `items[]` 与 `GET /v1/models` 的 `items[]` 同形（`provider` / `modelId` / `name` /
+  `thinkingLevels` / `contextWindow` / `maxTokens`），思考档顺序是规范序
+  `off,minimal,low,medium,high,xhigh,max`，不是 JSON 里的书写顺序。
+- `providers[]` 的 `key` **只回形状**（`env` / `cmd` / `secret` / `missing` / `plaintext`）：
+  元素库只收 `$ENV` / `!cmd` / `secret:<id>` 三种引用，出现明文只标红、**不回显值**。
+- `missing[]` 是 `"<组>/<包>"` 或 `"<组>/<供应商>/<模型>"`；缺一个包不许把同一组的其余编目吞掉。
+- 只读：这个端点不改元素库一个字节（写面走 `/v1/elements`）。
+
 ### GET /v1/fs/dirs?path=&machine=&hidden=
 
 `{ path, dirs: [{ name, path, hidden }], truncated }`。**列的是引擎那台机器上的目录。**
