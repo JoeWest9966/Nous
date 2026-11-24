@@ -980,7 +980,7 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 
 盘上真相还是元素库（上一节），这里只把「约定组」投影成编目。约定：
 
-- **组 id 固定是 `nous-models`**，引擎只读这一个组；别的组与模型无关。
+- **组 id 固定是 `element-models`**，引擎只读这一个组；别的组与模型无关。
 - 组里 `packages[]` 引两类包：`kind:"provider"`（供应商连接 + `models[]` 清单）和
   `kind:"model"`（单条模型覆盖，`provider` + `modelId` 定位）。别的 `kind` 只标红，不猜。
 - 组的 `default` 写 `"provider/modelId"`，`provider` 是**供应商键**（`wb2api`），不是包 id

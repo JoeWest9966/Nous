@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use nous_ai::{AssistantMessageEvent, AssistantMessageEventStream, Context, Model, Provider};
 use nous_ai::{SimpleStreamOptions, StopReason};
-use nous_models::KeyLookup;
+use nous_element_models::KeyLookup;
 use nous_runtime::{ModelRequest, ProviderRegistry, RuntimeConfig, ValueSource};
 
 /// `!cmd` 的超时：装配只在启动时跑一次，但一条挂住的命令会把启动卡死。
@@ -143,8 +143,8 @@ pub fn build(
             notes.push(format!("供应商 `{id}`：包里没有模型，跳过"));
             continue;
         };
-        let key = match nous_models::resolve_key(
-            &nous_models::parse_key_ref(provider.api_key.as_deref()),
+        let key = match nous_element_models::resolve_key(
+            &nous_element_models::parse_key_ref(provider.api_key.as_deref()),
             &lookup,
         ) {
             Ok(key) => key,

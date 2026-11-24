@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// 默认编目路径（`NOUS_MODELS_FILE` 未给时），也是诊断块里那条可诊断的路径。
-pub const DEFAULT_MODELS_FILE: &str = "/var/lib/nous/models.json";
+pub const DEFAULT_MODELS_FILE: &str = "/var/lib/nous/element-models.json";
 
 /// `GET /v1/models` 的 `items[]` 一项。字段名就是 wire 形状，不许改成 snake_case。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

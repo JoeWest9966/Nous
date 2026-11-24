@@ -286,16 +286,16 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// 元素库：一个 `nous-models` 组 + 一个供应商包。
+/// 元素库：一个 `element-models` 组 + 一个供应商包。
 fn elements_repo(base_url: &str, api_key: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     std::fs::create_dir_all(root.join("groups")).unwrap();
     std::fs::create_dir_all(root.join("packages")).unwrap();
     std::fs::write(
-        root.join("groups/nous-models.json"),
+        root.join("groups/element-models.json"),
         json!({
-            "id": "nous-models",
+            "id": "element-models",
             "name": "Nous 模型入口",
             "packages": ["provider-e2e"],
             "default": "e2e/e2e-model",

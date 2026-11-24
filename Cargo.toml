@@ -53,7 +53,7 @@ nous-wire = { path = "crates/nous/wire", version = "0.1.0" }
 nous-env = { path = "crates/nous/env", version = "0.1.0" }
 nous-repo = { path = "crates/nous/repo", version = "0.1.0" }
 nous-elements = { path = "crates/nous/elements", version = "0.1.0" }
-nous-models = { path = "crates/nous/models", version = "0.1.0" }
+nous-element-models = { path = "crates/nous/element-models", version = "0.1.0" }
 nous-prompts = { path = "crates/nous/prompts", version = "0.1.0" }
 nous-presets-admin = { path = "crates/nous/presets-admin", version = "0.1.0" }
 nous-env-ssh = { path = "crates/nous/env-ssh", version = "0.1.0" }

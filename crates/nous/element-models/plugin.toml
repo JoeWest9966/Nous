@@ -1,8 +1,8 @@
-name = "models"
+name = "element-models"
 vendor = "nous"
 version = "0.1.22"
 layer = "app"
-crate = "nous-models"
+crate = "nous-element-models"
 
 [requires]
 nous-elements = "^0.1"

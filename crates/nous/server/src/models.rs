@@ -1,8 +1,8 @@
 //! 模型入口：元素库里的约定组 → 编目投影（`/v1/models/elements`）。
 //!
-//! 盘上真相在元素库（`nous-elements`）：一个 `nous-models` 组引用若干**供应商包**
+//! 盘上真相在元素库（`nous-elements`）：一个 `element-models` 组引用若干**供应商包**
 //! （`kind:"provider"`，`models[]` 是模型清单）和可选的**覆盖包**（`kind:"model"`）。
-//! 解析与合并的纯逻辑在 `nous-models`，这里只做「扫两段 → 挑组 → 投影 → HTTP 翻译」。
+//! 解析与合并的纯逻辑在 `nous-element-models`，这里只做「扫两段 → 挑组 → 投影 → HTTP 翻译」。
 //!
 //! 三条不越过的线：
 //!
@@ -32,9 +32,9 @@ pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
 pub fn group_catalog(state: &Arc<AppState>) -> Option<nous_device::ModelsResponse> {
     let repo = state.repo(REPO_KEY)?;
     let groups = nous_elements::scan(&repo, Kind::Groups).ok()?;
-    let group = nous_models::find_group(&groups.items)?;
+    let group = nous_element_models::find_group(&groups.items)?;
     let packages = nous_elements::scan(&repo, Kind::Packages).ok()?;
-    let snapshot = nous_models::load(group, &packages.items);
+    let snapshot = nous_element_models::load(group, &packages.items);
     let default = snapshot.default.as_ref().map(|model| nous_device::ModelRef {
         provider: model.provider.clone(),
         model_id: model.model_id.clone(),
@@ -88,11 +88,11 @@ async fn projection(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let groups = nous_elements::scan(&repo, Kind::Groups).map_err(repo_error)?;
     let packages = nous_elements::scan(&repo, Kind::Packages).map_err(repo_error)?;
 
-    let Some(group) = nous_models::find_group(&groups.items) else {
+    let Some(group) = nous_element_models::find_group(&groups.items) else {
         let problems: Vec<Value> = groups
             .broken
             .iter()
-            .filter(|broken| broken.id == nous_models::GROUP_ID)
+            .filter(|broken| broken.id == nous_element_models::GROUP_ID)
             .map(|broken| {
                 json!({
                     "element": broken.id,
@@ -103,9 +103,9 @@ async fn projection(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
             .collect();
         // 组读不出来时别假装「没配」：把解析原文带上。
         let detail = if problems.is_empty() {
-            format!("没有 {} 这个组", nous_models::GROUP_ID)
+            format!("没有 {} 这个组", nous_element_models::GROUP_ID)
         } else {
-            format!("{} 这份组读不出来（见 problems）", nous_models::GROUP_ID)
+            format!("{} 这份组读不出来（见 problems）", nous_element_models::GROUP_ID)
         };
         return Ok(Json(json!({
             "kind": "models",
@@ -114,13 +114,13 @@ async fn projection(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
             "items": [],
             "providers": [],
             "packages": [],
-            "missing": [format!("{}", nous_models::GROUP_ID)],
+            "missing": [format!("{}", nous_element_models::GROUP_ID)],
             "problems": problems,
             "detail": detail,
         })));
     };
 
-    let snapshot = nous_models::load(group, &packages.items);
+    let snapshot = nous_element_models::load(group, &packages.items);
     let mut body = serde_json::to_value(&snapshot).unwrap_or(Value::Null);
     if let Value::Object(map) = &mut body {
         map.insert("kind".into(), json!("models"));

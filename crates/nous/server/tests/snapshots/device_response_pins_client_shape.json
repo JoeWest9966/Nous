@@ -12,7 +12,7 @@
   "catalog": {
     "state": "missing",
     "source": null,
-    "path": "/var/lib/nous/models.json"
+    "path": "/var/lib/nous/element-models.json"
   },
   "available": []
 }

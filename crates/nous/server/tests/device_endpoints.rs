@@ -102,7 +102,7 @@ async fn absent_catalog_reports_missing_state_and_default_path() {
     let env = CatalogEnvironment {
         inline: None,
         file: None,
-        file_path: PathBuf::from("/var/lib/nous/models.json"),
+        file_path: PathBuf::from("/var/lib/nous/element-models.json"),
         remote_base: None,
         remote_token: None,
         cache_path: None,
@@ -113,7 +113,7 @@ async fn absent_catalog_reports_missing_state_and_default_path() {
     assert_eq!(body["items"], json!([]));
     assert_eq!(body["catalog"]["state"], json!("missing"));
     assert!(body["catalog"]["source"].is_null());
-    assert_eq!(body["catalog"]["path"], json!("/var/lib/nous/models.json"));
+    assert_eq!(body["catalog"]["path"], json!("/var/lib/nous/element-models.json"));
 }
 
 #[tokio::test]

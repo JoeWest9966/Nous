@@ -170,7 +170,7 @@ fn assemble_in(
     // 构造点：模型注册表从宿主配置解析，工具注册表从本地执行环境装箱。
     // 轮次运行时拿走这两张表，server 保留句柄供编目/诊断使用。
     let mut registry: ProviderRegistry = nous_runtime::ProviderRegistry::default();
-    // 模型入口组优先：元素库里有 `nous-models` 组就用它的组/包投影当宿主配置
+    // 模型入口组优先：元素库里有 `element-models` 组就用它的组/包投影当宿主配置
     // （provider 键 / baseUrl / apiKey 引用 / models[]）；没有组就退回空配置，
     // 行为与没有这条线时一致（编目空表 + 凭证链只认 auth.json / env）。
     let (config, elements_note) = elements_runtime_config_at(elements);
@@ -339,10 +339,10 @@ fn elements_runtime_config_at(
     ) else {
         return (None, None);
     };
-    let Some(group) = nous_models::find_group(&groups.items) else {
+    let Some(group) = nous_element_models::find_group(&groups.items) else {
         return (None, None);
     };
-    let models_config = nous_models::runtime_config(group, &packages.items);
+    let models_config = nous_element_models::runtime_config(group, &packages.items);
     let note = format!(
         "elements group `{}`: {} providers / {} models",
         group.id,

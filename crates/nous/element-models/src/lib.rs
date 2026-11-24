@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// 模型入口组的约定 id。引擎只读这一个组。
-pub const GROUP_ID: &str = "nous-models";
+pub const GROUP_ID: &str = "element-models";
 
 /// 供应商包的 id 前缀（`provider-wb2api` → 供应商键 `wb2api`）。
 /// 包里显式写了 `provider` 字段时以字段为准，前缀只是兜底。

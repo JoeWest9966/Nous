@@ -38,9 +38,9 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     std::fs::create_dir_all(root.join("groups")).unwrap();
     std::fs::create_dir_all(root.join("packages")).unwrap();
     std::fs::write(
-        root.join("groups/nous-models.json"),
+        root.join("groups/element-models.json"),
         json!({
-            "id": "nous-models",
+            "id": "element-models",
             "name": "Nous 模型入口",
             "packages": ["provider-wb2api", "qwen-vl-max", "provider-gone"],
             "default": "wb2api/cn:fast",
@@ -124,7 +124,7 @@ async fn group_projects_into_catalog_with_override_and_diagnostics() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["kind"], "models");
     assert_eq!(body["state"], "ok", "{body}");
-    assert_eq!(body["group"], "nous-models");
+    assert_eq!(body["group"], "element-models");
     assert_eq!(body["repo"]["present"], true);
 
     // 两条模型，provider 是供应商键（不是包 id）。
@@ -147,7 +147,7 @@ async fn group_projects_into_catalog_with_override_and_diagnostics() {
     assert_eq!(body["providers"][0]["baseUrl"], "http://127.0.0.1:7864/v1");
 
     // 缺的包如实点名，但不影响其余编目。
-    assert_eq!(body["missing"], json!(["nous-models/provider-gone"]));
+    assert_eq!(body["missing"], json!(["element-models/provider-gone"]));
     assert_eq!(body["state"], "ok");
 }
 
@@ -228,7 +228,7 @@ async fn missing_group_is_an_honest_empty_catalog_not_404() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], "missing");
     assert_eq!(body["items"], json!([]));
-    assert_eq!(body["missing"], json!(["nous-models"]));
+    assert_eq!(body["missing"], json!(["element-models"]));
     assert_eq!(body["repo"]["present"], true);
 }
 

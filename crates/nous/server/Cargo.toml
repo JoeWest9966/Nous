@@ -26,7 +26,7 @@ nous-device = { workspace = true }
 nous-env = { workspace = true }
 nous-repo = { workspace = true }
 nous-elements = { workspace = true }
-nous-models = { workspace = true }
+nous-element-models = { workspace = true }
 nous-presets-admin = { workspace = true }
 nous-prompts = { workspace = true }
 nous-skills = { workspace = true }
