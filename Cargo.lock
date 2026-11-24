@@ -1430,6 +1430,7 @@ name = "nous-models"
 version = "0.1.21"
 dependencies = [
  "nous-elements",
+ "nous-runtime",
  "serde",
  "serde_json",
  "tempfile",

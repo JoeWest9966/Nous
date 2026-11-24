@@ -294,6 +294,79 @@ fn provider_key(item: &ElementItem) -> String {
     })
 }
 
+/// 将供应商包映射到 Rust runtime 的 `ProviderConfig` JSON 形状。
+///
+/// 未知字段不进入 runtime 配置（`nous-elements` 仍原样保存）；只传 runtime 真正消费的
+/// `name/baseUrl/api/apiKey/headers/authHeader/models[]`。密钥字段保持引用字符串，不解析真值。
+pub fn provider_config(item: &ElementItem) -> Option<Value> {
+    if !matches!(kind_of(item), Kind::Provider) {
+        return None;
+    }
+    let mut config = Map::new();
+    copy_field(&mut config, &item.fields, "name");
+    copy_field(&mut config, &item.fields, "baseUrl");
+    copy_field(&mut config, &item.fields, "api");
+    copy_field(&mut config, &item.fields, "apiKey");
+    copy_field(&mut config, &item.fields, "headers");
+    copy_field(&mut config, &item.fields, "authHeader");
+    let models: Vec<Value> = item
+        .fields
+        .get("models")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(|model| {
+            let id = model.get("id").and_then(Value::as_str)?;
+            let mut fields = model.as_object()?.clone();
+            fields.insert("id".into(), Value::String(id.into()));
+            Some(Value::Object(fields))
+        })
+        .collect();
+    config.insert("models".into(), Value::Array(models));
+    Some(Value::Object(config))
+}
+
+fn copy_field(target: &mut Map<String, Value>, source: &Value, field: &str) {
+    if let Some(value) = source.get(field) {
+        target.insert(field.to_string(), value.clone());
+    }
+}
+
+/// 按约定组引用顺序组装 runtime 配置；provider id 用包里的供应商键，不用包 id。
+pub fn runtime_config(group: &ElementItem, packages: &[ElementItem]) -> nous_runtime::config::ModelsConfig {
+    let by_id: BTreeMap<&str, &ElementItem> =
+        packages.iter().map(|item| (item.id.as_str(), item)).collect();
+    let mut config = nous_runtime::config::ModelsConfig::default();
+    for id in referenced(group) {
+        let Some(item) = by_id.get(id.as_str()) else { continue };
+        if matches!(kind_of(item), Kind::Provider) {
+            if let Some(projected) = provider_config(item) {
+                if let Ok(provider) = serde_json::from_value(projected) {
+                    config.providers.insert(provider_key(item), provider);
+                }
+            }
+        }
+    }
+
+    // model 覆盖包按 provider/modelId 查找 provider definition 中对应 id，逐键合并到模型项。
+    for id in referenced(group) {
+        let Some(overlay) = by_id.get(id.as_str()) else { continue };
+        if !matches!(kind_of(overlay), Kind::Model) { continue; }
+        let provider = overlay_provider(overlay);
+        let model_id = overlay_model_id(overlay);
+        let Some(provider_config) = config.providers.get_mut(&provider) else { continue };
+        if let Some(model) = provider_config.models.iter_mut().find(|model| model.id == model_id) {
+            let patch = overlay_model_fields(overlay);
+            if let Ok(mut value) = serde_json::to_value(&*model) {
+                merge_into(&mut value, &patch);
+                if let Ok(merged) = serde_json::from_value(value) {
+                    *model = merged;
+                }
+            }
+        }
+    }
+    config
+}
+
 fn overlay_provider(overlay: &ElementItem) -> String {
     string_field(&overlay.fields, "provider")
         .map(|provider| provider.strip_prefix(PROVIDER_PREFIX).unwrap_or(&provider).to_string())

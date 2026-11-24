@@ -87,6 +87,34 @@ fn one_group_one_provider_projects_items_and_default() {
 }
 
 #[test]
+fn provider_config_projection_preserves_protocol_endpoint_and_model_metadata() {
+    let package = element(
+        "provider-wb2api",
+        json!({
+            "id": "provider-wb2api", "name": "WB2API", "kind": "provider",
+            "provider": "wb2api", "baseUrl": "http://127.0.0.1:7864/v1",
+            "api": "openai-completions", "apiKey": "$WB2API_API_KEY",
+            "models": [{
+                "id": "cn:fast", "name": "Fast", "reasoning": true,
+                "contextWindow": 300000, "maxTokens": 48000,
+                "input": ["text", "image"],
+                "thinkingLevelMap": { "off": null, "low": "low", "high": "high" }
+            }]
+        }),
+    );
+    let projected = crate::provider_config(&package).unwrap();
+    let config: nous_runtime::config::ProviderConfig = serde_json::from_value(projected).unwrap();
+    assert_eq!(config.base_url.as_deref(), Some("http://127.0.0.1:7864/v1"));
+    assert_eq!(config.api.as_deref(), Some("openai-completions"));
+    assert_eq!(config.api_key.as_deref(), Some("$WB2API_API_KEY"));
+    assert_eq!(config.models.len(), 1);
+    assert_eq!(config.models[0].id, "cn:fast");
+    assert_eq!(config.models[0].context_window, Some(300000));
+    assert_eq!(config.models[0].input.as_deref().unwrap(), &["text", "image"]);
+    assert_eq!(config.models[0].thinking_level_map.as_ref().map(|m| serde_json::to_value(m).unwrap()).unwrap()["high"], json!("high"));
+}
+
+#[test]
 fn provider_key_falls_back_to_id_prefix() {
     let package = element(
         "provider-quickproxy",
