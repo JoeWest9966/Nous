@@ -1,6 +1,6 @@
 name = "prompts"
 vendor = "nous"
-version = "0.1.25"
+version = "0.1.26"
 layer = "app"
 crate = "nous-prompts"
 
