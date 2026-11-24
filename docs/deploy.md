@@ -159,6 +159,23 @@ sudo systemctl restart nous-app   # 密钥只在启动时解一次
 改密钥要重启服务（装配只跑一次）；`GET /v1/models` 仍会列出所有模型，但没解出密钥的
 供应商在发消息时会明确报错（轮次收敛成 `model_error`，不会静默停在 `queued`）。
 
+### 从 Desk 填密钥（写面）
+
+`PUT /v1/providers/{id}/secret { "value": "…" }` 把值写进**引擎自己能写的那份文件**：
+
+```
+NOUS_SECRETS_FILE（默认 /var/lib/nous/secrets/providers.env，nous:nous 0600）
+```
+
+`/etc/nous/providers.env` 是 `root:nous 0640`，引擎以 `nous` 用户跑，写不进去 —— 所以 unit
+里两条 `EnvironmentFile=` 都留着：`/etc/...` 给运维手写（部署期），`/var/lib/nous/...` 给
+Desk 写（运行期）。**后读的优先**，所以 Desk 改过的变量以 `/var/lib/nous/...` 为准；要收回
+控制权，把那一行从可写文件里删掉再重启。
+
+这条写面只认得起 `$NAME` 引用（`!cmd` / `secret:<id>` 回 409），元素库一个字节都不改；
+写盘是「同目录临时文件 + rename」的原子替换，文件 `0600`、目录 `0700`。写完仍要
+`sudo systemctl restart nous-app`（端点回执里 `restartRequired: true` 就是在说这件事）。
+
 ## 6 · 人工哨兵清单
 
 | 判据 | 为什么不能自动化 / 怎么做 |

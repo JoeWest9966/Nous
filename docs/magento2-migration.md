@@ -38,6 +38,9 @@ where S: Clone + Send + Sync + 'static {
 
 ### 3.2 宿主能力 trait：插件不依赖 `server`
 
+> 现在有两个能力的样板：`element-models` 的 `Host`（元素库仓库）与 `Secrets`（密钥文件路径）。
+> 新端点需要什么，就在插件里加一个窄 trait，别去依赖 `AppState`。
+
 插件不认识 `AppState`。它**声明自己需要什么**，由 `server` 实现并注入：
 
 ```rust
@@ -71,6 +74,7 @@ impl nous_element_models::routes::Host for AppState {
 |---|---|---|---|
 | `device` | `GET /v1/machines` | `feat(routes)` | 第一条试点，证明接缝通；handler 无需宿主状态 |
 | `element-models` | `GET /v1/models/elements` | `feat(element-models)` | 第一条**需要宿主注入**的端点；`Host::elements_repo` |
+| `element-models` | `PUT /v1/providers/{id}/secret` | `feat(element-models)` | **新端点**（不是搬家）：插件自带 handler，宿主给 `Secrets::secrets_file` |
 
 ### 4.2 待搬（161 条 / 14 个模块）
 
@@ -132,4 +136,5 @@ cargo test --workspace                                       # 全量
 | 日期 | 动作 |
 |---|---|
 | 2026-11-24 | 建 `nous-routes`（契约层）+ `server::plugins`（收集/装配/登记）；`device` 交出 `GET /v1/machines`（静态表删 1 行） |
+| 2026-11-24 | 第二条宿主能力落在 `element-models`：`PUT /v1/providers/{id}/secret`（密钥值写宿主文件，元素库仍只存引用）|
 | 2026-11-24 | `element-models` 交出 `GET /v1/models/elements`，`Host::elements_repo` 由 `server` 实现；`server/src/models.rs` 只剩 `ModelsResponse` 适配 |

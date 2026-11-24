@@ -20,6 +20,8 @@ Environment=NOUS_TOKEN_FILE=/etc/nous/token
 # root:nous 0640，不进 git。`-` = 文件可以不存在（没配密钥也能启动，只是轮次会
 # 明确报错而不是静默不出声）。密钥只在启动时解一次，换密钥要 restart。
 EnvironmentFile=-/etc/nous/providers.env
+# Desk 写的密钥落这里（引擎以 nous 用户跑，写不进 /etc）：后读的优先，Desk 改过就以它为准。
+EnvironmentFile=-/var/lib/nous/secrets/providers.env
 ExecStart=/opt/nous-app/current/nous-app
 # 78 = EX_CONFIG：拒绝启动（库比代码新 / 没 token / workdir 不可写 …）。
 # on-failure + PreventExitStatus=78 让「不想起」停在 failed，而不是每 3 秒拉一次。

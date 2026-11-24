@@ -1000,6 +1000,24 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 - `missing[]` 是 `"<组>/<包>"` 或 `"<组>/<供应商>/<模型>"`；缺一个包不许把同一组的其余编目吞掉。
 - 只读：这个端点不改元素库一个字节（写面走 `/v1/elements`）。
 
+### PUT /v1/providers/{id}/secret —— 给供应商填密钥（值不进元素库）
+
+元素库只存引用（`apiKey: "$WB2API_API_KEY"`），**值落在那台机器的密钥文件里**（一份
+`EnvironmentFile`）。这条端点就是把值写进去；`{id}` 是**供应商键**（`wb2api`），不是包 id。
+
+请求 `{ "value": "…" }`。回执：
+`{ kind:"secret", provider, package, name, path, replaced, restartRequired:true, detail }`。
+**回执不含值**，日志也不许有；`replaced:true` 表示这个变量本来就在文件里（覆盖，不是新增）。
+
+- 只改得起 `$NAME` 引用：`!cmd` / `secret:<id>` 是别人家的东西，回 **409** 并说清改哪去。
+- 包里没写 `apiKey` **422**（先加一条 `"$NAME"` 引用再来填）；写了明文 **422**（元素库不收明文）。
+- 值是空串 / 含换行 **422**；供应商不在约定组里 **404**；组引用了但盘上没有那个包 **404**（点名包 id）。
+- 宿主没开这个能力（`NOUS_SECRETS_FILE` 未配且没有默认位置）**503**，不许假装写成功。
+- 写盘：同目录临时文件 + `rename` 原子替换，文件 `0600`、目录 `0700`；**只改这一个变量**，
+  注释与别的变量原样保留，同名多行收敛成一行（systemd 取最后一行，重复会读到旧值）。
+- **元素库一个字节都不改**：这条端点不碰 `/v1/elements` 的写面。
+- 生效需要**重启引擎**：密钥只在装配时读一次（`restartRequired` 就是在说这件事）。
+
 ### GET /v1/fs/dirs?path=&machine=&hidden=
 
 `{ path, dirs: [{ name, path, hidden }], truncated }`。**列的是引擎那台机器上的目录。**
