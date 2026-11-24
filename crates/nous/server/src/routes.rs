@@ -691,23 +691,27 @@ async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Valu
 /// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
 /// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
 async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
-    // 装配注入的编目（faux 验收 / 测试快照）优先；否则走 device 的文件/内联来源。
+    current_catalog(&state).map(Json).map_err(ServerError::Internal)
+}
+
+/// 「当前编目」只有这一个出处：`GET /v1/models` 和发消息的模型解析都读它，
+/// 不许各读各的（线上因此出过 503：展示读了元素组，解析读的是空的文件来源）。
+///
+/// 顺序：装配注入（faux 验收 / 测试快照）→ 远端刷新 → 元素库的模型入口组 → device 文件/内联来源。
+fn current_catalog(state: &Arc<AppState>) -> std::result::Result<ModelsResponse, String> {
     if state.injected_models() {
         if let Some(catalog) = state.assembled_models() {
-            return Ok(Json(catalog));
+            return Ok(catalog);
         }
-        return Ok(Json(state.models()));
+        return Ok(state.models());
     }
     if let Some(refreshed) = state.refreshed_models() {
-        return Ok(Json(refreshed));
+        return Ok(refreshed);
     }
-    // 元素库的模型入口组优先：有 `nous-models` 组，编目就从组/包投影（来源标 elements）。
-    if let Some(response) = crate::models::group_catalog(&state) {
-        return Ok(Json(response));
+    if let Some(response) = crate::models::group_catalog(state) {
+        return Ok(response);
     }
-    let response = nous_device::load_models(state.catalog_env())
-        .map_err(ServerError::Internal)?;
-    Ok(Json(response))
+    nous_device::load_models(state.catalog_env())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1017,11 +1021,7 @@ async fn messages(
     }
     let faux = state.provider_kind() == "faux";
     // #70：模型解析在**受理之前**。没有来源就 503，不许先 202 再沉默。
-    let catalog = if state.injected_models() {
-        state.models().clone()
-    } else {
-        nous_device::load_models(state.catalog_env()).map_err(ServerError::ServiceUnavailable)?
-    };
+    let catalog = current_catalog(&state).map_err(ServerError::ServiceUnavailable)?;
     let session_model = state
         .source()
         .sessions()?
