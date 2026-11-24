@@ -350,7 +350,7 @@ pub fn runtime_config(group: &ElementItem, packages: &[ElementItem]) -> nous_run
         if matches!(kind_of(item), Kind::Provider) {
             if let Some(projected) = provider_config(item) {
                 if let Ok(provider) = serde_json::from_value(projected) {
-                    config.providers.insert(provider_key(item), provider);
+                    config.providers.insert(provider_key_of(item), provider);
                 }
             }
         }
