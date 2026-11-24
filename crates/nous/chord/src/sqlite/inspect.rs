@@ -43,21 +43,21 @@ impl Pragma {
 }
 
 /// 跑一条巡检 `PRAGMA`，回全部行（行里是键值表，见 [`SqliteRow`]）。
-pub fn pragma(db: &dyn SqliteExecutor, pragma: Pragma) -> Vec<SqliteRow> {
-    db.all(&format!("PRAGMA {}", pragma.as_sql()), &[]).unwrap_or_default()
+pub fn pragma(db: &dyn SqliteExecutor, which: Pragma) -> Vec<SqliteRow> {
+    db.all(&format!("PRAGMA {}", which.as_sql()), &[]).unwrap_or_default()
 }
 
 /// `PRAGMA` 的第一个整数（缺席 / 非整数 → 0）。只用于读数聚合，缺值当零是故意的。
-pub fn pragma_i64(db: &dyn SqliteExecutor, pragma: Pragma) -> i64 {
-    pragma(db, pragma)
+pub fn pragma_i64(db: &dyn SqliteExecutor, which: Pragma) -> i64 {
+    pragma(db, which)
         .first()
         .and_then(|row| row.values().next().and_then(SqliteValue::as_i64))
         .unwrap_or(0)
 }
 
 /// `PRAGMA` 的第一个文本（`journal_mode` 那种）。
-pub fn pragma_text(db: &dyn SqliteExecutor, pragma: Pragma) -> String {
-    pragma(db, pragma)
+pub fn pragma_text(db: &dyn SqliteExecutor, which: Pragma) -> String {
+    pragma(db, which)
         .first()
         .and_then(|row| row.values().next().and_then(SqliteValue::as_str).map(str::to_owned))
         .unwrap_or_default()
