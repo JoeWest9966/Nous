@@ -14,6 +14,7 @@ use crate::app::AppState;
 pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     let mut all: Vec<nous_routes::Route<Arc<AppState>>> = Vec::new();
     all.extend(nous_device::routes::routes::<Arc<AppState>>());
+    all.extend(nous_element_models::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -23,4 +24,14 @@ pub fn declarations() -> Vec<nous_routes::Declaration> {
         .iter()
         .map(nous_routes::Route::declaration)
         .collect()
+}
+
+/// `element-models` 插件要的那一件事：元素库仓库。
+///
+/// 插件不认识 `AppState`，只认识这个 trait；这里把宿主的能力显式交出去。
+/// 未装配 = `None`（插件回 `state:"missing"` 的诚实空表）。
+impl nous_element_models::routes::Host for AppState {
+    fn elements_repo(&self) -> Option<Arc<nous_repo::Repo>> {
+        self.repo(crate::elements::REPO_KEY)
+    }
 }

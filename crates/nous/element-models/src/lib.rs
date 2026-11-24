@@ -16,6 +16,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod routes;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use nous_elements::ElementItem;

@@ -123,7 +123,6 @@ pub fn router(state: Arc<AppState>) -> Router {
     // 元素库（组 / 包）：盘上真相与写事务在 `nous-elements`，这里只做 HTTP 翻译。
     let router = router.merge(crate::elements::attach(Router::new()));
     // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `nous-element-models`）。
-    let router = router.merge(crate::models::attach(Router::new()));
     // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);
     // #95：触发器工程面（n8qkkj 的宿主，路径与 `/v1/triggers` 定义面分开）。

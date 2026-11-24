@@ -7,7 +7,11 @@ license.workspace = true
 description = "models 插件：元素库里的模型入口组（组 + 供应商包 + 覆盖包）→ 编目投影（app 层）"
 
 [dependencies]
+axum = { workspace = true }
 nous-elements = { workspace = true }
+nous-env = { workspace = true }
+nous-repo = { workspace = true }
+nous-routes = { workspace = true }
 nous-runtime = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
