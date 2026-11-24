@@ -29,6 +29,22 @@
    `README_MISSING` / `README_TOO_LONG`。桌面端「关于 → 插件」直接读这份正文（随产物发布到
    `<产物目录>/docs/plugins/<module>.md`，换文档不用重编译）。
 
+8. **插件版本独立**：`plugin.toml` 的 `version` 是**这个插件自己的** semver，不再等于
+   workspace / `Cargo.toml` 的版本（那是发行版号，跟着 `chore(release)` 走）。Magento 2 的模块
+   版本也是各走各的，根仓不压一个数。当前所有插件都停在 `0.1.26` 只是**起点**（来历见
+   「按仓库痕迹重推 14 个插件版本」那张票），之后各自涨。
+   **跨度要求**（一张票动到几件，按最大的那条涨一次，别连涨三档）：
+
+   | 动了什么 | 涨到 |
+   |---|---|
+   | 端点契约（新增 / 改形状 / 改状态码 / 改字段名）、`capability` 或 `layer` 改名、删端点 | `0.Y+1.0`（minor） |
+   | 只改内部实现 / 日志 / 性能 / 错误文案 / README / 测试 | `0.Y.Z+1`（patch） |
+
+   `0.x` 阶段允许 minor 带破坏性变更，但**必须在票面与 `decisions.md` 里写出破的是谁**。
+   判据只守两条机械规则（`scripts/check-plugins.sh`）：合法 `X.Y.Z`、不比我 `git show HEAD:`
+   里的低（文件还没入库就不判）。**「该涨没涨」脚本不猜语义**，由 review 对着上表看；
+   所以「只改 README」也要 +patch，除非这一票明确写了「不动版本」。
+
 ## 表
 
 | module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |

@@ -78,23 +78,26 @@ def read_plugins_rows():
     return rows
 
 
-def read_cargo_version(manifest, meta):
-    with open(manifest, 'rb') as handle:
-        package = tomllib.load(handle).get('package', {})
-    version = package.get('version')
-    if isinstance(version, dict) and version.get('workspace'):
-        version = None
-    if version is None:
-        # `version.workspace = true`：读 workspace 根，不复制常量到每个 crate。
-        with open(os.path.join(ROOT, 'Cargo.toml'), 'rb') as handle:
-            version = tomllib.load(handle).get('workspace', {}).get('package', {}).get('version')
-    if meta:
-        for pkg in meta['packages']:
-            if os.path.normpath(pkg['manifest_path']) == os.path.normpath(manifest):
-                if pkg.get('version'):
-                    version = pkg['version']  # cargo 已解析的最终值，优先
-                break
-    return version
+SEMVER = re.compile(r'^(\d+)\.(\d+)\.(\d+)$')
+
+
+def version_key(text):
+    match = SEMVER.match(text or '')
+    return tuple(int(part) for part in match.groups()) if match else None
+
+
+def head_version(rel):
+    """git HEAD 里这一行的 version；文件还没入库 / 不在 git 里 → None（不判倒退）。"""
+    try:
+        proc = subprocess.run(['git', 'show', f'HEAD:{rel}'], capture_output=True, text=True)
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        return tomllib.loads(proc.stdout).get('version')
+    except tomllib.TOMLDecodeError:
+        return None
 
 
 def cargo_metadata():
@@ -224,14 +227,18 @@ for directory in dirs:
             if provides.get('endpoints') != []:
                 failures.append('endpoints 必须是 []（本票不生成端点）')
 
+    # 插件版本**独立演进**（Magento 2 的模块版本语义，`docs/plugins.md` 规则 8）：
+    # 不再 == workspace / Cargo.toml 的版本。只守两条：合法 semver、比 HEAD 里的值不倒退。
     cargo = os.path.join(directory, 'Cargo.toml')
-    try:
-        cargo_version = read_cargo_version(cargo, meta)
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        failures.append(f'Cargo.toml 解析失败：{exc}')
-        cargo_version = None
-    if pm.get('version') != cargo_version:
-        failures.append(f'version={pm.get("version")!r}（Cargo.toml 是 {cargo_version!r}）')
+    version = pm.get('version')
+    key = version_key(version) if isinstance(version, str) else None
+    if key is None:
+        failures.append(f'version={version!r}（要 X.Y.Z 三个整数）')
+    else:
+        prev = head_version(os.path.relpath(manifest, ROOT).replace(os.sep, '/'))
+        prev_key = version_key(prev) if isinstance(prev, str) else None
+        if prev_key is not None and key < prev_key:
+            failures.append(f'version={version} 比 HEAD 的 {prev} 低（插件版本只增不减）')
 
     want_deps = internal_deps(meta, os.path.abspath(cargo))
     if want_deps is not None:

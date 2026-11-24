@@ -84,8 +84,8 @@ tools      = []
 2. **双语在同一个文件里，不做两个文件。** 两个文件必然只更新一份（真实痛过）。顶部两个锚点
    `[中文](#zh) · [English](#en)`，中文在上、英文在下。生成器只填表格，散文人写两遍 —— 这是唯一
    保证两边不漂的写法。将来若要"点一下就切"，那是生成静态站的事，源文件仍是这一份。
-3. **版本号不许两处真相。** `plugin.toml` 的 `version` 与 `Cargo.toml` 的 `version` 由构建期校验
-   比对，不一致直接失败。同理 `provides.capability` 与 `docs/plugins.md` 的 `module` 列同名，
+3. ~~**版本号不许两处真相。**~~ **已作废**（2026-11-24）：插件版本独立演进，
+   不再与 `Cargo.toml` 比对，见 `docs/plugins.md` 规则 8 与 `decisions.md`。同理 `provides.capability` 与 `docs/plugins.md` 的 `module` 列同名，
    也是一条测试。
 
 ### 还没定的硬问题

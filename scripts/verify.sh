@@ -99,7 +99,7 @@ fi
 # 0c. plugin.toml 体检（issue #55）：清单变成可由程序读的数据
 step "0c. plugin.toml 体检（check-plugins.sh）"
 if ./scripts/check-plugins.sh; then
-	ok "plugin.toml 与目录 / Cargo.toml / docs/plugins.md / cargo metadata 一致"
+	ok "plugin.toml 与目录 / docs/plugins.md / cargo metadata 一致；版本是合法 semver 且只增不减"
 else
 	bad "plugin.toml 体检未过（详见 check-plugins.sh 的 checked/mismatched 汇总）"
 fi

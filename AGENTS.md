@@ -110,8 +110,10 @@ Environment=NOUS_DB=/var/lib/nous/nous.db
   干完 `--no-ff` 并进 `main`，再 `git worktree remove`。`main` 只由合并进入。
 - **做完就停**：本地提交、跑完判据，把分支与验证方法交回用户；用户说「没问题」之后才合并、
   打 tag、部署、关票。
-- **tag 是语义化版本**，默认 patch +1（升 minor/major 要用户明说），一处真相三处同步：
-  `Cargo.toml` 的 `[workspace.package] version`、每个 `plugin.toml`、tag 本身。
+- **tag 是语义化版本**，默认 patch +1（升 minor/major 要用户明说），**两处同步**：
+  `Cargo.toml` 的 `[workspace.package] version` 与 tag 本身。
+  每个 `plugin.toml` 的 `version` 是**插件自己的**版本，独立演进、不跟发行版号
+  （`docs/plugins.md` 规则 8；改插件的票按跨度要求各自涨）。
 
 ## 红线
 
