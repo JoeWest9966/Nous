@@ -112,25 +112,9 @@ fn integrity(db: &dyn SqliteExecutor, total_bytes: i64) -> Value {
     if total_bytes >= INTEGRITY_MAX_BYTES {
         return json!({ "checked": false, "ok": true, "messages": [] });
     }
-    match db.all("PRAGMA integrity_check", &[]) {
-        Ok(rows) => {
-            let messages: Vec<String> = rows
-                .iter()
-                .map(|row| {
-                    row.values()
-                        .next()
-                        .map(|value| match value {
-                            nous_chord::sqlite::SqliteValue::Text(text) => text.clone(),
-                            other => format!("{other:?}"),
-                        })
-                        .unwrap_or_default()
-                })
-                .collect();
-            let ok = messages.len() == 1 && messages[0] == "ok";
-            json!({ "checked": true, "ok": ok, "messages": messages.into_iter().take(4).collect::<Vec<_>>() })
-        }
-        Err(error) => json!({ "checked": true, "ok": false, "messages": [error.to_string()] }),
-    }
+    let messages = nous_chord::sqlite::inspect::integrity_messages(db);
+    let ok = messages.len() == 1 && messages[0] == "ok";
+    json!({ "checked": true, "ok": ok, "messages": messages.into_iter().take(4).collect::<Vec<_>>() })
 }
 
 /// 骨架外的提示（WAL 大 / 空闲页多 / schema 旧 / 旁路）。
@@ -174,10 +158,10 @@ pub fn overview(durable_db: &Path) -> Result<Value> {
     }
 
     let db = util::open_read_only(durable_db)?;
-    let page_size = util::pragma_i64(&db, "page_size");
-    let page_count = util::pragma_i64(&db, "page_count");
-    let freelist = util::pragma_i64(&db, "freelist_count");
-    let journal_mode = util::pragma_text(&db, "journal_mode");
+    let page_size = util::pragma_i64(&db, nous_chord::sqlite::inspect::Pragma::PageSize);
+    let page_count = util::pragma_i64(&db, nous_chord::sqlite::inspect::Pragma::PageCount);
+    let freelist = util::pragma_i64(&db, nous_chord::sqlite::inspect::Pragma::FreelistCount);
+    let journal_mode = util::pragma_text(&db, nous_chord::sqlite::inspect::Pragma::JournalMode);
     let version = util::get(&db, "SELECT version FROM durable_schema WHERE singleton = 1")
         .ok()
         .flatten()

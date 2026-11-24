@@ -5,14 +5,20 @@
 //! `crates/nous-engine/tests/fixtures/kernel_stats/` 就是它的产物（截断后）。
 //!
 //! ```bash
-//! cargo run -q -p nous-stats --example dump -- /tmp
+//! cargo run -q -p nous-stats --example dump -- fixtures/agent.small.sqlite /tmp
 //! ```
+//!
+//! 库路径与输出目录都从命令行来：这个 example 不写死任何库文件名。
 //!
 //! `health` 的 `now_ms` 钉死一个固定值，避免「卡住」判定随时钟漂。
 
 fn main() {
-    let path = std::path::Path::new("fixtures/agent.small.sqlite");
-    let out = std::env::args().nth(1).unwrap_or_else(|| "/tmp".to_string());
+    let db = std::env::args().nth(1).unwrap_or_else(|| {
+        eprintln!("用法：cargo run -q -p nous-stats --example dump -- <库路径> [输出目录]");
+        std::process::exit(2);
+    });
+    let path = std::path::Path::new(&db);
+    let out = std::env::args().nth(2).unwrap_or_else(|| "/tmp".to_string());
     let write = |name: &str, value: serde_json::Value| {
         std::fs::write(
             format!("{out}/{name}.json"),

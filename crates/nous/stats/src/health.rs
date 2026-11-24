@@ -222,8 +222,8 @@ pub fn health(durable_db: &Path, now_ms: i64) -> Result<Value> {
     };
 
     let wal_bytes = util::sidecar_bytes(durable_db, "-wal");
-    let page_size = util::pragma_i64(&db, "page_size");
-    let freelist = util::pragma_i64(&db, "freelist_count");
+    let page_size = util::pragma_i64(&db, nous_chord::sqlite::inspect::Pragma::PageSize);
+    let freelist = util::pragma_i64(&db, nous_chord::sqlite::inspect::Pragma::FreelistCount);
     let freelist_bytes = freelist * page_size;
 
     Ok(json!({
@@ -271,7 +271,7 @@ fn maintenance(durable_db: &Path, wal_bytes: i64, freelist: i64, freelist_bytes:
         json!({
             "label": "把 WAL 收回去",
             "why": format!("WAL 现在 {wal_bytes} 字节。checkpoint 只读的页面做不了，得由写者或 sqlite3 来。"),
-            "cmd": format!("sqlite3 \"{path}\" \"PRAGMA wal_checkpoint(TRUNCATE);\""),
+            "cmd": nous_chord::sqlite::inspect::advice_wal_checkpoint(durable_db),
             "danger": false,
         }),
         json!({
@@ -283,7 +283,7 @@ fn maintenance(durable_db: &Path, wal_bytes: i64, freelist: i64, freelist_bytes:
         json!({
             "label": "看它到底是不是好的",
             "why": "integrity_check 会把整库走一遍；库大了要几分钟。",
-            "cmd": format!("sqlite3 \"{path}\" \"PRAGMA integrity_check;\""),
+            "cmd": nous_chord::sqlite::inspect::advice_integrity_check(durable_db),
             "danger": false,
         }),
     ]

@@ -639,28 +639,39 @@ async fn publish(
     .into_response())
 }
 
+/// 跑一步 `cargo`。**不在这个文件里起进程**：走 `nous_tools::os_env::run_capture_async`
+/// （S1 的唯一执行面，spec ch1 判据 6 / 12 守的就是这条）。
 async fn run_cargo(step: &str, dir: &Path, target_dir: &Path) -> std::result::Result<(), String> {
-    let mut command = tokio::process::Command::new("cargo");
-    command
-        .arg(step)
-        .arg("--quiet")
-        .arg("--manifest-path")
-        .arg(dir.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(target_dir)
-        .current_dir(dir)
-        .stdin(std::process::Stdio::null());
-    let output = match tokio::time::timeout(BUILD_TIMEOUT, command.output()).await {
-        Err(_) => return Err(format!("cargo {step} 超时（{}s）", BUILD_TIMEOUT.as_secs())),
-        Ok(Err(error)) => return Err(format!("cargo {step} 起不来：{error}")),
-        Ok(Ok(output)) => output,
-    };
-    if output.status.success() {
+    let manifest = dir.join("Cargo.toml").to_string_lossy().to_string();
+    let target = target_dir.to_string_lossy().to_string();
+    let args = [
+        step,
+        "--quiet",
+        "--manifest-path",
+        manifest.as_str(),
+        "--target-dir",
+        target.as_str(),
+    ];
+    let captured = nous_tools::os_env::run_capture_async(
+        "cargo",
+        &args,
+        Some(dir),
+        BUILD_TIMEOUT,
+    )
+    .await?;
+    if captured.success {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let tail: String = stderr.chars().skip(stderr.chars().count().saturating_sub(2000)).collect();
-    Err(format!("cargo {step} 失败：\n{}", tail.trim()))
+    let tail: String = captured
+        .stderr
+        .chars()
+        .skip(captured.stderr.chars().count().saturating_sub(2000))
+        .collect();
+    Err(format!(
+        "cargo {step} 失败（退出码 {}）：\n{}",
+        captured.code.unwrap_or(-1),
+        tail.trim()
+    ))
 }
 
 /// 项目内所有该提交的文件（相对仓根），跳过 target / .git / 隐藏项。

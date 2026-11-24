@@ -438,6 +438,47 @@ pub fn run_capture(
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// 一次命令的结果（异步版用）。`success` 是退出码为零；非零不是错误，是结果。
+#[derive(Debug, Clone)]
+pub struct Captured {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// 异步版的「跑一条命令」：`tokio::process`，带超时，`stdin` 关掉。
+///
+/// 与 [`run_capture`] 同一个理由：**进程创建点只在本文件**（spec ch1 判据 6 / 12）。
+/// 需要 async 的调用方（触发器项目发布要跑 `cargo`）走这条，不许自己 `Command::new`。
+pub async fn run_capture_async(
+    cmd: &str,
+    args: &[&str],
+    dir: Option<&std::path::Path>,
+    timeout: std::time::Duration,
+) -> Result<Captured, String> {
+    let mut command = tokio::process::Command::new(cmd);
+    command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if let Some(dir) = dir {
+        command.current_dir(dir);
+    }
+    let output = match tokio::time::timeout(timeout, command.output()).await {
+        Err(_) => return Err(format!("命令 {cmd} 超时（{} 秒）", timeout.as_secs())),
+        Ok(Err(error)) => return Err(format!("命令 {cmd} 起不来：{error}")),
+        Ok(Ok(output)) => output,
+    };
+    Ok(Captured {
+        success: output.status.success(),
+        code: output.status.code(),
+        stdout: crate::output_decode::decode_output(&output.stdout),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+}
+
 /// `run_quick` 的阻塞版：给**不在 async 上下文**里的调用方用（目前只有
 /// `output_decode::console_code_page` —— Windows 控制台代码页探测，在
 /// `OnceLock` 惰性初始化里跑）。内部起一个一次性 runtime；调用频率是每

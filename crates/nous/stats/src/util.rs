@@ -26,6 +26,10 @@ pub(crate) fn get(db: &dyn SqliteExecutor, sql: &str) -> Result<Option<SqliteRow
     db.get(sql, &[]).map_err(|error| StatsError::Storage(error.to_string()))
 }
 
+/// 巡检读数的入口全在 `nous_chord::sqlite::inspect`（数据面方言只写在内核层，
+/// 见判据 5）：`stats` 只做呈现，不自己拼 `PRAGMA`。
+pub(crate) use nous_chord::sqlite::inspect::{pragma_i64, pragma_text};
+
 /// 取整数列（缺席 / 非整数 → 0）。只用于读数聚合，缺值当零是故意的。
 pub(crate) fn col_i64(row: &SqliteRow, column: &str) -> i64 {
     row.get(column).and_then(SqliteValue::as_i64).unwrap_or(0)
@@ -37,29 +41,6 @@ pub(crate) fn col_str(row: &SqliteRow, column: &str) -> String {
         .and_then(SqliteValue::as_str)
         .unwrap_or_default()
         .to_string()
-}
-
-/// `PRAGMA <name>` 的第一个整数。`name` 只来自本库写死的字面量，不拼用户输入。
-pub(crate) fn pragma_i64(db: &dyn SqliteExecutor, name: &str) -> i64 {
-    get(db, &format!("PRAGMA {name}"))
-        .ok()
-        .flatten()
-        .and_then(|row| row.values().next().and_then(SqliteValue::as_i64))
-        .unwrap_or(0)
-}
-
-/// `PRAGMA <name>` 的第一个文本（`journal_mode`）。
-pub(crate) fn pragma_text(db: &dyn SqliteExecutor, name: &str) -> String {
-    get(db, &format!("PRAGMA {name}"))
-        .ok()
-        .flatten()
-        .and_then(|row| {
-            row.values()
-                .next()
-                .and_then(SqliteValue::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_default()
 }
 
 /// 主文件字节数（不存在 → 0）。

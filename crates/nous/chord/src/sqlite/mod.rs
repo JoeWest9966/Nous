@@ -15,6 +15,7 @@
 
 pub mod database;
 pub mod error;
+pub mod inspect;
 pub mod local;
 pub mod migrations;
 pub mod schema;
