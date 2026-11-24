@@ -267,6 +267,7 @@ async fn sending_a_message_resolves_the_model_from_the_elements_group() {
     let app = app_with(&root);
     let (status, body) = post_message(&app, 1).await;
 
+    eprintln!("POST /messages -> {status} {body}");
     assert_ne!(
         status,
         StatusCode::SERVICE_UNAVAILABLE,
