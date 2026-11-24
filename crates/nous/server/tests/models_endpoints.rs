@@ -243,3 +243,33 @@ async fn unassembled_elements_repo_is_missing_not_a_crash() {
     assert_eq!(body["repo"]["present"], false);
     assert_eq!(body["missing"], json!(["NOUS_ELEMENTS"]));
 }
+
+/// 发消息的模型解析要和 `GET /v1/models` 看同一份编目：
+/// 元素库里有 `nous-models` 组、没人注入编目时，不能因为 device 文件缺失就 503。
+async fn post_message(app: &Router, session: i64) -> (StatusCode, Value) {
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/sessions/{session}/messages"))
+        .header("content-type", "application/json")
+        .body(Body::from(json!({ "content": "ping" }).to_string()))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn sending_a_message_resolves_the_model_from_the_elements_group() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+    let (status, body) = post_message(&app, 1).await;
+
+    assert_ne!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "组里有 default，发消息不该 503「没有可用模型」：{body}"
+    );
+}
