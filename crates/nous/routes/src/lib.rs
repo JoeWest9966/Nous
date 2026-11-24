@@ -156,6 +156,8 @@ mod tests {
         for route in &one() {
             router = route.mount(router);
         }
+        // 装完状态才是一张能被打的 Router（`Router<S>` → `Router<()>`）。
+        let router = router.with_state(State);
         for (method, uri) in [("GET", "/v1/things"), ("POST", "/v1/things/7/fire")] {
             let request = Request::builder()
                 .method(method)
