@@ -260,14 +260,14 @@
       "description": "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写",
       "enabled": true,
       "endpoints": [
-        "GET /v1/machines",
         "GET /v1/models",
         "PUT /v1/default",
         "POST /v1/catalog/refresh",
         "GET /v1/device",
         "GET /v1/capabilities",
         "GET /v1/openapi.json",
-        "GET /v1/_routes"
+        "GET /v1/_routes",
+        "GET /v1/machines"
       ]
     },
     {
