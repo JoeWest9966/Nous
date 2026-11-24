@@ -148,13 +148,32 @@ pub fn assemble(
     values: &dyn ValueSource,
     session: Arc<nous_durable::session::Session>,
 ) -> Result<AssembledRuntime> {
+    assemble_in(cwd, values, session, nous_env::ELEMENTS.resolve())
+}
+
+/// 同 [`assemble`]，但元素库的位置由调用方给定（测试用临时库，生产走 `NOUS_ELEMENTS`）。
+pub fn assemble_with_elements(
+    cwd: impl AsRef<Path>,
+    values: &dyn ValueSource,
+    session: Arc<nous_durable::session::Session>,
+    elements: impl AsRef<Path>,
+) -> Result<AssembledRuntime> {
+    assemble_in(cwd, values, session, elements.as_ref().to_path_buf())
+}
+
+fn assemble_in(
+    cwd: impl AsRef<Path>,
+    values: &dyn ValueSource,
+    session: Arc<nous_durable::session::Session>,
+    elements: PathBuf,
+) -> Result<AssembledRuntime> {
     // 构造点：模型注册表从宿主配置解析，工具注册表从本地执行环境装箱。
     // 轮次运行时拿走这两张表，server 保留句柄供编目/诊断使用。
     let mut registry: ProviderRegistry = nous_runtime::ProviderRegistry::default();
     // 模型入口组优先：元素库里有 `nous-models` 组就用它的组/包投影当宿主配置
     // （provider 键 / baseUrl / apiKey 引用 / models[]）；没有组就退回空配置，
     // 行为与没有这条线时一致（编目空表 + 凭证链只认 auth.json / env）。
-    let (config, elements_note) = elements_runtime_config();
+    let (config, elements_note) = elements_runtime_config_at(elements);
     let config = config.unwrap_or_else(nous_runtime::RuntimeConfig::default);
     if let Some(note) = elements_note {
         eprintln!("nous-server: model catalog: {note}");
@@ -223,10 +242,26 @@ pub fn assemble(
     let tool_names: Vec<String> = tools.keys().cloned().collect();
     let driver_session = session.clone();
     let driver_tools = Arc::new(tools);
+    // 真装配的供应商从元素组的投影里建：密钥引用在这里解成值，解不出来的供应商
+    // 被跳选（日志点名），一个都没成就退回离线 provider（轮次会失败，不假装有回答）。
+    let (real_provider, provider_notes) = if kind == "faux" {
+        (None, Vec::new())
+    } else {
+        crate::providers::build(&config, &registry, values)
+    };
+    for note in provider_notes {
+        eprintln!("nous-server: provider: {note}");
+    }
     let faux_or_offline: Arc<dyn nous_ai::Provider> = if kind == "faux" {
         faux_provider()
     } else {
-        crate::runtime::offline_provider()
+        real_provider.unwrap_or_else(|| {
+            eprintln!(
+                "nous-server: provider: 没有可用的真供应商（元素包的 apiKey 引用都解不出来），\
+                 轮次会走离线 provider，不会有回答"
+            );
+            crate::runtime::offline_provider()
+        })
     };
     // #54：actor 从组装根显式传进每一条 driver（包括带 SSE sink 的那条），
     // 不经全局/线程局部。#51 的 provider 工厂语义原样保留：factory 每次现造脚本，
@@ -291,9 +326,10 @@ pub fn assemble_with_provider(
 
 /// 元素库的模型入口组 → 宿主 `RuntimeConfig`。组不存在 / 私库打不开 → `(None, None)`。
 /// 密钥只在这里保持 `$ENV` / `!cmd` 引用字符串；展开发生在 runtime 的凭证链里。
-fn elements_runtime_config(
+fn elements_runtime_config_at(
+    root: PathBuf,
 ) -> (Option<nous_runtime::RuntimeConfig>, Option<String>) {
-    let repo = match nous_repo::Repo::open(nous_env::ELEMENTS.resolve()) {
+    let repo = match nous_repo::Repo::open(root) {
         Ok(repo) => repo,
         Err(_) => return (None, None),
     };
@@ -331,7 +367,7 @@ impl ValueSource for ProcessEnvValues {
     }
 }
 
-/// 离线/测试用的 provider。生产走 RuntimeConfig::resolve 绑定真实供应商。
+/// 离线/测试用的 provider。生产走 [`crate::providers::build`] 绑定真实供应商。
 pub fn offline_provider() -> Arc<dyn nous_ai::Provider> {
     nous_ai::providers::faux::FauxProvider::new(nous_ai::providers::faux::FauxScript::new())
 }
