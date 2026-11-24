@@ -691,18 +691,22 @@ async fn catalog_refresh(State(state): State<Arc<AppState>>) -> Result<Json<Valu
 /// faux 装配仍有自己的固定编目（它优先于文件，便于本地验收）。
 /// #79：最近一次远端刷新成功的结果在内存里优先，失败不改这一份。
 async fn models(State(state): State<Arc<AppState>>) -> Result<Json<ModelsResponse>> {
+    // 装配注入的编目（faux 验收 / 测试快照）优先：展示读装配出来的那份，没有再读静态注入的。
+    if state.injected_models() {
+        if let Some(catalog) = state.assembled_models() {
+            return Ok(Json(catalog));
+        }
+    }
     current_catalog(&state).map(Json).map_err(ServerError::Internal)
 }
 
 /// 「当前编目」只有这一个出处：`GET /v1/models` 和发消息的模型解析都读它，
 /// 不许各读各的（线上因此出过 503：展示读了元素组，解析读的是空的文件来源）。
 ///
-/// 顺序：装配注入（faux 验收 / 测试快照）→ 远端刷新 → 元素库的模型入口组 → device 文件/内联来源。
+/// 顺序：注入的静态编目（测试快照 / faux 验收）→ 远端刷新 → 元素库的模型入口组 → device 文件/内联来源。
+/// 注入时读 `state.models()`，与改动前发消息的行为一致；展示路由在调用前另有「装配编目优先」。
 fn current_catalog(state: &Arc<AppState>) -> std::result::Result<ModelsResponse, String> {
     if state.injected_models() {
-        if let Some(catalog) = state.assembled_models() {
-            return Ok(catalog);
-        }
         return Ok(state.models());
     }
     if let Some(refreshed) = state.refreshed_models() {
