@@ -9,5 +9,5 @@ nous-elements = "^0.1"
 nous-runtime = "^0.1"
 
 [provides]
-capability = "models"
+capability = "element-models"
 endpoints  = []
