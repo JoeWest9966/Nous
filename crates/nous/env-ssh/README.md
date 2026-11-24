@@ -1,5 +1,7 @@
-# nous-env-ssh
+# env-ssh
 
-`nous-env` 的远端实现：`ssh` / `scp` 把 `FileSystem` + `Shell` 翻成远端命令。
+`env` 的 SSH 远端实现：把一次文件或命令调用翻译成一条 ssh/scp 命令。
 
-边界：配置从机器编目（`NOUS_MACHINES_FILE`）读，凭据只从环境读；私钥内存 → 0600 临时文件 → ssh `-i` → 删除；ControlMaster 复用，`NOUS_SSH_MUX=0` 关。不把密钥写进仓库、日志、会话记录或数据库。
+**什么时候用**：引擎要操作另一台机器上的文件或跑命令，而调用方只想用同一套接口时。
+
+**不负责**：不管机器清单从哪来（device），也不管凭据怎么选（runtime）；本层不落日志。

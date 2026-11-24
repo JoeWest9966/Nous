@@ -95,6 +95,20 @@ else
 	skip "${W1} 不存在（首版绑回环，允许没有；#50 后必须有）"
 fi
 
+step '判据 12：插件 README 已随产物发布'
+README_JSON=$(api /v1/plugins/sessions/readme 2>/dev/null || true)
+if [ -z "$README_JSON" ]; then
+	bad 'GET /v1/plugins/sessions/readme 没有 200（产物里缺 docs/plugins/）'
+else
+	READ_MODULE=$(printf '%s' "$README_JSON" | jq -r '.module // ""')
+	READ_BYTES=$(printf '%s' "$README_JSON" | jq -r '.bytes // 0')
+	if [ "$READ_MODULE" = sessions ] && [ "${READ_BYTES:-0}" -gt 0 ]; then
+		ok "sessions README 可读（bytes=$READ_BYTES）"
+	else
+		bad "readme 形状不对：module=$READ_MODULE bytes=$READ_BYTES"
+	fi
+fi
+
 step '判据 6：manifest ↔ 备份库一致（schema_version）'
 MANIFEST=$(ls -1t "$DATA_DIR"/backups/nous-*.json 2>/dev/null | head -1 || true)
 if [ -n "$MANIFEST" ] && [ -x "$CURRENT" ]; then

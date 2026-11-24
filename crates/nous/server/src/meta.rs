@@ -275,6 +275,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/trigger-projects/category", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/trigger-projects/sync", module: "triggers" },
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
+    // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘；归属宿主（server）。
+    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "server" },
     // #62：stats 三条只读观测端点。
     RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
     RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "stats" },

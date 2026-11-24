@@ -33,6 +33,7 @@ pub mod records;
 pub mod observer;
 pub mod presets;
 pub mod plugins;
+pub mod plugin_docs;
 pub mod project;
 pub mod providers;
 pub mod routes;
