@@ -1,6 +1,6 @@
 name = "telemetry"
 vendor = "nous"
-version = "0.1.23"          # 必须 == Cargo.toml 的 version
+version = "0.1.24"          # 必须 == Cargo.toml 的 version
 layer = "platform"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-telemetry"
 
