@@ -429,7 +429,11 @@ upload_artifacts() {
 	done
 	rsync -a -e "ssh -o BatchMode=yes" "$stage/$BIN_NAME" "$HOST:/tmp/$BIN_NAME" || die "rsync 产物失败"
 	rsync -a -e "ssh -o BatchMode=yes" "$stage/nous-app.service.new" "$HOST:/tmp/nous-app.service.new" || die "rsync unit 失败"
-	rsync -a -e "ssh -o BatchMode=yes" "$stage/docs" "$HOST:/tmp/nous-docs" || die "rsync 文档失败"
+	# `/tmp/nous-docs` 可能是上一次中断留下的：源目录不带尾斜杠 + 目标已存在，
+	# rsync 会把内容嵌成 `/tmp/nous-docs/docs/plugins`，后面按 `/tmp/nous-docs/plugins`
+	# 取就扑空（真踩过：部署在「落产物」那步 cp stat 失败）。先清掉再按内容同步。
+	rs sh -c "rm -rf '/tmp/nous-docs'" || die "清理远端临时文档目录失败"
+	rsync -a -e "ssh -o BatchMode=yes" "$stage/docs/" "$HOST:/tmp/nous-docs/" || die "rsync 文档失败"
 	rm -rf "$stage"
 	# 版本是一**目录**（`nous-app-<sha8>-<target>/nous-app`），`current` 指向目录：
 	# unit 的 ExecStart 是 `/opt/nous-app/current/nous-app`，回退逻辑也是按
@@ -451,7 +455,8 @@ do_docs_only() {
 		[ -f "$readme" ] || continue
 		cp "$readme" "$stage/docs/plugins/$(basename "$(dirname "$readme")").md"
 	done
-	rsync -a -e "ssh -o BatchMode=yes" "$stage/docs" "$HOST:/tmp/nous-docs" || { rm -rf "$stage"; die "rsync 文档失败"; }
+	rs sh -c "rm -rf '/tmp/nous-docs'" || { rm -rf "$stage"; die "清理远端临时文档目录失败"; }
+	rsync -a -e "ssh -o BatchMode=yes" "$stage/docs/" "$HOST:/tmp/nous-docs/" || { rm -rf "$stage"; die "rsync 文档失败"; }
 	rm -rf "$stage"
 	out=$(rs sh -c "set -e; install -d -m 0755 '$target/docs'; rm -rf '$target/docs/plugins'; cp -a '/tmp/nous-docs/plugins' '$target/docs/plugins'; rm -rf '/tmp/nous-docs'" 2>&1) || rc=$?
 	[ $rc -eq 0 ] || die "同步文档失败：$out"
