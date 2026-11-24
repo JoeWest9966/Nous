@@ -400,11 +400,11 @@ impl Session {
     ) -> Result<Vec<EntryRecord>, SessionError> {
         let guard = self.storage.lock().await;
         let storage = guard.as_ref().ok_or(SessionError::Closed)?;
-        let query = crate::storage::EntryQuery {
+        let query = crate::storage::storage::EntryQuery {
             conversation_id: conversation,
             min_entry_id: None,
             max_entry_id: None,
-            order: Some(crate::storage::ScanOrder::Descending),
+            order: Some(crate::storage::cursor::ScanOrder::Descending),
         };
         let page = storage
             .scan_entries(&query, limit, None)
