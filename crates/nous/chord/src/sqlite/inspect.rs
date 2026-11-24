@@ -93,3 +93,62 @@ pub fn advice_integrity_check(path: &Path) -> String {
         Pragma::IntegrityCheck.as_sql()
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sqlite::LocalDatabase;
+    use std::path::PathBuf;
+
+    fn fixture() -> Option<PathBuf> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/agent.sqlite");
+        path.exists().then_some(path)
+    }
+
+    /// 白名单就是全部：SQL 里出现的那几个名字只来自这张表。
+    #[test]
+    fn the_whitelist_covers_exactly_what_we_run() {
+        let names: Vec<&str> = [
+            Pragma::PageSize,
+            Pragma::PageCount,
+            Pragma::FreelistCount,
+            Pragma::JournalMode,
+            Pragma::IntegrityCheck,
+            Pragma::WalCheckpoint,
+        ]
+        .iter()
+        .map(|pragma| pragma.as_sql())
+        .collect();
+        assert_eq!(
+            names,
+            vec!["page_size", "page_count", "freelist_count", "journal_mode", "integrity_check", "wal_checkpoint(TRUNCATE)"]
+        );
+        assert!(names.iter().all(|name| !name.contains(';')), "名字里不许带分号：那是拼 SQL 的后门");
+    }
+
+    /// 真库上读得出来：页大小、页数、journal_mode、integrity_check。
+    #[test]
+    fn pragmas_read_a_real_database() {
+        let Some(path) = fixture() else { return };
+        let db = LocalDatabase::open_read_only(&path).unwrap();
+
+        assert!(pragma_i64(&db, Pragma::PageSize) > 0, "页大小要读得出来");
+        assert!(pragma_i64(&db, Pragma::PageCount) > 0, "页数要读得出来");
+        assert_eq!(pragma_text(&db, Pragma::JournalMode), "wal");
+        assert_eq!(integrity_messages(&db), vec!["ok".to_string()]);
+    }
+
+    /// 运维命令只给文本：路径被引号包住，SQL 语句来自白名单。
+    #[test]
+    fn advice_texts_quote_the_path_and_carry_no_extra_statements() {
+        let path = Path::new("/var/lib/nous/nous.db");
+        let wal = advice_wal_checkpoint(path);
+        let check = advice_integrity_check(path);
+        assert_eq!(
+            wal,
+            "sqlite3 \"/var/lib/nous/nous.db\" \"PRAGMA wal_checkpoint(TRUNCATE);\""
+        );
+        assert_eq!(check, "sqlite3 \"/var/lib/nous/nous.db\" \"PRAGMA integrity_check;\"");
+    }
+}
