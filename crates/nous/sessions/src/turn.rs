@@ -92,7 +92,7 @@ pub async fn on_extension_process_death(
 
 /// 一个具体的轮次驱动器：provider 流 → 工具调用 → durable harness 一次提交。
 /// 一轮最多读多少条 entry 当上下文。与 `wire.md` 的 `/v1/entries` 同一条上限：
-/// 超了**截断不报错**，但截的是最老的（`entries_in` 取最新的 N 条再升序）。
+/// 超了**截断不报错**，但截的是最老的（取最新的 N 条再升序）。
 const TRANSCRIPT_ENTRY_LIMIT: usize = 1000;
 
 pub struct HarnessTurnDriver {
@@ -143,11 +143,13 @@ impl TurnDriver for HarnessTurnDriver {
 
         // 转录 → 上下文。**按会话查，不按 id 猜**：id 是全局单调的，从 1 往上扫第一个
         // 缺失就断（真机上那一断等于把整段对话丢了，供应商只收到工具清单）。
-        let transcript = self
-            .session
-            .entries_in(conversation, TRANSCRIPT_ENTRY_LIMIT)
-            .await
-            .map_err(|error| error.to_string())?;
+        let transcript = nous_durable::session::transcript::entries_in(
+            &self.session,
+            conversation,
+            TRANSCRIPT_ENTRY_LIMIT,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
         for entry in transcript {
             if let Some(messages) = entry.model {
                 for message in messages {
