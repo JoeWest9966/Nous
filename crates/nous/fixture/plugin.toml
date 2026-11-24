@@ -1,6 +1,6 @@
 name = "fixture"
 vendor = "nous"
-version = "0.1.20"          # 必须 == Cargo.toml 的 version
+version = "0.1.21"          # 必须 == Cargo.toml 的 version
 layer = "dev"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-fixture"
 
