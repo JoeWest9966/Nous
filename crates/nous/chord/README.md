@@ -1,4 +1,4 @@
-# chord
+# 快捷键
 
 一组语义基元：上下文、JSON 宽容解析、增量（delta）、SQLite 封装、watch、输出。
 

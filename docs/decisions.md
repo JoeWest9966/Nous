@@ -1106,6 +1106,11 @@ API 表，与「300 字说清是什么」互斥；API 面已经由 `capabilities
 **为什么不 `include_str!`**：j1900 只跑产物，为一句话改文档要重编译 + 重发版，成本远高于
 同步一个目录；文档跟着版本目录走，回退旧产物时文档一起回退，不会出现「二进制旧版、文档新版」。
 
+**归属 `device`，不是 `server`**：`/v1/_routes` 与 `capabilities` 只吐**清单里开着的模块**，
+`server` 不在 `meta::MANIFEST` 的 14 条里 —— 归它等于这条端点永远不出现在路由表，客户端会
+一直报「路由漂移」（真踩过：第一版写 `module: "server"`，`_routes` 162 条里找不到它，
+Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的「宿主级只读」模块。
+
 **代价**：多一条部署路径（`docs/` 目录）；文件漏同步靠 404 `readme_not_installed` 说话
 （客户端按「暂无文档」展示，不是错误弹窗）。源码侧由 `check-plugins.sh` 判，线上有没有装
 由 `deploy-check.sh` 的 readme 判据报。

@@ -1,4 +1,4 @@
-# skills
+# 技能
 
 技能目录的只读解析：`SKILL.md` 的 frontmatter、附件清单、类别词表，投影成 `/v1/skills`。
 
