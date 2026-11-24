@@ -24,7 +24,7 @@ fn catalog_environment() -> nous_device::CatalogEnvironment {
             .to_string(),
         ),
         file: None,
-        file_path: "/var/lib/nous/models.json".into(),
+        file_path: "/var/lib/nous/element-models.json".into(),
         remote_base: None,
         remote_token: None,
         cache_path: None,
@@ -46,7 +46,7 @@ fn missing_models_catalog_is_honest_and_points_at_default_path() {
     let env = nous_device::CatalogEnvironment {
         inline: None,
         file: None,
-        file_path: "/var/lib/nous/models.json".into(),
+        file_path: "/var/lib/nous/element-models.json".into(),
         remote_base: None,
         remote_token: None,
         cache_path: None,
@@ -55,7 +55,7 @@ fn missing_models_catalog_is_honest_and_points_at_default_path() {
     assert!(response.items.is_empty(), "诚实空表");
     assert_eq!(response.catalog.state, "missing");
     assert!(response.catalog.source.is_none());
-    assert_eq!(response.catalog.path, Path::new("/var/lib/nous/models.json"));
+    assert_eq!(response.catalog.path, Path::new("/var/lib/nous/element-models.json"));
 }
 
 #[test]

@@ -13,7 +13,7 @@ members = [
 exclude = ["vendor"]
 
 [workspace.package]
-version = "0.1.22"
+version = "0.1.23"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -53,7 +53,7 @@ nous-wire = { path = "crates/nous/wire", version = "0.1.0" }
 nous-env = { path = "crates/nous/env", version = "0.1.0" }
 nous-repo = { path = "crates/nous/repo", version = "0.1.0" }
 nous-elements = { path = "crates/nous/elements", version = "0.1.0" }
-nous-models = { path = "crates/nous/models", version = "0.1.0" }
+nous-element-models = { path = "crates/nous/element-models", version = "0.1.0" }
 nous-prompts = { path = "crates/nous/prompts", version = "0.1.0" }
 nous-presets-admin = { path = "crates/nous/presets-admin", version = "0.1.0" }
 nous-env-ssh = { path = "crates/nous/env-ssh", version = "0.1.0" }
@@ -62,6 +62,7 @@ nous-documents = { path = "crates/nous/documents", version = "0.1.0" }
 nous-ai-types = { path = "crates/nous/ai-types", version = "0.1.0" }
 nous-ai = { path = "crates/nous/ai", version = "0.1.0" }
 nous-tools = { path = "crates/nous/tools", version = "0.1.0" }
+nous-routes = { path = "crates/nous/routes", version = "0.1.0" }
 nous-runtime = { path = "crates/nous/runtime", version = "0.1.0" }
 nous-ext = { path = "crates/nous/ext", version = "0.1.0" }
 nous-ext-probe = { path = "crates/nous/ext-probe", version = "0.1.0" }

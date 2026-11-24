@@ -1,8 +1,8 @@
 {
   "self": null,
   "origin": null,
-  "node": "0.1.22",
-  "version": "0.1.22",
+  "node": "0.1.23",
+  "version": "0.1.23",
   "build": "00000000",
   "target": "test-target",
   "startedAt": 0,
@@ -12,7 +12,7 @@
   "catalog": {
     "state": "missing",
     "source": null,
-    "path": "/var/lib/nous/models.json"
+    "path": "/var/lib/nous/element-models.json"
   },
   "available": []
 }

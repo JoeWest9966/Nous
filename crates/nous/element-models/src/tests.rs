@@ -180,7 +180,7 @@ fn overlay_without_target_is_reported_not_swallowed() {
     let snapshot = load(&group(&["provider-a", "ghost"], json!({})), &[base, overlay]);
 
     assert_eq!(snapshot.state, "problem");
-    assert_eq!(snapshot.missing, vec!["nous-models/a/nope".to_string()]);
+    assert_eq!(snapshot.missing, vec!["element-models/a/nope".to_string()]);
     assert_eq!(
         snapshot.packages.iter().find(|p| p.id == "ghost").map(|p| p.state),
         Some("missing")
@@ -193,7 +193,7 @@ fn missing_package_keeps_the_rest_of_the_catalog() {
     let snapshot = load(&group(&["provider-a", "provider-gone"], json!({})), &[base]);
 
     assert_eq!(snapshot.items.len(), 1, "缺一个包不许把别的都吞了");
-    assert_eq!(snapshot.missing, vec!["nous-models/provider-gone".to_string()]);
+    assert_eq!(snapshot.missing, vec!["element-models/provider-gone".to_string()]);
     assert_eq!(snapshot.packages.len(), 2);
     // 缺包不算 problem：编目还是能用的。
     assert_eq!(snapshot.state, "ok");

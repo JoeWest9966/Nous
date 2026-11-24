@@ -16,6 +16,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod routes;
+pub mod secret;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use nous_elements::ElementItem;
@@ -23,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 /// 模型入口组的约定 id。引擎只读这一个组。
-pub const GROUP_ID: &str = "nous-models";
+pub const GROUP_ID: &str = "element-models";
 
 /// 供应商包的 id 前缀（`provider-wb2api` → 供应商键 `wb2api`）。
 /// 包里显式写了 `provider` 字段时以字段为准，前缀只是兜底。
@@ -166,7 +169,7 @@ pub fn load(group: &ElementItem, packages: &[ElementItem]) -> Snapshot {
         };
         match kind_of(item) {
             Kind::Provider => {
-                let provider = provider_key(item);
+                let provider = provider_key_of(item);
                 snapshot.packages.push(PackageState {
                     id: item.id.clone(),
                     state: "ok",
@@ -274,13 +277,14 @@ struct Draft {
     fields: Value,
 }
 
-enum Kind {
+pub enum Kind {
+    /// `kind:"provider"` —— 供应商包（连接信息 + `models[]`）。
     Provider,
     Model,
     Unknown(String),
 }
 
-fn kind_of(item: &ElementItem) -> Kind {
+pub fn kind_of(item: &ElementItem) -> Kind {
     match item.fields.get("kind").and_then(Value::as_str).unwrap_or_default() {
         "provider" => Kind::Provider,
         "model" => Kind::Model,
@@ -288,7 +292,7 @@ fn kind_of(item: &ElementItem) -> Kind {
     }
 }
 
-fn provider_key(item: &ElementItem) -> String {
+pub fn provider_key_of(item: &ElementItem) -> String {
     string_field(&item.fields, "provider").unwrap_or_else(|| {
         item.id.strip_prefix(PROVIDER_PREFIX).unwrap_or(&item.id).to_string()
     })
@@ -298,6 +302,11 @@ fn provider_key(item: &ElementItem) -> String {
 ///
 /// 未知字段不进入 runtime 配置（`nous-elements` 仍原样保存）；只传 runtime 真正消费的
 /// `name/baseUrl/api/apiKey/headers/authHeader/models[]`。密钥字段保持引用字符串，不解析真值。
+/// 这个元素是不是供应商包（`kind:"provider"`）。
+pub fn is_provider(item: &ElementItem) -> bool {
+    matches!(kind_of(item), Kind::Provider)
+}
+
 pub fn provider_config(item: &ElementItem) -> Option<Value> {
     if !matches!(kind_of(item), Kind::Provider) {
         return None;
@@ -341,7 +350,7 @@ pub fn runtime_config(group: &ElementItem, packages: &[ElementItem]) -> nous_run
         if matches!(kind_of(item), Kind::Provider) {
             if let Some(projected) = provider_config(item) {
                 if let Ok(provider) = serde_json::from_value(projected) {
-                    config.providers.insert(provider_key(item), provider);
+                    config.providers.insert(provider_key_of(item), provider);
                 }
             }
         }
@@ -395,7 +404,7 @@ fn overlay_model_fields(overlay: &ElementItem) -> Value {
     Value::Object(patch)
 }
 
-fn referenced(group: &ElementItem) -> Vec<String> {
+pub fn referenced(group: &ElementItem) -> Vec<String> {
     group
         .fields
         .get("packages")

@@ -134,7 +134,49 @@ scripts/deploy.sh --purge --yes-i-mean-it   # 才删 /var/lib/nous 与 /etc/nous
 （判据 5）。`--purge` 必须手打完整确认串，不接受 `-y`。升级与回退不得改变 token 的
 inode 与 sha256（判据 7）。
 
-## 5 · 人工哨兵清单
+## 5 · 供应商密钥从哪来（元素库只存引用）
+
+元素库里的包只存 `apiKey` **引用**，明文密钥不进 git（`packages/provider-*.json` 里
+出现明文会被元素库的写入口直接拒掉）。引擎启动时（`crates/nous/server/src/providers.rs`）
+把引用解成值，只放进请求头，不进日志、不进响应体；解不出来的供应商**整条跳过**并在
+journal 里点名（`nous-server: provider: 供应商 \`wb2api\`：环境变量 WB2API_API_KEY 没有值，跳过`）。
+
+| 包的写法 | 引擎从哪取 |
+|---|---|
+| `"apiKey": "$WB2API_API_KEY"` | 进程环境变量，值放 unit 的 `EnvironmentFile` |
+| `"apiKey": "!cat /etc/nous/wb2api.key"` | 跑这条命令取 stdout（超时 10 秒，失败就跳过） |
+| `"apiKey": "secret:wb2api"` | 环境变量 `NOUS_SECRET_WB2API`（id 转大写、非字母数字换 `_`） |
+
+部署时的推荐做法：密钥进 `/etc/nous/providers.env`（`root:nous 0640`），unit 里加一条
+`EnvironmentFile=-/etc/nous/providers.env`（`-` 表示文件可以不存在）：
+
+```sh
+sudo install -m 0640 -o root -g nous /dev/null /etc/nous/providers.env
+printf '%s\n' 'WB2API_API_KEY=…' | sudo tee -a /etc/nous/providers.env >/dev/null
+sudo systemctl restart nous-app   # 密钥只在启动时解一次
+```
+
+改密钥要重启服务（装配只跑一次）；`GET /v1/models` 仍会列出所有模型，但没解出密钥的
+供应商在发消息时会明确报错（轮次收敛成 `model_error`，不会静默停在 `queued`）。
+
+### 从 Desk 填密钥（写面）
+
+`PUT /v1/providers/{id}/secret { "value": "…" }` 把值写进**引擎自己能写的那份文件**：
+
+```
+NOUS_SECRETS_FILE（默认 /var/lib/nous/secrets/providers.env，nous:nous 0600）
+```
+
+`/etc/nous/providers.env` 是 `root:nous 0640`，引擎以 `nous` 用户跑，写不进去 —— 所以 unit
+里两条 `EnvironmentFile=` 都留着：`/etc/...` 给运维手写（部署期），`/var/lib/nous/...` 给
+Desk 写（运行期）。**后读的优先**，所以 Desk 改过的变量以 `/var/lib/nous/...` 为准；要收回
+控制权，把那一行从可写文件里删掉再重启。
+
+这条写面只认得起 `$NAME` 引用（`!cmd` / `secret:<id>` 回 409），元素库一个字节都不改；
+写盘是「同目录临时文件 + rename」的原子替换，文件 `0600`、目录 `0700`。写完仍要
+`sudo systemctl restart nous-app`（端点回执里 `restartRequired: true` 就是在说这件事）。
+
+## 6 · 人工哨兵清单
 
 | 判据 | 为什么不能自动化 / 怎么做 |
 |---|---|
@@ -144,7 +186,7 @@ inode 与 sha256（判据 7）。
 | 5 | `--uninstall` / `--purge` 会真停服务并删数据，不在自检脚本里自动跑 |
 | 10 | 临时删 unit 的 `WorkingDirectory=` 再重启真服务，验 `refuse: workdir-missing` + 78 + failed；验完恢复 |
 
-## 6 · 三条硬边界
+## 7 · 三条硬边界
 
 - 不碰 4790 / `nous-panel.service` / `content/` 下任何块目录 —— 旧面板已下线（2026-11-18），
   这几条现在只剩历史意义；判据 14 仍在守「部署不碰别人的东西」（判据 14：部署前后

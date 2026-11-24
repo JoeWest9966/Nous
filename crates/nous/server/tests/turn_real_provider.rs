@@ -193,7 +193,7 @@ fn app_for_model_resolution(
     router(state)
 }
 
-/// 元素库里放一个 `nous-models` 组（default 指向 faux provider 的模型），
+/// 元素库里放一个 `element-models` 组（default 指向 faux provider 的模型），
 /// 用来验证发消息的模型解析和 `GET /v1/models` 看的是同一份编目。
 fn elements_root_with_group(default: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
@@ -201,9 +201,9 @@ fn elements_root_with_group(default: &str) -> tempfile::TempDir {
     std::fs::create_dir_all(root.join("groups")).unwrap();
     std::fs::create_dir_all(root.join("packages")).unwrap();
     std::fs::write(
-        root.join("groups/nous-models.json"),
+        root.join("groups/element-models.json"),
         json!({
-            "id": "nous-models",
+            "id": "element-models",
             "name": "Nous 模型入口",
             "packages": ["provider-faux"],
             "default": default,

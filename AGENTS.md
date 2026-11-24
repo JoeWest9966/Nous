@@ -8,6 +8,9 @@
 先看三份，按这个顺序，别跳：`wire.md`（对外契约，权威）→ `docs/plugins.md`（模块与四层的
 唯一真相）→ `docs/pitfalls.md`（踩过的坑，三行一条）。
 
+**加端点 / 搬端点之前**还要看 `docs/magento2-migration.md`：端点归插件（模块自带 handler），
+`server` 只做监听与分发；那份文档同时是搬家进度表。
+
 ## 布局
 
 ```

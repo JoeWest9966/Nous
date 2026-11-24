@@ -68,7 +68,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/events", get(events))
         .route("/v1/sessions/{id}/abort", post(abort))
         .route("/v1/sessions/{id}/fork", post(fork))
-        .route("/v1/machines", get(machines))
         .route("/v1/fs/dirs", get(fs_dirs))
         .route("/v1/models", get(models))
         .route("/v1/default", put(put_default))
@@ -123,8 +122,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     let router = router.merge(crate::resource_admin::attach(Router::new()));
     // 元素库（组 / 包）：盘上真相与写事务在 `nous-elements`，这里只做 HTTP 翻译。
     let router = router.merge(crate::elements::attach(Router::new()));
-    // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `nous-models`）。
-    let router = router.merge(crate::models::attach(Router::new()));
+    // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `nous-element-models`）。
     // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);
     // #95：触发器工程面（n8qkkj 的宿主，路径与 `/v1/triggers` 定义面分开）。
@@ -133,6 +131,11 @@ pub fn router(state: Arc<AppState>) -> Router {
     let router = crate::upstream::attach(router);
     // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
     // presets 子路由自带 SharedStore state；合并进主 Router 不动其余端点的 AppState。
+    // 插件自己的端点：`nous-routes` 的声明就是注册，注册表读的也是同一份。
+    let mut router = router;
+    for route in crate::plugins::routes() {
+        router = route.mount(router);
+    }
     let router = router.with_state(state.clone());
     match state.presets() {
         Some(store) => router.merge(crate::presets::routes(store.clone())),
@@ -143,16 +146,6 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// `GET /v1/_routes`：与 capabilities 同源的注册表视图（#47）。
 async fn routes_view() -> axum::Json<serde_json::Value> {
     axum::Json(crate::meta::routes_view())
-}
-
-/// `GET /v1/machines`：机器编目（机器 + 注解 + 能力字段 + 兼容 target 列表）。
-async fn machines() -> Json<Value> {
-    let file = std::env::var("NOUS_MACHINES_FILE")
-        .ok()
-        .filter(|text| !text.trim().is_empty())
-        .map(PathBuf::from)
-        .filter(|path| path.is_file());
-    Json(nous_device::machines(file.as_deref()))
 }
 
 /// `GET /v1/fs/dirs` 的查询参数。未知字段由 axum 忽略，协议保持哑的。

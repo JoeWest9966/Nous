@@ -4,6 +4,8 @@
 //! > 诚实空表（`state: "missing"`）。`POST /v1/catalog/refresh` 会拉远端编目写进本地缓存，
 //! 之后 file 来源就指到那份缓存。密钥只在内存里的请求头中过一手，不落盘、不进日志。
 
+pub mod routes;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 /// 默认编目路径（`NOUS_MODELS_FILE` 未给时），也是诊断块里那条可诊断的路径。
-pub const DEFAULT_MODELS_FILE: &str = "/var/lib/nous/models.json";
+pub const DEFAULT_MODELS_FILE: &str = "/var/lib/nous/element-models.json";
 
 /// `GET /v1/models` 的 `items[]` 一项。字段名就是 wire 形状，不许改成 snake_case。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

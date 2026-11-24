@@ -1,6 +1,6 @@
 name = "presets-admin"
 vendor = "nous"
-version = "0.1.22"          # 必须 == Cargo.toml 的 version
+version = "0.1.23"          # 必须 == Cargo.toml 的 version
 layer = "app"
 crate = "nous-presets-admin"
 
