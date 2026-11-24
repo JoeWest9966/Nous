@@ -247,6 +247,8 @@ pub fn put(
     let existed = disk_read.is_some();
     let on_disk = disk_read.and_then(|read| parse_object(&read.content).ok());
     let was_locked = on_disk.as_ref().is_some_and(is_locked);
+    // 次序是刻意的：**锁先于 `If-Match`**。锁着回 423（先去解锁），指纹旧回 409
+    // （拉一遍再来）—— 反过来的话，锁着的元素会先被喊「刷新一下就好了」。
     if was_locked {
         return Err(locked_error(kind, &id));
     }
@@ -294,6 +296,7 @@ pub fn remove(
         )));
     };
     // 锁是「防误删」：连删除请求都不往下走，别让它落到 git 那一层。
+    // 与 `put` 同一个次序：锁着先回 423，`If-Match` 得排后面。
     if parse_object(&read.content).is_ok_and(|fields| is_locked(&fields)) {
         return Err(locked_error(kind, &id));
     }

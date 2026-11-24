@@ -958,13 +958,20 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
   （`feat(group): <id>` / `chore(package): rm <id>`）；`push` 尽力而为 —— 推不上去回
   `pushed:false`，本地提交不回滚。回执：`{ kind, id, created, etag, commit, pushed, refs, replay }`。
 - **幂等**：同一个 `requestId` 只提交一次；重放回 `replay:true`、`commit:null`，一个字节都不写。
+- **提交失败 = 这次什么都没发生**（`nous-repo` 的不变式）：`git commit` 失败（`pre-commit`
+  钩子拒了、磁盘满、身份没配）时，盘上那份内容与索引**都还原回动手之前**，再把 500 交出去。
+  不还原就会出现「盘上已经是新的、`git log` 里查不到」的半成品 —— 锁最怕这个状态
+  （`locked: true` 落了盘却没人认领，推也推不上去）。
 - 内容与盘上一致时不制造空提交：`commit:null`、`etag` 照给（不是错误）。
 - `base` = `If-Match`：与磁盘内容指纹不符 → 409（不静默覆盖）。
 - **锁**（`locked: true`）：那一份 JSON 里多一个 `"locked": true`，跟着提交走（谁锁的、
   什么时候锁的看 `git log`）。锁着时 **PUT / POST / DELETE 一律 423**（`{ error }` 里点名
   解锁地址），盘上那份一个字节都不动。**只有 `/lock` 能改锁**：`PUT` 的 `fields.locked`
   与盘上不一致 → 400 `{field:"locked"}`（客户端整份回写时带回同一个值是允许的）。
-  解锁 = 同一个端点 `{ locked: false }`，它**不受锁约束**（否则锁死就再也解不开）。
+  解锁 = 同一个端点 `{ locked: false }`，它**不受锁约束**（否则锁死就再也解不开），
+  但它**照样认 `base`**：拿着旧指纹去解锁回 409（别人刚改过，先拉一遍再决定）。
+  **锁先于 `If-Match`**：锁着又拿着旧指纹时回 **423**，不是 409 —— 409 的言下之意是
+  「刷新一下再来」，而锁着的东西刷新多少遍也写不进去。
   回执：`{ kind, id, locked, changed, etag, commit, pushed, refs, replay }`；
   `changed:false` = 状态本来就对，没写盘、没提交。锁的提交是
   `chore(group): lock <id>` / `chore(group): unlock <id>`。

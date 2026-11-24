@@ -393,3 +393,76 @@ async fn the_lock_endpoint_needs_locked_and_404s_on_unknown_ids() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "不存在的元素不许凭空锁出一个来");
 }
+
+/// 锁和旧 `base` 一起撞上来：**423 先出**（`If-Match` 排后面）。
+///
+/// 客户端看到 409 会以为「拉一遍再来就行」，可锁着的东西拉多少遍也写不进去 ——
+/// 所以 423 必须是那个先说出口的号。
+#[tokio::test]
+async fn a_lock_outranks_a_stale_if_match() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/elements/groups/frontend/lock",
+        Some(json!({ "locked": true })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let before = commits(&root);
+
+    let stale = "0".repeat(64);
+    let (status, body) = call(
+        &app,
+        "PUT",
+        &format!("/v1/elements/groups/frontend?base={stale}"),
+        Some(json!({ "fields": { "id": "frontend", "name": "改名" } })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::LOCKED, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("/lock"), "{body}");
+
+    let (status, body) =
+        call(&app, "DELETE", &format!("/v1/elements/groups/frontend?base={stale}"), None).await;
+    assert_eq!(status, StatusCode::LOCKED, "{body}");
+    assert_eq!(commits(&root), before, "两条被拒的请求没造提交");
+}
+
+/// 解锁走 `/lock`，它不被锁拦，但**照样认 `If-Match`**：拿旧指纹 409，拿对指纹 200。
+#[tokio::test]
+async fn unlocking_honours_if_match_but_is_not_blocked_by_the_lock() {
+    let (_tmp, root) = fixture();
+    let app = app_with(&root);
+    call(&app, "POST", "/v1/elements/groups/frontend/lock", Some(json!({ "locked": true }))).await;
+    let current = call(&app, "GET", "/v1/elements/groups/frontend", None).await.1["etag"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let stale = "0".repeat(64);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/elements/groups/frontend/lock",
+        Some(json!({ "locked": false, "base": stale })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        call(&app, "GET", "/v1/elements/groups/frontend", None).await.1["fields"]["locked"],
+        true,
+        "409 之后还是锁着"
+    );
+
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/elements/groups/frontend/lock",
+        Some(json!({ "locked": false, "base": current })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["locked"], false);
+    assert_eq!(body["changed"], true);
+}
