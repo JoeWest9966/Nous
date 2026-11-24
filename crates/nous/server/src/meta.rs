@@ -155,7 +155,6 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/origins", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/read/:id", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/machines", module: "device" },
     // #68：只读目录浏览（env 插件）。
     RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
     RegisteredRoute { method: "GET", path: "/v1/repos/:repo/status", module: "repo" },
@@ -340,7 +339,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
 /// 未装配运行时的 `ext` 端点仍回 200 空清单，但真路径永远来自同一张表）。
 pub fn routes_view() -> Value {
     json!({
-        "routes": enabled_routes()
+        "routes": endpoints()
+            .into_iter()
             .map(|route| json!({ "module": route.module, "method": route.method, "path": route.path }))
             .collect::<Vec<_>>(),
         "modules": MANIFEST
@@ -353,8 +353,8 @@ pub fn routes_view() -> Value {
 /// `GET /v1/openapi.json`：从 `ROUTES` 生成 paths，与 capabilities/_routes 三处同源。
 pub fn openapi_paths() -> Value {
     let mut paths = serde_json::Map::new();
-    for route in enabled_routes() {
-        let entry = paths.entry(route.path.to_string()).or_insert_with(|| json!({}));
+    for route in endpoints() {
+        let entry = paths.entry(route.path.clone()).or_insert_with(|| json!({}));
         if let Some(object) = entry.as_object_mut() {
             object.insert(
                 route.method.to_ascii_lowercase(),
@@ -375,6 +375,39 @@ pub fn route_enabled(module: &str) -> bool {
 
 fn enabled_routes() -> impl Iterator<Item = &'static RegisteredRoute> {
     ROUTES.iter().filter(|route| route_enabled(route.module))
+}
+
+/// 合流后的一条端点：静态表（还没搬进插件的）∪ 插件声明（`nous-routes`）。
+///
+/// 路径统一是 `:id` 形式（`wire.md` 的写法）；插件交上来的是 axum 的 `{id}`，
+/// 由 `Route::registry_path` 折成同一种，注册表里不会出现两种写法。
+#[derive(Debug, Clone)]
+pub struct Endpoint {
+    pub method: &'static str,
+    pub path: String,
+    pub module: &'static str,
+}
+
+/// 注册表 = 静态表 ∪ 插件声明。搬一个端点就从 `ROUTES` 删一行。
+pub fn endpoints() -> Vec<Endpoint> {
+    let mut all: Vec<Endpoint> = enabled_routes()
+        .map(|route| Endpoint {
+            method: route.method,
+            path: route.path.to_string(),
+            module: route.module,
+        })
+        .collect();
+    for declaration in crate::plugins::declarations() {
+        if !route_enabled(declaration.module) {
+            continue;
+        }
+        all.push(Endpoint {
+            method: declaration.method,
+            path: declaration.path,
+            module: declaration.module,
+        });
+    }
+    all
 }
 
 /// `#88`：清单的一行。五个展示列逐格抄自 `docs/plugins.md` 主表，
@@ -497,7 +530,8 @@ pub fn capabilities(origin: &str) -> Value {
         .iter()
         .map(|entry| {
             let name = entry.name;
-            let registered: Vec<&RegisteredRoute> = enabled_routes()
+            let registered: Vec<Endpoint> = endpoints()
+                .into_iter()
                 .filter(|route| route.module == name)
                 .collect();
             // 清单关掉的模块即便有代码也不声明；清单开着但没代码就 not_implemented。

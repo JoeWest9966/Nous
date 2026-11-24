@@ -32,6 +32,7 @@ pub mod models;
 pub mod records;
 pub mod observer;
 pub mod presets;
+pub mod plugins;
 pub mod project;
 pub mod providers;
 pub mod routes;

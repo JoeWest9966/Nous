@@ -62,6 +62,7 @@ nous-documents = { path = "crates/nous/documents", version = "0.1.0" }
 nous-ai-types = { path = "crates/nous/ai-types", version = "0.1.0" }
 nous-ai = { path = "crates/nous/ai", version = "0.1.0" }
 nous-tools = { path = "crates/nous/tools", version = "0.1.0" }
+nous-routes = { path = "crates/nous/routes", version = "0.1.0" }
 nous-runtime = { path = "crates/nous/runtime", version = "0.1.0" }
 nous-ext = { path = "crates/nous/ext", version = "0.1.0" }
 nous-ext-probe = { path = "crates/nous/ext-probe", version = "0.1.0" }

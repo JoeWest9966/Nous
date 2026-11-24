@@ -1,0 +1,11 @@
+name = "routes"
+vendor = "nous"
+version = "0.1.22"
+layer = "platform"
+crate = "nous-routes"
+
+[requires]
+
+[provides]
+capability = "routes"
+endpoints  = []

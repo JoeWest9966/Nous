@@ -1,0 +1,14 @@
+[package]
+name = "nous-routes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "插件自带端点的契约：一条声明同时产出 Router 装配与注册表登记（platform 层）"
+
+[dependencies]
+axum = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

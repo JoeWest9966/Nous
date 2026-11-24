@@ -4,6 +4,8 @@
 //! > 诚实空表（`state: "missing"`）。`POST /v1/catalog/refresh` 会拉远端编目写进本地缓存，
 //! 之后 file 来源就指到那份缓存。密钥只在内存里的请求头中过一手，不落盘、不进日志。
 
+pub mod routes;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
