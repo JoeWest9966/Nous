@@ -388,6 +388,39 @@ impl Session {
         Ok(Some((record, seq)))
     }
 
+    /// 一个会话的转录，按 id **升序**，最多最新的 `limit` 条。
+    ///
+    /// 轮次装配上下文只能走这条：entry id 是**全局单调**的（一条序列被所有会话共用），
+    /// 「从 1 往上递增、遇到缺失就停」那种写法在真库上第一跳就断 —— 请求体里
+    /// `messages` 会是空的（真机踩过：模型只能对着工具清单自说自话）。
+    pub async fn entries_in(
+        &self,
+        conversation: Id,
+        limit: usize,
+    ) -> Result<Vec<EntryRecord>, SessionError> {
+        let guard = self.storage.lock().await;
+        let storage = guard.as_ref().ok_or(SessionError::Closed)?;
+        let query = crate::storage::EntryQuery {
+            conversation_id: conversation,
+            min_entry_id: None,
+            max_entry_id: None,
+            order: Some(crate::storage::ScanOrder::Descending),
+        };
+        let page = storage
+            .scan_entries(&query, limit, None)
+            .map_err(SessionError::Storage)?
+            .map_err(|refusal| SessionError::Shape(format!("transcript refused: {refusal}")))?;
+        let mut records: Vec<EntryRecord> = Vec::with_capacity(page.items.len());
+        for value in page.items {
+            records.push(
+                serde_json::from_value(value)
+                    .map_err(|error| SessionError::Shape(format!("transcript entry: {error}")))?,
+            );
+        }
+        records.reverse();
+        Ok(records)
+    }
+
     fn end_all(&self, end: &WatchEnd) {
         self.observers.end_all(end);
     }
