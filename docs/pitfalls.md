@@ -383,3 +383,16 @@ worktree 新建的 `skill/<id>` 分支没有 upstream，push 直接失败。
 
 **怎么防**：`manifest::RESERVED_DIRS = ["data", "artifacts", "trash"]` 在扫描时跳过（点开头照旧跳过）；
 判据 `runtime_data_dir_is_not_an_extension`——根下同时放 `data/` 和一条真扩展，只许扫出真扩展。
+
+## 2026-11-24 · 真供应商收到的请求 `messages: []`：模型对着工具清单自说自话
+
+**症状**：j1900 上真发一条「1+1 等于几」，助手回「你好！我在 /srv/nous/work 工作目录里，
+目前没有收到具体任务」。抓供应商请求体：`{"messages":[],"tools":[…]}` —— 连 system 都没带。
+
+**根因**：轮次装配上下文时从 `id = 1` 往上逐个 `get_entry`，**遇到第一个缺失就 `break`**。
+entry id 是**全局单调**的（一条序列被所有会话共用），真库里 id 从 24041 那种数字开始，
+第一跳就是 `None` → 整段转录被丢掉。单测库的 id 恰好从 1 连续，所以一直是绿的。
+
+**怎么防**：上下文只能按**会话**查（`nous_durable::session::transcript::entries_in`，
+按 id 降序取最新 N 条再翻转）；判据写进 `providers_elements.rs::a_real_turn_answers_through_the_elements_provider`
+—— 断言供应商请求体里有用户那句话（`contains("ping")`），不只看答案落库。
