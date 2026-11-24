@@ -267,3 +267,185 @@ fn restrict_dir(path: &Path) {
 
 #[cfg(not(unix))]
 fn restrict_dir(_path: &Path) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn element(id: &str, fields: serde_json::Value) -> ElementItem {
+        ElementItem { id: id.to_string(), fields, etag: format!("etag-{id}") }
+    }
+
+    fn group_and_package(api_key: &str) -> (ElementItem, Vec<ElementItem>) {
+        let group = element(
+            GROUP_ID,
+            json!({ "id": GROUP_ID, "name": "Element", "packages": ["provider-wb2api"] }),
+        );
+        let package = element(
+            "provider-wb2api",
+            json!({
+                "id": "provider-wb2api",
+                "kind": "provider",
+                "provider": "wb2api",
+                "apiKey": api_key,
+                "models": [{ "id": "cn:fast" }],
+            }),
+        );
+        (group, vec![package])
+    }
+
+    fn read(path: &Path) -> String {
+        fs::read_to_string(path).unwrap()
+    }
+
+    #[test]
+    fn env_reference_is_written_and_neighbours_survive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.env");
+        fs::write(&path, "# 运维手写\nOTHER=1\n").unwrap();
+        let (group, packages) = group_and_package("$WB2API_API_KEY");
+
+        let stored = store(&group, &packages, "wb2api", "sk-real", &path).unwrap();
+
+        assert_eq!(stored.env, "WB2API_API_KEY");
+        assert_eq!(stored.package, "provider-wb2api");
+        assert_eq!(stored.path, path);
+        assert!(!stored.replaced, "第一次写是新增");
+        let text = read(&path);
+        assert!(text.contains("# 运维手写"), "注释要留着：{text}");
+        assert!(text.contains("OTHER=1"), "别的变量要留着：{text}");
+        assert!(text.contains("WB2API_API_KEY=sk-real"), "{text}");
+    }
+
+    #[test]
+    fn second_write_replaces_the_line_instead_of_appending() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.env");
+        let (group, packages) = group_and_package("$WB2API_API_KEY");
+
+        store(&group, &packages, "wb2api", "sk-old", &path).unwrap();
+        let stored = store(&group, &packages, "wb2api", "sk-new", &path).unwrap();
+
+        assert!(stored.replaced);
+        let text = read(&path);
+        assert_eq!(text.matches("WB2API_API_KEY=").count(), 1, "{text}");
+        assert!(text.contains("WB2API_API_KEY=sk-new"), "{text}");
+        assert!(!text.contains("sk-old"), "旧值不许留：{text}");
+    }
+
+    #[test]
+    fn duplicate_lines_for_the_same_name_collapse_to_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.env");
+        fs::write(&path, "WB2API_API_KEY=ancient\nKEEP=1\nWB2API_API_KEY=older\n").unwrap();
+        let (group, packages) = group_and_package("$WB2API_API_KEY");
+
+        store(&group, &packages, "wb2api", "sk-new", &path).unwrap();
+
+        let text = read(&path);
+        assert_eq!(text.matches("WB2API_API_KEY=").count(), 1, "{text}");
+        assert!(text.contains("KEEP=1"));
+    }
+
+    #[test]
+    fn value_with_spaces_is_quoted_for_systemd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.env");
+        let (group, packages) = group_and_package("$WB2API_API_KEY");
+
+        store(&group, &packages, "wb2api", "a b", &path).unwrap();
+
+        assert!(read(&path).contains("WB2API_API_KEY=\"a b\""), "{}", read(&path));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_is_0600_and_directory_is_0700() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secrets/providers.env");
+        let (group, packages) = group_and_package("$WB2API_API_KEY");
+
+        store(&group, &packages, "wb2api", "sk-real", &path).unwrap();
+
+        let file = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        let parent = fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(file, 0o600, "密钥文件必须 0600");
+        assert_eq!(parent, 0o700, "密钥目录必须 0700");
+    }
+
+    #[test]
+    fn cmd_reference_is_refused_and_nothing_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.env");
+        let (group, packages) = group_and_package("!pass show wb2api");
+
+        let refusal = store(&group, &packages, "wb2api", "sk-real", &path).unwrap_err();
+
+        assert!(matches!(refusal, Refusal::NotEnv { shape: "cmd", .. }), "{refusal:?}");
+        assert!(!path.exists(), "拒绝的写入不许碰盘");
+    }
+
+    #[test]
+    fn secret_space_reference_is_refused_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let (group, packages) = group_and_package("secret:wb2api");
+        let refusal = store(&group, &packages, "wb2api", "sk", &dir.path().join("p.env")).unwrap_err();
+        assert!(matches!(refusal, Refusal::NotEnv { shape: "secret", .. }), "{refusal:?}");
+    }
+
+    #[test]
+    fn missing_reference_tells_you_to_add_one_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let (group, packages) = group_and_package("");
+        let refusal = store(&group, &packages, "wb2api", "sk", &dir.path().join("p.env")).unwrap_err();
+        assert!(matches!(refusal, Refusal::NoKey(_)), "{refusal:?}");
+        assert!(refusal.message().contains("$WB2API_API_KEY"), "{}", refusal.message());
+    }
+
+    #[test]
+    fn plaintext_reference_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (group, packages) = group_and_package("sk-literal-in-the-element");
+        let refusal = store(&group, &packages, "wb2api", "sk", &dir.path().join("p.env")).unwrap_err();
+        assert!(matches!(refusal, Refusal::Plaintext(_)), "{refusal:?}");
+    }
+
+    #[test]
+    fn unknown_provider_is_named_not_silently_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let (group, packages) = group_and_package("$WB2API_API_KEY");
+        let refusal = store(&group, &packages, "ghost", "sk", &dir.path().join("p.env")).unwrap_err();
+        assert_eq!(refusal, Refusal::UnknownProvider("ghost".into()));
+        assert!(refusal.message().contains("ghost"), "{}", refusal.message());
+    }
+
+    #[test]
+    fn a_package_the_group_references_but_disk_lacks_is_reported_as_missing_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let (group, _) = group_and_package("$WB2API_API_KEY");
+        let refusal = store(&group, &[], "wb2api", "sk", &dir.path().join("p.env")).unwrap_err();
+        assert_eq!(refusal, Refusal::UnknownPackage("provider-wb2api".into()), "{refusal:?}");
+    }
+
+    #[test]
+    fn a_bad_reference_name_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (group, packages) = group_and_package("$2BAD");
+        let refusal = store(&group, &packages, "wb2api", "sk", &dir.path().join("p.env")).unwrap_err();
+        assert!(matches!(refusal, Refusal::Bad(_)), "{refusal:?}");
+    }
+
+    #[test]
+    fn empty_or_multiline_values_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.env");
+        let (group, packages) = group_and_package("$WB2API_API_KEY");
+        for value in ["   ", "a\nb"] {
+            let refusal = store(&group, &packages, "wb2api", value, &path).unwrap_err();
+            assert!(matches!(refusal, Refusal::Bad(_)), "{value:?} => {refusal:?}");
+        }
+        assert!(!path.exists());
+    }
+}
