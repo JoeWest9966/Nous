@@ -12,7 +12,8 @@
      「本目录入库」与「`ROUTES` 里首次登记本模块」两者中更早的那个 —— 票面硬问题 3 拍：
      端点属于模块，handler 还住在 `server/` 时的提交也算它的经历。
   4. 分档（机械判据，宁可低估 minor）：
-       minor = 本模块 `plugin.toml` 的 `name` / `layer` / `crate` / `vendor` / `provides`
+       minor = 本模块的**目录改名**（vendor 段或模块段变了，按 git 的 R 记录认）/
+               `plugin.toml` 的 `name` / `layer` / `crate` / `vendor` / `provides`
                有删改（整份新增不算），或 `meta.rs` 里 `module: "<本模块>"` 的 ROUTES 行
                有增删改（端点新增 / 删除 / 换路径换方法）。
        patch = 其余一切（实现 / 日志 / 性能 / 文案 / README / 测试）。
@@ -173,8 +174,32 @@ def route_lines_of(module, sha):
             if f'module: "{module}"' in line]
 
 
+def dir_renamed(sha, chain):
+    """这个提交是不是把这个插件自己的目录改名了（vendor 段或模块段变了）。
+
+    规则 8 把「vendor 或模块改名」算 minor，可**纯改名提交里 plugin.toml 一行都没变**
+    （`git show` 的 +/- 是空的），靠行判据会落成 patch —— 2026-11-25 把 29 个目录改成
+    PascalCase 时真踩到：16 个模块全落 patch，与规则 8 的跨度表不符。
+    所以改名走 git 的 R 记录：新旧路径的**父目录不同**就是改名。
+    """
+    new_root = chain[0]
+    for commit in COMMITS:
+        if commit['sha'] != sha:
+            continue
+        for status, old, new in commit['changes']:
+            if not status.startswith('R'):
+                continue
+            if not new.startswith(new_root + '/'):
+                continue
+            if os.path.dirname(old) != os.path.dirname(new):
+                return True
+    return False
+
+
 def classify(module, sha, chain):
     """机械分档：minor 或 patch。见模块文档第 4 条。"""
+    if dir_renamed(sha, chain):
+        return 'minor', '插件目录改名（vendor 段或模块段变了）'
     manifest = f'{chain[0]}/plugin.toml'
     if not added_in(sha, manifest):
         for line in diff_lines(sha, [manifest]):
