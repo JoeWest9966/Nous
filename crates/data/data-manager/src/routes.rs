@@ -293,15 +293,15 @@ mod tests {
         assert_eq!(body, json!({ "error": "from 必须小于 to" }));
     }
 
-    /// 空库也是 200：库存在但没数据，不是「坏了」，也不是「没装配」。
+    /// 库还没建也是 200 且按 0 报告：空库判据是「三条端点都 200」，
+    /// 「没建」不许伪装成「坏了」（也不许伪装成「没装配」的 409）。
     #[tokio::test]
-    async fn an_empty_database_answers_200_not_an_error() {
+    async fn a_missing_database_reports_zeros_and_still_answers_200() {
         let dir = tempfile::tempdir().unwrap();
-        let paths = empty_paths(dir.path());
-        drop(nous_chord::sqlite::LocalDatabase::open(&paths.durable).unwrap());
-        // plugins 库不存在也算空库（`db` 端点自己按 0 报告）。
-        let host = FakeHost { paths: Some(paths) };
-        let body = db(State(host)).await.unwrap();
-        assert!(body.0.get("durable").is_some(), "durable 一节必须在");
+        let host = FakeHost { paths: Some(empty_paths(dir.path())) };
+        let body = db(State(host)).await.unwrap().0;
+        assert_eq!(body["durable"]["bytes"], json!(0));
+        assert_eq!(body["plugins"]["bytes"], json!(0));
+        assert_eq!(body["durable"]["quickCheck"], json!("ok"));
     }
 }
