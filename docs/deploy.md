@@ -22,9 +22,11 @@ unit 里写这四个变量就会变成两份真相 —— 要换路径只在环�
 ## 发版清单（涨版本号时别漏第 2 条）
 
 1. `Cargo.toml` 的 workspace `version` 涨一格 + `cargo metadata --offline` 刷 `Cargo.lock`。
-2. **快照里的发行版号要跟着改**：`crates/Nous/Server/tests/snapshots/` 里
+2. **快照里的版本号要跟着改**（两类：`server.version` 的发行版号、`modules[].version` 的模块版本）：`crates/Nous/Server/tests/snapshots/` 里
    `capabilities_declares_modules_and_reasons.json`（`server.version` + 回退发行版号的那几个模块）
    与 `device_response_pins_client_shape.json`（`node` / `version`）是**逐字比对**的，不改就红。
+   涨某个插件的 `plugin.toml` 版本时，`dispatches` 快照里那条 `modules[].version` 也要同步
+   （2026-11-25 又踩一次：29 个插件集体涨 minor，`presets-admin` 快照红）。
    没有 `BLESS` 开关，`sed` 一把最省事：`sed -i 's/"0\.1\.28"/"0.1.29"/g' <快照>`。
    2026-11-25 真踩过：`v0.1.29` 的 tag 打完后才跑判据，两个快照全红。
 3. 判据顺序：`plugin-versions.py --check --doc-check` → `verify.sh` → `cargo test --workspace`，

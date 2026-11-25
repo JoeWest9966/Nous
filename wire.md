@@ -475,12 +475,15 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
   `GET /v1/plugins/:name/readme` 的 `version` 同一来源。
 - `modules[].name` 是**模块全名**（`docs/plugins.md` 规则 12）：照 Magento 2 的 `Vendor_Module`
   长相，例如 `Element_Models`；老模块的小写连字符名（`data-manager` / `sessions`）继续有效。
-  `name` 是 `/v1/plugins/:name/*` 与 `/v1/_routes` 的 `module` 标签，也是桌面端的显示名 ——
-  **目录名与包名是它的小写形**（`crates/Element/Models`、`element-models`），两者不是同一个字符串。
-- `modules[].vendor`：**出品方**（规则 10，`docs/plugins.md` 的 `vendor` 列），例如 `nous` / `data`。
+  `name` 是 `/v1/plugins/:name/*` 与 `/v1/_routes` 的 `module` 标签，也是桌面端的显示名。
+  **同一样东西的三套写法**（`docs/plugins.md` 规则 12）：全名 `Element_Models`、目录
+  `crates/Element/Models`（PascalCase）、包名 `element-models`（cargo 全小写）与 capability
+  `models`。客户端只认 `name`，别从包名或目录名反推。
+- `modules[].vendor`：**出品方**（规则 10，`docs/plugins.md` 的 `vendor` 列），**PascalCase**：
+  `Nous` / `Data` / `Element`（目录第一段就是它；全名第一段是它的小写形）。
   与 `version` 同一份生成表（`plugin.toml` 的 `vendor`，`server/build.rs` 编译期读出来），
-  桌面端拿它当插件列表的副标题（`data-manager` 的供应商是 `data`）。
-  没有清单的模块（运行时外挂 / `(待建)`）这里回 `null` —— **不猜**，不用 `nous` 顶替。
+  桌面端拿它当插件列表的副标题（`data-manager` 的供应商是 `Data`）。
+  没有清单的模块（运行时外挂 / `(待建)`）这里回 `null` —— **不猜**，不用 `Nous` 顶替。
   判据：`crates/Nous/Server/tests/plugin_versions.rs`（遍历 `docs/plugins.md` 的行，不点名模块）。
 
 #### POST /v1/sessions/:id/archive

@@ -121,7 +121,7 @@
     },
     {
       "name": "presets-admin",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -265,7 +265,7 @@
     },
     {
       "name": "Nous_Device",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "kind": "编译期",
       "layer": "app",
       "required": true,
