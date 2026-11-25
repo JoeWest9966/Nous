@@ -17,6 +17,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(element_models::routes::routes::<Arc<AppState>>());
     all.extend(data_data_manager::routes::routes::<Arc<AppState>>());
     all.extend(data_archive::routes::routes::<Arc<AppState>>());
+    all.extend(nous_elements::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -34,7 +35,18 @@ pub fn declarations() -> Vec<nous_routes::Declaration> {
 /// 未装配 = `None`（插件回 `state:"missing"` 的诚实空表）。
 impl element_models::routes::Host for AppState {
     fn elements_repo(&self) -> Option<Arc<nous_repo::Repo>> {
-        self.repo(crate::elements::REPO_KEY)
+        self.repo(nous_elements::routes::REPO_KEY)
+    }
+}
+
+/// `elements` 插件要的那一件事：元素库仓库。
+///
+/// 与 `element-models` 要的是同一个仓库 —— 两条能力各自声明，因为它们是两个插件：
+/// `elements` 读写元素本身，`element-models` 只把它投影成编目。共用一份 `AppState.repos`
+/// 里的 `"elements"` 键，所以看到的必然是同一个根。
+impl nous_elements::routes::Host for AppState {
+    fn elements_repo(&self) -> Option<Arc<nous_repo::Repo>> {
+        self.repo(nous_elements::routes::REPO_KEY)
     }
 }
 

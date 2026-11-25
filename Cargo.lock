@@ -1398,10 +1398,14 @@ dependencies = [
 name = "nous-elements"
 version = "0.1.31"
 dependencies = [
+ "axum",
+ "nous-env",
  "nous-repo",
+ "nous-routes",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

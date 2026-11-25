@@ -30,6 +30,8 @@ use std::collections::BTreeSet;
 use nous_repo::{CommitResult, Pushed, Repo, RepoError, Result, WriteCommit};
 use serde_json::{json, Map, Value};
 
+pub mod routes;
+
 /// id 最长 64（与旧面板 `ID_RE` 同一个数）。
 pub const ID_MAX: usize = 64;
 

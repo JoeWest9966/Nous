@@ -110,8 +110,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/_routes", get(routes_view));
     // 资源仓管理面（技能 / 提示词 / 扩展的编辑页）：文件读写 + 新建 + 发布，翻译层在独立模块。
     let router = router.merge(crate::resource_admin::attach(Router::new()));
-    // 元素库（组 / 包）：盘上真相与写事务在 `nous-elements`，这里只做 HTTP 翻译。
-    let router = router.merge(crate::elements::attach(Router::new()));
     // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `element-models`）。
     // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);

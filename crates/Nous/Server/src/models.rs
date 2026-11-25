@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use crate::app::AppState;
-use crate::elements::REPO_KEY;
+use nous_elements::routes::REPO_KEY;
 
 /// 约定组 → `GET /v1/models` 的形状。组不存在 / 私库未装配 → `None`，
 /// 调用方回落到 device 的文件/内联来源（行为与没有这条线时一致）。

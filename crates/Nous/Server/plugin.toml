@@ -1,6 +1,6 @@
 name = "server"
 vendor = "Nous"
-version = "0.3.18"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；归档三端点换归属 + 删静态表 3 行）
+version = "0.3.19"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；elements 八端点换归属 + 删静态表 8 行）
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-server"
 

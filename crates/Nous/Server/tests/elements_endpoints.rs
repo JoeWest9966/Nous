@@ -297,9 +297,28 @@ async fn capabilities_declare_the_elements_module_with_its_endpoints() {
     assert_eq!(module["enabled"], true);
     assert_eq!(module["layer"], "app");
     assert_eq!(module["crate"], "`nous-elements`");
-    let endpoints = module["endpoints"].as_array().unwrap();
-    assert!(endpoints.iter().any(|line| line == "PUT /v1/elements/{kind}/{id}"));
-    assert!(endpoints.iter().any(|line| line == "POST /v1/elements/push"));
+    // 搬家后这 8 条由插件自己的 `routes()` 交上来，注册表写法是 `:kind` / `:id`
+    // （`nous-routes::to_registry_path` 折的）；静态表里那批才是 `{kind}`。
+    // 逐条比对整张表，不只抽两条 —— 漏一条、多一条都要红。
+    let endpoints: Vec<&str> = module["endpoints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|line| line.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        endpoints,
+        vec![
+            "GET /v1/elements",
+            "GET /v1/elements/:kind",
+            "POST /v1/elements/:kind",
+            "GET /v1/elements/:kind/:id",
+            "PUT /v1/elements/:kind/:id",
+            "DELETE /v1/elements/:kind/:id",
+            "POST /v1/elements/:kind/:id/lock",
+            "POST /v1/elements/push",
+        ]
+    );
 }
 
 #[tokio::test]

@@ -18,7 +18,6 @@
 
 pub mod app;
 pub mod auth;
-pub mod elements;
 pub mod ext_admin;
 pub mod clock;
 pub mod coalesce;
