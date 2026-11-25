@@ -122,7 +122,7 @@ impl element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（10 条）
+### 4.1 已搬（13 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
@@ -130,16 +130,16 @@ impl element_models::routes::Host for AppState {
 | `element-models` | `GET /v1/models/elements` | `feat(element-models)` | 第一条**需要宿主注入**的端点；`Host::elements_repo` |
 | `element-models` | `PUT /v1/providers/{id}/secret` | `feat(element-models)` | **新端点**（不是搬家）：插件自带 handler，宿主给 `Secrets::secrets_file` |
 | `data-manager` | `GET /v1/stats/{usage,tasks,db,overview,conversations,conversation/:id,cost,health}`（8 条） | `refactor(data-manager)` | 第一次「一个插件一次搬 8 条」：`Host::stats_paths` 只给两个库路径；`server/src/stats.rs` 整份删掉，`openapi` 归 `server/routes.rs`（它读的是注册表，不是统计）。**这就是 §3.4 的标杆** |
+| `archive` | `POST /v1/sessions/{id}/archive` · `GET /v1/archive` · `POST /v1/archive/{id}/restore`（3 条） | `feat(archive)` | 第二类接缝：**命令面**（`Host::archive_session` / `archive_generations` / `restore_session`），不是库路径 —— 归档要在活库写锁下写 gen 文件再提交墓碑，失败按方向补偿，那套语义在 `nous_durable::session::commands`。顺带把供应商换成 `data`（`crates/data/archive`、包名 `data-archive`）。`server/src/routes.rs` 的三条 handler 与 `RestoreBody` 整份删除 |
 
-### 4.2 待搬（154 条 / 14 个模块）
+### 4.2 待搬（151 条 / 13 个模块）
 
 按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
-（静态表总数：搬家起点 162 行 → 现在 154 行；插件自带的端点 `Route::new` 共 11 条）。
+（静态表总数：搬家起点 162 行 → 现在 151 行；插件自带的端点 `Route::new` 共 14 条）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
 | `env` | 1 | 目录解析（`NOUS_START_DIRS`），无 IO 以外的状态 |
-| `archive` | 3 | 归档/墓碑（`nous-durable` sessions） |
 | `skills` | 6 | 私库读写（`nous-repo`）+ 变体表 |
 | `prompts` | 6 | 私库读写（`nous-repo`） |
 | `elements` | 8 | 元素库私库（已有 `element-models` 的先例） |
@@ -152,7 +152,7 @@ impl element_models::routes::Host for AppState {
 | `repo` | 30 | 最杂：git 面全在这一家（`nous-repo` 已是 platform，宿主只需给根路径） |
 | `device` | 7 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，建议**最后搬**（它们读注册表本身） |
 
-建议顺序：`env` → `archive` → `skills` / `prompts` / `elements` → `combos` →
+建议顺序：`env` → `skills` / `prompts` / `elements` → `combos` →
 `presets(-admin)` → `ext` → `triggers` → `repo` → `sessions` → `device`。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
@@ -212,3 +212,4 @@ vendor `nous` → `element`、补一条 `MANIFEST`（它自带两条端点却不
 | 2026-11-25 | **改名票**：`stats` → 出品方 `data` 的 `data-manager`（目录 `crates/data/data-manager`、包名 `data-data-manager`，端点路径 `/v1/stats/*` 一个字没动）；规则 10 由此立起来 |
 | 2026-11-25 | `data-manager` 交出 8 条 `GET /v1/stats/*`：`Host::stats_paths` 注入两个库路径；`server/src/stats.rs` 删除（`openapi` 搬回 `server/routes.rs`），静态表删 8 行 |
 | 2026-11-25 | `plugin.toml` 删掉 `endpoints` 字段（28 个清单）：端点唯一真相是 `routes()`，清单只记身份（规则 11） |
+| 2026-11-25 | `archive` 交出 3 条世代归档端点，落 `crates/data/archive`（vendor=`data`、包名 `data-archive`、模块全名 `archive`）：宿主能力是**命令面** `Host::{archive_session, archive_generations, restore_session}`（实现只在 `server/src/plugins.rs`，全走同一个 `CommandSource`）；`server/src/routes.rs` 的 `archive` / `archive_index` / `restore` / `RestoreBody` 整份删；静态表删 3 行 |

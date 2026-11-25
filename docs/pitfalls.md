@@ -417,3 +417,17 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 
 **怎么防**：动代码前先 `git worktree add /opt/Nous-src-<主题> -b fix/<主题>`，共用 main
 上一秒都不留未提交文件（AGENTS.md 的「一个 worktree 一个分支」就是为这个）。
+
+## 远端开发机的 `cargo` 是 wrapper，会盖掉你传的 `CARGO_TARGET_DIR`（2026-11-25）
+
+**症状**：在远程工作树里 `CARGO_TARGET_DIR=/workspace/av-target cargo test --workspace`，
+`nous-device/tests/manifest.rs` 报 `cargo metadata 可跑: NotFound`；单跑 `-p nous-device` 却是绿的。
+`verify.sh` 同一条（第 1 段「有失败」），其余全绿。
+
+**根因**：`/usr/local/bin/cargo` 是个 bash 包装：`export CARGO_TARGET_DIR=/workspace/nous/target`
+之后才 `exec` 真 cargo。于是「工作树 A 的测试二进制」配「工作树 B 的产物目录」，
+测试里 `Command::new("cargo")` 又继承了这个被改写的环境 → 找不到可执行文件 / 读到别人的源。
+
+**怎么防**：远程跑判据时显式绕过 wrapper —— `PATH=/workspace/cargo/bin:$PATH` +
+`CARGO_TARGET_DIR=<本工作树专用>`，别依赖 `/usr/local/bin/cargo`。共享一个 target 目录
+还会让两个工作树的 `build.rs` 生成物互相顶掉（`plugin_versions.rs` 就是其中之一）。
