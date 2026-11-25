@@ -22,9 +22,52 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
-/// `docs/plugins.md` 主表里「有 crate 目录」的行：`module -> crates/<vendor>/<module>`。
+/// 模块全名 → 目录名（`docs/plugins.md` 规则 12）：去掉 vendor 段、按大写字母断词、降小写。
 ///
-/// 读法与 `scripts/check-plugins.sh` 一致：只认反引号包住、名字是 `[a-z][a-z0-9-]*` 的第一格；
+/// `Element_Models` → `models`、`Nous_PresetsAdmin` → `presets-admin`、`data-manager` → 自己。
+/// 与 `scripts/check-plugins.sh` 的 `_kebab`、`scripts/layer-paths.sh` 的 `dir_of` 同算法。
+fn dir_of(module: &str) -> String {
+    let tail = module.split_once('_').map(|(_, tail)| tail).unwrap_or(module);
+    let mut out = String::new();
+    for (i, ch) in tail.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('-');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else if ch == '_' {
+            out.push('-');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// 全名形如 `Vendor_Module`（两段首字母大写）或老式小写连字符名。
+fn module_name_ok(module: &str) -> bool {
+    let two_segments = module
+        .split_once('_')
+        .is_some_and(|(head, tail)| {
+            !head.is_empty()
+                && !tail.is_empty()
+                && !tail.contains('_')
+                && head.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && tail.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                && module
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+    let legacy = module
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && module.chars().next().is_some_and(|c| c.is_ascii_lowercase());
+    two_segments || legacy
+}
+
+/// `docs/plugins.md` 主表里「有 crate 目录」的行：`模块全名 -> crates/<vendor>/<目录>`。
+///
+/// 读法与 `scripts/check-plugins.sh` 一致：只认反引号包住、名字合法（规则 12）的第一格；
 /// `(待建)` / `—` 的行跳过（它们没有 `plugin.toml`）。
 fn plugin_dirs() -> BTreeMap<String, PathBuf> {
     let doc = std::fs::read_to_string(repo_root().join("docs/plugins.md")).unwrap();
@@ -39,14 +82,17 @@ fn plugin_dirs() -> BTreeMap<String, PathBuf> {
             continue;
         }
         let module = cells[0].trim_matches('`').trim();
-        if module.is_empty() || !module.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        if module.is_empty() || !module_name_ok(module) {
             continue;
         }
         let crate_cell = cells[2];
         if crate_cell.starts_with("(待建)") || crate_cell.trim_matches('`').trim() == "—" {
             continue;
         }
-        let dir = repo_root().join("crates").join(cells[1]).join(module);
+        let dir = repo_root()
+            .join("crates")
+            .join(cells[1])
+            .join(dir_of(module));
         if dir.join("plugin.toml").is_file() {
             rows.insert(module.to_string(), dir);
         }
@@ -80,6 +126,20 @@ async fn capabilities(app: &Router) -> Value {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&bytes).unwrap()
+}
+
+/// 规则 12 的两条纯函数先钉一遍：目录推导错了，上面那条比对就会扫到空目录而静默跳过。
+#[test]
+fn rule12_name_and_dir_derivation() {
+    assert_eq!(dir_of("Element_Models"), "models");
+    assert_eq!(dir_of("Nous_Device"), "device");
+    assert_eq!(dir_of("Nous_PresetsAdmin"), "presets-admin");
+    assert_eq!(dir_of("data-manager"), "data-manager");
+    assert!(module_name_ok("Nous_Device"));
+    assert!(module_name_ok("data-manager"));
+    assert!(!module_name_ok("Nous_device"));
+    assert!(!module_name_ok("nous-device_Extra"));
+    assert!(!module_name_ok("Device"));
 }
 
 #[tokio::test]
