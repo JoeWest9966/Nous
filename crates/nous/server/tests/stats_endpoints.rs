@@ -1,5 +1,5 @@
 //! #62 判据 7 + 端点公共接缝：真 Router 上三条 stats 端点、capabilities、openapi。
-//! 用临时真库装配 StatsRuntime，不用假数据替端点自证。
+//! 用临时真库装配插件的 `Paths`（两个库路径），不用假数据替端点自证。
 
 mod common;
 
@@ -8,7 +8,8 @@ use std::path::PathBuf;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use nous_durable::{Storage, StorageWrite};
-use nous_server::{router, AppState, stats::StatsRuntime};
+use data_data_manager::routes::Paths;
+use nous_server::{router, AppState};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -32,9 +33,9 @@ fn temp_db(tag: &str) -> PathBuf {
 
 fn app(db: &PathBuf) -> axum::Router {
     let source = nous_server::ImportedSource::open(db).unwrap();
-    let state = AppState::with_source(source).with_stats(StatsRuntime {
-        durable_db: db.clone(),
-        plugins_db: db.with_file_name("data-data-manager62-http-never.sqlite"),
+    let state = AppState::with_source(source).with_stats(Paths {
+        durable: db.clone(),
+        plugins: db.with_file_name("data-data-manager62-http-never.sqlite"),
     });
     router(state)
 }
