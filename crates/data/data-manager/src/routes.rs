@@ -66,18 +66,26 @@ pub enum Refusal {
 }
 
 impl Refusal {
-    fn into_response(self) -> (StatusCode, Json<Value>) {
+    /// 状态码 + `{"error": …}` 这一对。分支只有一处，测试与 `IntoResponse` 共用。
+    fn split(self) -> (StatusCode, Value) {
         let (status, message) = match self {
             Self::NotConfigured => (StatusCode::CONFLICT, "stats not configured".to_string()),
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
             Self::NotFound(message) => (StatusCode::NOT_FOUND, message),
             Self::Internal(message) => (StatusCode::INTERNAL_SERVER_ERROR, message),
         };
-        (status, Json(json!({ "error": message })))
+        (status, json!({ "error": message }))
     }
 
     fn internal(error: impl std::fmt::Display) -> Self {
         Self::Internal(error.to_string())
+    }
+}
+
+impl axum::response::IntoResponse for Refusal {
+    fn into_response(self) -> axum::response::Response {
+        let (status, body) = self.split();
+        (status, Json(body)).into_response()
     }
 }
 
@@ -263,26 +271,26 @@ mod tests {
     #[tokio::test]
     async fn an_unassembled_host_is_a_conflict_not_empty_data() {
         let refusal = paths(&FakeHost { paths: None }).unwrap_err();
-        let (status, body) = refusal.into_response();
+        let (status, body) = refusal.split();
         assert_eq!(status, StatusCode::CONFLICT);
-        assert_eq!(body.0, json!({ "error": "stats not configured" }));
+        assert_eq!(body, json!({ "error": "stats not configured" }));
     }
 
     /// `group_by` 是闭集合；`from >= to` 直接 400，不悄悄换个区间。
     #[test]
     fn query_rules_reject_bad_input_with_a_400() {
         let bad_group = UsageQuery { from: None, to: None, group_by: Some("hour".into()) };
-        let (status, body) = bad_group.group_by().unwrap_err().into_response();
+        let (status, body) = bad_group.group_by().unwrap_err().split();
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(
-            body.0,
+            body,
             json!({ "error": "group_by 只能是 day|model|conversation，收到 \"hour\"" })
         );
 
         let bad_window = UsageQuery { from: Some(10), to: Some(10), group_by: None };
-        let (status, body) = bad_window.window().unwrap_err().into_response();
+        let (status, body) = bad_window.window().unwrap_err().split();
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body.0, json!({ "error": "from 必须小于 to" }));
+        assert_eq!(body, json!({ "error": "from 必须小于 to" }));
     }
 
     /// 空库也是 200：库存在但没数据，不是「坏了」，也不是「没装配」。
