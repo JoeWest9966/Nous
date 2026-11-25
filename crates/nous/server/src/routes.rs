@@ -18,7 +18,6 @@
 //! 接再自己 parse —— 让 axum 的 `Path<i64>` 拒掉会吐一段纯文本，破坏 `{error}`。
 
 use std::convert::Infallible;
-use std::path::PathBuf;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
