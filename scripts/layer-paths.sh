@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # 路径选择子：从 `docs/plugins.md` 的 `layer` 列输出模块**路径**（空格分隔）。
 #
-#   K=$(scripts/layer-paths.sh kernel)   # 例如 crates/nous/wire crates/nous/chord …
+#   K=$(scripts/layer-paths.sh kernel)   # 例如 crates/Nous/Wire crates/Nous/Chord …
 #   A=$(scripts/layer-paths.sh app)
 #
 # 规矩（spec §3.0）：
 #   - 成员**只从 `docs/plugins.md` 读**，本脚本里不写死任何模块名，也不写死 vendor 名；
 #   - 跳过 `crate` 列为 `(待建) …` 或 `—` 的行（目录不存在，不是判据载体）；
 #   - 清单缺失 / 不可解析 → 退出码 1（= 判据 RED，不是 SKIP）；参数缺失 → 退出码 2（用法错误）；
-#   - 目录名由**模块全名**推出（`docs/plugins.md` 规则 12）：`Element_Models` → `crates/element/models`，
+#   - 目录名由**模块全名**推出（`docs/plugins.md` 规则 12）：`Element_Models` → `crates/Element/Models`，
 #     老的小写连字符名 `data-manager` → 目录名就是它自己。
 set -uo pipefail
 
@@ -63,12 +63,15 @@ if not rows:
     raise SystemExit(1)
 
 def dir_of(name):
-    """规则 12：全名 → 目录名。`Element_Models` → `models`；`Nous_PresetsAdmin` → `presets-admin`。
+    """规则 12：全名 → 目录名（PascalCase，照 Magento 的 `app/code/Amasty/Shiprestriction`）。
+    `Element_Models` → `Models`；`Nous_PresetsAdmin` → `PresetsAdmin`。
 
-    与 `check-plugins.sh` 的 `_kebab` 同一算法：按大写字母断词再降小写。
+    与 `check-plugins.sh` 的 `_pascal` 同一算法：按大写字母断词，再把每段首字母大写。
     """
     tail = name.split('_', 1)[1] if '_' in name else name
-    return re.sub(r'(?<=[A-Za-z0-9])(?=[A-Z])', '-', tail).lower().replace('_', '-')
+    spaced = re.sub(r'(?<=[A-Za-z0-9])(?=[A-Z])', '-', tail)
+    words = [w for w in re.split(r'[-_]+', spaced) if w]
+    return ''.join(w[:1].upper() + w[1:].lower() for w in words)
 
 
 out = []

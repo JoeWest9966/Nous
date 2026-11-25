@@ -4,7 +4,7 @@
 #   ./scripts/check-plugins.sh
 #
 # 数据源：crates/*/*/ 目录、各 Cargo.toml、docs/plugins.md、cargo metadata、
-# crates/nous/durable/README.md。任何不一致都指名并打印 `checked=N mismatched=M`，
+# crates/Nous/Durable/README.md。任何不一致都指名并打印 `checked=N mismatched=M`，
 # 退出码非 0 —— 不许只 exit 0。
 set -uo pipefail
 
@@ -46,25 +46,35 @@ NAME_OK = re.compile(r'^(?:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z][A-Za-z0-9]*)?|[a-z][
 
 
 def split_name(name):
-    """模块全名 → (全名第一段的小写 vendor, 小写连字符目录名)。规则 12。
+    """模块全名 → (vendor 段的小写, 目录名 PascalCase)。规则 12。
 
-    `Element_Models` → ('element', 'models')；`Nous_PresetsAdmin` → ('nous', 'presets-admin')；
-    老写法 `data-manager` → (None, 'data-manager')。
+    `Element_Models` → ('element', 'Models')；`Nous_PresetsAdmin` → ('nous', 'PresetsAdmin')；
+    老写法 `data-manager` → (None, 'DataManager')。
 
-    尾段是 CamelCase，转目录要按**大写字母断词**再降小写：`DataManager` → `data-manager`、
-    `PresetsAdmin` → `presets-admin`。只 `.lower()` 会把 `presets-admin` 推成 `presetsadmin`，
-    跟仓里现有目录对不上。
+    目录名 = 尾段按大写字母断词、再**首字母大写连起来**（Magento 的 `app/code/Amasty/Shiprestriction`）：
+    `PresetsAdmin` → `PresetsAdmin`、`DataManager` → `DataManager`。只 `.lower()` 会把
+    `presets-admin` 推成 `presetsadmin`，跟仓里目录对不上。
     """
     if '_' in name:
         head, tail = name.split('_', 1)
-        return head.lower(), _kebab(tail)
-    return None, _kebab(name)
+        return head.lower(), _pascal(tail)
+    return None, _pascal(name)
+
+
+def _words(text):
+    """CamelCase / kebab / snake 都拆成词：`PresetsAdmin` / `presets-admin` → ['presets','admin']。"""
+    spaced = re.sub(r'(?<=[A-Za-z0-9])(?=[A-Z])', '-', text)
+    return [w for w in re.split(r'[-_]+', spaced) if w]
+
+
+def _pascal(text):
+    """→ `PresetsAdmin`（目录名）。"""
+    return ''.join(w[:1].upper() + w[1:].lower() for w in _words(text))
 
 
 def _kebab(text):
-    """CamelCase → 小写连字符：`PresetsAdmin` → `presets-admin`，已有连字符的原样保留。"""
-    spaced = re.sub(r'(?<=[A-Za-z0-9])(?=[A-Z])', '-', text)
-    return spaced.lower().replace('_', '-')
+    """→ `presets-admin`（包名 / capability 用的小写机器名）。"""
+    return '-'.join(w.lower() for w in _words(text))
 
 
 def read_plugins_rows():
@@ -241,9 +251,11 @@ for directory in dirs:
     name_vendor, name_dir = split_name(full_name)
     if name_dir != module:
         failures.append(f'目录名={module!r}（由全名 {full_name!r} 推出应为 {name_dir!r}）')
+    # vendor 是 PascalCase 出品方（`Nous` / `Element` / `Data`），且必须就是目录名。
+    # 全名第一段是小写形，所以只跟 `vendor.lower()` 比 —— 这条是规则 12 的「同一件事两套写法」。
     if pm.get('vendor') != vendor:
         failures.append(f'vendor={pm.get("vendor")!r}（应为目录的 {vendor!r}）')
-    if name_vendor is not None and name_vendor != vendor:
+    if name_vendor is not None and name_vendor != vendor.lower():
         failures.append(f'全名第一段是 {name_vendor!r}，与 vendor={vendor!r} 不符（规则 12）')
     row_pair = rows_by_dir.get(module)
     if row_pair is None:
@@ -254,7 +266,7 @@ for directory in dirs:
         if row_full != full_name:
             failures.append(f'清单行是 `{row_full}`，与 plugin.toml 的 name={full_name!r} 不符')
     if row is not None:
-        if row['vendor'] != vendor:
+        if row['vendor'] != vendor:  # 清单行 vendor 也是 PascalCase（`Nous`）
             failures.append(f'vendor 与清单行 {row["vendor"]!r} 不符')
         got_layer = pm.get('layer')
         if got_layer != row['layer']:
@@ -266,8 +278,10 @@ for directory in dirs:
             failures.append('provides 不是表')
         else:
             capability = provides.get('capability')
-            if capability is not None and capability != module:
-                failures.append(f'capability={capability!r}（目录名是 {module!r}）')
+            if capability is not None and capability != _kebab(module):
+                failures.append(
+                    f'capability={capability!r}（目录名 {module!r} 的小写机器名是 {_kebab(module)!r}）'
+                )
             # 规则 11：端点只有一个真相 —— 插件的 `routes()`；注册表（capabilities /
             # `_routes` / openapi）从它生成。清单里不许再抄一份（曾经是永远空的 `[]`，
             # 让人以为"这个插件没端点"）。
@@ -293,7 +307,8 @@ for directory in dirs:
     except (OSError, tomllib.TOMLDecodeError) as exc:
         failures.append(f'Cargo.toml 解析失败：{exc}')
         package_name = None
-    want_package = f'{vendor}-{module}'
+    # 包名是 cargo 的世界：全小写 kebab（`nous-device`），与目录的 PascalCase 不同。
+    want_package = f'{vendor.lower()}-{_kebab(module)}'
     if package_name is not None and package_name != want_package:
         failures.append(f'包名={package_name!r}（规则 10 要求 {want_package!r}）')
 

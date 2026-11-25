@@ -12,7 +12,7 @@
 
 | 现状（搬家前） | 症状 |
 |---|---|
-| 所有 handler 都在 `crates/nous/server/src/`，`routes.rs` 一千多行 | 加一条端点就得改 `server`，插件再小也得排队 |
+| 所有 handler 都在 `crates/Nous/Server/src/`，`routes.rs` 一千多行 | 加一条端点就得改 `server`，插件再小也得排队 |
 | 归属靠 `meta::ROUTES` 一张**手写静态表**声明 | 声明与实现是两份东西，只能靠判据对齐；搬/删容易漂 |
 | `plugin.toml` 的 `endpoints` 全是空数组 | 清单里读不出某个插件到底提供了什么端点（2026-11-25 已把这个字段整个删掉，见 `docs/plugins.md` 规则 11） |
 
@@ -86,7 +86,7 @@ impl element_models::routes::Host for AppState {
       `nous-routes` 自动折成注册表要的 `:id`。
 - [ ] 时钟只在端点层取（聚合层零时钟）；只读插件一次写都不做。
 
-#### B. 宿主侧（`crates/nous/server/`）
+#### B. 宿主侧（`crates/Nous/Server/`）
 
 - [ ] `plugins.rs`：`all.extend(<crate>::routes::routes::<Arc<AppState>>());`
 - [ ] `plugins.rs`：`impl <crate>::routes::Host for AppState`（**能力实现只写这一处**）。
@@ -130,7 +130,7 @@ impl element_models::routes::Host for AppState {
 | `element-models` | `GET /v1/models/elements` | `feat(element-models)` | 第一条**需要宿主注入**的端点；`Host::elements_repo` |
 | `element-models` | `PUT /v1/providers/{id}/secret` | `feat(element-models)` | **新端点**（不是搬家）：插件自带 handler，宿主给 `Secrets::secrets_file` |
 | `data-manager` | `GET /v1/stats/{usage,tasks,db,overview,conversations,conversation/:id,cost,health}`（8 条） | `refactor(data-manager)` | 第一次「一个插件一次搬 8 条」：`Host::stats_paths` 只给两个库路径；`server/src/stats.rs` 整份删掉，`openapi` 归 `server/routes.rs`（它读的是注册表，不是统计）。**这就是 §3.4 的标杆** |
-| `archive` | `POST /v1/sessions/{id}/archive` · `GET /v1/archive` · `POST /v1/archive/{id}/restore`（3 条） | `feat(archive)` | 第二类接缝：**命令面**（`Host::archive_session` / `archive_generations` / `restore_session`），不是库路径 —— 归档要在活库写锁下写 gen 文件再提交墓碑，失败按方向补偿，那套语义在 `nous_durable::session::commands`。顺带把供应商换成 `data`（`crates/data/archive`、包名 `data-archive`）。`server/src/routes.rs` 的三条 handler 与 `RestoreBody` 整份删除 |
+| `archive` | `POST /v1/sessions/{id}/archive` · `GET /v1/archive` · `POST /v1/archive/{id}/restore`（3 条） | `feat(archive)` | 第二类接缝：**命令面**（`Host::archive_session` / `archive_generations` / `restore_session`），不是库路径 —— 归档要在活库写锁下写 gen 文件再提交墓碑，失败按方向补偿，那套语义在 `nous_durable::session::commands`。顺带把供应商换成 `data`（`crates/Data/Archive`、包名 `data-archive`）。`server/src/routes.rs` 的三条 handler 与 `RestoreBody` 整份删除 |
 
 ### 4.2 待搬（151 条 / 13 个模块）
 
@@ -172,7 +172,7 @@ cargo test --workspace                                       # 全量
 
 1. `meta::ROUTES` 里那条**没了**（静态表只减不增）。
 2. `plugins::declarations()` 里有那条（`/v1/_routes` 能看到，`module` 字段对）。
-3. `server/src` 里再也搜不到那条路径字面量：`grep -rn '"/v1/xxx"' crates/nous/server/src`。
+3. `server/src` 里再也搜不到那条路径字面量：`grep -rn '"/v1/xxx"' crates/Nous/Server/src`。
 4. 插件 `plugin.toml` 的 `[requires]` 补齐了新增的内部依赖（`check-plugins.sh` 会点名）。
 
 ## 6 · 已知遗留
@@ -186,7 +186,7 @@ cargo test --workspace                                       # 全量
   极端分支上可能从 4xx 变 500。
 - 进程创建点：`server` 里原本新的 `!cmd` 密钥解析自己 `Command::new("sh")`，
   已改成调 `nous_tools::os_env::run_capture`（S1 的唯一执行面，判据 6 / 12 的口子）。
-  `crates/nous/server/src/trigger_projects.rs` 里的 `run_cargo` 是同一类欠账（更早就有），
+  `crates/Nous/Server/src/trigger_projects.rs` 里的 `run_cargo` 是同一类欠账（更早就有），
   本条未动 —— 它要 async 语义，换法另议。
 - 注册表顺序：静态表在前、插件声明在后；`capabilities_declares_modules_and_reasons.json`
   快照会随搬家调整端点顺序（内容不变）。
@@ -198,7 +198,7 @@ cargo test --workspace                                       # 全量
 | 2026-11-24 | 建 `nous-routes`（契约层）+ `server::plugins`（收集/装配/登记）；`device` 交出 `GET /v1/machines`（静态表删 1 行） |
 | 2026-11-25 | **规则 12 第二个：`device` → `Nous_Device`**（vendor/目录/包名一字不动，只改全名与版本 0.7.0 → 0.8.0）。同时补齐尾段 **CamelCase → kebab** 推导（`Nous_PresetsAdmin` → 目录 `presets-admin`）。三个判据跟着改：`plugin-versions.rs` 的测试原本按小写名硬凑目录，`Nous_Device` 直接被跳过 → 判据空转（`只比对了 9 个模块`）；修成由全名推目录，并补 `rule12_name_and_dir_derivation` 自检。Desk 侧新增 `module_matches`（`Nous_Device` ↔ `device` 都认），否则改名当天「设备」页会被判成未登记而灰掉 |
 | 2026-11-25 | **规则 12 落地**：模块全名照 Magento 2 的 `Vendor_Module`（`Element_Models`），
-目录与包名仍是小写（`crates/element/models` / `element-models`）。第一个迁的是 `element-models`：
+目录与包名仍是小写（`crates/Element/Models` / `element-models`）。第一个迁的是 `element-models`：
 vendor `nous` → `element`、补一条 `MANIFEST`（它自带两条端点却不在清单里，capabilities 看不见）。
 判据跟着改：`check-plugins.sh` 由全名**推出**目录 / 包名 / vendor；`layer-paths.sh` 与
 `plugin-versions.py` 用同一算法；`deploy.sh` 的插件 README 按全名落盘（`Element_Models.md`）。
@@ -209,7 +209,7 @@ vendor `nous` → `element`、补一条 `MANIFEST`（它自带两条端点却不
 | 2026-11-24 | `verify.sh` 判据 5/6/12 转绿（`os_env::run_capture_async`、`chord::sqlite::inspect`）；本轮不搬端点 |
 | 2026-11-24 | 客户端去掉「模块名 → 中文名」表（`docs/plugins.md` 规则 9）：模块名只有英文一处真相，新插件客户端自动出现 |
 | 2026-11-25 | 改名票：`stats` → `data/data-manager`（vendor=data，包名 `data-data-manager`）；端点路径 `/v1/stats/*` 一个字不变 |
-| 2026-11-25 | **改名票**：`stats` → 出品方 `data` 的 `data-manager`（目录 `crates/data/data-manager`、包名 `data-data-manager`，端点路径 `/v1/stats/*` 一个字没动）；规则 10 由此立起来 |
+| 2026-11-25 | **改名票**：`stats` → 出品方 `data` 的 `data-manager`（目录 `crates/Data/DataManager`、包名 `data-data-manager`，端点路径 `/v1/stats/*` 一个字没动）；规则 10 由此立起来 |
 | 2026-11-25 | `data-manager` 交出 8 条 `GET /v1/stats/*`：`Host::stats_paths` 注入两个库路径；`server/src/stats.rs` 删除（`openapi` 搬回 `server/routes.rs`），静态表删 8 行 |
 | 2026-11-25 | `plugin.toml` 删掉 `endpoints` 字段（28 个清单）：端点唯一真相是 `routes()`，清单只记身份（规则 11） |
-| 2026-11-25 | `archive` 交出 3 条世代归档端点，落 `crates/data/archive`（vendor=`data`、包名 `data-archive`、模块全名 `archive`）：宿主能力是**命令面** `Host::{archive_session, archive_generations, restore_session}`（实现只在 `server/src/plugins.rs`，全走同一个 `CommandSource`）；`server/src/routes.rs` 的 `archive` / `archive_index` / `restore` / `RestoreBody` 整份删；静态表删 3 行 |
+| 2026-11-25 | `archive` 交出 3 条世代归档端点，落 `crates/Data/Archive`（vendor=`data`、包名 `data-archive`、模块全名 `archive`）：宿主能力是**命令面** `Host::{archive_session, archive_generations, restore_session}`（实现只在 `server/src/plugins.rs`，全走同一个 `CommandSource`）；`server/src/routes.rs` 的 `archive` / `archive_index` / `restore` / `RestoreBody` 整份删；静态表删 3 行 |

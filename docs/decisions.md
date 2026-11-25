@@ -287,7 +287,7 @@ durable-until-acked），把这条 pragma 去掉，同时重跑 `commit_throughp
 ## 2026-11-18 · 存储分离 = 两个文件：`nous.db` 走自己的迁移链（#56）
 
 **决定**：触发器与触发账（`triggers` / `fires`）进**第二个库** `nous.db`，由新 crate
-`crates/nous/store`（`nous-store`，layer = `platform`）独占所有权；`durable.db` 一个字节都不碰。
+`crates/Nous/Store`（`nous-store`，layer = `platform`）独占所有权；`durable.db` 一个字节都不碰。
 store 的迁移链是**自己的**：版本表叫 `schema_version`、`CURRENT_VERSION = 1`，跟 durable 的
 `durable_schema`（= 2）各走各的。依赖面上 `nous-store` **只依赖 `rusqlite`**，不依赖 `nous-durable`。
 
@@ -319,7 +319,7 @@ durable 的迁移一改，触发器的数据跟着承担风险。两个文件把
 
 **决定**：`verify.sh` 判据 5 的标题与实现从「数据面唯一入口」改成「数据面入口**可数**」。
 入口集合 = `$K`（内核层）∪ `[package.metadata.nous] sqlite-entry = true` 的 crate（今天只有
-`crates/nous/store`）。名单从 `cargo metadata` 读，脚本里不点名目录；每一条入口都必须出现在
+`crates/Nous/Store`）。名单从 `cargo metadata` 读，脚本里不点名目录；每一条入口都必须出现在
 「排掉了 N 行」的清单里（豁免规则活着才绿）。
 
 **留痕（老规矩三行）**：
@@ -332,7 +332,7 @@ durable 的迁移一改，触发器的数据跟着承担风险。两个文件把
   有人图省事把触发器塞进 durable（正是本票要防的）。所以判据跟着改口径，而不是代码跟着判据走。
 
 同时收窄了 `scripts/check-separation.sh` 判据 1 的 grep：票面写的是
-`grep -rn "trigger|fires|plugin_snapshot" == 0`，但 `crates/nous/durable/src/harness/live.rs`
+`grep -rn "trigger|fires|plugin_snapshot" == 0`，但 `crates/Nous/Durable/src/harness/live.rs`
 里有一个 pi 自己的字段 `trigger: CompactionReason`（压缩触发，跟我们无关）。照票面字面扫，
 判据一落地就假红；要它绿就得去改 pi 的字段名 —— **判据不许指挥代码**。所以实际 pattern 是
 `trigger_code|triggers|fires|plugin_snapshot|nous_store`，并用「同一 pattern 在 store 里必须命中
@@ -371,7 +371,7 @@ durable 的迁移一改，触发器的数据跟着承担风险。两个文件把
 
 **决定**：`auth::token_path()` = `NOUS_TOKEN_FILE` 优先，否则 `default_token_path()`。
 `scripts/deploy.sh` 生成钥匙、unit 指路、代码只读 —— **三处一个路径，不许各猜一个**。
-判据 `crates/nous/server/tests/token_path.rs`：`NOUS_TOKEN_FILE` 那把能用、`$HOME` 那把**不认**、
+判据 `crates/Nous/Server/tests/token_path.rs`：`NOUS_TOKEN_FILE` 那把能用、`$HOME` 那把**不认**、
 不带 header 401。负向哨兵验过（把 `token_path()` 换回 `default_token_path()` → 红）。
 
 **反悔线**：如果哪天要做多把钥匙（按主体分权），先换 `auth.rs` 这一个文件，
@@ -504,7 +504,7 @@ pi durable 眼里**不该存在**触发器这个概念。分清楚域，才好�
 
 ## 2026-11-18 · 收口合并：`#44` 存在**两份实现**，取 integration 那份
 
-**事实**：`crates/nous/sessions` / `server` 在两条线上各被写了一遍 —— `main` 上的 `63f476a`
+**事实**：`crates/Nous/Sessions` / `server` 在两条线上各被写了一遍 —— `main` 上的 `63f476a`
 与 `integration/desk-connect` 上的 `f7e1ed5`。同一个目录、同一个目的、不同实现（`turn.rs` 各自
 300+ 行），所以两边合并时每一处都是「添加/添加」冲突，`git` 没法替我们选。
 
@@ -517,12 +517,12 @@ integration 用 `chrono_millis` 直接取时间。也就意味着 `nous-sessions
 **这条列成待办**：把时钟注入补回 sessions（一个 `Clock` trait + 一处注入 + 一条判据），
 不做就会在某次"时间相关 bug"上付出比现在更贵的代价。
 
-**同时删掉的两个文件**：`crates/nous/server/tests/turn_end_to_end.rs`、`crates/nous/sessions/src/clock.rs`
+**同时删掉的两个文件**：`crates/Nous/Server/tests/turn_end_to_end.rs`、`crates/Nous/Sessions/src/clock.rs`
 —— 它们测/提供的是**已经不存在的 API**（`TurnHandle` / `TurnFactory`），留着会编译不过。
 端到端覆盖没丢：integration 自己那份 `sessions/tests/turn_end_to_end.rs` 还在。
 
 **反悔点**：如果哪天发现 integration 那份 #44 缺了 main 那份的某个能力（例如历史重放 `load_history`），
-用 `git show 63f476a:crates/nous/sessions/src/turn.rs` 取回来当参照 —— 两份都还在 git 里，没有真丢。
+用 `git show 63f476a:crates/Nous/Sessions/src/turn.rs` 取回来当参照 —— 两份都还在 git 里，没有真丢。
 
 ---
 
@@ -539,7 +539,7 @@ integration 用 `chrono_millis` 直接取时间。也就意味着 `nous-sessions
 - **环境变量与文件名同字**：`NOUS_PLUGINS_DB` / `nous-plugins.db`（原来 `NOUS_TRIGGER_DB`）。
   一条规则，少一次「变量叫 A、文件叫 B」的对照。
 
-**落地面**：`crates/nous/server/src/main.rs` 的默认路径与变量名、`scripts/deploy-check.sh`
+**落地面**：`crates/Nous/Server/src/main.rs` 的默认路径与变量名、`scripts/deploy-check.sh`
 判据 12 的白名单（两个库都认，清单外任何文件仍然红）。
 
 **反悔点**：如果哪天要「一个插件一个库」（真隔离），那是把 `nous-plugins.db` 拆成
@@ -670,7 +670,7 @@ Magento 2 的模块也是各走各的版本线，根仓不压一个数 —— �
 2. 17 个 `crates/*/*/plugin.toml` 的 `version`（构建期校验：必须等于第 1 项）
 3. `git tag v<版本>` —— tag 只打在这一个数上
 
-**顺带修掉一处两处真相**：`crates/nous/ext-sdk/Cargo.toml` 是唯一一个把版本写成字面量的 crate
+**顺带修掉一处两处真相**：`crates/Nous/ExtSdk/Cargo.toml` 是唯一一个把版本写成字面量的 crate
 （其他都是 `version.workspace = true`）。升版本时它不会跟着动，`check-plugins.sh` 立刻报
 `ext-sdk: version='0.1.1'（Cargo.toml 是 '0.1.0'）`。改成 workspace 继承 —— 外部消费者要的
 是**一个能验的版本号**，不是「每个 crate 自己记一份」。
@@ -687,7 +687,7 @@ Magento 2 的模块也是各走各的版本线，根仓不压一个数 —— �
 `content/` 已于 2026-11-18 移出仓库（见上一条），这两行只对**本机 / j1900 上还没删的旧工作树**有用
 —— 那儿跑着真 sqlite，去掉只会让边车变成 `??` 噪声。`fixtures/*.sqlite-wal` / `-shm` 同理。
 
-**为什么现在能删**：前提有两条，都已经是事实 —— ① 引擎换成 Rust（`crates/nous/*`，
+**为什么现在能删**：前提有两条，都已经是事实 —— ① 引擎换成 Rust（`crates/Nous/*`，
 `cargo test --workspace` 是唯一的"做完了"定义）；② 面板下线，`vite preview` 不再被任何
 systemd unit 拉起，`NOUS_HOST` 全仓 0 处读取。这些文件不参与 cargo 构建、不被任何 Rust
 代码读，只占着名字让新人（和 agent）以为 `server/` 里还有 `/v1` 的实现、`templates/` 里还有
@@ -696,13 +696,13 @@ systemd unit 拉起，`NOUS_HOST` 全仓 0 处读取。这些文件不参与 car
 
 **怎么确认不是巧合**：正反两个方向都试过（issue #59 判据 5）。反向哨兵：临时留回
 `tsconfig.json` 再删，CI 判据不变红 —— 说明没人读它；正向哨兵：把 `server/tree.ts` 挪进
-`crates/nous/server/src/`，CI 也不变红 —— 说明它本来就不参与编译。两个方向都确认
+`crates/Nous/Server/src/`，CI 也不变红 —— 说明它本来就不参与编译。两个方向都确认
 "删了没影响"不是因为测试瞎了。
 
 **判据**：`git ls-files` 里上述路径 0 条；`cargo metadata --no-deps` 的 workspace members
 仍是 23；`./scripts/verify.sh` 56 ✓、`./scripts/check-plugins.sh` `checked=17 mismatched=0`；
 `git grep -nE "vite|tsconfig|nous-panel\.service" -- ':!docs' ':!*.md'` 的旧壳引用零命中
-（`crates/nous/tools/shell_output.rs` 里的 `vite v6.4.3` 是日志清洗的**测试样本**；
+（`crates/Nous/Tools/shell_output.rs` 里的 `vite v6.4.3` 是日志清洗的**测试样本**；
 `vendor/pi-env-daemon` 的 `tsconfig.build.json` 是 vendor 自己的构建配置；
 以及 `invite` 里的 `vite` 子串误命中 —— 三处都与旧壳无关）。
 **判据 4 的口径据此收窄**：判的是「旧壳的**路径**还有没有人引用」，不是「文件里出现过 `vite` 这个词」，
@@ -719,7 +719,7 @@ systemd unit 拉起，`NOUS_HOST` 全仓 0 处读取。这些文件不参与 car
 ## 2026-11-20（票 #65）· device 从 server 里长成插件：编目有来源，默认模型有写者
 
 **决定**：把 `meta.rs` 的 device/machines/models 段和 `machines.rs` / `models.rs` 搬进新插件
-`crates/nous/device`（app 层，`nous-device`）；`server → device` 单向依赖，device 不认识 server。
+`crates/Nous/Device`（app 层，`nous-device`）；`server → device` 单向依赖，device 不认识 server。
 `/v1/models` 的来源优先级是「装配注入的编目（faux 验收 / 快照测试）> `NOUS_MODELS` 内联 >
 `NOUS_MODELS_FILE` 文件 > 诚实空表 + `catalog.state="missing"`」。
 `PUT /v1/default` 只写文件编目（临时文件 + rename，先校验模型在 items 里），内联编目没有可写路径 → 400。
@@ -741,7 +741,7 @@ j1900 上其实还留着 940K 的技能副本。插件机制在跑，内容进�
 "没装" 和 "不知道数据根在哪" 混成同一个形状。
 
 **决定**：变量名和默认值照 `Nous-ts` `server.js:77-83` 净移植，四个入口收进
-`crates/nous/env/src/content.rs` 一处解析；旧变量名删除、不做兼容（查过没有任何
+`crates/Nous/Env/src/content.rs` 一处解析；旧变量名删除、不做兼容（查过没有任何
 部署设过）。`root` 从此恒为字符串，目录在不在由 `present` 说；`missing` 只在
 `present=false` 给一句人话。服务只读：不建目录、不写、不 spawn —— 写回是
 `skills-admin` / `presets-admin` 的事。模板数据根走 `NOUS_PRESETS`，与 #60 的
@@ -1031,7 +1031,7 @@ restore 方向相反：闭包先写回活库，抹墓碑失败时**保留 genera
 ## 2026-11-22 · 资源仓管理面（三个编辑页）落在 server 翻译层，文件与 git 全部复用 `nous-repo`
 
 **决定**：`/v1/{skills,prompts,extensions}/{files,file,create,publish}` 由
-`crates/nous/server/src/resource_admin.rs` 做 HTTP ↔ 盘面翻译（三仓共用一副骨架），
+`crates/Nous/Server/src/resource_admin.rs` 做 HTTP ↔ 盘面翻译（三仓共用一副骨架），
 不新建 `nous-skills-admin` crate；文件读写 / etag 撞闸 / 提交 / push
 一律走 `nous_repo::Repo`（`/v1/repos/skills/*` 的同一套）。publish 先问 `pending()` 拿
 dirty 路径再 `commit()`，不自己拼 `git add`。
@@ -1086,7 +1086,7 @@ server 只做 HTTP ↔ 盘面翻译。归档改成 TS 的**搬目录**（`<段>/
 64 KiB 的句柄预算被它吃光，扩展拿到的 `files` 里一条 `SKILL.md` 都没有。
 ## 2026-11-23 · 元素库 = 第六套私库（不是 ext 插件），写一次提交一次
 
-**决定**：旧面板 `k3skws` 的元素库（组 / 包）在 Rust 侧落成 `crates/nous/elements`
+**决定**：旧面板 `k3skws` 的元素库（组 / 包）在 Rust 侧落成 `crates/Nous/Elements`
 （app 层）+ 第六套私库 `NOUS_ELEMENTS`（默认 `/opt/Nous-Elements`）。盘上真相仍是
 `groups/<id>.json` / `packages/<id>.json`，一份 JSON 一个元素；`/v1/elements*` 由
 `server::elements` 只做 HTTP 翻译，写事务在 `nous-repo`：新增 `write_and_commit`
@@ -1178,7 +1178,7 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 2. **`server/` 里还没搬进插件的 handler 提交算这个插件的经历**：端点属于模块（`ROUTES` 就是
    归属的唯一真相），起点取「目录入库」与「`ROUTES` 首次登记本模块」中更早的那个。
    搬家票（`#14` / `#75` 一族）往后照这个口径记账，端点先于目录不重复计。
-3. **`/v1/capabilities` 报插件自己的版本**：`crates/nous/server/build.rs` 扫
+3. **`/v1/capabilities` 报插件自己的版本**：`crates/Nous/Server/build.rs` 扫
    `crates/*/*/plugin.toml` 生成 `模块名 → version` 静态表（`include!` 进
    `src/plugin_versions.rs`），`meta.rs` 从表里取；取不到才回退发行版号并加
    `versionSource: "release"` 如实说明（回退不静默）。`build.rs` 对每份 `plugin.toml` 与
@@ -1207,7 +1207,7 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 而不是比 HEAD。已知低估也写在 `docs/plugin-versions.md` 里：端点只改回包形状 / 状态码
 这类变更机械判据抓不到，minor 是下界不是完整清单。
 
-## 2026-11-25 会话归档搬进插件（`crates/data/archive`，vendor=`data`）
+## 2026-11-25 会话归档搬进插件（`crates/Data/Archive`，vendor=`data`）
 
 **背景**：搬家票（`docs/magento2-migration.md`）按 §3.4 的标杆逐个插件推进。`archive` 是
 第 4 个，3 条端点：`POST /v1/sessions/{id}/archive` · `GET /v1/archive` ·
@@ -1223,7 +1223,7 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
   `ServerError`（409 是「现在不行」、400 是「这么写不行」、404 是「没有这条」）；
   `plugins.rs` 只把 `ServerError` 的 `status()` + `message()` 原样装进
   `data_archive::routes::Refusal`。插件只补自己那两条 400（id 不是数字 / restore body 坏）。
-- **供应商换 `data`。** 目录 `crates/data/archive`、包名 `data-archive`、`plugin.toml`
+- **供应商换 `data`。** 目录 `crates/Data/Archive`、包名 `data-archive`、`plugin.toml`
   的 `vendor = "data"` / `capability = "archive"`（规则 10 + 规则 11）。模块名保持
   `archive` —— `docs/plugins.md` 的 module 列、`capabilities` 的 `name`、NousDesk 的
   `Feature::Archive` 都按这个名字判能力，改它等于跨仓改契约，不在这一票里。

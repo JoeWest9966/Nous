@@ -4,7 +4,7 @@
 > `wire.md`（语义参考）。`presets/*` 从来不在 `wire.md` 里，形状一律从 desk 类型抄。
 > 本文件是**实现前**定稿，防止 documents 长出 per-kind 分支（ticket 末尾的反悔点）。
 >
-> **#48 已落地**：形状的权威回到代码 —— `crates/nous/documents` 的路由 + `wire.md`。
+> **#48 已落地**：形状的权威回到代码 —— `crates/Nous/Documents` 的路由 + `wire.md`。
 > 这里留着的价值是**当时的理由**（为什么一个实现生两套端点、为什么不 per-kind 分支），
 > 不是字段清单：对不上就改代码那边，别拿这份反向修实现。
 

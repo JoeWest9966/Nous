@@ -15,14 +15,14 @@
 
 **四条私库路径不进 unit**（#63）：`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` /
 `NOUS_EXTEND` 的默认值分别是 `/opt/Nous-skills` / `/opt/Nous-prompts` /
-`/opt/Nous-Template` / `/opt/Nous-extend`，在 `crates/nous/env/src/content.rs` 一处解析。
+`/opt/Nous-Template` / `/opt/Nous-extend`，在 `crates/Nous/Env/src/content.rs` 一处解析。
 unit 里写这四个变量就会变成两份真相 —— 要换路径只在环境里改一处；缺目录是正常状态，
 `/v1/skills` / `/v1/prompts` 仍回 `root` 字符串 + `present=false`，不会回 `null`。
 
 ## 发版清单（涨版本号时别漏第 2 条）
 
 1. `Cargo.toml` 的 workspace `version` 涨一格 + `cargo metadata --offline` 刷 `Cargo.lock`。
-2. **快照里的发行版号要跟着改**：`crates/nous/server/tests/snapshots/` 里
+2. **快照里的发行版号要跟着改**：`crates/Nous/Server/tests/snapshots/` 里
    `capabilities_declares_modules_and_reasons.json`（`server.version` + 回退发行版号的那几个模块）
    与 `device_response_pins_client_shape.json`（`node` / `version`）是**逐字比对**的，不改就红。
    没有 `BLESS` 开关，`sed` 一把最省事：`sed -i 's/"0\.1\.28"/"0.1.29"/g' <快照>`。
@@ -148,7 +148,7 @@ inode 与 sha256（判据 7）。
 ## 5 · 供应商密钥从哪来（元素库只存引用）
 
 元素库里的包只存 `apiKey` **引用**，明文密钥不进 git（`packages/provider-*.json` 里
-出现明文会被元素库的写入口直接拒掉）。引擎启动时（`crates/nous/server/src/providers.rs`）
+出现明文会被元素库的写入口直接拒掉）。引擎启动时（`crates/Nous/Server/src/providers.rs`）
 把引用解成值，只放进请求头，不进日志、不进响应体；解不出来的供应商**整条跳过**并在
 journal 里点名（`nous-server: provider: 供应商 \`wb2api\`：环境变量 WB2API_API_KEY 没有值，跳过`）。
 

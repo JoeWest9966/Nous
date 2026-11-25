@@ -51,7 +51,7 @@ else
 	fi
 	# dev 层正集哨兵：dev 为空会让所有"减 dev 层"的排除静默失效，所以这里钉死它的成员。
 	DEV_SORTED=$(printf '%s\n' $DEV_PATHS | sed '/^$/d' | sort | tr '\n' ' ' | sed 's/ *$//')
-	if [ "$DEV_SORTED" = "crates/nous/ext-probe crates/nous/fixture" ]; then
+	if [ "$DEV_SORTED" = "crates/Nous/ExtProbe crates/Nous/Fixture" ]; then
 		ok "dev 层正集哨兵：$DEV_SORTED（探针 + 夹具；空 dev 会让排除静默失效）"
 	else
 		bad "dev 层集合不是「fixture + ext-probe」（实得：${DEV_PATHS:-空}）—— 减 dev 层的排除会跟着失效"
@@ -127,13 +127,13 @@ if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	fi
 
 	step "1c. conformance 用例数下限（防止套件被瘦成三行）"
-	FLOOR=crates/nous/durable/conformance/FLOOR.tsv
+	FLOOR=crates/Nous/Durable/conformance/FLOOR.tsv
 	if [ -f "$FLOOR" ]; then
 		THIN=0; FILES=0
 		while IFS=$'\t' read -r file min; do
 			case "$file" in ''|'#'*) continue ;; esac
 			FILES=$((FILES+1))
-			N=$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "crates/nous/durable/conformance/$file" 2>/dev/null || true)
+			N=$(grep -cE '^[[:space:]]*#\[(tokio::)?test' "crates/Nous/Durable/conformance/$file" 2>/dev/null || true)
 			N=${N:-0}
 			if [ "$N" -ge "$min" ] 2>/dev/null; then
 				ok "$file：$N ≥ $min"
@@ -260,8 +260,8 @@ if [ "$WHAT" = all ] || [ "$WHAT" = boot ] || [ "$WHAT" = auth ]; then
 		mkdir -p "$AUTH_TMP/home"
 
 		# 源码哨兵：删掉中间件挂载 / 删掉启动门槛，下面两行 grep 就红。
-		if grep -q 'require_bearer' crates/nous/server/src/main.rs \
-		   && grep -q -- '--print-token' crates/nous/server/src/main.rs; then
+		if grep -q 'require_bearer' crates/Nous/Server/src/main.rs \
+		   && grep -q -- '--print-token' crates/Nous/Server/src/main.rs; then
 			ok "源码哨兵：中间件挂载 + 启动门槛提示都在"
 		else
 			bad "源码哨兵丢了：中间件挂载或 --print-token 提示不在 main.rs"
@@ -833,7 +833,7 @@ PY
 	# 5. 数据面唯一入口：$K 之外不许出现 rusqlite / Connection::open / .sqlite / PRAGMA / BEGIN IMMEDIATE。
 	#    "之外"只算代码（crates/ 下的 .rs）；tests/ 与 *_test(s).rs 里的临时库名是夹具，不是第二入口。
 	# #56 起这条从「恰好一个入口」改成「**可数的**入口」：数据面入口 = $K ∪ `sqlite-entry` 的 crate。
-	# 第二个库（`nous.db`，`crates/nous/store`）自己开连接是正当的 —— 它就是这个库的所有者。
+	# 第二个库（`nous.db`，`crates/Nous/Store`）自己开连接是正当的 —— 它就是这个库的所有者。
 	# 名单从 `cargo metadata` 的 `[package.metadata.nous] sqlite-entry = true` 读，**不点名目录**；
 	# 每一条入口都必须在「排掉了 N 行」里出现过，否则豁免是死的。
 	sqlite_entry_paths() {
@@ -1041,9 +1041,9 @@ for p in m['packages']:
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT" | sed '/^$/d' | sort) || true)
 		report_dropped "11." "$DROPPED" || return 1
 		# 哨兵：dev 层里那条"测试用配置"必须被命中（排除活着，且排的正是测试用途）
-		printf '%s\n' "$DROPPED" | grep -q '^crates/nous/ext-probe/src/server.rs:36:' \
+		printf '%s\n' "$DROPPED" | grep -q '^crates/Nous/ExtProbe/src/server.rs:36:' \
 			|| { echo "哨兵丢了：dev 层的 ext-probe/src/server.rs:36 没命中（减 dev 层的规则失效，或探针被挪走）"; return 1; }
-		echo "       哨兵：$(printf '%s\n' "$DROPPED" | grep '^crates/nous/ext-probe/src/server.rs:36:' | sed 's/^ *//')"
+		echo "       哨兵：$(printf '%s\n' "$DROPPED" | grep '^crates/Nous/ExtProbe/src/server.rs:36:' | sed 's/^ *//')"
 		[ -z "$KEPT" ] || { echo "$KEPT"; return 1; }
 	}
 
@@ -1056,10 +1056,10 @@ for p in m['packages']:
 		KEPT=$(printf '%s\n' "$RAW" | dev_reject | grep -vE '(/tests/|tests\.rs$)' | sed '/^$/d' | sort || true)
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT") || true)
 		report_dropped "12." "$DROPPED" || return 1
-		# 哨兵：**恰好 1 个文件**，且就是扩展监管的 `crates/nous/ext/src/spawn.rs`
+		# 哨兵：**恰好 1 个文件**，且就是扩展监管的 `crates/Nous/Ext/src/spawn.rs`
 		NF=$(printf '%s\n' "$KEPT" | grep -c . || true)
-		if [ "$NF" -ne 1 ] || [ "$(printf '%s\n' "$KEPT")" != "crates/nous/ext/src/spawn.rs" ]; then
-			echo "进程创建点不是恰好 1 个文件 == crates/nous/ext/src/spawn.rs（实得 $NF 个）："
+		if [ "$NF" -ne 1 ] || [ "$(printf '%s\n' "$KEPT")" != "crates/Nous/Ext/src/spawn.rs" ]; then
+			echo "进程创建点不是恰好 1 个文件 == crates/Nous/Ext/src/spawn.rs（实得 $NF 个）："
 			printf '%s\n' "$KEPT" | sed 's/^/       /'
 			return 1
 		fi
@@ -1120,7 +1120,7 @@ fi
 if [ "$WHAT" = all ] || [ "$WHAT" = issue52 ]; then
 	step "6a. #52：拒绝启动常量与理由表"
 
-	EXIT_REFUSED_SRC=$(grep -oE 'EXIT_REFUSED: u8 = [0-9]+' crates/nous/server/src/refusal.rs | sed -E 's/.*= ([0-9]+)/\1/' || true)
+	EXIT_REFUSED_SRC=$(grep -oE 'EXIT_REFUSED: u8 = [0-9]+' crates/Nous/Server/src/refusal.rs | sed -E 's/.*= ([0-9]+)/\1/' || true)
 	if [ "$EXIT_REFUSED_SRC" = 78 ]; then
 		ok "2b. 源码 EXIT_REFUSED == 78"
 	else

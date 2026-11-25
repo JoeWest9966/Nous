@@ -61,7 +61,7 @@ def plugin_dirs():
     """`docs/plugins.md` 里所有有目录的模块：`目录名 -> crates/<vendor>/<目录名>`。
 
     目录名由模块全名推出（`docs/plugins.md` 规则 12，与 `scripts/layer-paths.sh` 同一算法）：
-    `Element_Models` → `crates/element/models`。
+    `Element_Models` → `crates/Element/Models`。
 
     key 用**模块全名**（`plugin.toml` 的 `name`）：`/v1/capabilities`、路由声明、本文档三者
     都按全名说话，目录名只是目录。
@@ -169,7 +169,7 @@ def added_in(sha, path):
 
 def route_lines_of(module, sha):
     """这个提交在 `meta.rs` 的 `ROUTES` 里改到的、属于本模块的行。"""
-    return [line for line in diff_lines(sha, ['crates/nous/server/src/meta.rs'])
+    return [line for line in diff_lines(sha, ['crates/Nous/Server/src/meta.rs'])
             if f'module: "{module}"' in line]
 
 

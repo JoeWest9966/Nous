@@ -77,76 +77,83 @@
     requires），不管"我有哪些 URL"。
     判据：`scripts/check-plugins.sh` 见到 `provides.endpoints` 就红（`endpoints 已作废`）。
 
-12. **模块名照 Magento 2 的 `Vendor_Module` 长，目录与包名照旧全小写。**
-    Magento 的模块全名是 `Magento_Catalog` / `Amasty_Shiprestriction`：**大写、`_` 分段、第一段就是
-    vendor**。我们照抄这条，但把它和「机器名」分开，否则 cargo 包名与目录会变成大写：
+12. **三套写法，各归各的世界** —— 照 Magento 2 的 `app/code/Amasty/Shiprestriction` + `module.xml`
+    + composer 包名三件套：
 
     | 概念 | 形态 | 例 |
     |---|---|---|
-    | 模块全名（`plugin.toml` 的 `name`、`/v1/capabilities` 的 `modules[].name`、`GET /v1/plugins/:name/*`） | `<Vendor>_<Module>`，两段首字母大写 | `Element_Models` |
-    | vendor（出品方，规则 10） | 小写，等于全名第一段的小写 | `element` |
-    | 目录 | `crates/<vendor>/<module 目录名>`，目录名 = 全名去掉 vendor 段后的**小写连字符形** | `crates/element/models` |
-    | 包名（`Cargo.toml`） | `<vendor>-<module 目录名>` | `element-models` |
-    | capability（`provides.capability`） | 同目录名（机器名，判据比对用） | `models` |
+    | 模块全名（`plugin.toml` 的 `name`、`/v1/capabilities` 的 `modules[].name`、`GET /v1/plugins/:name/*`） | `<Vendor>_<Module>`，`_` 分段，每段首字母大写 | `Amasty_Shiprestriction` / `Nous_PresetsAdmin` |
+    | vendor（出品方，规则 10；`plugin.toml` 的 `vendor`、`/v1/capabilities` 的 `modules[].vendor`、目录名） | **PascalCase**，等于全名第一段 | `Amasty` / `Nous` / `Element` / `Data` |
+    | 目录 | `crates/<Vendor>/<Module>`，Module = 全名去掉 vendor 段、按大写字母断词后**每段首字母大写** | `crates/Amasty/Shiprestriction` / `crates/Nous/PresetsAdmin` |
+    | 包名（`Cargo.toml` 的 `name`） | `<vendor 小写>-<module 小写连字符>`：cargo 的世界全小写 | `amasty-shiprestriction` / `nous-presets-admin` |
+    | capability（`provides.capability`） | 同「小写连字符模块名」，判据与机器比对用 | `shiprestriction` / `presets-admin` |
+
+    四句话记住：
+    ① **全名与 vendor 首字母大写**（命名空间的样子，`Nous_PresetsAdmin` / `Nous`）；
+    ② **目录跟着 PascalCase 走**（`crates/Nous/PresetsAdmin`，与 Magento 的 `app/code/...` 同构）；
+    ③ **包名与 capability 全小写连字符**（cargo 与机器名只认这个，`nous-presets-admin` / `presets-admin`）；
+    ④ 三者**由全名推出来，不另存第二份**：`check-plugins.sh` 的 `_pascal` / `_kebab`、
+    `layer-paths.sh` 的 `dir_of`、`plugin-versions.rs` 的 `dir_of` 是同一算法的三份实现，改一处必须改全部。
+
+    **断词规则**：尾段是 CamelCase 或 kebab，都先按大写字母/连字符拆成词，再拼 ——
+    `PresetsAdmin` / `presets-admin` → 目录 `PresetsAdmin`、包名 `presets-admin`。只 `.lower()`
+    会把 `presets-admin` 推成 `presetsadmin`，跟仓里目录对不上（这条踩过）。
 
     「vendor 永远是 B 形态」：**vendor 是目录与包名的一部分，模块由 vendor 独立命名，包名 `vendor-module`**
     —— 不存在「vendor 只活在字段里、目录平铺」的 A 形态。这句话是一次性决定，别再翻案。
-    **尾段 CamelCase 按大写字母断词再降小写**，不是只 `.lower()`：`Nous_PresetsAdmin` → 目录
-    `crates/nous/presets-admin`、`Element_Models` → `crates/element/models`。只降小写会把
-    `presets-admin` 推成 `presetsadmin`，跟仓里现有目录对不上（`check-plugins.sh` 的 `_kebab`
-    与 `layer-paths.sh` 的 `dir_of` 是同一算法，改一处必须改另一处）。
-    老模块的小写连字符全名（`data-manager`、`sessions`）继续有效：无 `_` 时目录名 = 全名本身、
-    包名 = `<vendor>-<全名>`，逐次迁移，不做一次性改名。
-    判据：`scripts/check-plugins.sh` 由全名**推出**目录名 / 包名 / vendor 再逐条比对（不再要求
-    `plugin.toml.name == 目录名`，那是 A 形态的算法）。
+    老模块的小写连字符全名（`data-manager`、`sessions`）继续有效：无 `_` 时目录名 = 全名断词后
+    PascalCase（`DataManager` / `Sessions`）、包名 = `<vendor 小写>-<全名>`，**逐个改成全名**，
+    不做一次性改名。
+    判据：`scripts/check-plugins.sh` 由全名**推出**目录名 / 包名 / capability，再与磁盘、清单、
+    `docs/plugins.md` 三处逐条比对；`vendor` 必须等于目录名（PascalCase），且全名第一段 == vendor 的小写。
 
 ## 表
 
 | module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |
 |---|---|---|---|---|---|---|---|
-| `wire` | nous | `nous-wire` | kernel | 编译期 | `/v1/*` 事件与实体类型 | 是 | 契约层，零依赖优先 |
-| `chord` | nous | `nous-chord` | kernel | 编译期 | context / json / delta / sqlite / watch / output | 是 | 语义基元 |
-| `durable` | nous | `nous-durable` | kernel | 编译期 | 提交 / 文档 / 会话与 entry 查询 / scans | 是 | 存储与事务边界 |
-| `env` | nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait + 四条私库路径解析（`content.rs`：#63）+ `GET /v1/fs/dirs` 的目录解析（`NOUS_START_DIRS` 只在这里读） | 是 | 契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin` |
-| `repo` | nous | `nous-repo` | platform | 编译期 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75）+ 技能/扩展变体 worktree + 绑定表 + prune/publish/usage（#76）+ 上游追踪（sources / mirror / check / pin / sync / tree / file / copy / adopt；#77） | 是 | 唯一的 git 进程调用面；四条私库路径解析沿用 `env` |
-| `env-local` | nous | (待建) `nous-env-local` | platform | 编译期 | `ExecutionEnv` 本地实现 | 是 | 今天的 `os_env.rs` 落点 |
-| `env-ssh` | nous | `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现（ssh/scp + ControlMaster + 临时密钥） | 否 | 今天 `ssh-env.js`（631 行）；#78 落地 |
-| `ai-types` | nous | `nous-ai-types` | kernel | 编译期 | TSchema / Message / Usage（纯） | 是 | 从 `nous-ai` 拆出，零 IO 零时钟（T2 已落地） |
-| `ai` | nous | `nous-ai` | platform | 编译期 | provider trait + HTTP/SSE 实现 | 是 | 今天一个包兼纯/IO 两半；纯的那半已拆成 `ai-types` |
-| `ai-providers` | nous | (待建) `nous-ai-providers` | platform | 编译期 | provider 实现（拆完只留 IO 那半） | 是 | T2 拆完由 `ai` 改出：目录改名 `ai` → `ai-providers`、包改名 `nous-ai` → `nous-ai-providers` |
-| `tools` | nous | `nous-tools` | platform | 编译期 | read / write / edit / bash / grep / find / ls | 否 | 第一方工具，唯一进程创建面 |
-| `runtime` | nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
-| `telemetry` | nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
-| `store` | nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
-| `Nous_Device` | nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
-| `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
-| `documents` | nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
-| `prompts` | nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟）+ 管理面 `/v1/prompts/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 是 | 今天 `prompts/index.js` |
-| `ext` | nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 / 管理面（create / duplicate / install / uninstall / categories / category / usage，#84）+ 编辑页 `/v1/extensions/{files,file,publish}`（文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划 |
-| `ext-probe` | nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
-| `ext-sdk` | nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
-| `extend-trash` | nous | — | app | 数据目录 | 卸载源码的垃圾站 + `deleted-extensions.json` 删除名单（#84） | 否 | 位于 `data/extend-trash/`，install 的回退来源；名单随私库发布，防 git pull 复活 |
-| `ext-host` | nous | (待建) `nous-ext-host` | app | 编译期 | 帧协议 + 进程监管 + 熔断 + 热加载 | 是 | slice 1（`#20`） |
-| `server` | nous | `nous-server` | app | 编译期 | `/v1/*` 端点 + SSE | 是 | 唯一监听处；bin 叫 `nous-app` |
-| `fixture` | nous | `nous-fixture` | dev | 编译期 | fixture 库 → `/v1/sessions` 同形 JSON | 否 | 测试夹具 binary（`dev`：不进 systemd、不进发布包） |
-| `audit` | nous | (待建) `nous-audit` | app | 编译期 | 事件追加与投影 | 否 | 今天 `activity.js`（55 行） |
-| `dispatcher` | nous | `nous-dispatcher` | app | 编译期 | 注入 Clock + durable `sleeping` 任务的 60s 节拍、纯判定 `evaluate`、忙则跳过、失败隔离（trigger → 会话） | 否 | #73 落地；内核算核心三件之一，见下注 |
-| `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
-| `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口）+ `PATCH /v1/triggers/{code}`（#73：改 schedule/params/enabled，code 不可变） | 否 | #57/#58 落地；调度节拍归 `dispatcher` |
-| `elements` | nous | `nous-elements` | app | 编译期 | `GET /v1/elements`（两段全量 + 引用解析）+ `GET/PUT/DELETE /v1/elements/{kind}/{id}`（单条读写 / 删）+ `POST /v1/elements/{kind}`（新建）+ `POST /v1/elements/push`（手动补推）；写一次提交一次，同一个 `requestId` 重放不二次提交 | 否 | 元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点 |
-| `Element_Models` | element | `element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
-| `routes` | nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 不再有 `endpoints` 字段（规则 11：端点只由 `routes()` 声明，三处读口都从它生成） |
-| `archive` | data | `data-archive` | app | 编译期 | 会话归档：`POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 三条端点自带 handler（`crates/data/archive/src/routes.rs`）；供应商 `data`，包名 `data-archive` |
-| `data-manager` | data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
-| `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
-| `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
-| `combos` | nous | — | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读 |
-| `skills` | nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71）+ 管理面 `/v1/skills/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`） |
-| `prompt-text` | nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
-| `trigger-spec` | nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
-| `skills-admin` | nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
-| `presets-admin` | nous | `nous-presets-admin` | app | 编译期 | 模板管理：形状闸 / 引用解析（`resolved`）/ 名册投影；`/v1/presets` 的判定全走它（#60 端点面复用） | 否 | 从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json` |
-| `trigger-catalog` | nous | — | app | 运行时外挂 | 触发器清单（列/改/发布）：`POST /v1/triggers`、`PUT /v1/triggers/{code}`（#80：schedule/on/params/session/enabled 整份改）、`POST /v1/triggers/{code}/{archive,restore,purge}`（墓碑语义）、`GET /v1/triggers/categories` + `POST /v1/triggers/category`（类别词表），写入闸校验 cron 与 on | 否 | 今天 `n8qkkj` 块；实现落 `crates/nous/server/src/triggers*`，与 #73 的 PATCH 同一处 |
+| `wire` | Nous | `nous-wire` | kernel | 编译期 | `/v1/*` 事件与实体类型 | 是 | 契约层，零依赖优先 |
+| `chord` | Nous | `nous-chord` | kernel | 编译期 | context / json / delta / sqlite / watch / output | 是 | 语义基元 |
+| `durable` | Nous | `nous-durable` | kernel | 编译期 | 提交 / 文档 / 会话与 entry 查询 / scans | 是 | 存储与事务边界 |
+| `env` | Nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait + 四条私库路径解析（`content.rs`：#63）+ `GET /v1/fs/dirs` 的目录解析（`NOUS_START_DIRS` 只在这里读） | 是 | 契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin` |
+| `repo` | Nous | `nous-repo` | platform | 编译期 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75）+ 技能/扩展变体 worktree + 绑定表 + prune/publish/usage（#76）+ 上游追踪（sources / mirror / check / pin / sync / tree / file / copy / adopt；#77） | 是 | 唯一的 git 进程调用面；四条私库路径解析沿用 `env` |
+| `env-local` | Nous | (待建) `nous-env-local` | platform | 编译期 | `ExecutionEnv` 本地实现 | 是 | 今天的 `os_env.rs` 落点 |
+| `env-ssh` | Nous | `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现（ssh/scp + ControlMaster + 临时密钥） | 否 | 今天 `ssh-env.js`（631 行）；#78 落地 |
+| `ai-types` | Nous | `nous-ai-types` | kernel | 编译期 | TSchema / Message / Usage（纯） | 是 | 从 `nous-ai` 拆出，零 IO 零时钟（T2 已落地） |
+| `ai` | Nous | `nous-ai` | platform | 编译期 | provider trait + HTTP/SSE 实现 | 是 | 今天一个包兼纯/IO 两半；纯的那半已拆成 `ai-types` |
+| `ai-providers` | Nous | (待建) `nous-ai-providers` | platform | 编译期 | provider 实现（拆完只留 IO 那半） | 是 | T2 拆完由 `ai` 改出：目录改名 `ai` → `ai-providers`、包改名 `nous-ai` → `nous-ai-providers` |
+| `tools` | Nous | `nous-tools` | platform | 编译期 | read / write / edit / bash / grep / find / ls | 否 | 第一方工具，唯一进程创建面 |
+| `runtime` | Nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
+| `telemetry` | Nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
+| `store` | Nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
+| `Nous_Device` | Nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
+| `sessions` | Nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
+| `documents` | Nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
+| `prompts` | Nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟）+ 管理面 `/v1/prompts/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 是 | 今天 `prompts/index.js` |
+| `ext` | Nous | `nous-ext` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 / 管理面（create / duplicate / install / uninstall / categories / category / usage，#84）+ 编辑页 `/v1/extensions/{files,file,publish}`（文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划 |
+| `ext-probe` | Nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
+| `ext-sdk` | Nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
+| `extend-trash` | Nous | — | app | 数据目录 | 卸载源码的垃圾站 + `deleted-extensions.json` 删除名单（#84） | 否 | 位于 `data/extend-trash/`，install 的回退来源；名单随私库发布，防 git pull 复活 |
+| `ext-host` | Nous | (待建) `nous-ext-host` | app | 编译期 | 帧协议 + 进程监管 + 熔断 + 热加载 | 是 | slice 1（`#20`） |
+| `server` | Nous | `nous-server` | app | 编译期 | `/v1/*` 端点 + SSE | 是 | 唯一监听处；bin 叫 `nous-app` |
+| `fixture` | Nous | `nous-fixture` | dev | 编译期 | fixture 库 → `/v1/sessions` 同形 JSON | 否 | 测试夹具 binary（`dev`：不进 systemd、不进发布包） |
+| `audit` | Nous | (待建) `nous-audit` | app | 编译期 | 事件追加与投影 | 否 | 今天 `activity.js`（55 行） |
+| `dispatcher` | Nous | `nous-dispatcher` | app | 编译期 | 注入 Clock + durable `sleeping` 任务的 60s 节拍、纯判定 `evaluate`、忙则跳过、失败隔离（trigger → 会话） | 否 | #73 落地；内核算核心三件之一，见下注 |
+| `exts/` | Nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
+| `triggers` | Nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口）+ `PATCH /v1/triggers/{code}`（#73：改 schedule/params/enabled，code 不可变） | 否 | #57/#58 落地；调度节拍归 `dispatcher` |
+| `elements` | Nous | `nous-elements` | app | 编译期 | `GET /v1/elements`（两段全量 + 引用解析）+ `GET/PUT/DELETE /v1/elements/{kind}/{id}`（单条读写 / 删）+ `POST /v1/elements/{kind}`（新建）+ `POST /v1/elements/push`（手动补推）；写一次提交一次，同一个 `requestId` 重放不二次提交 | 否 | 元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点 |
+| `Element_Models` | Element | `element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
+| `routes` | Nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 不再有 `endpoints` 字段（规则 11：端点只由 `routes()` 声明，三处读口都从它生成） |
+| `archive` | Data | `data-archive` | app | 编译期 | 会话归档：`POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 三条端点自带 handler（`crates/Data/Archive/src/routes.rs`）；供应商 `data`，包名 `data-archive` |
+| `data-manager` | Data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
+| `build-worker` | Nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
+| `presets` | Nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
+| `combos` | Nous | — | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读 |
+| `skills` | Nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71）+ 管理面 `/v1/skills/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`） |
+| `prompt-text` | Nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
+| `trigger-spec` | Nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
+| `skills-admin` | Nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
+| `presets-admin` | Nous | `nous-presets-admin` | app | 编译期 | 模板管理：形状闸 / 引用解析（`resolved`）/ 名册投影；`/v1/presets` 的判定全走它（#60 端点面复用） | 否 | 从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json` |
+| `trigger-catalog` | Nous | — | app | 运行时外挂 | 触发器清单（列/改/发布）：`POST /v1/triggers`、`PUT /v1/triggers/{code}`（#80：schedule/on/params/session/enabled 整份改）、`POST /v1/triggers/{code}/{archive,restore,purge}`（墓碑语义）、`GET /v1/triggers/categories` + `POST /v1/triggers/category`（类别词表），写入闸校验 cron 与 on | 否 | 今天 `n8qkkj` 块；实现落 `crates/Nous/Server/src/triggers*`，与 #73 的 PATCH 同一处 |
 
 ## 待判（还没归位，归位前不许进仓）
 
@@ -175,7 +182,7 @@
 
 ## 注：与 `ls -d crates/*/*/` 的一一对应
 
-今天 `crates/*/*` 下 29 个目录（`crates/nous/` 26 个 + `crates/data/` 2 个 + `crates/element/` 1 个），
+今天 `crates/*/*` 下 29 个目录（`crates/Nous/` 26 个 + `crates/Data/` 2 个 + `crates/Element/` 1 个），
 本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 29 行：
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
 `store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `fixture` `elements` `env-ssh` `repo`

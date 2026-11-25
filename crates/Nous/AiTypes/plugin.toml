@@ -1,0 +1,10 @@
+name = "ai-types"
+vendor = "Nous"
+version = "0.1.3"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+layer = "kernel"          # 必须 == docs/plugins.md 的 layer 列
+crate = "nous-ai-types"
+
+[requires]                 # cargo metadata 里的内部 workspace 依赖
+
+[provides]
+capability = "ai-types"

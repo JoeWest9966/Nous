@@ -17,28 +17,28 @@
 #   也在创建进程，`\.spawn\(\)` 数不到它。判据 12 用同一条 pattern（同一个概念不许两种写法）。
 #   判定口径变更（2026-11-17，集合成员不变、仍是 2 个）：`.spawn\(` → 构造点；
 spawn_files=5
-#   crates/nous/tools/src/os_env.rs      为什么留着：终端会话的唯一执行面（shell 与 taskkill）
-#   crates/nous/ext/src/spawn.rs         为什么留着：扩展子进程的唯一创建处（S1 白名单第二个位置）
-#   crates/nous/env-ssh/src/mux.rs       为什么留着：#78 的 ssh ControlMaster 多路复用建进程（platform 层）
-#   crates/nous/env-ssh/src/remote.rs    为什么留着：#78 的 ssh/scp 远端执行建进程（platform 层）
-#   crates/nous/repo/src/git.rs          为什么留着：#75 私库 git 发布/归档/variant/upstream 的唯一 git 调用面（platform 层）
+#   crates/Nous/Tools/src/os_env.rs      为什么留着：终端会话的唯一执行面（shell 与 taskkill）
+#   crates/Nous/Ext/src/spawn.rs         为什么留着：扩展子进程的唯一创建处（S1 白名单第二个位置）
+#   crates/Nous/EnvSsh/src/mux.rs       为什么留着：#78 的 ssh ControlMaster 多路复用建进程（platform 层）
+#   crates/Nous/EnvSsh/src/remote.rs    为什么留着：#78 的 ssh/scp 远端执行建进程（platform 层）
+#   crates/Nous/Repo/src/git.rs          为什么留着：#75 私库 git 发布/归档/variant/upstream 的唯一 git 调用面（platform 层）
 # 成员变更（2026-11-17 签字）：
-#   - crates/nous/tools/src/utils/open_browser.rs  上一轮判定无调用方，已删
-#   + crates/nous/ext/src/spawn.rs                 扩展运行时落地（#17–#37）
+#   - crates/Nous/Tools/src/utils/open_browser.rs  上一轮判定无调用方，已删
+#   + crates/Nous/Ext/src/spawn.rs                 扩展运行时落地（#17–#37）
 # 成员变更（#89 签字，2026-11-21）：+3 个 platform 层进程调用面（2→5）。
-#   + crates/nous/env-ssh/src/mux.rs / remote.rs   #78 的 ExecutionEnv 远端实现；platform 层允许进程，判据 6 的内核层零进程与判据 12 的 app 唯一 spawn 都没动。
-#   + crates/nous/repo/src/git.rs                  #75 私库 git 调用面；docs/plugins.md 明写“唯一的 git 进程调用面”。
+#   + crates/Nous/EnvSsh/src/mux.rs / remote.rs   #78 的 ExecutionEnv 远端实现；platform 层允许进程，判据 6 的内核层零进程与判据 12 的 app 唯一 spawn 都没动。
+#   + crates/Nous/Repo/src/git.rs                  #75 私库 git 调用面；docs/plugins.md 明写“唯一的 git 进程调用面”。
 #   三条都是判据原先漏收的真实 platform 构造点，不是给 app 开第二 spawn 口；不删断言、不减检查范围。
 
 # 排除项（不数；逐行写理由。判据 6 会从集合里减掉这些路径）
-#   crates/nous/tools/src/output_decode.rs:198   为什么排除：在 `#[cfg(windows)] fn console_code_page` **整块**里（Linux 不编）。
+#   crates/Nous/Tools/src/output_decode.rs:198   为什么排除：在 `#[cfg(windows)] fn console_code_page` **整块**里（Linux 不编）。
 #                                               现状：该文件已无构造点（0 命中）；留着是给那个 block 备案，不是它在挡什么
 #   tests/ 与 *_test(s).rs                       为什么排除：测试夹具（S12 明写不算；生成命令里已 grep -vE '(/tests/|tests\.rs$)'）
 #
 # 减 `dev` 层（测试夹具与探针，`docs/plugins.md` 里 layer=dev 的模块）：不写在这里，
 # 由判据从 `scripts/layer-paths.sh dev` 现算 —— 名单只有一处真相，不点名目录。
 #
-# 已删的一条（2026-11-17 留痕）：`crates/nous/ext/src/runtime.rs:537`
+# 已删的一条（2026-11-17 留痕）：`crates/Nous/Ext/src/runtime.rs:537`
 #   —— 那是单行豁免（`scope.spawn(move || …)` 是线程），按下面的规矩撤回。
 #
 # 排除项的规矩（2026-11-17 签字）：
@@ -62,95 +62,95 @@ spawn_files=5
 # 规则（逐字实现 spec 判据 3）：verify.sh 第 5 段把上面命令的输出与本文件的正文行
 # （`路径:行号:内容`，尾部 `  # 理由` 剥掉后）逐行比对；出现本文件没有的新行即红。
 # 删除行不红（本文件只减不增）。改基线必须单独一张票，并在该行写清"为什么留着"。
-crates/nous/ai-types/src/types.rs: /// A text content block.  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs:     // `kind` renames to "type" so direct serialization carries the block  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs: /// An image content block (base64-encoded).  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs: // Each concrete block already serializes its own `type` marker. Deriving an  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs:             Self::Text(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs:             Self::Thinking(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs:             Self::Image(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs:             Self::ToolCall(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs: /// `string | TextContent[]`, and a system prompt that carries an image or a tool call is a  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs: /// A named slice of the prompt that later system messages patch by name.  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs: /// The first system message of a transcript carries the prompt and the tool set  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs:     /// A leading prompt: `content` plus, when non-empty, the tool declarations.  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs:             .map(|block| block.text.as_str())  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs: /// Providers emit events in this order: `Start` is emitted once before any per-block  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/types.rs: /// events, then a `{Start,Delta*,End}` triple per content block (text / thinking /  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
-crates/nous/ai-types/src/utils/streaming_json.rs: /// provider 在**自己的流状态**里每条调用存一个，绝不放在 content block 上 —— 原始文本不进口  # provider 流状态：`content block` 是 provider 协议里的块，不是产品语义
-crates/nous/chord/src/context.rs:             .expect("cancelled() must resolve")  # `cancelled() must resolve` = future 的 resolve，与发现无关
-crates/nous/chord/src/delta/draft.rs:         resolve(&self.value, path)  # `resolve()` = JSON 指针的路径解析函数名，与「地址发现」无关
-crates/nous/chord/src/delta/draft.rs:         resolve(&self.base, path)  # `resolve()` = JSON 指针的路径解析函数名，与「地址发现」无关
-crates/nous/chord/src/delta/draft.rs: fn resolve<'a>(root: &'a Value, path: &[Seg]) -> Option<&'a Value> {  # `resolve()` = JSON 指针的路径解析函数名，与「地址发现」无关
-crates/nous/durable/src/harness/partial.rs:             let Some(block) = message  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:             if block.get("type").and_then(Value::as_str) != Some("toolCall") {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:             let snapshot = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:             if let Some(object) = block.as_object_mut() {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:             let block = message.get("content").and_then(|content| content.get(index));  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:             let is_tool_call = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:                 .and_then(|block| block.get("type"))  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:             let Some(block) = content.get(index) else {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:             if block.get("type").and_then(Value::as_str) != Some("toolCall") {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs: fn apply_change(draft: &mut Draft, block: &[Seg], change: &JsonChange) -> Result<(), OpError> {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/partial.rs:     let arguments = child(block, &Seg::key("arguments"));  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:                         block: item.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:                     for (index, block) in blocks.iter().enumerate() {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:                             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:         Op::Set(_, block) if rest.is_empty() => {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:                 frames.push(start_of(index, block));  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:         Some(block) => {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:                 block,  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs: fn start_of(index: usize, block: &Value) -> MessageChange {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:     match block.get("type").and_then(Value::as_str) {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/harness/project.rs: /// 只有 `Set(["content", i], block)` 的"新块还是旧块"需要它。三条事实：  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/src/storage/sessions.rs: //! `thinkingLevels` / `skills` / `template` / `readOnly` / `archived` / `updatedAt` 在旧库里  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
-crates/nous/durable/src/storage/sessions.rs:     pub template: Option<String>,  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
-crates/nous/durable/src/storage/sessions.rs:             template: None,  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
-crates/nous/durable/src/storage/sessions.rs:         assert_eq!(item.template, None);  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
-crates/nous/durable/tests/harness_generation.rs:         .and_then(|block| block.get("text"))  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs: fn block_type(block: &Value) -> &str {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:     block.get("type").and_then(Value::as_str).unwrap_or("")  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:             .map(|(index, block)| Op::Set(content_path(index), block.clone()))  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:         for (index, (frame, block)) in frames.iter().zip(content.iter()).enumerate() {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:             let expected = match block_type(block) {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:             kinds.insert(block_type(block).to_string());  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:     let (index, block) = messages  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                 .position(|block| block_type(block) == "text")?;  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:         !block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:     let mut replacement = block.clone();  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:             block: replacement,  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:     let (index, block) = messages  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                 .position(|block| {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                     block_type(block) == "text"  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                         && block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:     let text = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:     let mut committed = block.clone();  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:     let mut grown = block.clone();  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                 MessageChange::Block { block, .. } => {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                     arguments = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                 other => panic!("参数流只该产出 toolcall_delta 或 block，拿到 {other:?}"),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/harness_projection.rs:                 block: partial_block,  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
-crates/nous/durable/tests/storage_roundtrip.rs:     assert_eq!(json.get("template"), Some(&serde_json::Value::Null));  # `template` 列原样往返（Q19）
-crates/nous/wire/src/event.rs:     /// 块的开头。`block.text` 已经是全文 —— **跳过它就等于把第一段吞掉**。  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/src/event.rs:     TextStart { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/src/event.rs:     ThinkingStart { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/src/event.rs:     ToolcallStart { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/src/event.rs:     Block { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/src/event.rs:             MessageChange::Block { .. } => Some("block"),  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/tests/event_json.rs:         "changes":[{"type":"text_start","contentIndex":0,"block":{"type":"text","text":"Hello there"}}]}"#;  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/tests/event_json.rs:                 MessageChange::TextStart { content_index, block } => {  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/tests/event_json.rs:                     assert_eq!(block["text"], "Hello there");  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/tests/event_json.rs:         {"type":"block","contentIndex":0,"block":{"type":"text","text":"superseded"}},  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/tests/event_json.rs:                 MessageChange::Block { content_index: 0, block } if block["text"] == "superseded"  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
-crates/nous/wire/tests/event_json.rs:             block: json!({"type":"toolCall"})  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/AiTypes/src/types.rs: /// A text content block.  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs:     // `kind` renames to "type" so direct serialization carries the block  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs: /// An image content block (base64-encoded).  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs: // Each concrete block already serializes its own `type` marker. Deriving an  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs:             Self::Text(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs:             Self::Thinking(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs:             Self::Image(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs:             Self::ToolCall(block) => block.serialize(serializer),  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs: /// `string | TextContent[]`, and a system prompt that carries an image or a tool call is a  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs: /// A named slice of the prompt that later system messages patch by name.  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs: /// The first system message of a transcript carries the prompt and the tool set  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs:     /// A leading prompt: `content` plus, when non-empty, the tool declarations.  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs:             .map(|block| block.text.as_str())  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs: /// Providers emit events in this order: `Start` is emitted once before any per-block  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/types.rs: /// events, then a `{Start,Delta*,End}` triple per content block (text / thinking /  # provider 契约的类型名与文档（content block / system prompt），不是产品语义
+crates/Nous/AiTypes/src/utils/streaming_json.rs: /// provider 在**自己的流状态**里每条调用存一个，绝不放在 content block 上 —— 原始文本不进口  # provider 流状态：`content block` 是 provider 协议里的块，不是产品语义
+crates/Nous/Chord/src/context.rs:             .expect("cancelled() must resolve")  # `cancelled() must resolve` = future 的 resolve，与发现无关
+crates/Nous/Chord/src/delta/draft.rs:         resolve(&self.value, path)  # `resolve()` = JSON 指针的路径解析函数名，与「地址发现」无关
+crates/Nous/Chord/src/delta/draft.rs:         resolve(&self.base, path)  # `resolve()` = JSON 指针的路径解析函数名，与「地址发现」无关
+crates/Nous/Chord/src/delta/draft.rs: fn resolve<'a>(root: &'a Value, path: &[Seg]) -> Option<&'a Value> {  # `resolve()` = JSON 指针的路径解析函数名，与「地址发现」无关
+crates/Nous/Durable/src/harness/partial.rs:             let Some(block) = message  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:             if block.get("type").and_then(Value::as_str) != Some("toolCall") {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:             let snapshot = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:             if let Some(object) = block.as_object_mut() {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:             let block = message.get("content").and_then(|content| content.get(index));  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:             let is_tool_call = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:                 .and_then(|block| block.get("type"))  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:             let Some(block) = content.get(index) else {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:             if block.get("type").and_then(Value::as_str) != Some("toolCall") {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs: fn apply_change(draft: &mut Draft, block: &[Seg], change: &JsonChange) -> Result<(), OpError> {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/partial.rs:     let arguments = child(block, &Seg::key("arguments"));  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:                         block: item.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:                     for (index, block) in blocks.iter().enumerate() {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:                             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:         Op::Set(_, block) if rest.is_empty() => {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:                 frames.push(start_of(index, block));  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:         Some(block) => {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:                 block,  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs: fn start_of(index: usize, block: &Value) -> MessageChange {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:     match block.get("type").and_then(Value::as_str) {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs:             block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/harness/project.rs: /// 只有 `Set(["content", i], block)` 的"新块还是旧块"需要它。三条事实：  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/src/storage/sessions.rs: //! `thinkingLevels` / `skills` / `template` / `readOnly` / `archived` / `updatedAt` 在旧库里  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
+crates/Nous/Durable/src/storage/sessions.rs:     pub template: Option<String>,  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
+crates/Nous/Durable/src/storage/sessions.rs:             template: None,  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
+crates/Nous/Durable/src/storage/sessions.rs:         assert_eq!(item.template, None);  # 旧库列 `template` / `skills`：原样存原样取，不解释（Q19）
+crates/Nous/Durable/tests/harness_generation.rs:         .and_then(|block| block.get("text"))  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs: fn block_type(block: &Value) -> &str {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:     block.get("type").and_then(Value::as_str).unwrap_or("")  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:             .map(|(index, block)| Op::Set(content_path(index), block.clone()))  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:         for (index, (frame, block)) in frames.iter().zip(content.iter()).enumerate() {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:             let expected = match block_type(block) {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                     block: block.clone(),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:             kinds.insert(block_type(block).to_string());  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:     let (index, block) = messages  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                 .position(|block| block_type(block) == "text")?;  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:         !block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:     let mut replacement = block.clone();  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:             block: replacement,  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:     let (index, block) = messages  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                 .position(|block| {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                     block_type(block) == "text"  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                         && block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:     let text = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:     let mut committed = block.clone();  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:     let mut grown = block.clone();  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                 MessageChange::Block { block, .. } => {  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                     arguments = block  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                 other => panic!("参数流只该产出 toolcall_delta 或 block，拿到 {other:?}"),  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/harness_projection.rs:                 block: partial_block,  # `block` 是 wire 契约里消息块的字段名（Q19 原样存取），投影/partial 按它成形
+crates/Nous/Durable/tests/storage_roundtrip.rs:     assert_eq!(json.get("template"), Some(&serde_json::Value::Null));  # `template` 列原样往返（Q19）
+crates/Nous/Wire/src/event.rs:     /// 块的开头。`block.text` 已经是全文 —— **跳过它就等于把第一段吞掉**。  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/src/event.rs:     TextStart { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/src/event.rs:     ThinkingStart { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/src/event.rs:     ToolcallStart { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/src/event.rs:     Block { content_index: u64, block: Value },  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/src/event.rs:             MessageChange::Block { .. } => Some("block"),  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/tests/event_json.rs:         "changes":[{"type":"text_start","contentIndex":0,"block":{"type":"text","text":"Hello there"}}]}"#;  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/tests/event_json.rs:                 MessageChange::TextStart { content_index, block } => {  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/tests/event_json.rs:                     assert_eq!(block["text"], "Hello there");  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/tests/event_json.rs:         {"type":"block","contentIndex":0,"block":{"type":"text","text":"superseded"}},  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/tests/event_json.rs:                 MessageChange::Block { content_index: 0, block } if block["text"] == "superseded"  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
+crates/Nous/Wire/tests/event_json.rs:             block: json!({"type":"toolCall"})  # 契约：wire.md 的 Rust 投影，`block` / `contentIndex` 是消息块字段名
 
 # ── #89 收口追加（逐行判定，2026-11-21）──────────────────────────────────
 # 以下 15 行是 #72（会话 template 单值持久化）与 #83（选中 skills 的会话写面）
@@ -163,18 +163,18 @@ crates/nous/wire/tests/event_json.rs:             block: json!({"type":"toolCall
 # 各行的票号与理由写在行尾 `# #72:` / `# #83:`，不按预估数反推删除任何一行。
 # 其中 #72 的 13 行 = commands.rs 2 + session/mod.rs 2 + storage/sessions.rs 4
 #   + tests/session_template.rs 5；#83 的 2 行 = commands.rs 1 + tests/session_skills.rs 1。
-crates/nous/durable/src/session/commands.rs: /// 和 template 一样放在 commands 面，不动 `Session` 的 A3 六方法表。  # #72：注释指明 template 读口的落点，不是 discovery
-crates/nous/durable/src/session/commands.rs: /// `skills` / `extensions` / `template` / `machine` / `cwd`；`skills` / `extensions`  # #83：会话配置字段原样列出（skills 按选中顺序写入 pi.agent）
-crates/nous/durable/src/session/commands.rs:         "template",  # #72：commands 面读 session 模板字段的键名
-crates/nous/durable/src/session/mod.rs:         let template = config.get("template").cloned().unwrap_or(Value::Null);  # #72：config 里 template 单值原样取出
-crates/nous/durable/src/session/mod.rs:         templates[id.to_string()] = template;  # #72：template 单值写入会话作用域 map
-crates/nous/durable/src/storage/sessions.rs:             template: templates.get(&id).cloned(),  # #72：旧库列 template 原样读出（Q19）
-crates/nous/durable/src/storage/sessions.rs:         // #72：template 是单值，和 names / archived 住同一份文档。  # #72：注释说明存储形状（单值文档，不是 entry）
-crates/nous/durable/src/storage/sessions.rs:                 if let (Ok(id), Some(template)) = (key.parse::<i64>(), value.as_str()) {  # #72：从会话文档读 template 字段
-crates/nous/durable/src/storage/sessions.rs:                     templates.insert(id, template.to_string());  # #72：template 值入 map 供会话读口用
-crates/nous/durable/tests/session_skills.rs:     let path = std::env::temp_dir().join(format!("nous-skill-config-{tag}-{}-{:?}.sqlite", std::process::id(), std::thread::current().id()));  # #83：测试文件名含 skill 词根；临时库路径，不是 discovery
-crates/nous/durable/tests/session_template.rs: //! #72：会话 template 落进 session 作用域单例文档，重启后仍读得出。  # #72：测试文件头说明 template 持久化语义
-crates/nous/durable/tests/session_template.rs:     let path = std::env::temp_dir().join(format!("nous-template-{tag}-{}.sqlite", std::process::id()));  # #72：测试库文件名含 template 词根，不是 discovery
-crates/nous/durable/tests/session_template.rs:         "name": "tpl-session", "template": "alpha"  # #72：测试输入里 template 字段名
-crates/nous/durable/tests/session_template.rs:     assert_eq!(rows.items.len(), 0, "template 不该写成 entry");  # #72：断言 template 不落 entry（单值文档）
-crates/nous/durable/tests/session_template.rs:     assert_eq!(items[0].template.as_deref(), Some("alpha"));  # #72：断言 template 读回原值
+crates/Nous/Durable/src/session/commands.rs: /// 和 template 一样放在 commands 面，不动 `Session` 的 A3 六方法表。  # #72：注释指明 template 读口的落点，不是 discovery
+crates/Nous/Durable/src/session/commands.rs: /// `skills` / `extensions` / `template` / `machine` / `cwd`；`skills` / `extensions`  # #83：会话配置字段原样列出（skills 按选中顺序写入 pi.agent）
+crates/Nous/Durable/src/session/commands.rs:         "template",  # #72：commands 面读 session 模板字段的键名
+crates/Nous/Durable/src/session/mod.rs:         let template = config.get("template").cloned().unwrap_or(Value::Null);  # #72：config 里 template 单值原样取出
+crates/Nous/Durable/src/session/mod.rs:         templates[id.to_string()] = template;  # #72：template 单值写入会话作用域 map
+crates/Nous/Durable/src/storage/sessions.rs:             template: templates.get(&id).cloned(),  # #72：旧库列 template 原样读出（Q19）
+crates/Nous/Durable/src/storage/sessions.rs:         // #72：template 是单值，和 names / archived 住同一份文档。  # #72：注释说明存储形状（单值文档，不是 entry）
+crates/Nous/Durable/src/storage/sessions.rs:                 if let (Ok(id), Some(template)) = (key.parse::<i64>(), value.as_str()) {  # #72：从会话文档读 template 字段
+crates/Nous/Durable/src/storage/sessions.rs:                     templates.insert(id, template.to_string());  # #72：template 值入 map 供会话读口用
+crates/Nous/Durable/tests/session_skills.rs:     let path = std::env::temp_dir().join(format!("nous-skill-config-{tag}-{}-{:?}.sqlite", std::process::id(), std::thread::current().id()));  # #83：测试文件名含 skill 词根；临时库路径，不是 discovery
+crates/Nous/Durable/tests/session_template.rs: //! #72：会话 template 落进 session 作用域单例文档，重启后仍读得出。  # #72：测试文件头说明 template 持久化语义
+crates/Nous/Durable/tests/session_template.rs:     let path = std::env::temp_dir().join(format!("nous-template-{tag}-{}.sqlite", std::process::id()));  # #72：测试库文件名含 template 词根，不是 discovery
+crates/Nous/Durable/tests/session_template.rs:         "name": "tpl-session", "template": "alpha"  # #72：测试输入里 template 字段名
+crates/Nous/Durable/tests/session_template.rs:     assert_eq!(rows.items.len(), 0, "template 不该写成 entry");  # #72：断言 template 不落 entry（单值文档）
+crates/Nous/Durable/tests/session_template.rs:     assert_eq!(items[0].template.as_deref(), Some("alpha"));  # #72：断言 template 读回原值

@@ -52,7 +52,7 @@
 2. 帧里的 `input.extensions` 从「装载名」改成**本会话选中的名字**（`skill:` / `prompt:`，
    顺序即选中顺序）。装载名对扩展没有信息量 —— 它自己就是其中之一。
 
-**判据**：`crates/nous/server/tests/extension_injection.rs`（真进程，段文本逐字进
+**判据**：`crates/Nous/Server/tests/extension_injection.rs`（真进程，段文本逐字进
 `sections.extensions`）+ `nous-ext-probe frame-selection`（帧里就是那两份名字）。
 
 **还没做的**：`triggers.rs` 的 faux 轮次（`submission_to_turn` 拿不到 `AppState`）没有扩展段；

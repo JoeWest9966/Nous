@@ -234,7 +234,7 @@ step '判据 5 / 14：卸载边界（人工哨兵：会停服务，不在自检�
 # 这是**白名单**不是放宽：清单外的任何文件仍然红 —— 数据目录里冒出来的东西必须有人认领。
 # 命名理顺（decisions 里记的 durable.db / nous.db）之后，这份清单要跟着改成两个名字。
 # `.gitconfig` 是触发器发布认领的：服务账号 `nous` 没有 HOME 配置，仓库层
-# （`crates/nous/repo`）虽然会给 commit 注入身份，但 `git push` 的凭据与
+# （`crates/Nous/Repo`）虽然会给 commit 注入身份，但 `git push` 的凭据与
 # `git config` 读取仍然经过它 —— 留在数据目录里是有意的，不是垃圾。
 ALLOWED='nous.db nous.db-wal nous.db-shm nous-plugins.db nous-plugins.db-wal nous-plugins.db-shm .gitconfig'
 FIND_ARGS=""

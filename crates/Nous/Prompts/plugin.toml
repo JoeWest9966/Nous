@@ -1,0 +1,10 @@
+name = "prompts"
+vendor = "Nous"
+version = "0.2.2"
+layer = "app"
+crate = "nous-prompts"
+
+[requires]
+
+[provides]
+capability = "prompts"

@@ -54,7 +54,7 @@ PY
 
 ## 2026-11-17 · 排除式多写一个 `_`，集合从 2 变 3 却看不出是写错了
 
-**症状**：判据 6 数进程构造点，`crates/nous/runtime/src/provider/tests.rs` 被当成生产代码
+**症状**：判据 6 数进程构造点，`crates/Nous/Runtime/src/provider/tests.rs` 被当成生产代码
 算进集合，红得不讲道理；而判据 5 里同样目的的排除是好的。
 
 **原因**：排除式写成了 `_tests?\.rs$`，而文件名是 `tests.rs`（**没有下划线前缀**）——一个
@@ -179,7 +179,7 @@ let _driver = runtime.driver.clone();   // 注释写着"通过 TurnRequest 传�
 ## 8 · 在 worktree 里跑 verify.sh 却共用主树的 `CARGO_TARGET_DIR` → 主树测试假红
 
 **症状**：worktree 里 `verify.sh` 56 ✓，回到主树同一份代码却红一两条，而且红得莫名其妙：
-`小样本 fixture 应在仓里：/opt/nous-docs/crates/nous/durable/../../../fixtures/agent.small.sqlite`
+`小样本 fixture 应在仓里：/opt/nous-docs/crates/Nous/Durable/../../../fixtures/agent.small.sqlite`
 —— 路径指向一个**已经被删掉的 worktree**。
 **根因**：`CARGO_MANIFEST_DIR` 是编译期写进二进制的。在 worktree 里编、但 `CARGO_TARGET_DIR` 指向主树，
 产物就带着 worktree 的路径留在主树的 target 里；worktree 一删，那些测试找什么都 NotFound。

@@ -1,7 +1,7 @@
 # Nous 唯一 workspace（spec §1：一个仓、一个 workspace、一个产物）。
 # 目录只管所有权，层写在 `docs/plugins.md` 的 layer 列（spec §3.0）：
 #   crates/<vendor>/<module>/   —— vendor 是所有者，module 是模块名（≠ 包名）
-#   crates/nous/durable  的包名仍是 nous-durable（crate 名不因搬家而改）
+#   crates/Nous/Durable  的包名仍是 nous-durable（crate 名不因搬家而改）
 [workspace]
 resolver = "2"
 members = [
@@ -46,32 +46,32 @@ bytes = "1"
 tempfile = "3"
 eventsource-stream = "0.2"
 
-nous-ext-sdk = { path = "crates/nous/ext-sdk", version = "0.1.0" }
-nous-telemetry = { path = "crates/nous/telemetry", version = "0.1.0" }
-nous-chord = { path = "crates/nous/chord", version = "0.1.0" }
-nous-wire = { path = "crates/nous/wire", version = "0.1.0" }
-nous-env = { path = "crates/nous/env", version = "0.1.0" }
-nous-repo = { path = "crates/nous/repo", version = "0.1.0" }
-nous-elements = { path = "crates/nous/elements", version = "0.1.0" }
-element-models = { path = "crates/element/models", version = "0.1.0" }
-nous-prompts = { path = "crates/nous/prompts", version = "0.1.0" }
-nous-presets-admin = { path = "crates/nous/presets-admin", version = "0.1.0" }
-nous-env-ssh = { path = "crates/nous/env-ssh", version = "0.1.0" }
-nous-durable = { path = "crates/nous/durable", version = "0.1.0" }
-nous-documents = { path = "crates/nous/documents", version = "0.1.0" }
-nous-ai-types = { path = "crates/nous/ai-types", version = "0.1.0" }
-nous-ai = { path = "crates/nous/ai", version = "0.1.0" }
-nous-tools = { path = "crates/nous/tools", version = "0.1.0" }
-nous-routes = { path = "crates/nous/routes", version = "0.1.0" }
-nous-runtime = { path = "crates/nous/runtime", version = "0.1.0" }
-nous-ext = { path = "crates/nous/ext", version = "0.1.0" }
-nous-ext-probe = { path = "crates/nous/ext-probe", version = "0.1.0" }
-nous-server = { path = "crates/nous/server", version = "0.1.0" }
-nous-device = { path = "crates/nous/device", version = "0.1.0" }
-nous-skills = { path = "crates/nous/skills", version = "0.1.0" }
-nous-sessions = { path = "crates/nous/sessions", version = "0.1.0" }
-nous-fixture = { path = "crates/nous/fixture", version = "0.1.0" }
-data-data-manager = { path = "crates/data/data-manager", version = "0.1.0" }
-data-archive = { path = "crates/data/archive", version = "0.1.0" }
-nous-store = { path = "crates/nous/store", version = "0.1.0" }
-nous-dispatcher = { path = "crates/nous/dispatcher", version = "0.1.0" }
+nous-ext-sdk = { path = "crates/Nous/ExtSdk", version = "0.1.0" }
+nous-telemetry = { path = "crates/Nous/Telemetry", version = "0.1.0" }
+nous-chord = { path = "crates/Nous/Chord", version = "0.1.0" }
+nous-wire = { path = "crates/Nous/Wire", version = "0.1.0" }
+nous-env = { path = "crates/Nous/Env", version = "0.1.0" }
+nous-repo = { path = "crates/Nous/Repo", version = "0.1.0" }
+nous-elements = { path = "crates/Nous/Elements", version = "0.1.0" }
+element-models = { path = "crates/Element/Models", version = "0.1.0" }
+nous-prompts = { path = "crates/Nous/Prompts", version = "0.1.0" }
+nous-presets-admin = { path = "crates/Nous/PresetsAdmin", version = "0.1.0" }
+nous-env-ssh = { path = "crates/Nous/EnvSsh", version = "0.1.0" }
+nous-durable = { path = "crates/Nous/Durable", version = "0.1.0" }
+nous-documents = { path = "crates/Nous/Documents", version = "0.1.0" }
+nous-ai-types = { path = "crates/Nous/AiTypes", version = "0.1.0" }
+nous-ai = { path = "crates/Nous/Ai", version = "0.1.0" }
+nous-tools = { path = "crates/Nous/Tools", version = "0.1.0" }
+nous-routes = { path = "crates/Nous/Routes", version = "0.1.0" }
+nous-runtime = { path = "crates/Nous/Runtime", version = "0.1.0" }
+nous-ext = { path = "crates/Nous/Ext", version = "0.1.0" }
+nous-ext-probe = { path = "crates/Nous/ExtProbe", version = "0.1.0" }
+nous-server = { path = "crates/Nous/Server", version = "0.1.0" }
+nous-device = { path = "crates/Nous/Device", version = "0.1.0" }
+nous-skills = { path = "crates/Nous/Skills", version = "0.1.0" }
+nous-sessions = { path = "crates/Nous/Sessions", version = "0.1.0" }
+nous-fixture = { path = "crates/Nous/Fixture", version = "0.1.0" }
+data-data-manager = { path = "crates/Data/DataManager", version = "0.1.0" }
+data-archive = { path = "crates/Data/Archive", version = "0.1.0" }
+nous-store = { path = "crates/Nous/Store", version = "0.1.0" }
+nous-dispatcher = { path = "crates/Nous/Dispatcher", version = "0.1.0" }

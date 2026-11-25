@@ -24,7 +24,7 @@
 ### 配置：四条私库路径（#63）
 
 服务端按 TS 版 `server.js:77-83` 解析下面四个变量，变量名与默认值**只有这一份真相**
-（代码落在 `crates/nous/env/src/content.rs`，别在各端点里自己 `std::env::var`）：
+（代码落在 `crates/Nous/Env/src/content.rs`，别在各端点里自己 `std::env::var`）：
 
 | 变量 | 默认值 | 指向 |
 |---|---|---|
@@ -161,7 +161,7 @@
 
 我们依赖：`id` `name` `parent` `model` `thinkingLevel` `readOnly` `busy` `updatedAt` `last` `archived`。
 
-字段形状以 `crates/nous/server/tests/endpoints.rs::get_sessions_returns_the_wire_shape_newest_first` 为准（本文件只索引端点与约束）。
+字段形状以 `crates/Nous/Server/tests/endpoints.rs::get_sessions_returns_the_wire_shape_newest_first` 为准（本文件只索引端点与约束）。
 
 - `archived` 是**归档墓碑**，`null` = 没归档过（捞回之后也回到 `null`），对象 = `{at, gen, purged}`，
   `at` 是 epoch **毫秒**。老引擎整个字段缺席时也是 `null` —— 别当布尔用，也别拿它判断
@@ -304,7 +304,7 @@ entry 条数、tokens 与 cost、工具调用数、用过的模型集合、首�
   扩展先合并，preamble 排在技能正文前面）。扩展进程拿到的帧里 `input.extensions` 是
   **本会话选中的名字**（`skill:<名>` / `prompt:<名>`，顺序即选中顺序），不是装载名。
   没有扩展运行时（精简装配）时这一条不出现，轮次照跑。判据：
-  `crates/nous/server/tests/extension_injection.rs`、`nous-ext-probe frame-selection`。
+  `crates/Nous/Server/tests/extension_injection.rs`、`nous-ext-probe frame-selection`。
 
 ### GET /v1/sessions/:id/events —— SSE
 
@@ -358,7 +358,7 @@ entry 条数、tokens 与 cost、工具调用数、用过的模型集合、首�
 
 #79：`catalog` 现在是 device 自己那份诊断对象（`state` / `source` / `path` / `fetchedAt` / `error`），
 不是 `null`。`fetchedAt` 是最近一次成功刷新的时刻，`error` 是最近一次失败的原因；
-两者都可能为 `null`（缺席）。字段形状以 `crates/nous/server/tests/catalog_refresh.rs` 为准。
+两者都可能为 `null`（缺席）。字段形状以 `crates/Nous/Server/tests/catalog_refresh.rs` 为准。
 
 ### GET /v1/plugins/:name/readme
 
@@ -460,7 +460,7 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 
 一个发行版一张清单：`modules[]` 每个模块声明 `name` / `enabled` 与 `endpoints` 或 `reason`，
 顶层给 `contract` / `server` / `runtime` / `services`。字段形状以
-`crates/nous/server/tests/capabilities_shapes.rs::capabilities_declares_modules_and_reasons` 为准。
+`crates/Nous/Server/tests/capabilities_shapes.rs::capabilities_declares_modules_and_reasons` 为准。
 
 - #88：`modules[]` 每个模块（含未启用的）另带版本、类型、层、必需、来源 crate、说明六列，
   取自 `docs/plugins.md` 同一张表；判据 `capabilities_manifest.rs::manifest_metadata_matches_the_plugins_table_cell_by_cell`
@@ -476,12 +476,12 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 - `modules[].name` 是**模块全名**（`docs/plugins.md` 规则 12）：照 Magento 2 的 `Vendor_Module`
   长相，例如 `Element_Models`；老模块的小写连字符名（`data-manager` / `sessions`）继续有效。
   `name` 是 `/v1/plugins/:name/*` 与 `/v1/_routes` 的 `module` 标签，也是桌面端的显示名 ——
-  **目录名与包名是它的小写形**（`crates/element/models`、`element-models`），两者不是同一个字符串。
+  **目录名与包名是它的小写形**（`crates/Element/Models`、`element-models`），两者不是同一个字符串。
 - `modules[].vendor`：**出品方**（规则 10，`docs/plugins.md` 的 `vendor` 列），例如 `nous` / `data`。
   与 `version` 同一份生成表（`plugin.toml` 的 `vendor`，`server/build.rs` 编译期读出来），
   桌面端拿它当插件列表的副标题（`data-manager` 的供应商是 `data`）。
   没有清单的模块（运行时外挂 / `(待建)`）这里回 `null` —— **不猜**，不用 `nous` 顶替。
-  判据：`crates/nous/server/tests/plugin_versions.rs`（遍历 `docs/plugins.md` 的行，不点名模块）。
+  判据：`crates/Nous/Server/tests/plugin_versions.rs`（遍历 `docs/plugins.md` 的行，不点名模块）。
 
 #### POST /v1/sessions/:id/archive
 
@@ -626,7 +626,7 @@ body `{"gen":"YYYYMMDD"}`（哪一份复印件，取自 `GET /v1/archive`）。
 和 `ref` / `value`；`model` 另带 `thinkingLevels`（编目里那几档），`template` / `cwd` /
 `machine` 另带 `mode`（`default` / `none` / `picked`）；`readOnly` 是布尔；`absence` 是
 八个「键在不在」的布尔值（给面板画 chip 用，不参与判定）。字段名以
-`crates/nous/presets-admin/src/resolve.rs` 为准 —— 这里不抄第二份。
+`crates/Nous/PresetsAdmin/src/resolve.rs` 为准 —— 这里不抄第二份。
 
 - `state` 只有三值：`ok`（钉住了 / 走默认，两种都成立）、`auto`（**只有 `model`**：
   没钉模型，跟设备默认走）、`invalid`（引用失效，现在开不了）。
@@ -710,13 +710,13 @@ body 必带幂等锚 `requestId`。回包给判定结果 `fired`、人话 `reaso
 
 返回默认模型 + 模型列表。
 
-字段形状以 `crates/nous/server/tests/wire_shapes.rs::models_response_pins_default_and_item_field_shape` 为准（本文件只索引端点与约束）。
+字段形状以 `crates/Nous/Server/tests/wire_shapes.rs::models_response_pins_default_and_item_field_shape` 为准（本文件只索引端点与约束）。
 
 - `default` 是**盘上那只眼当前指着的**模型，不是我们的默认值。
 - `thinkingLevels` 从少想到多（`off` … `max`），**每个模型不一样**。换模型必须按新模型的表
   重新夹档位（`off` 一定要在表里，没有就退成 `off`）。
 - 242 个模型是常态 —— 模型那一列必须能滚，别想着一次画完。
-- #65：多一个 `catalog` 诊断块（字段形状见 `crates/nous/server/tests/device_endpoints.rs`）。
+- #65：多一个 `catalog` 诊断块（字段形状见 `crates/Nous/Server/tests/device_endpoints.rs`）。
   `missing` + `items: []` 是**诚实空表**（没有编目来源），客户端别把它当成「加载中」无限重试；
   `ok` 时 `source` 指明是内联（`NOUS_MODELS`）、文件（`NOUS_MODELS_FILE`）还是远端（`remote`）。
 - #79：远端刷新成功后内存里的编目优先于文件来源；`fetchedAt` / `error` 由刷新写入。
@@ -725,7 +725,7 @@ body 必带幂等锚 `requestId`。回包给判定结果 `fired`、人话 `reaso
 
 拉一次远端编目写进本地缓存，回 `{ default, items, fetchedAt, error? }`。
 远端入口是 `NOUS_CATALOG_BASE`（`{base}/models.json`）+ `NOUS_CATALOG_TOKEN`（Bearer）。
-字段形状以 `crates/nous/server/tests/catalog_refresh.rs` 为准（本文件只索引端点与约束）。
+字段形状以 `crates/Nous/Server/tests/catalog_refresh.rs` 为准（本文件只索引端点与约束）。
 
 - 成功：远端三条就回三条，`fetchedAt` 非空，`error` 缺席；`/v1/models` 立即换成新表。
 - 失败（含 HTTP 500）：**回 200 但带 `error`**，`items` 仍是旧表，绝不把模型表清空。
@@ -777,7 +777,7 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
 - 名字规矩沿用旧面板 `checkName`：`^[a-z0-9][a-z0-9._-]*$`、≤64 字，且不许撞仓库根
   的保留名（`index.json` / `nous.json` / `SKILL.md` / `PROMPT.md` / `sources.json` / `node_modules` …）。
 - 私库没装配（对应的 `NOUS_*` 目录不存在）→ 409，不退回空 200。
-- 判据见 `crates/nous/server/tests/resource_admin_endpoints.rs`。
+- 判据见 `crates/Nous/Server/tests/resource_admin_endpoints.rs`。
 
 ### GET /v1/extensions
 
@@ -824,7 +824,7 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
   即使 `git pull` 把目录带回来也不会复活。名单随私库发布，重启后仍生效。
 - `categories.json` 是字符串数组；`nous.json` 的 `category` 是单值字符串（见 SDK 清单），
   不是 skills 那种数组。词表与扩展字段共用同一套字符串，不另造 id。
-- 判据见 `crates/nous/server/tests/extension_admin_endpoints.rs`。
+- 判据见 `crates/Nous/Server/tests/extension_admin_endpoints.rs`。
 
 ### GET /v1/search
 
@@ -850,19 +850,19 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
   填 `false` 是撒谎。
 - `repo` 块只给 `root` 与 `present`（#63 形状），**没有 git 状态字段**。
 - `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
-- 判据见 `crates/nous/server/tests/skills_endpoints.rs` 与 `crates/nous/skills/tests/scan.rs`。
+- 判据见 `crates/Nous/Server/tests/skills_endpoints.rs` 与 `crates/Nous/Skills/tests/scan.rs`。
 
 #83：建会话 / `POST /v1/sessions/:id/config` 选的 `skills` 落在会话的 `pi.agent` 文档里，
 起轮时按**选中顺序**读 `<skill>/SKILL.md` 正文（去掉 frontmatter）拼进 `pi.system` 的
 `model[0].sections.prompts`。技能缺失 / frontmatter 坏只留 `skill: missing` / `skill: problem`
-诊断，轮次照跑；只读会话照样注入。判据见 `crates/nous/server/tests/skill_injection.rs`。
+诊断，轮次照跑；只读会话照样注入。判据见 `crates/Nous/Server/tests/skill_injection.rs`。
 
 ### /v1/documents —— v1 不提供（#90 下线）
 
 `documents` 的数据库文档与 12 条泛型端点已下线：内容真相只有四个私库的文件
 （`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND`）。
 本服务不注册任何 `/v1/documents/*` 路径，`/v1/_routes` 与 `/v1/capabilities` 不声明
-`documents`；请求这些路径得到 404。判据见 `crates/nous/server/tests/documents_off.rs`。
+`documents`；请求这些路径得到 404。判据见 `crates/Nous/Server/tests/documents_off.rs`。
 
 ### GET /v1/prompts
 
@@ -870,14 +870,14 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
 `root` / `present` / `missing` 与 skills 同义：有路径但没目录是正常状态，不是 `null`。
 模板那条至少有
 `{ name, description?, category?, load: { state } }`。
-字段形状以 `crates/nous/server/tests/prompts_endpoints.rs::prompts_lists_real_directories_and_names_an_unconfigured_default` 为准。
+字段形状以 `crates/Nous/Server/tests/prompts_endpoints.rs::prompts_lists_real_directories_and_names_an_unconfigured_default` 为准。
 
 - 真读 `NOUS_PROMPTS`：每个子目录一条 `path`，至少要有 `PROMPT.md` + `nous.json`；
   缺哪份就在 `problem` 里点名，不许把坏目录从列表里抹掉。
 - `settings.json` 的 `default` 指向不存在的模板时照样回那个名字（不变成 null），
   并在 `problem` 里说清“不存在”。
 - `prompt:<名>` 会话模板在起轮时把 `PROMPT.md` 正文放进 `pi.system` 的
-  `model[0].sections.prompts`（见 `crates/nous/server/tests/prompt_injection.rs`）；
+  `model[0].sections.prompts`（见 `crates/Nous/Server/tests/prompt_injection.rs`）；
   模板缺失时轮次照跑，诊断以 `template: missing` 写进同一段。
 
 - 和技能不是一回事：**模板是单值**（每轮都带的那份规则），技能是集合。所以列表里
@@ -899,7 +899,7 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
 
 六套私库（`:repo` ∈ `presets | skills | prompts | extend | triggers | elements`）共用一套端点；文件 CRUD
 在 `nous-repo` 的公共 API，HTTP 只暴露发布与读视图。字段形状以
-`crates/nous/server/tests/repos_endpoints.rs` 为准（本文件只索引端点与约束）。
+`crates/Nous/Server/tests/repos_endpoints.rs` 为准（本文件只索引端点与约束）。
 
 - `GET /v1/repos/:repo/status` → `{root, head, branch, ahead, behind, dirty, locked}`。
 - `GET /v1/repos/:repo/pending` → `{units:[{name, state, aheadCommits, paths[]}]}`，按目录单元分组。
@@ -1066,7 +1066,7 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 
 ### POST /v1/sessions —— 建会话
 
-字段形状以 `crates/nous/server/tests/wire_shapes.rs::create_session_request_and_response_are_snapshotted` 为准（本文件只索引端点与约束）。
+字段形状以 `crates/Nous/Server/tests/wire_shapes.rs::create_session_request_and_response_are_snapshotted` 为准（本文件只索引端点与约束）。
 
 - `skills` 可省 = 不挂。
 - 名字省略就是空串 `""` —— 本库不生成默认名；显示为「对话 N」是客户端自己的占位，别写回库里。

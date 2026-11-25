@@ -156,7 +156,7 @@ Trigger::new(NewTrigger) -> Result<Trigger, TriggerError>   // 唯一入口，�
 **准则怎么被钉死**（三条一起才算强制）：
 
 1. `Trigger::new` 是唯一构造入口 —— 绕过它就构造不出 `Trigger`（类型层面封住）。
-2. `crates/nous/store/tests/trigger_conformance.rs` 是一张**接受/拒绝表**：每条准则至少一条拒绝用例
+2. `crates/Nous/Store/tests/trigger_conformance.rs` 是一张**接受/拒绝表**：每条准则至少一条拒绝用例
    （跟上游 `storage-conformance.ts`、我们的 `ext-probe/cases_*.rs` 同一路子）。
 3. 错误 slug 是**封闭集合**、唯一、且有单测覆盖 —— Desk 只许按 slug 分支、不许解析人话文案。
 

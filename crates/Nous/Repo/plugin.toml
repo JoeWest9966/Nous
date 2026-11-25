@@ -1,0 +1,11 @@
+name = "repo"
+vendor = "Nous"
+version = "0.5.13"
+layer = "platform"
+crate = "nous-repo"
+
+[requires]
+nous-env = "^0.1"
+
+[provides]
+capability = "repo"

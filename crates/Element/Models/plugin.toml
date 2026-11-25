@@ -1,0 +1,15 @@
+name = "Element_Models"
+vendor = "Element"
+version = "0.2.0"
+layer = "app"
+crate = "element-models"
+
+[requires]
+nous-elements = "^0.1"
+nous-env = "^0.1"
+nous-repo = "^0.1"
+nous-routes = "^0.1"
+nous-runtime = "^0.1"
+
+[provides]
+capability = "models"

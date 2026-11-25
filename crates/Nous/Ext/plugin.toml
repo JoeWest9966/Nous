@@ -1,0 +1,12 @@
+name = "ext"
+vendor = "Nous"
+version = "0.6.6"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+layer = "app"          # 必须 == docs/plugins.md 的 layer 列
+crate = "nous-ext"
+
+[requires]                 # cargo metadata 里的内部 workspace 依赖
+nous-durable = "^0.1"
+nous-ext-sdk = "^0.1"
+
+[provides]
+capability = "ext"

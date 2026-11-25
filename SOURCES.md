@@ -163,4 +163,4 @@ pi-rust: crates/{rpi-harness, rpi-cli, rpi-tui, rpi-extensions, rpi-plugin-sdk}
 
 | 本库路径 | 来源 | 上下游路径 | 改动 | 状态 |
 |---|---|---|---|---|
-| `crates/nous/store/**` | 自写 | — | 自写：Nous 自己的库（`nous.db`）。语义出自票面 #56（表形状逐字照抄）+ `docs/decisions.md` 2026-11-18（存储分离 = 两个文件）。两张表 `triggers` / `fires`、一条自己的迁移链（`schema_version`，`CURRENT_VERSION = 1`）、`reclaim` 纯函数 + `backup_to` / `schema_version` 两个薄接口。**没有上游**：触发器的概念在 pi 里不存在，所以不上台账的提货口径 —— 判据在 `crates/nous/store/tests/` 与 `scripts/check-separation.sh` | 自写 |
+| `crates/Nous/Store/**` | 自写 | — | 自写：Nous 自己的库（`nous.db`）。语义出自票面 #56（表形状逐字照抄）+ `docs/decisions.md` 2026-11-18（存储分离 = 两个文件）。两张表 `triggers` / `fires`、一条自己的迁移链（`schema_version`，`CURRENT_VERSION = 1`）、`reclaim` 纯函数 + `backup_to` / `schema_version` 两个薄接口。**没有上游**：触发器的概念在 pi 里不存在，所以不上台账的提货口径 —— 判据在 `crates/Nous/Store/tests/` 与 `scripts/check-separation.sh` | 自写 |

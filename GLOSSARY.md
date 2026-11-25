@@ -9,11 +9,11 @@ crate 名在 `wire.md` 与 `docs/storage.md`，不在这里。
 ## Language
 
 **内核层**:
-`crates/nous/*`（`docs/plugins.md` 里 layer=kernel 的行）：换个产品还能用的那一层，只出 pub API，不认识进程、路由、产品语义。
+`crates/Nous/*`（`docs/plugins.md` 里 layer=kernel 的行）：换个产品还能用的那一层，只出 pub API，不认识进程、路由、产品语义。
 _Avoid_: 引擎、Package、Nous-Package、服务端、后端
 
 **应用层**:
-`crates/nous/*`（layer=app 的行）：只有 Nous 用的那一层，持有客户端契约、路由、鉴权、扩展运行时与部署决策。
+`crates/Nous/*`（layer=app 的行）：只有 Nous 用的那一层，持有客户端契约、路由、鉴权、扩展运行时与部署决策。
 _Avoid_: nous-app、宿主、壳
 
 **提交**:

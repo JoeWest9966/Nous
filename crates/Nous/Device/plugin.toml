@@ -1,0 +1,11 @@
+name = "Nous_Device"
+vendor = "Nous"
+version = "0.8.0"
+layer = "app"
+crate = "nous-device"
+
+[requires]
+nous-routes = "^0.1"
+
+[provides]
+capability = "device"

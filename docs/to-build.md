@@ -39,9 +39,9 @@
 ### 形状草案（未定稿）
 
 ```toml
-# crates/nous/documents/plugin.toml
+# crates/Nous/Documents/plugin.toml
 name   = "documents"
-vendor = "nous"
+vendor = "Nous"
 version = "1.2.0"                  # 与 Cargo.toml 的 version 必须一致（构建期校验，见硬问题 3）
 layer  = "app"
 crate  = "nous-documents"
