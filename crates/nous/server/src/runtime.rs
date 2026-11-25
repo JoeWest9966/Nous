@@ -339,10 +339,10 @@ fn elements_runtime_config_at(
     ) else {
         return (None, None);
     };
-    let Some(group) = nous_element_models::find_group(&groups.items) else {
+    let Some(group) = element_models::find_group(&groups.items) else {
         return (None, None);
     };
-    let models_config = nous_element_models::runtime_config(group, &packages.items);
+    let models_config = element_models::runtime_config(group, &packages.items);
     let note = format!(
         "elements group `{}`: {} providers / {} models",
         group.id,

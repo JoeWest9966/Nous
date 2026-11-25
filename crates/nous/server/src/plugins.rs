@@ -14,7 +14,7 @@ use crate::app::AppState;
 pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     let mut all: Vec<nous_routes::Route<Arc<AppState>>> = Vec::new();
     all.extend(nous_device::routes::routes::<Arc<AppState>>());
-    all.extend(nous_element_models::routes::routes::<Arc<AppState>>());
+    all.extend(element_models::routes::routes::<Arc<AppState>>());
     all.extend(data_data_manager::routes::routes::<Arc<AppState>>());
     all
 }
@@ -31,7 +31,7 @@ pub fn declarations() -> Vec<nous_routes::Declaration> {
 ///
 /// 插件不认识 `AppState`，只认识这个 trait；这里把宿主的能力显式交出去。
 /// 未装配 = `None`（插件回 `state:"missing"` 的诚实空表）。
-impl nous_element_models::routes::Host for AppState {
+impl element_models::routes::Host for AppState {
     fn elements_repo(&self) -> Option<Arc<nous_repo::Repo>> {
         self.repo(crate::elements::REPO_KEY)
     }
@@ -42,7 +42,7 @@ impl nous_element_models::routes::Host for AppState {
 /// `NOUS_SECRETS_FILE` 优先；没配就是 `/var/lib/nous/secrets/providers.env`
 /// （`deploy/nous-app.service` 里那条 `EnvironmentFile=` 读的同一份）。引擎以 `nous` 用户跑，
 /// 所以这个位置必须是 `nous` 可写的 —— `/etc/nous/providers.env` 是 `root:nous 0640`，写不进去。
-impl nous_element_models::routes::Secrets for AppState {
+impl element_models::routes::Secrets for AppState {
     fn secrets_file(&self) -> Option<std::path::PathBuf> {
         Some(match std::env::var("NOUS_SECRETS_FILE") {
             Ok(path) if !path.trim().is_empty() => std::path::PathBuf::from(path),

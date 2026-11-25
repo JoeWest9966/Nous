@@ -1,8 +1,8 @@
-name = "element-models"
-vendor = "nous"
-version = "0.1.10"
+name = "Element_Models"
+vendor = "element"
+version = "0.2.0"
 layer = "app"
-crate = "nous-element-models"
+crate = "element-models"
 
 [requires]
 nous-elements = "^0.1"
@@ -12,4 +12,4 @@ nous-routes = "^0.1"
 nous-runtime = "^0.1"
 
 [provides]
-capability = "element-models"
+capability = "models"

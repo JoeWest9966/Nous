@@ -23,6 +23,10 @@ use serde_json::{json, Value};
 
 use crate::Snapshot;
 
+/// 模块全名（规则 12）：`/v1/capabilities` 的 `modules[].name`、`/v1/_routes` 的
+/// `module` 标签都用它 —— 面板靠这个标签把端点挂到模块名下。
+pub const MODULE: &str = "Element_Models";
+
 /// 宿主能力：这个插件只认识「给我元素库仓库」这一件事。
 ///
 /// 未装配（目录不存在）回 `None` —— 那是「还没有」，不是「没这个端点」。
@@ -57,10 +61,10 @@ where
     H: Host + Secrets + Clone + Send + Sync + 'static,
 {
     vec![
-        nous_routes::Route::new("GET", "/v1/models/elements", "element-models", || {
+        nous_routes::Route::new("GET", "/v1/models/elements", MODULE, || {
             get(handler::<H>)
         }),
-        nous_routes::Route::new("PUT", "/v1/providers/{id}/secret", "element-models", || {
+        nous_routes::Route::new("PUT", "/v1/providers/{id}/secret", MODULE, || {
             put(store_secret::<H>)
         }),
     ]

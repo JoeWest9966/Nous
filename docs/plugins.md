@@ -76,7 +76,29 @@
     —— 同一份 `routes()`，不可能分叉。清单只管**身份**（name / vendor / version / layer / crate /
     requires），不管"我有哪些 URL"。
     判据：`scripts/check-plugins.sh` 见到 `provides.endpoints` 就红（`endpoints 已作废`）。
-dule | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |
+
+12. **模块名照 Magento 2 的 `Vendor_Module` 长，目录与包名照旧全小写。**
+    Magento 的模块全名是 `Magento_Catalog` / `Amasty_Shiprestriction`：**大写、`_` 分段、第一段就是
+    vendor**。我们照抄这条，但把它和「机器名」分开，否则 cargo 包名与目录会变成大写：
+
+    | 概念 | 形态 | 例 |
+    |---|---|---|
+    | 模块全名（`plugin.toml` 的 `name`、`/v1/capabilities` 的 `modules[].name`、`GET /v1/plugins/:name/*`） | `<Vendor>_<Module>`，两段首字母大写 | `Element_Models` |
+    | vendor（出品方，规则 10） | 小写，等于全名第一段的小写 | `element` |
+    | 目录 | `crates/<vendor>/<module 目录名>`，目录名 = 全名去掉 vendor 段后的**小写连字符形** | `crates/element/models` |
+    | 包名（`Cargo.toml`） | `<vendor>-<module 目录名>` | `element-models` |
+    | capability（`provides.capability`） | 同目录名（机器名，判据比对用） | `models` |
+
+    「vendor 永远是 B 形态」：**vendor 是目录与包名的一部分，模块由 vendor 独立命名，包名 `vendor-module`**
+    —— 不存在「vendor 只活在字段里、目录平铺」的 A 形态。这句话是一次性决定，别再翻案。
+    老模块的小写连字符全名（`data-manager`、`sessions`）继续有效：无 `_` 时目录名 = 全名本身、
+    包名 = `<vendor>-<全名>`，逐次迁移，不做一次性改名。
+    判据：`scripts/check-plugins.sh` 由全名**推出**目录名 / 包名 / vendor 再逐条比对（不再要求
+    `plugin.toml.name == 目录名`，那是 A 形态的算法）。
+
+## 表
+
+| module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |
 |---|---|---|---|---|---|---|---|
 | `wire` | nous | `nous-wire` | kernel | 编译期 | `/v1/*` 事件与实体类型 | 是 | 契约层，零依赖优先 |
 | `chord` | nous | `nous-chord` | kernel | 编译期 | context / json / delta / sqlite / watch / output | 是 | 语义基元 |
@@ -108,7 +130,7 @@ dule | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |
 | `exts/` | nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
 | `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口）+ `PATCH /v1/triggers/{code}`（#73：改 schedule/params/enabled，code 不可变） | 否 | #57/#58 落地；调度节拍归 `dispatcher` |
 | `elements` | nous | `nous-elements` | app | 编译期 | `GET /v1/elements`（两段全量 + 引用解析）+ `GET/PUT/DELETE /v1/elements/{kind}/{id}`（单条读写 / 删）+ `POST /v1/elements/{kind}`（新建）+ `POST /v1/elements/push`（手动补推）；写一次提交一次，同一个 `requestId` 重放不二次提交 | 否 | 元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点 |
-| `element-models` | nous | `nous-element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
+| `Element_Models` | element | `element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
 | `routes` | nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 不再有 `endpoints` 字段（规则 11：端点只由 `routes()` 声明，三处读口都从它生成） |
 | `archive` | nous | — | app | 编译期 | `archive` / `purge` / `archive_list` / `restore`；端点族 `POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票 |
 | `data-manager` | data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |

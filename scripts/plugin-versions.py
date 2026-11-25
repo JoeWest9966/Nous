@@ -58,7 +58,14 @@ def git(*args):
 
 
 def plugin_dirs():
-    """`docs/plugins.md` 里所有有目录的模块：`module -> crates/<vendor>/<module>`。"""
+    """`docs/plugins.md` 里所有有目录的模块：`目录名 -> crates/<vendor>/<目录名>`。
+
+    目录名由模块全名推出（`docs/plugins.md` 规则 12，与 `scripts/layer-paths.sh` 同一算法）：
+    `Element_Models` → `crates/element/models`。
+
+    key 用**模块全名**（`plugin.toml` 的 `name`）：`/v1/capabilities`、路由声明、本文档三者
+    都按全名说话，目录名只是目录。
+    """
     out = {}
     for layer in LAYERS:
         proc = subprocess.run(['bash', os.path.join(ROOT, 'scripts/layer-paths.sh'), layer],
@@ -68,7 +75,13 @@ def plugin_dirs():
                              f'{proc.stderr.strip()}')
         for path in proc.stdout.split():
             rel = os.path.relpath(os.path.join(ROOT, path), ROOT).replace(os.sep, '/')
-            out[os.path.basename(rel)] = rel
+            manifest = os.path.join(ROOT, rel, 'plugin.toml')
+            try:
+                with open(manifest, 'rb') as handle:
+                    name = tomllib.load(handle).get('name')
+            except (OSError, tomllib.TOMLDecodeError):
+                name = None
+            out[name or os.path.basename(rel)] = rel
     return dict(sorted(out.items()))
 
 
@@ -230,7 +243,7 @@ def manifest_version(rel):
 
 DOC = os.path.join(ROOT, 'docs/plugin-versions.md')
 DOC_ROW = re.compile(
-    r'^\| `(?P<module>[a-z0-9-]+)` \| (?P<total>\d+) \| (?P<minor>\d+) \| '
+    r'^\| `(?P<module>[A-Za-z0-9_-]+)` \| (?P<total>\d+) \| (?P<minor>\d+) \| '
     r'(?P<patch>\d+) \| (?P<version>[\d.]+) \| (?P<manifest>[\d.]+) \| '
     r'`(?P<sha>[0-9a-f]{8})` ',
     re.M,

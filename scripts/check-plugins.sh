@@ -42,6 +42,20 @@ def cell_text(value):
     return value.strip().strip('`').strip()
 
 
+NAME_OK = re.compile(r'^(?:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z][A-Za-z0-9]*)?|[a-z][a-z0-9-]*)$')
+
+
+def split_name(name):
+    """模块全名 → (全名第一段的小写 vendor, 小写连字符目录名)。规则 12。
+
+    `Element_Models` → ('element', 'models')；老写法 `data-manager` → (None, 'data-manager')。
+    """
+    if '_' in name:
+        head, tail = name.split('_', 1)
+        return head.lower(), tail.lower().replace('_', '-')
+    return None, name.lower()
+
+
 def read_plugins_rows():
     if not os.path.exists(PLUGINS_DOC):
         report(f'{PLUGINS_DOC} 缺失（清单是判据的一部分）', True)
@@ -58,7 +72,7 @@ def read_plugins_rows():
                 continue
             module = cell_text(cells[0])
             # 只认反引号包起来的模块名；表头 `module` 与分隔行 `---` 都不是模块。
-            if not (cells[0].strip().startswith('`') and re.fullmatch(r'[a-z][a-z0-9-]*', module)):
+            if not (cells[0].strip().startswith('`') and NAME_OK.fullmatch(module)):
                 continue
             if module in all_modules:
                 duplicates.append(module)
@@ -67,6 +81,7 @@ def read_plugins_rows():
             if crate_raw.startswith('(待建)') or cell_text(crate_raw) in ('—', '-', ''):
                 continue  # 待建 / 外挂行不是 crate 目录
             rows[module] = {
+                'dir': split_name(module)[1],
                 'vendor': cell_text(cells[1]),
                 'crate': cell_text(crate_raw),
                 'layer': cell_text(cells[3]),
@@ -179,7 +194,8 @@ manifest_paths = sorted(glob.glob('crates/*/*/plugin.toml'))
 
 # 集合双向：目录 ↔ 清单 ↔ plugin.toml。待建 / 外挂行已从 rows 里排除。
 dir_set = {os.path.relpath(p).replace(os.sep, '/') for p in dirs}
-row_set = {f'crates/{v["vendor"]}/{m}' for m, v in rows.items()}
+row_set = {f'crates/{v["vendor"]}/{v["dir"]}' for v in rows.values()}
+rows_by_dir = {v['dir']: (full, v) for full, v in rows.items()}
 manifest_dirs = {os.path.dirname(p).replace(os.sep, '/') for p in manifest_paths}
 for label, extra in (
     ('DIR_NO_ROW', dir_set - row_set),
@@ -207,14 +223,26 @@ for directory in dirs:
         continue
 
     failures = []
-    for key, want in (('name', module), ('vendor', vendor)):
-        got = pm.get(key)
-        if got != want:
-            failures.append(f'{key}={got!r}（应为 {want!r}）')
-    row = rows.get(module)
-    if row is None:
+    full_name = pm.get('name')
+    if not isinstance(full_name, str) or not NAME_OK.fullmatch(full_name):
+        failures.append(f'name={full_name!r}（规则 12 要 `Vendor_Module` 或老的小写连字符名）')
+        full_name = module
+    name_vendor, name_dir = split_name(full_name)
+    if name_dir != module:
+        failures.append(f'目录名={module!r}（由全名 {full_name!r} 推出应为 {name_dir!r}）')
+    if pm.get('vendor') != vendor:
+        failures.append(f'vendor={pm.get("vendor")!r}（应为目录的 {vendor!r}）')
+    if name_vendor is not None and name_vendor != vendor:
+        failures.append(f'全名第一段是 {name_vendor!r}，与 vendor={vendor!r} 不符（规则 12）')
+    row_pair = rows_by_dir.get(module)
+    if row_pair is None:
         failures.append('docs/plugins.md 无对应行')
+        row = None
     else:
+        row_full, row = row_pair
+        if row_full != full_name:
+            failures.append(f'清单行是 `{row_full}`，与 plugin.toml 的 name={full_name!r} 不符')
+    if row is not None:
         if row['vendor'] != vendor:
             failures.append(f'vendor 与清单行 {row["vendor"]!r} 不符')
         got_layer = pm.get('layer')
@@ -228,7 +256,7 @@ for directory in dirs:
         else:
             capability = provides.get('capability')
             if capability is not None and capability != module:
-                failures.append(f'capability={capability!r}（module 列是 {module!r}）')
+                failures.append(f'capability={capability!r}（目录名是 {module!r}）')
             # 规则 11：端点只有一个真相 —— 插件的 `routes()`；注册表（capabilities /
             # `_routes` / openapi）从它生成。清单里不许再抄一份（曾经是永远空的 `[]`，
             # 让人以为"这个插件没端点"）。
@@ -275,7 +303,7 @@ for directory in dirs:
                 failures.append(f'requires.{dep}={constraint!r}（内部 crate 版本是 ^0.1）')
 
     if failures:
-        report(f'{module}: ' + '；'.join(failures), True)
+        report(f'{full_name}: ' + '；'.join(failures), True)
 
 check_readme(dirs)
 

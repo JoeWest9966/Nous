@@ -7,7 +7,9 @@
 # 规矩（spec §3.0）：
 #   - 成员**只从 `docs/plugins.md` 读**，本脚本里不写死任何模块名，也不写死 vendor 名；
 #   - 跳过 `crate` 列为 `(待建) …` 或 `—` 的行（目录不存在，不是判据载体）；
-#   - 清单缺失 / 不可解析 → 退出码 1（= 判据 RED，不是 SKIP）；参数缺失 → 退出码 2（用法错误）。
+#   - 清单缺失 / 不可解析 → 退出码 1（= 判据 RED，不是 SKIP）；参数缺失 → 退出码 2（用法错误）；
+#   - 目录名由**模块全名**推出（`docs/plugins.md` 规则 12）：`Element_Models` → `crates/element/models`，
+#     老的小写连字符名 `data-manager` → 目录名就是它自己。
 set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
@@ -59,6 +61,12 @@ if not rows:
     print(f'RED: {path} 不可解析（一行模块都没读出来）', file=sys.stderr)
     raise SystemExit(1)
 
+def dir_of(name):
+    """规则 12：全名 → 目录名。`Element_Models` → `models`；`data-manager` → `data-manager`。"""
+    tail = name.split('_', 1)[1] if '_' in name else name
+    return tail.lower().replace('_', '-')
+
+
 out = []
 for module, vendor, crate, layer in rows:
     if layer != want:
@@ -66,7 +74,7 @@ for module, vendor, crate, layer in rows:
     # `(待建) nous-sessions` = 目录还不存在；`—` = 不是 crate。两种都不是判据载体。
     if crate.startswith('(待建)') or crate in ('—', '-', ''):
         continue
-    out.append(f'crates/{vendor}/{module}')
+    out.append(f'crates/{vendor}/{dir_of(module)}')
 
 print(' '.join(out))
 PY

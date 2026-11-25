@@ -389,7 +389,9 @@ pub fn endpoints() -> Vec<Endpoint> {
     let mut all: Vec<Endpoint> = enabled_routes()
         .map(|route| Endpoint {
             method: route.method,
-            path: route.path.to_string(),
+            // 注册表只认 `:id` 一种写法：静态表里是 `{id}`，插件声明本来就是 `:id`，
+            // 这里统一折一次 —— 否则同一个 `endpoints[]` 里两种写法并存。
+            path: nous_routes::to_registry_path(route.path),
             module: route.module,
         })
         .collect();
@@ -485,6 +487,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "今天 `prompts/index.js`" },
     ManifestEntry { name: "ext", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划" },
     // 元素库：旧面板 `k3skws` 块的 Rust 落点；盘上真相 = 第五套私库。
+    ManifestEntry { name: "Element_Models", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`element-models`", description: "盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟）" },
     ManifestEntry { name: "elements", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-elements`", description: "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点" },
 ];
 

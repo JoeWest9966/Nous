@@ -106,17 +106,17 @@
       "endpoints": [
         "GET /v1/presets",
         "GET /v1/presets/model",
-        "GET /v1/presets/{section}",
-        "PUT /v1/presets/{section}/order",
-        "GET /v1/presets/{section}/categories",
-        "GET /v1/presets/{section}/{name}",
-        "PUT /v1/presets/{section}/{name}",
-        "PATCH /v1/presets/{section}/{name}",
-        "DELETE /v1/presets/{section}/{name}",
-        "POST /v1/presets/{section}/{name}/copy",
-        "GET /v1/presets/{section}/{name}/revisions",
-        "GET /v1/presets/{section}/{name}/revisions/{n}",
-        "POST /v1/presets/{section}/{name}/rollback"
+        "GET /v1/presets/:section",
+        "PUT /v1/presets/:section/order",
+        "GET /v1/presets/:section/categories",
+        "GET /v1/presets/:section/:name",
+        "PUT /v1/presets/:section/:name",
+        "PATCH /v1/presets/:section/:name",
+        "DELETE /v1/presets/:section/:name",
+        "POST /v1/presets/:section/:name/copy",
+        "GET /v1/presets/:section/:name/revisions",
+        "GET /v1/presets/:section/:name/revisions/:n",
+        "POST /v1/presets/:section/:name/rollback"
       ]
     },
     {
@@ -130,25 +130,25 @@
       "description": "从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json`",
       "enabled": true,
       "endpoints": [
-        "GET /v1/presets/{section}/order",
-        "POST /v1/presets/{section}/categories",
-        "POST /v1/presets/{section}/category",
-        "POST /v1/presets/{section}/create",
-        "POST /v1/presets/{section}/rename",
-        "POST /v1/presets/{section}/archive",
-        "POST /v1/presets/{section}/restore",
-        "POST /v1/presets/{section}/purge",
-        "GET /v1/presets/{section}/validate",
-        "POST /v1/presets/{section}/validate",
-        "GET /v1/presets/{section}/resolve",
-        "POST /v1/presets/{section}/resolve",
-        "GET /v1/presets/{section}/files",
-        "GET /v1/presets/{section}/file",
-        "PUT /v1/presets/{section}/file",
-        "GET /v1/presets/{section}/pending",
-        "POST /v1/presets/{section}/sync",
-        "POST /v1/presets/{section}/publish",
-        "POST /v1/presets/{section}/reload"
+        "GET /v1/presets/:section/order",
+        "POST /v1/presets/:section/categories",
+        "POST /v1/presets/:section/category",
+        "POST /v1/presets/:section/create",
+        "POST /v1/presets/:section/rename",
+        "POST /v1/presets/:section/archive",
+        "POST /v1/presets/:section/restore",
+        "POST /v1/presets/:section/purge",
+        "GET /v1/presets/:section/validate",
+        "POST /v1/presets/:section/validate",
+        "GET /v1/presets/:section/resolve",
+        "POST /v1/presets/:section/resolve",
+        "GET /v1/presets/:section/files",
+        "GET /v1/presets/:section/file",
+        "PUT /v1/presets/:section/file",
+        "GET /v1/presets/:section/pending",
+        "POST /v1/presets/:section/sync",
+        "POST /v1/presets/:section/publish",
+        "POST /v1/presets/:section/reload"
       ]
     },
     {
@@ -184,7 +184,7 @@
       "endpoints": [
         "POST /v1/sessions/:id/archive",
         "GET /v1/archive",
-        "POST /v1/archive/{id}/restore"
+        "POST /v1/archive/:id/restore"
       ]
     },
     {
@@ -201,7 +201,7 @@
       "endpoints": [
         "GET /v1/combos/:section",
         "PATCH /v1/combos/:section/:name",
-        "POST /v1/combos/{section}/{name}/fire",
+        "POST /v1/combos/:section/:name/fire",
         "POST /v1/presets/Ultimate-Template/launch"
       ]
     },
@@ -221,13 +221,13 @@
         "POST /v1/triggers",
         "GET /v1/triggers/categories",
         "POST /v1/triggers/category",
-        "POST /v1/triggers/{code}/archive",
-        "POST /v1/triggers/{code}/restore",
-        "POST /v1/triggers/{code}/purge",
-        "POST /v1/triggers/{code}/fire",
-        "GET /v1/triggers/{code}/fires",
-        "PATCH /v1/triggers/{code}",
-        "PUT /v1/triggers/{code}",
+        "POST /v1/triggers/:code/archive",
+        "POST /v1/triggers/:code/restore",
+        "POST /v1/triggers/:code/purge",
+        "POST /v1/triggers/:code/fire",
+        "GET /v1/triggers/:code/fires",
+        "PATCH /v1/triggers/:code",
+        "PUT /v1/triggers/:code",
         "GET /v1/trigger-projects",
         "GET /v1/trigger-projects/files",
         "GET /v1/trigger-projects/file",
@@ -280,7 +280,7 @@
         "POST /v1/catalog/refresh",
         "GET /v1/device",
         "GET /v1/capabilities",
-        "GET /v1/plugins/{name}/readme",
+        "GET /v1/plugins/:name/readme",
         "GET /v1/openapi.json",
         "GET /v1/_routes",
         "GET /v1/machines"
@@ -334,6 +334,21 @@
       ]
     },
     {
+      "name": "Element_Models",
+      "version": "0.2.0",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`element-models`",
+      "vendor": "element",
+      "description": "盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟）",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/models/elements",
+        "PUT /v1/providers/:id/secret"
+      ]
+    },
+    {
       "name": "elements",
       "version": "0.2.4",
       "kind": "编译期",
@@ -345,12 +360,12 @@
       "enabled": true,
       "endpoints": [
         "GET /v1/elements",
-        "GET /v1/elements/{kind}",
-        "GET /v1/elements/{kind}/{id}",
-        "PUT /v1/elements/{kind}/{id}",
-        "POST /v1/elements/{kind}",
-        "DELETE /v1/elements/{kind}/{id}",
-        "POST /v1/elements/{kind}/{id}/lock",
+        "GET /v1/elements/:kind",
+        "GET /v1/elements/:kind/:id",
+        "PUT /v1/elements/:kind/:id",
+        "POST /v1/elements/:kind",
+        "DELETE /v1/elements/:kind/:id",
+        "POST /v1/elements/:kind/:id/lock",
         "POST /v1/elements/push"
       ]
     }

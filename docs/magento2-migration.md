@@ -52,7 +52,7 @@ pub trait Host {
 impl<T: Host + ?Sized> Host for std::sync::Arc<T> { /* 转发 */ }
 
 // 宿主侧（server/src/plugins.rs）
-impl nous_element_models::routes::Host for AppState {
+impl element_models::routes::Host for AppState {
     fn elements_repo(&self) -> Option<Arc<nous_repo::Repo>> { self.repo(crate::elements::REPO_KEY) }
 }
 ```

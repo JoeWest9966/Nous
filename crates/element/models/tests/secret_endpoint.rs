@@ -10,8 +10,8 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
-use nous_element_models::routes::{self, Host, Secrets};
-use nous_element_models::GROUP_ID;
+use element_models::routes::{self, Host, Secrets};
+use element_models::GROUP_ID;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -107,11 +107,11 @@ fn both_endpoints_are_declared_under_the_plugin_module() {
     assert_eq!(
         declared,
         vec![
-            ("GET".to_string(), "/v1/models/elements".to_string(), "element-models"),
+            ("GET".to_string(), "/v1/models/elements".to_string(), "Element_Models"),
             (
                 "PUT".to_string(),
                 "/v1/providers/:id/secret".to_string(),
-                "element-models"
+                "Element_Models"
             ),
         ],
         "注册表写法必须是 wire.md 的 :id 形式"

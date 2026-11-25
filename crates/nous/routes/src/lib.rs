@@ -93,7 +93,9 @@ where
 }
 
 /// `{id}` / `{kind}` → `:id` / `:kind`（axum 0.8 的写法 → `wire.md` 的写法）。
-fn to_registry_path(path: &str) -> String {
+/// `{id}` → `:id`：注册表（`/v1/_routes`、openapi、capabilities 的 `endpoints[]`）里
+/// 路径只认这一种写法，静态表与插件声明都经过它，别在两处各写一套。
+pub fn to_registry_path(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
     let mut rest = path;
     while let Some(start) = rest.find('{') {

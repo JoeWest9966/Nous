@@ -339,6 +339,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "element-models"
+version = "0.1.28"
+dependencies = [
+ "axum",
+ "nous-elements",
+ "nous-env",
+ "nous-repo",
+ "nous-routes",
+ "nous-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1365,23 +1382,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nous-element-models"
-version = "0.1.28"
-dependencies = [
- "axum",
- "nous-elements",
- "nous-env",
- "nous-repo",
- "nous-routes",
- "nous-runtime",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower",
-]
-
-[[package]]
 name = "nous-elements"
 version = "0.1.28"
 dependencies = [
@@ -1520,13 +1520,13 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "data-data-manager",
+ "element-models",
  "futures",
  "libc",
  "nous-ai",
  "nous-device",
  "nous-dispatcher",
  "nous-durable",
- "nous-element-models",
  "nous-elements",
  "nous-env",
  "nous-env-ssh",
