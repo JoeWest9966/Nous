@@ -2,7 +2,7 @@
   "contract": 1,
   "server": {
     "name": "nous",
-    "version": "0.1.28"
+    "version": "0.1.30"
   },
   "modules": [
     {
@@ -94,7 +94,7 @@
     },
     {
       "name": "presets",
-      "version": "0.1.28",
+      "version": "0.1.30",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -172,7 +172,7 @@
     },
     {
       "name": "archive",
-      "version": "0.1.28",
+      "version": "0.1.30",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -189,7 +189,7 @@
     },
     {
       "name": "combos",
-      "version": "0.1.28",
+      "version": "0.1.30",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -207,7 +207,7 @@
     },
     {
       "name": "triggers",
-      "version": "0.1.28",
+      "version": "0.1.30",
       "kind": "运行时外挂",
       "layer": "app",
       "required": false,

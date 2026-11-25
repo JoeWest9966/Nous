@@ -19,6 +19,17 @@
 unit 里写这四个变量就会变成两份真相 —— 要换路径只在环境里改一处；缺目录是正常状态，
 `/v1/skills` / `/v1/prompts` 仍回 `root` 字符串 + `present=false`，不会回 `null`。
 
+## 发版清单（涨版本号时别漏第 2 条）
+
+1. `Cargo.toml` 的 workspace `version` 涨一格 + `cargo metadata --offline` 刷 `Cargo.lock`。
+2. **快照里的发行版号要跟着改**：`crates/nous/server/tests/snapshots/` 里
+   `capabilities_declares_modules_and_reasons.json`（`server.version` + 回退发行版号的那几个模块）
+   与 `device_response_pins_client_shape.json`（`node` / `version`）是**逐字比对**的，不改就红。
+   没有 `BLESS` 开关，`sed` 一把最省事：`sed -i 's/"0\.1\.28"/"0.1.29"/g' <快照>`。
+   2026-11-25 真踩过：`v0.1.29` 的 tag 打完后才跑判据，两个快照全红。
+3. 判据顺序：`plugin-versions.py --check --doc-check` → `verify.sh` → `cargo test --workspace`，
+   全绿再 `git tag -a vX.Y.Z`。
+
 ## 0 · 一次性准备（人做，脚本不代劳）
 
 j1900（`root` 登录一次）：
