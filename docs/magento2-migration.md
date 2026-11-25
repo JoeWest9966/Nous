@@ -38,7 +38,8 @@ where S: Clone + Send + Sync + 'static {
 
 ### 3.2 宿主能力 trait：插件不依赖 `server`
 
-> 现在有两个能力的样板：`element-models` 的 `Host`（元素库仓库）与 `Secrets`（密钥文件路径）。
+> 现在有三个能力的样板：`element-models` 的 `Host`（元素库仓库）与 `Secrets`（密钥文件路径），
+> 以及 `data-manager` 的 `Host::stats_paths`（两个只读库路径）。
 > 新端点需要什么，就在插件里加一个窄 trait，别去依赖 `AppState`。
 
 插件不认识 `AppState`。它**声明自己需要什么**，由 `server` 实现并注入：
@@ -66,6 +67,59 @@ impl nous_element_models::routes::Host for AppState {
 3. **插件不许 `use nous_server::…`**：需要宿主能力就加 trait 方法，由 `server` 实现。
    内核层（`wire` / `chord` / `durable` / `ai-types`）仍然不许出现 `axum::` / `.route(`（`verify.sh` 判据 4）。
 
+### 3.4 标杆：一个「搬完」的插件长什么样（照 `data-manager` 抄）
+
+`data-manager`（原 `stats`）是第一个把**整套**走完的插件：8 条端点、一份清单、一个窄能力、
+一组端点级判据。后面 153 条按这张清单抄，不再逐个议接缝。**缺一条就不算搬完。**
+
+#### A. 插件侧（`crates/<vendor>/<module>/src/routes.rs`）
+
+- [ ] `pub const MODULE: &str = "<module>";` —— 注册表里的模块名只写在这里（清单里不再有 `endpoints`，规则 11）。
+- [ ] `pub trait Host { fn … }`：**一个方法一个能力**，返回 `Option<…>` 表示「宿主没装配」。
+- [ ] `impl<T: Host + ?Sized> Host for std::sync::Arc<T>`：路由装进 `Router<Arc<AppState>>` 时不用再写转发。
+- [ ] `pub enum Refusal { NotConfigured, BadRequest(String), NotFound(String), Internal(String) }`
+      + `impl axum::response::IntoResponse for Refusal`（`{status, {"error": …}}`；
+      **必须实现 `IntoResponse`**，否则 `Handler<_>` 不成立，编译器只会说一句听不懂的 `trait bound not satisfied`）。
+- [ ] handler 是泛型 `async fn x<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>, …)`
+      —— 泛型参数上那串 bound 是 axum 的要求，不是啰嗦。
+- [ ] `pub fn routes<H>() -> Vec<Route<H>>`：**路径只写在这里**（axum 的 `{id}` 形式），
+      `nous-routes` 自动折成注册表要的 `:id`。
+- [ ] 时钟只在端点层取（聚合层零时钟）；只读插件一次写都不做。
+
+#### B. 宿主侧（`crates/nous/server/`）
+
+- [ ] `plugins.rs`：`all.extend(<crate>::routes::routes::<Arc<AppState>>());`
+- [ ] `plugins.rs`：`impl <crate>::routes::Host for AppState`（**能力实现只写这一处**）。
+- [ ] `meta.rs`：把该模块的端点行从静态表**删掉**（只减不增）。
+- [ ] 旧 handler 文件整份删除；**不是**插件的东西（例如 `openapi` 读的是注册表，不是统计）搬回 `routes.rs`，别顺手塞进插件。
+- [ ] 需要路径/仓库这类死数据的，`AppState` 的字段类型直接换成插件的类型（`data-manager` 就把
+      `StatsRuntime` 换成 `routes::Paths`，`with_stats` 的签名跟着变）—— 别留两套同形结构。
+
+#### C. 判据（插件自己 4 条 + 仓库级 3 条）
+
+- [ ] 声明逐字：`routes()` 的 `declared()` 与模块名逐条比对（路径写错、漏一条立刻红）。
+- [ ] 未装配 = `409` 且文案是那句熟话（不是空 200，也不是 404）。
+- [ ] 参数错 = `400` 且把收到的值回显在 `{error}` 里（`group_by` 那种闭集合尤其要）。
+- [ ] 库/资源没建 = **200 + 按 0 报告**（「没建」不许伪装成「坏了」）。
+- [ ] `scripts/check-plugins.sh`（清单四处同源 + 版本只增不减）
+- [ ] `scripts/verify.sh`（路由归属、数据面、进程创建点、依赖边）
+- [ ] `cargo test --workspace`
+- [ ] 原端点的服务器级测试改成走插件类型（`stats_endpoints` 的 `StatsRuntime` → `routes::Paths`），
+      读静态表的判据改成读 `meta::endpoints()`（静态表 ∪ 插件声明）—— **静态表变薄不该让判据失效**。
+
+#### D. 记账（三处，缺一处下一个人就不知道发生了什么）
+
+- [ ] `docs/plugins.md` 那一行（module / vendor / crate / layer / API 面 / 备注）
+- [ ] 本文 §4 进度表：搬走的从「待搬」删除、加到「已搬」；静态表行数同步
+- [ ] 本文 §7 操作日志一行：搬了什么、宿主能力叫什么、有什么坑
+
+#### E. 版本与身份
+
+- [ ] `plugin.toml` 只记身份：`name` / `vendor` / `version` / `layer` / `crate` / `requires`
+      （**没有 `endpoints`**，规则 11）；`requires` 由 `check-plugins.sh` 对着 `cargo metadata` 核。
+- [ ] 版本按规则 8 涨：端点契约变化 → minor；纯内部改动 → patch。宿主能力的增删也算契约。
+
+
 ## 4 · 进度
 
 ### 4.1 已搬（10 条）
@@ -75,7 +129,7 @@ impl nous_element_models::routes::Host for AppState {
 | `device` | `GET /v1/machines` | `feat(routes)` | 第一条试点，证明接缝通；handler 无需宿主状态 |
 | `element-models` | `GET /v1/models/elements` | `feat(element-models)` | 第一条**需要宿主注入**的端点；`Host::elements_repo` |
 | `element-models` | `PUT /v1/providers/{id}/secret` | `feat(element-models)` | **新端点**（不是搬家）：插件自带 handler，宿主给 `Secrets::secrets_file` |
-| `data-manager` | `GET /v1/stats/{usage,tasks,db,overview,conversations,conversation/:id,cost,health}`（8 条） | `refactor(data-manager)` | 第一次「一个插件一次搬 8 条」：`Host::stats_paths` 只给两个库路径；`server/src/stats.rs` 整份删掉，`openapi` 归 `server/routes.rs`（它读的是注册表，不是统计） |
+| `data-manager` | `GET /v1/stats/{usage,tasks,db,overview,conversations,conversation/:id,cost,health}`（8 条） | `refactor(data-manager)` | 第一次「一个插件一次搬 8 条」：`Host::stats_paths` 只给两个库路径；`server/src/stats.rs` 整份删掉，`openapi` 归 `server/routes.rs`（它读的是注册表，不是统计）。**这就是 §3.4 的标杆** |
 
 ### 4.2 待搬（154 条 / 14 个模块）
 
