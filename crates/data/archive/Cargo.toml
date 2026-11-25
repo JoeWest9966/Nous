@@ -1,0 +1,18 @@
+[package]
+name = "data-archive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "应用层 archive 模块：会话归档三端点（/v1/sessions/:id/archive · /v1/archive · /v1/archive/:id/restore，#67）"
+
+[dependencies]
+async-trait = { workspace = true }
+axum = { workspace = true }
+nous-durable = { workspace = true }
+nous-routes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

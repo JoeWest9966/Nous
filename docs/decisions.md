@@ -1206,3 +1206,41 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 得换成发布记录逐条对得上 —— 那时 `check-plugins.sh` 该读 `plugin.toml` 的 changelog 段，
 而不是比 HEAD。已知低估也写在 `docs/plugin-versions.md` 里：端点只改回包形状 / 状态码
 这类变更机械判据抓不到，minor 是下界不是完整清单。
+
+## 2026-11-25 会话归档搬进插件（`crates/data/archive`，vendor=`data`）
+
+**背景**：搬家票（`docs/magento2-migration.md`）按 §3.4 的标杆逐个插件推进。`archive` 是
+第 4 个，3 条端点：`POST /v1/sessions/{id}/archive` · `GET /v1/archive` ·
+`POST /v1/archive/{id}/restore`。同时它还是「换出品方」的第一个非 `data-manager` 例子。
+
+**决定**：
+
+- **宿主能力是「命令面」，不是库路径。** `Host::{archive_session, archive_generations,
+  restore_session}` 三个方法各一个能力，实现只在 `server/src/plugins.rs`，全部落在同一个
+  `CommandSource`（同一个 `Session` 写者）上 —— 插件不另开写通道，也就不会出现第二份
+  gen 文件 / 墓碑口径。
+- **状态码不在插件里重算。** `command_error` 已经把 `CommandError` 翻成
+  `ServerError`（409 是「现在不行」、400 是「这么写不行」、404 是「没有这条」）；
+  `plugins.rs` 只把 `ServerError` 的 `status()` + `message()` 原样装进
+  `data_archive::routes::Refusal`。插件只补自己那两条 400（id 不是数字 / restore body 坏）。
+- **供应商换 `data`。** 目录 `crates/data/archive`、包名 `data-archive`、`plugin.toml`
+  的 `vendor = "data"` / `capability = "archive"`（规则 10 + 规则 11）。模块名保持
+  `archive` —— `docs/plugins.md` 的 module 列、`capabilities` 的 `name`、NousDesk 的
+  `Feature::Archive` 都按这个名字判能力，改它等于跨仓改契约，不在这一票里。
+- **`wire.md` 一个字没动。** 三条路径与回包形状（`{gen,ids,rows}` /
+  `{gens:[{gen,items}]}` / `{restored,gen,rows}`）逐字保留，所以客户端（NousDesk
+  `nous-engine`）零改动 —— 已核：`client.rs` 只按路径拼 URL、按 `serde_json::Value` 收包。
+
+**为什么**：`archive` 存量只有 3 条，但它是**第一个写面插件**。`data-manager` 证明的是
+「只读聚合能搬」，这里要证明「写命令也能搬，且不破坏单写者」。选它而不是 `elements`（8 条、
+零新接缝），是因为 `sessions`（17 条）、`triggers`（24 条）都要走同一类命令面接缝，
+先把这条缝立起来，后面两票是抄。
+
+**代价**：`Host` 是 `#[async_trait]`（命令是 async），插件因此多了 `async-trait` 依赖；
+`data-manager` 那套 `Refusal` 枚举带语义分支，这里换成「状态码 + 文案」的窄结构 ——
+插件不重算语义，但也不再拥有「哪些状态码合法」的知识。
+
+**反悔点**：如果后面搬 `sessions` 时发现每个插件都要各写一份 `Refusal` → `ServerError`
+的翻译，就把这对映射提到 `nous-routes`（契约层）里做一次；现在只有两个插件，提前抽会
+造出一个只有一个实现的 trait。另外：真机上「归档 → 归档库页刷新 → 打捞」那一眼还没验
+（见 `docs/` 的部署判据），部署后要补。

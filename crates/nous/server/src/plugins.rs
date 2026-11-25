@@ -16,6 +16,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_device::routes::routes::<Arc<AppState>>());
     all.extend(element_models::routes::routes::<Arc<AppState>>());
     all.extend(data_data_manager::routes::routes::<Arc<AppState>>());
+    all.extend(data_archive::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -59,4 +60,46 @@ impl data_data_manager::routes::Host for AppState {
     fn stats_paths(&self) -> Option<data_data_manager::routes::Paths> {
         self.stats().cloned()
     }
+}
+
+/// `archive` 插件要的三件事：归档 / 列世代 / 打捞。
+///
+/// 全部落在同一个 `CommandSource`（同一个 `Session` 写者）上 —— 插件不另开写通道。
+/// 错误语义只在 `commands.rs` 的 `command_error` 里判一次（409 与 400 的分界），
+/// 这里只把 `ServerError` 翻成插件认识的状态码 + 文案，不重算。
+#[async_trait::async_trait]
+impl data_archive::routes::Host for AppState {
+    async fn archive_session(
+        &self,
+        session: i64,
+        at: i64,
+    ) -> Result<nous_durable::session::commands::ArchiveResult, data_archive::routes::Refusal> {
+        self.commands()
+            .archive(session, at, None)
+            .await
+            .map_err(refusal)
+    }
+
+    async fn archive_generations(
+        &self,
+    ) -> Result<Vec<nous_durable::storage::archive::Generation>, data_archive::routes::Refusal> {
+        self.commands().archives().await.map_err(refusal)
+    }
+
+    async fn restore_session(
+        &self,
+        session: i64,
+        gen: String,
+        at: i64,
+    ) -> Result<nous_durable::session::commands::RestoreResult, data_archive::routes::Refusal> {
+        self.commands()
+            .restore(session, gen, at)
+            .await
+            .map_err(refusal)
+    }
+}
+
+/// `ServerError` → 插件侧的拒绝理由：状态码与文案逐字搬过去（不在这里换口径）。
+fn refusal(error: crate::ServerError) -> data_archive::routes::Refusal {
+    data_archive::routes::Refusal::new(error.status(), error.message())
 }

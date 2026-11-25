@@ -1,6 +1,6 @@
 name = "server"
 vendor = "nous"
-version = "0.3.16"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+version = "0.3.17"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；归档三端点换归属 + 删静态表 3 行）
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-server"
 
@@ -22,6 +22,7 @@ nous-skills = "^0.1"
 nous-runtime = "^0.1"
 nous-sessions = "^0.1"
 data-data-manager = "^0.1"
+data-archive = "^0.1"
 nous-store = "^0.1"
 nous-telemetry = "^0.1"
 nous-tools = "^0.1"

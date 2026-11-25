@@ -72,5 +72,6 @@ nous-skills = { path = "crates/nous/skills", version = "0.1.0" }
 nous-sessions = { path = "crates/nous/sessions", version = "0.1.0" }
 nous-fixture = { path = "crates/nous/fixture", version = "0.1.0" }
 data-data-manager = { path = "crates/data/data-manager", version = "0.1.0" }
+data-archive = { path = "crates/data/archive", version = "0.1.0" }
 nous-store = { path = "crates/nous/store", version = "0.1.0" }
 nous-dispatcher = { path = "crates/nous/dispatcher", version = "0.1.0" }

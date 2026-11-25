@@ -395,10 +395,11 @@ op 就发一帧" → 0 帧负向红。
 | `nous-runtime` | `nous-ai` | 执行绑定 |
 | `nous-durable` | `nous-chord` `nous-ai` `nous-wire` `nous-telemetry` `nous-env` `nous-ai-types` | 语义层；永久禁 HTTP（判据另有断言） |
 | `nous-dispatcher` | `nous-chord` `nous-durable` `nous-store` | #73 注入 Clock + durable sleeping 任务的节拍：chord 处理增量、durable 落 tick、store 读写账本 |
-| `nous-server` | `nous-durable` `nous-wire` `nous-telemetry` `nous-ai` `nous-runtime` `nous-sessions` `nous-tools` `nous-store` `nous-env` · **#65** `nous-device` · **#78** `nous-env-ssh` · **#81** `nous-ext` · **#72/#71/#83** `nous-prompts` `nous-skills` · **#75/#76/#77** `nous-repo` · **#62** `data-data-manager` · **#73** `nous-dispatcher` · **#60** `nous-presets-admin` · **element-models** `element-models` · **路由契约** `nous-routes` | 组装根：拼 HTTP 面就要摸到这些插件（#44/#47/#48/#49/#51/#57 原始边；#89 补齐 7 条实际边；#73 补 dispatcher 边） |
+| `nous-server` | `nous-durable` `nous-wire` `nous-telemetry` `nous-ai` `nous-runtime` `nous-sessions` `nous-tools` `nous-store` `nous-env` · **#65** `nous-device` · **#78** `nous-env-ssh` · **#81** `nous-ext` · **#72/#71/#83** `nous-prompts` `nous-skills` · **#75/#76/#77** `nous-repo` · **#62** `data-data-manager` · **#67** `data-archive` · **#73** `nous-dispatcher` · **#60** `nous-presets-admin` · **element-models** `element-models` · **路由契约** `nous-routes` | 组装根：拼 HTTP 面就要摸到这些插件（#44/#47/#48/#49/#51/#57 原始边；#89 补齐 7 条实际边；#73 补 dispatcher 边） |
 | `nous-store` | 无 | 独立迁移链；多一条边（尤其 `nous-durable`）就是判据 1 破 |
 | `nous-routes` | 无 | 端点契约层：一条声明同时是「装进 Router」和「注册表登记」，谁都不依赖（否则与 server 成环） |
 | `element-models` | `nous-elements` `nous-runtime` `nous-env` `nous-repo` `nous-routes` | 模型编目插件：读元素库、投影成编目、自带 `GET /v1/models/elements` 与密钥写面 |
+| `data-archive` | `nous-durable` `nous-routes` | #67 会话归档插件：三条命令走 durable 的 session commands（活库写锁 + 补偿方向在那里），端点由 `routes()` 声明 |
 
 **这张表不是许可证**：它只回答「这条边有没有人签字」，不替代判据 2（内核层不许依赖应用层）
 或判据 §1.1（`nous-app` 的 normal 依赖里不许有 `rusqlite` / `nous-chord`）。扩边只在实现真的
