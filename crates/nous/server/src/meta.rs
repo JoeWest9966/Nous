@@ -280,16 +280,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // "server" 不在 MANIFEST 的 14 条里 —— 归它等于这条端点永远不出现在 /v1/_routes，
     // 客户端会一直报「路由漂移」。device 是 0.1.25 里唯一「宿主级只读」的模块。
     RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "device" },
-    // #62：stats 三条只读观测端点。
-    RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "stats" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "stats" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/db", module: "stats" },
-    // 数据监控室六屏复原：明细读口（X 光片 / 会话树 / 回放 / 账单 / 维修）。
-    RegisteredRoute { method: "GET", path: "/v1/stats/overview", module: "stats" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/conversations", module: "stats" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/conversation/:id", module: "stats" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/cost", module: "stats" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/health", module: "stats" },
+    // 机读总表：从注册表（本表 ∪ 插件声明）生成，自身也归 device。
     RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
     // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
     RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
@@ -489,7 +480,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读" },
     ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57/#58 落地；调度节拍归 `dispatcher`" },
-    ManifestEntry { name: "stats", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-stats`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
+    ManifestEntry { name: "data-manager", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-data-manager`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
     ManifestEntry { name: "device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "今天 `prompts/index.js`" },
     ManifestEntry { name: "ext", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划" },

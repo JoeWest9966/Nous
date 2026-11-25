@@ -89,7 +89,7 @@
 | `element-models` | nous | `nous-element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
 | `routes` | nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 的 `endpoints` 仍是空数组（端点由代码声明，不从清单生成） |
 | `archive` | nous | — | app | 编译期 | `archive` / `purge` / `archive_list` / `restore`；端点族 `POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票 |
-| `stats` | nous | `nous-stats` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
+| `data-manager` | data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
 | `combos` | nous | — | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读 |
@@ -129,7 +129,7 @@
 
 今天 `crates/nous/` 下 19 个目录，本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 19 行：
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
-`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `stats` `fixture` `elements`。新增模块 → 先加一行；删模块 → 先删一行。
+`store` `ext` `ext-probe` `ext-sdk` `sessions` `server` `data-manager` `fixture` `elements`。新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用
 `cargo tree -p nous-durable --depth 2 | grep providers`，路径里带 `providers` 会让它永远假红。

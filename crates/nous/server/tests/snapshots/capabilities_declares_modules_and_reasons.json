@@ -231,12 +231,12 @@
       ]
     },
     {
-      "name": "stats",
+      "name": "data-manager",
       "version": "0.1.27",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`nous-stats`",
+      "crate": "`data-data-manager`",
       "description": "归口监控六屏；与 `--check` 共读口，tasks 现算",
       "enabled": true,
       "endpoints": [

@@ -11,13 +11,13 @@ fn db_report_uses_the_same_check_reader_as_the_cli() {
     let durable_path = &durable.path;
     // 插件库用 Store::open 建（它自己的迁移链），schema 由它自己报。
     let plugins_path: PathBuf = std::env::temp_dir().join(format!(
-        "nous-stats62-db-plugins-{}.sqlite", std::process::id()
+        "data-data-manager62-db-plugins-{}.sqlite", std::process::id()
     ));
     let _ = std::fs::remove_file(&plugins_path);
     let store = nous_store::Store::open(&plugins_path).unwrap();
     drop(store);
 
-    let report = nous_stats::db(durable_path, &plugins_path).unwrap();
+    let report = data_data_manager::db(durable_path, &plugins_path).unwrap();
     let d = &report["durable"];
     let p = &report["plugins"];
     assert_eq!(d["quickCheck"], json!("ok"));
@@ -36,21 +36,21 @@ fn db_report_uses_the_same_check_reader_as_the_cli() {
 #[test]
 fn all_three_endpoints_are_zero_or_empty_on_a_fresh_db() {
     let db = Db::new("empty");
-    let missing_plugins = db.path.with_file_name("nous-stats62-never-exists.sqlite");
+    let missing_plugins = db.path.with_file_name("data-data-manager62-never-exists.sqlite");
     let _ = std::fs::remove_file(&missing_plugins);
 
-    let usage = nous_stats::usage(&db.path, Default::default(), nous_stats::GroupBy::Day).unwrap();
+    let usage = data_data_manager::usage(&db.path, Default::default(), data_data_manager::GroupBy::Day).unwrap();
     assert_eq!(usage["totals"]["totalTokens"], json!(0));
     assert_eq!(usage["totals"]["costTotal"], json!(0.0));
     assert_eq!(usage["totals"]["requests"], json!(0));
     assert_eq!(usage["totals"]["errors"], json!(0));
     assert_eq!(usage["rows"], json!([]));
 
-    let tasks = nous_stats::tasks(&db.path).unwrap();
+    let tasks = data_data_manager::tasks(&db.path).unwrap();
     assert_eq!(tasks["active"], json!(0));
     assert!(tasks["byState"].as_object().unwrap().values().all(|v| v == &json!(0)));
 
-    let dbs = nous_stats::db(&db.path, &missing_plugins).unwrap();
+    let dbs = data_data_manager::db(&db.path, &missing_plugins).unwrap();
     assert_eq!(dbs["durable"]["quickCheck"], json!("ok"));
     assert_eq!(dbs["plugins"]["schema"], json!(0), "没有插件库按空库报，不 404/500");
     let rows: &Value = &dbs["durable"]["rows"];

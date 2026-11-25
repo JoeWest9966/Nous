@@ -33,7 +33,7 @@ nous-skills = { workspace = true }
 nous-env-ssh = { workspace = true }
 nous-ext = { workspace = true }
 nous-sessions = { workspace = true }
-nous-stats = { workspace = true }
+data-data-manager = { workspace = true }
 nous-routes = { workspace = true }
 nous-runtime = { workspace = true }
 nous-tools = { workspace = true }

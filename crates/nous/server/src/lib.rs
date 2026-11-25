@@ -41,7 +41,6 @@ pub mod repos;
 pub mod resource_admin;
 pub mod runtime;
 pub mod source;
-pub mod stats;
 pub mod trigger_projects;
 pub mod triggers;
 pub mod upstream;

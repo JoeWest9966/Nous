@@ -68,22 +68,23 @@ impl nous_element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（2 条）
+### 4.1 已搬（10 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
 | `device` | `GET /v1/machines` | `feat(routes)` | 第一条试点，证明接缝通；handler 无需宿主状态 |
 | `element-models` | `GET /v1/models/elements` | `feat(element-models)` | 第一条**需要宿主注入**的端点；`Host::elements_repo` |
 | `element-models` | `PUT /v1/providers/{id}/secret` | `feat(element-models)` | **新端点**（不是搬家）：插件自带 handler，宿主给 `Secrets::secrets_file` |
+| `data-manager` | `GET /v1/stats/{usage,tasks,db,overview,conversations,conversation/:id,cost,health}`（8 条） | `refactor(data-manager)` | 第一次「一个插件一次搬 8 条」：`Host::stats_paths` 只给两个库路径；`server/src/stats.rs` 整份删掉，`openapi` 归 `server/routes.rs`（它读的是注册表，不是统计） |
 
-### 4.2 待搬（161 条 / 14 个模块）
+### 4.2 待搬（154 条 / 14 个模块）
 
-按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条。
+按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
+（静态表总数：搬家起点 162 行 → 现在 154 行；插件自带的端点 `Route::new` 共 11 条）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
 | `env` | 1 | 目录解析（`NOUS_START_DIRS`），无 IO 以外的状态 |
-| `stats` | 8 | 统计库只读查询（`nous-stats`） |
 | `archive` | 3 | 归档/墓碑（`nous-durable` sessions） |
 | `skills` | 6 | 私库读写（`nous-repo`）+ 变体表 |
 | `prompts` | 6 | 私库读写（`nous-repo`） |
@@ -97,7 +98,7 @@ impl nous_element_models::routes::Host for AppState {
 | `repo` | 30 | 最杂：git 面全在这一家（`nous-repo` 已是 platform，宿主只需给根路径） |
 | `device` | 7 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，建议**最后搬**（它们读注册表本身） |
 
-建议顺序：`env` → `stats` → `archive` → `skills` / `prompts` / `elements` → `combos` →
+建议顺序：`env` → `archive` → `skills` / `prompts` / `elements` → `combos` →
 `presets(-admin)` → `ext` → `triggers` → `repo` → `sessions` → `device`。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
@@ -109,7 +110,7 @@ impl nous_element_models::routes::Host for AppState {
 ./scripts/check-plugins.sh                                   # 模块/层/版本与 docs/plugins.md 对齐
 cargo test -p nous-routes                                    # 契约：折写路径 + 挂载后真能打到 handler
 cargo test -p nous-server --test capabilities_shapes \
-  --test capabilities_manifest --test stats_manifest         # 注册表三处同源 + 多重集一致
+  --test capabilities_manifest --test data_manager_manifest         # 注册表三处同源 + 多重集一致
 cargo test --workspace                                       # 全量
 ```
 
@@ -144,3 +145,6 @@ cargo test --workspace                                       # 全量
 | 2026-11-24 | `element-models` 交出 `GET /v1/models/elements`，`Host::elements_repo` 由 `server` 实现；`server/src/models.rs` 只剩 `ModelsResponse` 适配 |
 | 2026-11-24 | `verify.sh` 判据 5/6/12 转绿（`os_env::run_capture_async`、`chord::sqlite::inspect`）；本轮不搬端点 |
 | 2026-11-24 | 客户端去掉「模块名 → 中文名」表（`docs/plugins.md` 规则 9）：模块名只有英文一处真相，新插件客户端自动出现 |
+| 2026-11-25 | 改名票：`stats` → `data/data-manager`（vendor=data，包名 `data-data-manager`）；端点路径 `/v1/stats/*` 一个字不变 |
+| 2026-11-25 | **改名票**：`stats` → 出品方 `data` 的 `data-manager`（目录 `crates/data/data-manager`、包名 `data-data-manager`，端点路径 `/v1/stats/*` 一个字没动）；规则 10 由此立起来 |
+| 2026-11-25 | `data-manager` 交出 8 条 `GET /v1/stats/*`：`Host::stats_paths` 注入两个库路径；`server/src/stats.rs` 删除（`openapi` 搬回 `server/routes.rs`），静态表删 8 行 |

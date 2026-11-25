@@ -1,7 +1,7 @@
 mod common;
 
 use common::{hand_totals, Db};
-use nous_stats::{GroupBy, UsageWindow};
+use data_data_manager::{GroupBy, UsageWindow};
 use serde_json::{json, Value};
 
 fn as_i64(value: &Value) -> i64 {
@@ -21,7 +21,7 @@ fn day_totals_equal_the_hand_sum_from_entries_projection() {
     let (tokens, cost, requests, errors) = hand_totals(&entries);
     assert_eq!((tokens, cost, requests, errors), (39, 8, 3, 1), "手算自己先钉住");
 
-    let report = nous_stats::usage(&db.path, UsageWindow::default(), GroupBy::Day).unwrap();
+    let report = data_data_manager::usage(&db.path, UsageWindow::default(), GroupBy::Day).unwrap();
     let totals = &report["totals"];
     assert_eq!(as_i64(&totals["totalTokens"]), tokens);
     assert_eq!(as_i64(&totals["costTotal"]), cost, "cost={:?}", totals);

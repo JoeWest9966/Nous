@@ -15,6 +15,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     let mut all: Vec<nous_routes::Route<Arc<AppState>>> = Vec::new();
     all.extend(nous_device::routes::routes::<Arc<AppState>>());
     all.extend(nous_element_models::routes::routes::<Arc<AppState>>());
+    all.extend(data_data_manager::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -47,5 +48,15 @@ impl nous_element_models::routes::Secrets for AppState {
             Ok(path) if !path.trim().is_empty() => std::path::PathBuf::from(path),
             _ => std::path::PathBuf::from("/var/lib/nous/secrets/providers.env"),
         })
+    }
+}
+
+/// `data-manager` 插件要的那一件事：两个只读库在哪。
+///
+/// 路径与启动 / `--check` / `--triggers` 共用同一套推导（`main` 装配一次），
+/// 插件拿到的就是那一份 —— 不复算第二次，也就不会读到另一份库。
+impl data_data_manager::routes::Host for AppState {
+    fn stats_paths(&self) -> Option<data_data_manager::routes::Paths> {
+        self.stats().cloned()
     }
 }

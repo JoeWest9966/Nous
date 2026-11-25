@@ -1,14 +1,15 @@
-name = "stats"
-vendor = "nous"
-version = "0.1.26"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+name = "data-manager"
+vendor = "data"
+version = "0.3.0"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；端点自带 = minor）
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
-crate = "nous-stats"
+crate = "data-data-manager"
 
 [requires]                 # cargo metadata 里的内部 workspace 依赖
 nous-chord = "^0.1"
 nous-durable = "^0.1"
+nous-routes = "^0.1"
 nous-store = "^0.1"
 
 [provides]
-capability = "stats"
+capability = "data-manager"
 endpoints  = []         # 本票一律留空；端点由 #48 的注册表生成
