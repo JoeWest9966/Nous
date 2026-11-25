@@ -80,8 +80,8 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
         "清单应为 {expected} 行且 0 处不符：{}", summary.lines().last().unwrap_or_default());
 
     assert!(
-        doc.contains("| `device` | nous | `nous-device` | app |"),
-        "docs/plugins.md 必须有 device 行"
+        doc.contains("| `Nous_Device` | nous | `nous-device` | app |"),
+        "docs/plugins.md 必须有 Nous_Device 行（规则 12：模块全名带 vendor 段，目录/包名不变）"
     );
 }
 
