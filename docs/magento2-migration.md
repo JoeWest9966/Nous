@@ -196,6 +196,7 @@ cargo test --workspace                                       # 全量
 | 日期 | 动作 |
 |---|---|
 | 2026-11-24 | 建 `nous-routes`（契约层）+ `server::plugins`（收集/装配/登记）；`device` 交出 `GET /v1/machines`（静态表删 1 行） |
+| 2026-11-25 | **规则 12 第二个：`device` → `Nous_Device`**（vendor/目录/包名一字不动，只改全名与版本 0.7.0 → 0.8.0）。同时补齐尾段 **CamelCase → kebab** 推导（`Nous_PresetsAdmin` → 目录 `presets-admin`）。三个判据跟着改：`plugin-versions.rs` 的测试原本按小写名硬凑目录，`Nous_Device` 直接被跳过 → 判据空转（`只比对了 9 个模块`）；修成由全名推目录，并补 `rule12_name_and_dir_derivation` 自检。Desk 侧新增 `module_matches`（`Nous_Device` ↔ `device` 都认），否则改名当天「设备」页会被判成未登记而灰掉 |
 | 2026-11-25 | **规则 12 落地**：模块全名照 Magento 2 的 `Vendor_Module`（`Element_Models`），
 目录与包名仍是小写（`crates/element/models` / `element-models`）。第一个迁的是 `element-models`：
 vendor `nous` → `element`、补一条 `MANIFEST`（它自带两条端点却不在清单里，capabilities 看不见）。
