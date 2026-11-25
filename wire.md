@@ -473,6 +473,10 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
   所以各模块的数不一样。取不到清单时才回退 `server.version`，那时另带
   `"versionSource": "release"` 如实说明回退（回退不静默）。
   `GET /v1/plugins/:name/readme` 的 `version` 同一来源。
+- `modules[].vendor`：**出品方**（规则 10，`docs/plugins.md` 的 `vendor` 列），例如 `nous` / `data`。
+  与 `version` 同一份生成表（`plugin.toml` 的 `vendor`，`server/build.rs` 编译期读出来），
+  桌面端拿它当插件列表的副标题（`data-manager` 的供应商是 `data`）。
+  没有清单的模块（运行时外挂 / `(待建)`）这里回 `null` —— **不猜**，不用 `nous` 顶替。
   判据：`crates/nous/server/tests/plugin_versions.rs`（遍历 `docs/plugins.md` 的行，不点名模块）。
 
 #### POST /v1/sessions/:id/archive

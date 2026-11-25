@@ -25,6 +25,17 @@ pub fn version_of(module: &str) -> (String, bool) {
     }
 }
 
+/// 这个模块的出品方（规则 10）。清单里没写 / 模块没有清单 → `None`。
+///
+/// capabilities 用它当"供应商"：`Magento_Catalog` 的 `Magento`，我们的 `nous` / `data`。
+pub fn vendor_of(module: &str) -> Option<&'static str> {
+    PLUGIN_VENDORS
+        .iter()
+        .find(|(name, _)| *name == module)
+        .map(|(_, vendor)| *vendor)
+        .filter(|vendor| !vendor.is_empty())
+}
+
 /// 清单在、但 `version` 不是合法 `X.Y.Z` 的模块（生成期发现，不是运行时猜）。
 ///
 /// 正常情况下必须是空表：`check-plugins.sh` 已经要求每份清单的 `version` 是合法 semver。
