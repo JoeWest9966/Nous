@@ -29,7 +29,19 @@ fn repo_root() -> PathBuf {
 /// 与 `scripts/check-plugins.sh` 的 `_pascal`、`scripts/layer-paths.sh` 的 `dir_of` 同算法。
 fn dir_of(module: &str) -> String {
     let tail = module.split_once('_').map(|(_, tail)| tail).unwrap_or(module);
-    tail.split(|c: char| c == '-' || c == '_')
+    // 先按 camel hump 断词（`PresetsAdmin` → `Presets` + `Admin`），再按连字符/下划线断。
+    let humped = {
+        let mut out = String::new();
+        for (i, ch) in tail.chars().enumerate() {
+            if i > 0 && ch.is_ascii_uppercase() {
+                out.push('-');
+            }
+            out.push(ch);
+        }
+        out
+    };
+    humped
+        .split(|c: char| c == '-' || c == '_')
         .filter(|word| !word.is_empty())
         .map(|word| {
             let mut chars = word.chars();
