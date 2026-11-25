@@ -47,39 +47,51 @@
 ## 表
 
 `提交数` = 计入的提交总数（含起点那次）；`minor 档 / patch 档` = 起点之后按上表分的档；
-`推出` = `0.(1 + minor).(patch 累加，minor 归零)`；`起点提交` = 记 `0.1.0` 的那一次，
-点进去就是一段 `git log`。
+`推出` = `0.(1 + minor).(patch 累加，minor 归零)`；`现填` = 生成这张表那一刻盘上的值
+（`#93` 那次两边相等；之后各插件按规则 8 自己涨，这一列会旧，`--doc-check` 不校它）；
+`起点提交` = 记 `0.1.0` 的那一次，点进去就是一段 `git log`。
 
-| module | 提交数 | minor 档 | patch 档 | 推出 | 起点提交 |
-|---|---|---|---|---|---|
-| `ai` | 10 | 0 | 9 | 0.1.9 | `acbf79a7` 2026-11-16 |
-| `ai-types` | 4 | 0 | 3 | 0.1.3 | `82662470` 2026-11-17 |
-| `chord` | 20 | 0 | 19 | 0.1.19 | `d49c111b` 2026-11-16 |
-| `device` | 17 | 6 | 10 | 0.7.0 | `58bd05b3` 2026-11-18 |
-| `dispatcher` | 6 | 0 | 5 | 0.1.5 | `6abbf38a` 2026-11-21 |
-| `documents` | 11 | 3 | 7 | 0.4.2 | `9002c5a5` 2026-11-18 |
-| `durable` | 71 | 0 | 70 | 0.1.70 | `4b7edc13` 2026-11-16 |
-| `element-models` | 11 | 0 | 10 | 0.1.10 | `a335681e` 2026-11-24 |
-| `elements` | 8 | 1 | 6 | 0.2.4 | `648846d8` 2026-11-23 |
-| `env` | 10 | 1 | 8 | 0.2.5 | `46e196c2` 2026-11-16 |
-| `env-ssh` | 7 | 0 | 6 | 0.1.6 | `5d2eb78f` 2026-11-20 |
-| `ext` | 18 | 5 | 12 | 0.6.6 | `82662470` 2026-11-17 |
-| `ext-probe` | 7 | 0 | 6 | 0.1.6 | `82662470` 2026-11-17 |
-| `ext-sdk` | 6 | 0 | 5 | 0.1.5 | `82662470` 2026-11-17 |
-| `fixture` | 4 | 0 | 3 | 0.1.3 | `ef562e95` 2026-11-17 |
-| `presets-admin` | 3 | 0 | 2 | 0.1.2 | `e24ece4e` 2026-11-22 |
-| `prompts` | 6 | 1 | 4 | 0.2.2 | `58bd05b3` 2026-11-18 |
-| `repo` | 33 | 4 | 28 | 0.5.13 | `c49abb76` 2026-11-20 |
-| `routes` | 4 | 0 | 3 | 0.1.3 | `cfd815c8` 2026-11-24 |
-| `runtime` | 5 | 0 | 4 | 0.1.4 | `9ab7ab9e` 2026-11-17 |
-| `server` | 185 | 2 | 182 | 0.3.1 | `dea670b0` 2026-11-17 |
-| `sessions` | 16 | 5 | 10 | 0.6.7 | `f7e1ed54` 2026-11-18 |
-| `skills` | 6 | 1 | 4 | 0.2.2 | `58bd05b3` 2026-11-18 |
-| `stats` | 7 | 1 | 5 | 0.2.4 | `7ebfe9a3` 2026-11-20 |
-| `store` | 13 | 0 | 12 | 0.1.12 | `249d729f` 2026-11-18 |
-| `telemetry` | 4 | 0 | 3 | 0.1.3 | `203d5d99` 2026-11-16 |
-| `tools` | 9 | 0 | 8 | 0.1.8 | `f3c5b4db` 2026-11-17 |
-| `wire` | 4 | 0 | 3 | 0.1.3 | `c754e96b` 2026-11-16 |
+**这张表是生成物**：`python3 scripts/plugin-versions.py --write-doc` 重写它，别手改
+（`--doc-check` 会拦手改）。逐条 patch 档的提交没在表里列 —— 表只钉「每个数怎么来的」，
+要看细节就跑 `python3 scripts/plugin-versions.py --json`，那里每个提交都带 sha / 分档 / 理由。
+
+**自指的代价（务必知道）**：这套判据把「改动本身」也算进考古，所以**任何**动到插件的提交
+都会让表里的 `推出` 涨一格 —— 包括只改这个脚本或这份文档的提交（它们改到了 `server` 的
+`build.rs` / `meta.rs`，`server` 就得再 +patch）。做法是照规则 8 老实涨、再
+`--write-doc` 一次、三样一起提交；不这么做 `verify.sh` 的 0d 段会红并指名是哪个模块。
+这不是判据太严，是「版本线从痕迹推」的必然：想让它不涨，就得让考古面看不见那次改动，
+那才是真的骗人。
+
+| module | 提交数 | minor 档 | patch 档 | 推出 | 现填 | 起点提交 |
+|---|---|---|---|---|---|---|
+| `ai` | 10 | 0 | 9 | 0.1.9 | 0.1.9 | `acbf79a7` 2026-11-16 |
+| `ai-types` | 4 | 0 | 3 | 0.1.3 | 0.1.3 | `82662470` 2026-11-17 |
+| `chord` | 20 | 0 | 19 | 0.1.19 | 0.1.19 | `d49c111b` 2026-11-16 |
+| `device` | 17 | 6 | 10 | 0.7.0 | 0.7.0 | `58bd05b3` 2026-11-18 |
+| `dispatcher` | 6 | 0 | 5 | 0.1.5 | 0.1.5 | `6abbf38a` 2026-11-21 |
+| `documents` | 11 | 3 | 7 | 0.4.2 | 0.4.2 | `9002c5a5` 2026-11-18 |
+| `durable` | 71 | 0 | 70 | 0.1.70 | 0.1.70 | `4b7edc13` 2026-11-16 |
+| `element-models` | 11 | 0 | 10 | 0.1.10 | 0.1.10 | `a335681e` 2026-11-24 |
+| `elements` | 8 | 1 | 6 | 0.2.4 | 0.2.4 | `648846d8` 2026-11-23 |
+| `env` | 10 | 1 | 8 | 0.2.5 | 0.2.5 | `46e196c2` 2026-11-16 |
+| `env-ssh` | 7 | 0 | 6 | 0.1.6 | 0.1.6 | `5d2eb78f` 2026-11-20 |
+| `ext` | 18 | 5 | 12 | 0.6.6 | 0.6.6 | `82662470` 2026-11-17 |
+| `ext-probe` | 7 | 0 | 6 | 0.1.6 | 0.1.6 | `82662470` 2026-11-17 |
+| `ext-sdk` | 6 | 0 | 5 | 0.1.5 | 0.1.5 | `82662470` 2026-11-17 |
+| `fixture` | 4 | 0 | 3 | 0.1.3 | 0.1.3 | `ef562e95` 2026-11-17 |
+| `presets-admin` | 3 | 0 | 2 | 0.1.2 | 0.1.2 | `e24ece4e` 2026-11-22 |
+| `prompts` | 6 | 1 | 4 | 0.2.2 | 0.2.2 | `58bd05b3` 2026-11-18 |
+| `repo` | 33 | 4 | 28 | 0.5.13 | 0.5.13 | `c49abb76` 2026-11-20 |
+| `routes` | 4 | 0 | 3 | 0.1.3 | 0.1.3 | `cfd815c8` 2026-11-24 |
+| `runtime` | 5 | 0 | 4 | 0.1.4 | 0.1.4 | `9ab7ab9e` 2026-11-17 |
+| `server` | 186 | 2 | 183 | 0.3.2 | 0.3.2 | `dea670b0` 2026-11-17 |
+| `sessions` | 16 | 5 | 10 | 0.6.7 | 0.6.7 | `f7e1ed54` 2026-11-18 |
+| `skills` | 6 | 1 | 4 | 0.2.2 | 0.2.2 | `58bd05b3` 2026-11-18 |
+| `stats` | 7 | 1 | 5 | 0.2.4 | 0.2.4 | `7ebfe9a3` 2026-11-20 |
+| `store` | 13 | 0 | 12 | 0.1.12 | 0.1.12 | `249d729f` 2026-11-18 |
+| `telemetry` | 4 | 0 | 3 | 0.1.3 | 0.1.3 | `203d5d99` 2026-11-16 |
+| `tools` | 9 | 0 | 8 | 0.1.8 | 0.1.8 | `f3c5b4db` 2026-11-17 |
+| `wire` | 4 | 0 | 3 | 0.1.3 | 0.1.3 | `c754e96b` 2026-11-16 |
 
 **为什么是 28 行而票面说「14 个插件」**：`plugin.toml` 有 28 份（`docs/plugins.md` 里
 `crate` 列不是 `(待建)` / `—` 的行），其中 14 个进发行面（`MANIFEST`），另外 14 个是
@@ -118,13 +130,16 @@ kernel / platform / dev 层的 crate。规则 8 管的是**所有** `plugin.toml
 ## 判据
 
 ```bash
-python3 scripts/plugin-versions.py --check   # 盘上的 plugin.toml 与考古结论逐个比，checked=28 mismatched=0
-./scripts/check-plugins.sh                   # 合法 semver + 只增不减
+python3 scripts/plugin-versions.py --check      # 版本不得低于考古结论（checked=28 mismatched=0）
+python3 scripts/plugin-versions.py --doc-check  # 文档里的表 == 现算的考古结论
+./scripts/check-plugins.sh                      # 合法 semver + 只增不减
 cargo test -p nous-server --test plugin_versions   # capabilities 报的版本 == 各自 plugin.toml
 ```
 
-`plugin-versions.py --check` 是**追加式**判据：它不拦「版本比推出来的低」（那是 `#93` 之后的
-正常演进 —— 下一张票改了 `ext` 就得 +patch），只拦「表算出来的数与盘上不一致」。
+`plugin-versions.py --check` 的语义是**不得低于考古结论**（`<`，不是 `!=`）：
+`#93` 之后按规则 8 自己涨（高于）是正常的 —— 下一张票改了 `ext` 就得 +patch；
+低于 = 有人把版本手改回去了，或者插件目录改名导致考古面变了，两种都要人看一眼。
+`--doc-check` 才校「文档里的表 == 现算的考古结论」（表是生成物，别手抄）。
 换句话说：**考古结论是快照，之后的演进按规则 8 自己涨。**
 
 ## 与 `/v1/capabilities` 的关系
@@ -136,3 +151,28 @@ cargo test -p nous-server --test plugin_versions   # capabilities 报的版本 =
 并加 `versionSource: "release"` 如实说明（回退不静默）。
 `build.rs` 对每个 `plugin.toml` 和 `crates/` 两层的目录都挂了 `cargo:rerun-if-changed` ——
 少了这条，改版本不重编 = 假绿。
+
+## 票面边界与这次实际改动的对应
+
+票面写「不许夹带代码改动：这张票只动 `version` 字段 + 票面表格」。实际提交里的每一处
+非 `version` 改动都能指到票面某一句，列在这里免得评审时一条条问：
+
+| 改动 | 票面依据 |
+|---|---|
+| 28 份 `plugin.toml` 的 `version` | 「一次性改 14 个 `plugin.toml` 的 `version`，**同一提交**里改」（本仓 `plugin.toml` 实为 28 份，见下） |
+| `server/build.rs` + `src/plugin_versions.rs` | 补充评论：「`build.rs` 读 `crates/*/*/plugin.toml`，生成 `模块名 → version` 的静态表」 |
+| `server/src/meta.rs` 的 capabilities 版本来源 | 补充评论：「`meta.rs` 从表里取，取不到才回退 `CARGO_PKG_VERSION` 并**在 capabilities 里如实说明**」 |
+| `server/src/plugin_docs.rs` 的 `version` | 同一句话的延伸：`readme` 的 `version` 也是「文档所属的版本」，两处报不同的数就是又一份事实源 |
+| `server/tests/plugin_versions.rs` | 补充评论的两条判据：「遍历 `docs/plugins.md` 的行，别点名模块」+「故意改高一个 patch，`cargo build` 后 capabilities 跟着变」 |
+| `scripts/plugin-versions.py` + `scripts/verify.sh` 0d 段 | 判据「`scripts/check-plugins.sh` → `checked=28 mismatched=0`」与「`scripts/verify.sh` 全绿」要能复算，不然表是手抄的 |
+| `docs/plugin-versions.md` | 「一张表放票面：`module \| 提交数 \| minor 档 \| patch 档 \| 推出 \| 现填`」—— 放在仓里（票面写不下 28 行且会漂） |
+| `docs/decisions.md` 新条目 | 规则 8：「`0.x` 阶段允许 minor 带破坏性变更，但**必须在票面与 `decisions.md` 里写出破的是谁**」 |
+| `docs/plugins.md` 规则 8 改写 | 原文写着「当前所有插件都停在 `0.1.26` 只是起点」—— 这张票做完这句就是假话 |
+| `wire.md` 的 capabilities / readme 段 | `wire.md` 是契约的唯一真相；加了 `versionSource` 字段不写进去，下一个客户端就会当它是噪音 |
+| `.gitignore` 的 `__pycache__/` | 新增了 `scripts/*.py`，不带这行每次跑判据都留 `??` 噪声 |
+| `.github/workflows/verify.yml` 的 `fetch-depth: 0` | 版本线要从完整历史推；CI 是浅克隆，不加这条判据在 CI 上是假绿 |
+
+**为什么是 28 而不是 14**：票面说「14 个插件」，指的是 `MANIFEST` 里进发行面的那 14 个；
+但 `plugin.toml` 有 28 份（kernel / platform / dev 层的 crate 也各带一份），规则 8 管的是
+**所有** `plugin.toml`，`check-plugins.sh` 也逐个查「合法 semver + 只增不减」。只推 14 个
+会让另外 14 个继续冒充发行版号 —— 那正是这张票要消灭的东西。判据 `checked=28` 也是这么来的。

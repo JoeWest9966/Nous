@@ -1189,7 +1189,18 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 （那一层是唯一允许依赖 axum 的 crate，构建依赖也该一样克制）。
 
 **代价**：`build.rs` 多跑一遍目录扫描（毫秒级）；`plugin-versions.py` 依赖完整 git 历史
-（浅克隆上会算少 —— 判据只在完整 clone 上跑，CI 的 `actions/checkout` 默认是完整历史）。
+（浅克隆上会算少 —— 所以 `.github/workflows/verify.yml` 的 checkout 显式写了 `fetch-depth: 0`，
+这条不加就等着 CI 上「版本线全绿但其实只看到最近几条」）。
+
+**破了谁（规则 8 要求写清）**：`#93` 这次重推里只有两处形状变化，其余全是加法 ——
+
+- `documents` 的 `#90`（`705d1490`：从 `MANIFEST` / `ROUTES` / `capabilities` / 依赖里整体下线，
+  17 行端点声明删掉）是**破坏性**的：破 NousDesk（`/v1/documents/*` 已无调用点，但「关于 →
+  插件」会少一行）与旧面板调用方（2026-11-18 已下线，无活体）。
+- `modules[].version` 的含义变了（发行版号 → 插件自己的版本），并新增 `versionSource`。
+  这是**加法**：老桌面端只读 `name` / `enabled` / `endpoints` / `reason`，照旧能解析；
+  新客户端按「有 `versionSource` 就是回退值」分支。破的是**任何拿 `modules[].version`
+  当发行版号做比较的脚本**（仓里 0 处，`NousDesk` 只拿来显示）。
 
 **反悔点**：如果哪天要「按版本协商能力」（客户端要求 `ext >= 0.6`），机械推的版本线就不够了，
 得换成发布记录逐条对得上 —— 那时 `check-plugins.sh` 该读 `plugin.toml` 的 changelog 段，

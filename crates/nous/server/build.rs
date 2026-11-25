@@ -29,6 +29,7 @@ fn emit_plugin_versions() {
     let crates = root.join("crates");
 
     let mut entries: Vec<(String, String)> = Vec::new();
+    let mut problems: Vec<String> = Vec::new();
     for vendor in read_dirs(&crates) {
         println!("cargo:rerun-if-changed={}", vendor.display());
         for module in read_dirs(&vendor) {
@@ -50,14 +51,22 @@ fn emit_plugin_versions() {
                 .unwrap_or_default();
             match read_version(&text) {
                 Some(version) => entries.push((name, version)),
-                None => println!(
-                    "cargo:warning={} 没有合法的 version，该模块版本回退发行版号",
-                    manifest.display()
-                ),
+                None => {
+                    // 回退不静默：清单存在但读不出合法 semver 是**仓的错**，不是环境问题。
+                    // `cargo:warning` 只进构建日志，容易被当成噪声；所以同时把这份清单
+                    // 记进生成表里的 `PLUGIN_VERSION_PROBLEMS`，让 `/v1/capabilities`
+                    // 的 `versionSource: "release"` 之外还能被测试与人工查到具体是哪份。
+                    println!(
+                        "cargo:warning={} 没有合法的 version，该模块版本回退发行版号",
+                        manifest.display()
+                    );
+                    problems.push(name);
+                }
             }
         }
     }
     entries.sort();
+    problems.sort();
 
     let mut out = String::from(
         "// 由 crates/nous/server/build.rs 生成 —— 别手改。\n\
@@ -66,6 +75,11 @@ fn emit_plugin_versions() {
     );
     for (name, version) in &entries {
         writeln!(out, "    ({name:?}, {version:?}),").unwrap();
+    }
+    out.push_str("];\n\n// 清单在、但 `version` 不是合法 `X.Y.Z` 的模块（它们回退发行版号）。\n");
+    out.push_str("pub const PLUGIN_VERSION_PROBLEMS: &[&str] = &[\n");
+    for name in &problems {
+        writeln!(out, "    {name:?},").unwrap();
     }
     out.push_str("];\n");
 

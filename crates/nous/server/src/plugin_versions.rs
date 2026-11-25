@@ -25,9 +25,27 @@ pub fn version_of(module: &str) -> (String, bool) {
     }
 }
 
+/// 清单在、但 `version` 不是合法 `X.Y.Z` 的模块（生成期发现，不是运行时猜）。
+///
+/// 正常情况下必须是空表：`check-plugins.sh` 已经要求每份清单的 `version` 是合法 semver。
+/// 非空 = 有人绕过判据把清单写坏了，此时 `/v1/capabilities` 会回退发行版号并带
+/// `versionSource: "release"` —— 这张表让「到底哪几份坏了」可查，不靠翻构建日志。
+pub fn version_problems() -> &'static [&'static str] {
+    PLUGIN_VERSION_PROBLEMS
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{version_of, PLUGIN_VERSIONS, RELEASE_VERSION};
+    use super::{version_of, version_problems, PLUGIN_VERSIONS, RELEASE_VERSION};
+
+    #[test]
+    fn every_manifest_that_exists_has_a_usable_version() {
+        assert!(
+            version_problems().is_empty(),
+            "这些清单的 version 读不出来（capabilities 会回退发行版号）：{:?}",
+            version_problems()
+        );
+    }
 
     #[test]
     fn table_is_not_empty_and_names_are_unique() {
