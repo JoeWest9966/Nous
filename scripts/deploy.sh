@@ -420,12 +420,17 @@ upload_artifacts() {
 	cp "$BIN_LOCAL" "$stage/$BIN_NAME"
 	cp "$UNIT_SRC" "$stage/nous-app.service.new"
 	# 插件 README 随产物发布：**不进二进制**（改文档不用重编译），落在版本目录的
-	# `docs/plugins/<module>.md`。模块名取 crate 目录名，与 `docs/plugins.md` 的 module 列
-	# 一致由 `check-plugins.sh` 保证。端点 `GET /v1/plugins/{name}/readme` 运行时读盘。
+	# `docs/plugins/<模块全名>.md`。文件名用 `plugin.toml` 的 `name`（规则 12：全名可能是
+	# `Element_Models`，而目录叫 `models`、包叫 `element-models` —— 三者不同，端点按**全名**找人）。
+	# 端点 `GET /v1/plugins/{name}/readme` 运行时读盘。
 	mkdir -p "$stage/docs/plugins"
-	for readme in crates/*/*/README.md; do
+	for manifest in crates/*/*/plugin.toml; do
+		[ -f "$manifest" ] || continue
+		readme="$(dirname "$manifest")/README.md"
 		[ -f "$readme" ] || continue
-		cp "$readme" "$stage/docs/plugins/$(basename "$(dirname "$readme")").md"
+		name=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["name"])' "$manifest") \
+			|| die "读不出 $manifest 的 name"
+		cp "$readme" "$stage/docs/plugins/$name.md"
 	done
 	rsync -a -e "ssh -o BatchMode=yes" "$stage/$BIN_NAME" "$HOST:/tmp/$BIN_NAME" || die "rsync 产物失败"
 	rsync -a -e "ssh -o BatchMode=yes" "$stage/nous-app.service.new" "$HOST:/tmp/nous-app.service.new" || die "rsync unit 失败"
