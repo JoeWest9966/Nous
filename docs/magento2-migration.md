@@ -77,9 +77,10 @@ impl nous_element_models::routes::Host for AppState {
 | `element-models` | `PUT /v1/providers/{id}/secret` | `feat(element-models)` | **新端点**（不是搬家）：插件自带 handler，宿主给 `Secrets::secrets_file` |
 | `data-manager` | `GET /v1/stats/{usage,tasks,db,overview,conversations,conversation/:id,cost,health}`（8 条） | `refactor(data-manager)` | 第一次「一个插件一次搬 8 条」：`Host::stats_paths` 只给两个库路径；`server/src/stats.rs` 整份删掉，`openapi` 归 `server/routes.rs`（它读的是注册表，不是统计） |
 
-### 4.2 待搬（153 条 / 14 个模块）
+### 4.2 待搬（154 条 / 14 个模块）
 
-按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条。
+按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
+（静态表总数：搬家起点 162 行 → 现在 154 行；插件自带的端点 `Route::new` 共 11 条）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
