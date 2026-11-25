@@ -1,6 +1,6 @@
 //! 编译期只注入 target triple；身份的字节哈希在运行时算（见 src/version.rs）。
 //!
-//! #93：另外把 14 个插件的 `plugin.toml` 版本读出来，生成 `模块名 → version` 的静态表
+//! #93：另外把每个插件的 `plugin.toml` 版本读出来，生成 `模块名 → version` 的静态表
 //! （`$OUT_DIR/plugin_versions.rs`，由 `src/plugin_versions.rs` `include!` 进来）。
 //! 不手写第二份：`/v1/capabilities` 报的版本与插件自己的清单同源，改清单才改得上。
 
@@ -45,10 +45,14 @@ fn emit_plugin_versions() {
                 );
                 continue;
             };
-            let name = module
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
+            // 模块名取**清单里的全名**（`docs/plugins.md` 规则 12）：`Element_Models` 的
+            // 目录叫 `models`、包叫 `element-models`，三者的对应关系只有清单说得清。
+            let name = read_field(&text, "name").unwrap_or_else(|| {
+                module
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
             let vendor = read_field(&text, "vendor");
             match read_version(&text) {
                 Some(version) => entries.push((name, version, vendor.unwrap_or_default())),
