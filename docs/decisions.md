@@ -1157,3 +1157,52 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 
 **反悔点**：如果文档涨到几十份、`docs/` 同步成为部署痛点，或者要支持「用户自己往插件页
 写笔记」，那说明它该进可写存储（`nous.db` / 私库），而不是继续加文件。
+
+---
+
+## 2026-11-25 · 插件版本线从 git 痕迹机械推（`#93`），capabilities 报插件自己的版本
+
+**现象**：规则 8 把 `plugin.toml` 的 `version` 与发行版号解绑之后，28 份 `plugin.toml`
+全都停在 `0.1.26` —— 那是旧规则的残留，不是任何插件的经历。`telemetry` 只动过三次，
+`sessions` 动过十几次，它们不该是同一个数。而且 `meta.rs` 报的 `modules[].version` 仍是
+`env!("CARGO_PKG_VERSION")`：即便把清单推开，桌面端「关于 → 插件」里照样 14 行同一个数，
+**这次考古在界面上等于没发生**。
+
+**决定**（三件事，一起落）：
+
+1. **版本线机械推**，不人工判读：`scripts/plugin-versions.py` 从
+   `git log --name-status -M40%` 现算，起点 `0.1.0`，minor 只认两种痕迹（清单身份删改、
+   `ROUTES` 里本模块的端点行增删改），其余 patch。表与口径写进 `docs/plugin-versions.md`，
+   28 份 `plugin.toml` 一次性落盘。为什么机械：可复核 —— 每个数都能指到一段 `git log`；
+   人工判读更"诚实"但也更不可反驳，评审时无从下嘴。
+2. **`server/` 里还没搬进插件的 handler 提交算这个插件的经历**：端点属于模块（`ROUTES` 就是
+   归属的唯一真相），起点取「目录入库」与「`ROUTES` 首次登记本模块」中更早的那个。
+   搬家票（`#14` / `#75` 一族）往后照这个口径记账，端点先于目录不重复计。
+3. **`/v1/capabilities` 报插件自己的版本**：`crates/nous/server/build.rs` 扫
+   `crates/*/*/plugin.toml` 生成 `模块名 → version` 静态表（`include!` 进
+   `src/plugin_versions.rs`），`meta.rs` 从表里取；取不到才回退发行版号并加
+   `versionSource: "release"` 如实说明（回退不静默）。`build.rs` 对每份 `plugin.toml` 与
+   `crates/` 两层目录都挂了 `cargo:rerun-if-changed` —— 少了这条，改版本不重编 = 假绿。
+
+**为什么不用 `include_str!` 解析 TOML**：`plugin.toml` 的行格式就那几种（`version = "X.Y.Z"`），
+`build.rs` 里一个十行的扫描器足够，不值得为它引 `toml` 依赖进 `nous-server` 的构建链
+（那一层是唯一允许依赖 axum 的 crate，构建依赖也该一样克制）。
+
+**代价**：`build.rs` 多跑一遍目录扫描（毫秒级）；`plugin-versions.py` 依赖完整 git 历史
+（浅克隆上会算少 —— 所以 `.github/workflows/verify.yml` 的 checkout 显式写了 `fetch-depth: 0`，
+这条不加就等着 CI 上「版本线全绿但其实只看到最近几条」）。
+
+**破了谁（规则 8 要求写清）**：`#93` 这次重推里只有两处形状变化，其余全是加法 ——
+
+- `documents` 的 `#90`（`705d1490`：从 `MANIFEST` / `ROUTES` / `capabilities` / 依赖里整体下线，
+  17 行端点声明删掉）是**破坏性**的：破 NousDesk（`/v1/documents/*` 已无调用点，但「关于 →
+  插件」会少一行）与旧面板调用方（2026-11-18 已下线，无活体）。
+- `modules[].version` 的含义变了（发行版号 → 插件自己的版本），并新增 `versionSource`。
+  这是**加法**：老桌面端只读 `name` / `enabled` / `endpoints` / `reason`，照旧能解析；
+  新客户端按「有 `versionSource` 就是回退值」分支。破的是**任何拿 `modules[].version`
+  当发行版号做比较的脚本**（仓里 0 处，`NousDesk` 只拿来显示）。
+
+**反悔点**：如果哪天要「按版本协商能力」（客户端要求 `ext >= 0.6`），机械推的版本线就不够了，
+得换成发布记录逐条对得上 —— 那时 `check-plugins.sh` 该读 `plugin.toml` 的 changelog 段，
+而不是比 HEAD。已知低估也写在 `docs/plugin-versions.md` 里：端点只改回包形状 / 状态码
+这类变更机械判据抓不到，minor 是下界不是完整清单。

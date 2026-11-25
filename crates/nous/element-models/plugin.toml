@@ -1,6 +1,6 @@
 name = "element-models"
 vendor = "nous"
-version = "0.1.26"
+version = "0.1.10"
 layer = "app"
 crate = "nous-element-models"
 

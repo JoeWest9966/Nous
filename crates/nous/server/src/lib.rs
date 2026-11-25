@@ -34,6 +34,7 @@ pub mod observer;
 pub mod presets;
 pub mod plugins;
 pub mod plugin_docs;
+pub mod plugin_versions;
 pub mod project;
 pub mod providers;
 pub mod routes;

@@ -1,6 +1,6 @@
 name = "skills"
 vendor = "nous"
-version = "0.1.26"
+version = "0.2.2"
 layer = "app"
 crate = "nous-skills"
 

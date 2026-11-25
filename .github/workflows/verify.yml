@@ -15,6 +15,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: repo
+          # `scripts/plugin-versions.py` 要从**完整历史**推版本线（#93）；
+          # 浅克隆上它会把「改名链 / 起点提交」算少，判据就变成假绿。
+          fetch-depth: 0
 
       - uses: actions/checkout@v4
         with:

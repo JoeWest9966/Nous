@@ -1,6 +1,6 @@
 name = "store"
 vendor = "nous"
-version = "0.1.26"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+version = "0.1.12"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
 layer = "platform"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-store"
 

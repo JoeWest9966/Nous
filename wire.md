@@ -373,6 +373,8 @@ entry 条数、tokens 与 cost、工具调用数、用过的模型集合、首�
 - 清单里有、产物里没带这份文档 → **404**
   `{ error: "readme_not_installed", module, hint }`。客户端按「暂无文档」展示，不当错误弹窗。
 - 引擎读盘带 mtime + 长度缓存：文件没动不重读，改了立刻生效（不用重启）。
+- `version` 与 `capabilities.modules[].version` 同源（`#93`）：都是这个插件自己的版本，
+  不是发行版号。客户端不拿它做判定，只用来显示「这份文档属于哪一版」。
 
 ### GET /v1/selection · POST /v1/selection
 
@@ -466,6 +468,12 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
 - `layer` 四值封闭、`kind` 三值封闭；`enabled:false` 的模块用 `reason.code` 四值封闭解释原因。
 - 六列是加法：老引擎没有这些字段时，桌面端降级成「版本 = server.version，类型 / 层 = —」，
   不据此判模块不存在。新字段一律只读，`endpoints` / `reason` 的既有语义不变。
+- `#93`：`modules[].version` 是**这个插件自己的**版本（规则 8），不是发行版号 ——
+  来源是它自己的 `plugin.toml`（`server/build.rs` 编译期生成 `模块名 → version` 静态表），
+  所以各模块的数不一样。取不到清单时才回退 `server.version`，那时另带
+  `"versionSource": "release"` 如实说明回退（回退不静默）。
+  `GET /v1/plugins/:name/readme` 的 `version` 同一来源。
+  判据：`crates/nous/server/tests/plugin_versions.rs`（遍历 `docs/plugins.md` 的行，不点名模块）。
 
 #### POST /v1/sessions/:id/archive
 

@@ -75,7 +75,7 @@ fn read_doc(path: &Path) -> Option<String> {
 
 /// `GET /v1/plugins/{name}/readme`
 ///
-/// 200：`{ module, version, markdown, bytes }`。
+/// 200：`{ module, version, markdown, bytes }`（取不到插件版本时另带 `versionSource: "release"`）。
 /// 404 `unknown_module`：名字不在 MANIFEST（拼错、或不是插件）。
 /// 404 `readme_not_installed`：名单里有，但产物里没带这份文档（部署漏同步 / 老产物）。
 pub async fn readme(
@@ -97,13 +97,19 @@ pub async fn readme(
             format!("产物里没有这份文档：{}（跑 scripts/deploy.sh --docs-only 同步）", path.display()),
         );
     };
-    Json(serde_json::json!({
+    let (version, fallback) = crate::plugin_versions::version_of(&name);
+    let mut body = serde_json::json!({
         "module": name,
-        "version": env!("CARGO_PKG_VERSION"),
+        // #93：与 `/v1/capabilities` 同一张生成表 —— 文档所属的也是**这个插件自己的**版本。
+        "version": version,
         "markdown": markdown,
         "bytes": markdown.len(),
-    }))
-    .into_response()
+    });
+    // 回退不静默：与 capabilities 一样把「这个数是发行版号」说出来。
+    if fallback {
+        body["versionSource"] = serde_json::json!("release");
+    }
+    Json(body).into_response()
 }
 
 fn not_found(code: &str, module: &str, hint: String) -> Response {
