@@ -91,6 +91,10 @@
 
     「vendor 永远是 B 形态」：**vendor 是目录与包名的一部分，模块由 vendor 独立命名，包名 `vendor-module`**
     —— 不存在「vendor 只活在字段里、目录平铺」的 A 形态。这句话是一次性决定，别再翻案。
+    **尾段 CamelCase 按大写字母断词再降小写**，不是只 `.lower()`：`Nous_PresetsAdmin` → 目录
+    `crates/nous/presets-admin`、`Element_Models` → `crates/element/models`。只降小写会把
+    `presets-admin` 推成 `presetsadmin`，跟仓里现有目录对不上（`check-plugins.sh` 的 `_kebab`
+    与 `layer-paths.sh` 的 `dir_of` 是同一算法，改一处必须改另一处）。
     老模块的小写连字符全名（`data-manager`、`sessions`）继续有效：无 `_` 时目录名 = 全名本身、
     包名 = `<vendor>-<全名>`，逐次迁移，不做一次性改名。
     判据：`scripts/check-plugins.sh` 由全名**推出**目录名 / 包名 / vendor 再逐条比对（不再要求
@@ -114,7 +118,7 @@
 | `runtime` | nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
 | `telemetry` | nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
 | `store` | nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
-| `device` | nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
+| `Nous_Device` | nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
 | `sessions` | nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
 | `documents` | nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
 | `prompts` | nous | `nous-prompts` | app | 编译期 | 提示词目录只读扫描 + `render()` 纯函数（不碰盘不碰网不看时钟）+ 管理面 `/v1/prompts/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 是 | 今天 `prompts/index.js` |

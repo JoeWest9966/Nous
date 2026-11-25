@@ -27,7 +27,7 @@ Magento 2 的做法是：模块自带 controller，`etc/*/routes.xml` 声明路�
 // 插件侧（以 device 为例）
 pub fn routes<S>() -> Vec<nous_routes::Route<S>>
 where S: Clone + Send + Sync + 'static {
-    vec![nous_routes::Route::new("GET", "/v1/machines", "device", || get(machines))]
+    vec![nous_routes::Route::new("GET", "/v1/machines", "Nous_Device", || get(machines))]
 }
 ```
 

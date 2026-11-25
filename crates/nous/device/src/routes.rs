@@ -6,6 +6,10 @@
 use axum::routing::get;
 use axum::Json;
 
+/// 模块全名（`docs/plugins.md` 规则 12）：`vendor` 是 `nous`，模块名是 `Device`。
+/// `/v1/_routes` 的 `module`、`/v1/capabilities` 的 `modules[].name` 都用这一个字面量。
+pub const MODULE: &str = "Nous_Device";
+
 /// 机器编目：机器 + 注解 + 能力字段 + 兼容 target 列表。
 ///
 /// `NOUS_MACHINES_FILE` 给了就用它（读不出来退回内置表），没给就是内置表。
@@ -24,7 +28,10 @@ pub fn routes<S>() -> Vec<nous_routes::Route<S>>
 where
     S: Clone + Send + Sync + 'static,
 {
-    vec![nous_routes::Route::new("GET", "/v1/machines", "device", || {
-        get(machines)
-    })]
+    vec![nous_routes::Route::new(
+        "GET",
+        "/v1/machines",
+        MODULE,
+        || get(machines),
+    )]
 }

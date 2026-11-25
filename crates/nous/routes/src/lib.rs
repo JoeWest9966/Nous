@@ -9,7 +9,7 @@
 //! ```ignore
 //! pub fn routes<S>() -> Vec<nous_routes::Route<S>>
 //! where S: Clone + Send + Sync + 'static {
-//!     vec![nous_routes::Route::new("GET", "/v1/machines", "device", || axum::routing::get(machines))]
+//!     vec![nous_routes::Route::new("GET", "/v1/machines", "Nous_Device", || axum::routing::get(machines))]
 //! }
 //! ```
 //!

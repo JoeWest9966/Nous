@@ -102,7 +102,7 @@ async fn device_response_pins_client_shape() {
     assert_eq!(status, StatusCode::OK, "GET /v1/device 应 200");
     fields(
         &body,
-        "device",
+        "Nous_Device",
         &[
             ("self", is_string_or_null),
             ("origin", is_string_or_null),
@@ -507,7 +507,7 @@ async fn capabilities_declares_modules_and_reasons() {
         "extensions",
         "skills",
         "prompts",
-        "device",
+        "Nous_Device",
         "ext",
     ] {
         if name == "extensions" {

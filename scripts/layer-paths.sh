@@ -28,6 +28,7 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 python3 - "$MANIFEST" "$LAYER" <<'PY'
+import re
 import sys
 
 path, want = sys.argv[1], sys.argv[2]
@@ -62,9 +63,12 @@ if not rows:
     raise SystemExit(1)
 
 def dir_of(name):
-    """规则 12：全名 → 目录名。`Element_Models` → `models`；`data-manager` → `data-manager`。"""
+    """规则 12：全名 → 目录名。`Element_Models` → `models`；`Nous_PresetsAdmin` → `presets-admin`。
+
+    与 `check-plugins.sh` 的 `_kebab` 同一算法：按大写字母断词再降小写。
+    """
     tail = name.split('_', 1)[1] if '_' in name else name
-    return tail.lower().replace('_', '-')
+    return re.sub(r'(?<=[A-Za-z0-9])(?=[A-Z])', '-', tail).lower().replace('_', '-')
 
 
 out = []

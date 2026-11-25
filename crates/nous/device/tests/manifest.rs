@@ -43,7 +43,10 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
     assert_eq!(manifest.parent().unwrap().file_name().unwrap(), "device");
     let plugin = std::fs::read_to_string(manifest.parent().unwrap().join("plugin.toml"))
         .expect("device/plugin.toml 必须存在");
-    assert!(plugin.contains("name = \"device\""), "plugin.toml 的 name");
+    assert!(
+        plugin.contains("name = \"Nous_Device\""),
+        "plugin.toml 的 name（规则 12：全名 `Nous_Device`）"
+    );
     assert!(plugin.contains("layer = \"app\""), "plugin.toml 的 layer=app");
 
     let checked = repo_cmd("bash")

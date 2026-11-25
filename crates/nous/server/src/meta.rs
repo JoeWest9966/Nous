@@ -189,9 +189,9 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/repos/:repo/upstream/files", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/copy", module: "repo" },
     RegisteredRoute { method: "POST", path: "/v1/repos/:repo/upstream/adopt", module: "repo" },
-    RegisteredRoute { method: "GET", path: "/v1/models", module: "device" },
-    RegisteredRoute { method: "PUT", path: "/v1/default", module: "device" },
-    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/models", module: "Nous_Device" },
+    RegisteredRoute { method: "PUT", path: "/v1/default", module: "Nous_Device" },
+    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "Nous_Device" },
     RegisteredRoute { method: "POST", path: "/v1/sessions", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/sessions/:id/entries", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
@@ -210,7 +210,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/archive/{id}/restore", module: "archive" },
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/device", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/device", module: "Nous_Device" },
     RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
     // 资源仓管理面：编辑页要的文件清单 / 单文件读写 / 新建 / 发布（三仓共用一副骨架）。
     RegisteredRoute { method: "GET", path: "/v1/skills/files", module: "skills" },
@@ -274,14 +274,14 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "POST", path: "/v1/trigger-projects/categories", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/trigger-projects/category", module: "triggers" },
     RegisteredRoute { method: "POST", path: "/v1/trigger-projects/sync", module: "triggers" },
-    RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Nous_Device" },
     // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘。
     // 归 `device`（不是"server"）：`_routes` / `capabilities` 只吐**清单里开着的模块**，
     // "server" 不在 MANIFEST 的 14 条里 —— 归它等于这条端点永远不出现在 /v1/_routes，
     // 客户端会一直报「路由漂移」。device 是 0.1.25 里唯一「宿主级只读」的模块。
-    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "Nous_Device" },
     // 机读总表：从注册表（本表 ∪ 插件声明）生成，自身也归 device。
-    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "Nous_Device" },
     // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
     RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
     RegisteredRoute { method: "GET", path: "/v1/presets/model", module: "presets" },
@@ -325,7 +325,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "DELETE", path: "/v1/elements/{kind}/{id}", module: "elements" },
     RegisteredRoute { method: "POST", path: "/v1/elements/{kind}/{id}/lock", module: "elements" },
     RegisteredRoute { method: "POST", path: "/v1/elements/push", module: "elements" },
-    RegisteredRoute { method: "GET", path: "/v1/_routes", module: "device" },
+    RegisteredRoute { method: "GET", path: "/v1/_routes", module: "Nous_Device" },
 ];
 
 /// `GET /v1/_routes`：debug 视图与 capabilities 从同一张表吐出。
@@ -481,7 +481,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读" },
     ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57/#58 落地；调度节拍归 `dispatcher`" },
     ManifestEntry { name: "data-manager", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-data-manager`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
-    ManifestEntry { name: "device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
+    ManifestEntry { name: "Nous_Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "今天 `prompts/index.js`" },
     ManifestEntry { name: "ext", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划" },
     // 元素库：旧面板 `k3skws` 块的 Rust 落点；盘上真相 = 第五套私库。

@@ -265,8 +265,8 @@
       ]
     },
     {
-      "name": "device",
-      "version": "0.7.0",
+      "name": "Nous_Device",
+      "version": "0.8.0",
       "kind": "编译期",
       "layer": "app",
       "required": true,

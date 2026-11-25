@@ -48,12 +48,23 @@ NAME_OK = re.compile(r'^(?:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z][A-Za-z0-9]*)?|[a-z][
 def split_name(name):
     """模块全名 → (全名第一段的小写 vendor, 小写连字符目录名)。规则 12。
 
-    `Element_Models` → ('element', 'models')；老写法 `data-manager` → (None, 'data-manager')。
+    `Element_Models` → ('element', 'models')；`Nous_PresetsAdmin` → ('nous', 'presets-admin')；
+    老写法 `data-manager` → (None, 'data-manager')。
+
+    尾段是 CamelCase，转目录要按**大写字母断词**再降小写：`DataManager` → `data-manager`、
+    `PresetsAdmin` → `presets-admin`。只 `.lower()` 会把 `presets-admin` 推成 `presetsadmin`，
+    跟仓里现有目录对不上。
     """
     if '_' in name:
         head, tail = name.split('_', 1)
-        return head.lower(), tail.lower().replace('_', '-')
-    return None, name.lower()
+        return head.lower(), _kebab(tail)
+    return None, _kebab(name)
+
+
+def _kebab(text):
+    """CamelCase → 小写连字符：`PresetsAdmin` → `presets-admin`，已有连字符的原样保留。"""
+    spaced = re.sub(r'(?<=[A-Za-z0-9])(?=[A-Z])', '-', text)
+    return spaced.lower().replace('_', '-')
 
 
 def read_plugins_rows():
