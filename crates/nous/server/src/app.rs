@@ -43,7 +43,8 @@ pub struct AppState {
     /// #60：模板私库 + 修订表的写者（整段串行锁）。按 env 的路径解析，进程内不留 map。
     presets: Option<crate::presets::SharedStore>,
     /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
-    stats: Option<crate::stats::StatsRuntime>,
+    /// #62/搬家：data-manager 插件的只读句柄（两个库路径）。
+    stats: Option<data_data_manager::routes::Paths>,
     /// #81：扩展运行时。只有一个入口可 spawn 扩展子进程，装配一次后由端点读观测。
     ext: Option<Arc<nous_ext::Runtime>>,
     /// #84：扩展源码管理面（私库根 + 垃圾站）。运行时装配时一并注入。
@@ -520,7 +521,7 @@ impl AppState {
         self.combo_action.as_ref()
     }
 
-    pub fn stats(&self) -> Option<&crate::stats::StatsRuntime> {
+    pub fn stats(&self) -> Option<&data_data_manager::routes::Paths> {
         self.stats.as_ref()
     }
 
@@ -591,7 +592,7 @@ impl AppState {
     }
 
     /// 装上 stats 的只读句柄（生产装配只调一次；测试用它打真 Router）。
-    pub fn with_stats(self: Arc<Self>, runtime: crate::stats::StatsRuntime) -> Arc<Self> {
+    pub fn with_stats(self: Arc<Self>, runtime: data_data_manager::routes::Paths) -> Arc<Self> {
         Arc::new(Self {
             source: self.source.clone(),
             commands: self.commands.clone(),

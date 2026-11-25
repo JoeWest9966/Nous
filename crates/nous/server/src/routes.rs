@@ -109,15 +109,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/capabilities", get(capabilities))
         // 插件人话 README：随产物发布到 `<产物目录>/docs/plugins/`，运行时读盘（不进二进制）。
         .route("/v1/plugins/{name}/readme", get(crate::plugin_docs::readme))
-        .route("/v1/stats/usage", get(crate::stats::usage))
-        .route("/v1/stats/tasks", get(crate::stats::tasks))
-        .route("/v1/stats/db", get(crate::stats::db))
-        .route("/v1/stats/overview", get(crate::stats::overview))
-        .route("/v1/stats/conversations", get(crate::stats::conversations))
-        .route("/v1/stats/conversation/{id}", get(crate::stats::conversation))
-        .route("/v1/stats/cost", get(crate::stats::cost))
-        .route("/v1/stats/health", get(crate::stats::health))
-        .route("/v1/openapi.json", get(crate::stats::openapi))
+        .route("/v1/openapi.json", get(openapi))
         // #90：原先挂在 documents::attach 上的自省端点，下线后归主路由。
         .route("/v1/_routes", get(routes_view));
     // 资源仓管理面（技能 / 提示词 / 扩展的编辑页）：文件读写 + 新建 + 发布，翻译层在独立模块。
@@ -143,6 +135,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         Some(store) => router.merge(crate::presets::routes(store.clone())),
         None => router,
     }
+}
+
+/// `GET /v1/openapi.json`：从注册表（静态表 ∪ 插件声明）生成的只读机读视图。
+async fn openapi() -> axum::Json<serde_json::Value> {
+    axum::Json(serde_json::json!({
+        "openapi": "3.1.0",
+        "info": { "title": "nous /v1", "version": env!("CARGO_PKG_VERSION") },
+        "paths": crate::meta::openapi_paths(),
+    }))
 }
 
 /// `GET /v1/_routes`：与 capabilities 同源的注册表视图（#47）。

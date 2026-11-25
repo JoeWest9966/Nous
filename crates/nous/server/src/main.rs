@@ -413,9 +413,9 @@ async fn run() -> Result<(), RunError> {
 
     // #62：stats 的只读句柄。库路径与启动/`--check`/`--triggers` 共用 `db` 与
     // `plugins_db_path()` 的推导，不让三条端点读另一份库。
-    let state = state.with_stats(nous_server::stats::StatsRuntime {
-        durable_db: std::path::PathBuf::from(&db),
-        plugins_db: std::path::PathBuf::from(&plugins_db),
+    let state = state.with_stats(data_data_manager::routes::Paths {
+        durable: std::path::PathBuf::from(&db),
+        plugins: std::path::PathBuf::from(&plugins_db),
     });
 
     // 认证：token 文件存在就启用，不存在时只有绑回环才放行（且不启用中间件，

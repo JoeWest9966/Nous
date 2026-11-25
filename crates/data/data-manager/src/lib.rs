@@ -1,7 +1,8 @@
 //! `data-manager` 应用层模块（#62）：只读观测聚合。
 //!
 //! 三条端点从两张现成的库里现算，不建表、不写库、不 spawn 进程、不直接看时钟。
-//! 公共接口只有 [`usage`] / [`tasks`] / [`db`] 三个纯读函数；HTTP 与声明在 `nous-server`。
+//! 公共接口是几个纯读函数；**端点也归本插件**（[`routes`]，Magento 2 那种模块自带
+//! controller），宿主只注入两个库路径（[`routes::Host`]）。
 //!
 //! ## 判据的接缝
 //!
@@ -16,6 +17,7 @@ use nous_chord::sqlite::{LocalDatabase, SqliteExecutor, SqliteValue};
 use serde_json::{json, Value};
 
 pub mod db;
+pub mod routes;
 pub mod util;
 pub mod overview;
 pub mod conversations;

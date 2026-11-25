@@ -7,8 +7,10 @@ license.workspace = true
 description = "应用层 data-manager 模块：只读观测聚合（/v1/stats/usage · tasks · db，#62）"
 
 [dependencies]
+axum = { workspace = true }
 nous-chord = { workspace = true }
 nous-durable = { workspace = true }
+nous-routes = { workspace = true }
 nous-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -16,4 +18,4 @@ serde_json = { workspace = true }
 [dev-dependencies]
 rusqlite = { workspace = true }
 tempfile = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

@@ -280,16 +280,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // "server" 不在 MANIFEST 的 14 条里 —— 归它等于这条端点永远不出现在 /v1/_routes，
     // 客户端会一直报「路由漂移」。device 是 0.1.25 里唯一「宿主级只读」的模块。
     RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "device" },
-    // #62：stats 三条只读观测端点。
-    RegisteredRoute { method: "GET", path: "/v1/stats/usage", module: "data-manager" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/tasks", module: "data-manager" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/db", module: "data-manager" },
-    // 数据监控室六屏复原：明细读口（X 光片 / 会话树 / 回放 / 账单 / 维修）。
-    RegisteredRoute { method: "GET", path: "/v1/stats/overview", module: "data-manager" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/conversations", module: "data-manager" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/conversation/:id", module: "data-manager" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/cost", module: "data-manager" },
-    RegisteredRoute { method: "GET", path: "/v1/stats/health", module: "data-manager" },
+    // 机读总表：从注册表（本表 ∪ 插件声明）生成，自身也归 device。
     RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "device" },
     // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
     RegisteredRoute { method: "GET", path: "/v1/presets", module: "presets" },
