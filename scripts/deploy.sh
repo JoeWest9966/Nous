@@ -456,9 +456,13 @@ do_docs_only() {
 	[ -n "$target" ] || die "--docs-only 需要 current（先跑一次完整部署）"
 	stage=$(mktemp -d)
 	mkdir -p "$stage/docs/plugins"
-	for readme in crates/*/*/README.md; do
+	for manifest in crates/*/*/plugin.toml; do
+		[ -f "$manifest" ] || continue
+		readme="$(dirname "$manifest")/README.md"
 		[ -f "$readme" ] || continue
-		cp "$readme" "$stage/docs/plugins/$(basename "$(dirname "$readme")").md"
+		name=$(python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["name"])' "$manifest") \
+			|| die "读不出 $manifest 的 name"
+		cp "$readme" "$stage/docs/plugins/$name.md"
 	done
 	rs sh -c "rm -rf '/tmp/nous-docs'" || { rm -rf "$stage"; die "清理远端临时文档目录失败"; }
 	rsync -a -e "ssh -o BatchMode=yes" "$stage/docs/" "$HOST:/tmp/nous-docs/" || { rm -rf "$stage"; die "rsync 文档失败"; }

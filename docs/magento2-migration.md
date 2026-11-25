@@ -196,6 +196,13 @@ cargo test --workspace                                       # 全量
 | 日期 | 动作 |
 |---|---|
 | 2026-11-24 | 建 `nous-routes`（契约层）+ `server::plugins`（收集/装配/登记）；`device` 交出 `GET /v1/machines`（静态表删 1 行） |
+| 2026-11-25 | **规则 12 落地**：模块全名照 Magento 2 的 `Vendor_Module`（`Element_Models`），
+目录与包名仍是小写（`crates/element/models` / `element-models`）。第一个迁的是 `element-models`：
+vendor `nous` → `element`、补一条 `MANIFEST`（它自带两条端点却不在清单里，capabilities 看不见）。
+判据跟着改：`check-plugins.sh` 由全名**推出**目录 / 包名 / vendor；`layer-paths.sh` 与
+`plugin-versions.py` 用同一算法；`deploy.sh` 的插件 README 按全名落盘（`Element_Models.md`）。
+坑：`plugin-versions.py` 的考古 key 用全名后，`build.rs` 也必须读 `plugin.toml` 的 `name` 当 key，
+否则 capabilities 回退发行版号 |
 | 2026-11-24 | 第二条宿主能力落在 `element-models`：`PUT /v1/providers/{id}/secret`（密钥值写宿主文件，元素库仍只存引用）|
 | 2026-11-24 | `element-models` 交出 `GET /v1/models/elements`，`Host::elements_repo` 由 `server` 实现；`server/src/models.rs` 只剩 `ModelsResponse` 适配 |
 | 2026-11-24 | `verify.sh` 判据 5/6/12 转绿（`os_env::run_capture_async`、`chord::sqlite::inspect`）；本轮不搬端点 |
