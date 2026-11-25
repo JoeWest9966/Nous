@@ -542,6 +542,9 @@ pub fn capabilities(origin: &str) -> Value {
             // 「关于 → 插件」列表上看不出谁动过。取不到才回退发行版号，并加
             // `versionSource: "release"` 如实说明（回退不静默）。
             let (version, fallback) = crate::plugin_versions::version_of(name);
+            // 规则 10：`vendor` 是出品方（`nous` / `data` …），桌面端拿它当副标题。
+            // 没有清单的模块（外挂 / 待建）这里是 null —— 不猜、不编一个 nous 顶上。
+            let vendor = crate::plugin_versions::vendor_of(name);
             let mut module = json!({
                 "name": name,
                 "version": version,
@@ -549,6 +552,7 @@ pub fn capabilities(origin: &str) -> Value {
                 "layer": entry.layer.as_str(),
                 "required": entry.required,
                 "crate": entry.crate_name,
+                "vendor": vendor,
                 "description": entry.description,
             });
             if fallback {

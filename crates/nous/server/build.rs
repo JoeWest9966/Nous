@@ -28,7 +28,7 @@ fn emit_plugin_versions() {
         .to_path_buf();
     let crates = root.join("crates");
 
-    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut entries: Vec<(String, String, String)> = Vec::new();
     let mut problems: Vec<String> = Vec::new();
     for vendor in read_dirs(&crates) {
         println!("cargo:rerun-if-changed={}", vendor.display());
@@ -49,8 +49,9 @@ fn emit_plugin_versions() {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let vendor = read_field(&text, "vendor");
             match read_version(&text) {
-                Some(version) => entries.push((name, version)),
+                Some(version) => entries.push((name, version, vendor.unwrap_or_default())),
                 None => {
                     // 回退不静默：清单存在但读不出合法 semver 是**仓的错**，不是环境问题。
                     // `cargo:warning` 只进构建日志，容易被当成噪声；所以同时把这份清单
@@ -73,8 +74,13 @@ fn emit_plugin_versions() {
          // 来源：crates/<vendor>/<module>/plugin.toml 的 version（#93）。\n\
          pub const PLUGIN_VERSIONS: &[(&str, &str)] = &[\n",
     );
-    for (name, version) in &entries {
+    for (name, version, _) in &entries {
         writeln!(out, "    ({name:?}, {version:?}),").unwrap();
+    }
+    out.push_str("];\n\n// 出品方（规则 10）：模块名 → vendor。空串 = 清单没写 vendor。\n");
+    out.push_str("pub const PLUGIN_VENDORS: &[(&str, &str)] = &[\n");
+    for (name, _, vendor) in &entries {
+        writeln!(out, "    ({name:?}, {vendor:?}),").unwrap();
     }
     out.push_str("];\n\n// 清单在、但 `version` 不是合法 `X.Y.Z` 的模块（它们回退发行版号）。\n");
     out.push_str("pub const PLUGIN_VERSION_PROBLEMS: &[&str] = &[\n");
@@ -98,6 +104,16 @@ fn read_dirs(dir: &Path) -> Vec<PathBuf> {
         .collect();
     dirs.sort();
     dirs
+}
+
+/// 读一个字符串字段（`vendor = "data"`）。注释、行尾空白都不影响。
+fn read_field(text: &str, key: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let line = line.split('#').next().unwrap_or("").trim();
+        let value = line.strip_prefix(key)?.trim_start().strip_prefix('=')?.trim();
+        let value = value.strip_prefix('"')?.strip_suffix('"')?;
+        (!value.is_empty()).then(|| value.to_string())
+    })
 }
 
 /// 只认 `version = "X.Y.Z"` 这一行；注释、行尾空白都不影响。

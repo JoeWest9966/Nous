@@ -12,6 +12,7 @@
       "layer": "app",
       "required": true,
       "crate": "`nous-sessions`",
+      "vendor": "nous",
       "description": "**pi 本体**（#44 落地），承载最小轮次与取消收敛",
       "enabled": true,
       "endpoints": [
@@ -41,6 +42,7 @@
       "layer": "platform",
       "required": true,
       "crate": "`nous-env`",
+      "vendor": "nous",
       "description": "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`",
       "enabled": true,
       "endpoints": [
@@ -54,6 +56,7 @@
       "layer": "platform",
       "required": true,
       "crate": "`nous-repo`",
+      "vendor": "nous",
       "description": "唯一的 git 进程调用面；四条私库路径解析沿用 `env`",
       "enabled": true,
       "endpoints": [
@@ -96,6 +99,7 @@
       "layer": "app",
       "required": false,
       "crate": "—",
+      "vendor": null,
       "description": "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`）",
       "versionSource": "release",
       "enabled": true,
@@ -122,6 +126,7 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-presets-admin`",
+      "vendor": "nous",
       "description": "从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json`",
       "enabled": true,
       "endpoints": [
@@ -153,6 +158,7 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-skills`",
+      "vendor": "nous",
       "description": "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`）",
       "enabled": true,
       "endpoints": [
@@ -171,6 +177,7 @@
       "layer": "app",
       "required": false,
       "crate": "—",
+      "vendor": null,
       "description": "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票",
       "versionSource": "release",
       "enabled": true,
@@ -187,6 +194,7 @@
       "layer": "app",
       "required": false,
       "crate": "—",
+      "vendor": null,
       "description": "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读",
       "versionSource": "release",
       "enabled": true,
@@ -204,6 +212,7 @@
       "layer": "app",
       "required": false,
       "crate": "—",
+      "vendor": null,
       "description": "#57/#58 落地；调度节拍归 `dispatcher`",
       "versionSource": "release",
       "enabled": true,
@@ -241,6 +250,7 @@
       "layer": "app",
       "required": false,
       "crate": "`data-data-manager`",
+      "vendor": "data",
       "description": "归口监控六屏；与 `--check` 共读口，tasks 现算",
       "enabled": true,
       "endpoints": [
@@ -261,6 +271,7 @@
       "layer": "app",
       "required": true,
       "crate": "`nous-device`",
+      "vendor": "nous",
       "description": "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写",
       "enabled": true,
       "endpoints": [
@@ -282,6 +293,7 @@
       "layer": "app",
       "required": true,
       "crate": "`nous-prompts`",
+      "vendor": "nous",
       "description": "今天 `prompts/index.js`",
       "enabled": true,
       "endpoints": [
@@ -300,6 +312,7 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-ext`",
+      "vendor": "nous",
       "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划",
       "enabled": true,
       "endpoints": [
@@ -327,6 +340,7 @@
       "layer": "app",
       "required": false,
       "crate": "`nous-elements`",
+      "vendor": "nous",
       "description": "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点",
       "enabled": true,
       "endpoints": [
