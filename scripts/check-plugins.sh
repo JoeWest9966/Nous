@@ -100,6 +100,11 @@ def head_version(rel):
         return None
 
 
+def read_cargo_name(manifest):
+    with open(manifest, 'rb') as handle:
+        return tomllib.load(handle).get('package', {}).get('name')
+
+
 def cargo_metadata():
     try:
         proc = subprocess.run(
@@ -242,6 +247,16 @@ for directory in dirs:
         prev_key = version_key(prev) if isinstance(prev, str) else None
         if prev_key is not None and key < prev_key:
             failures.append(f'version={version} 比 HEAD 的 {prev} 低（插件版本只增不减）')
+
+    # 规则 10：包名 = `<vendor>-<module>`（Magento 的 composer 包名同构，扁平写法不写 module-）。
+    try:
+        package_name = read_cargo_name(cargo)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        failures.append(f'Cargo.toml 解析失败：{exc}')
+        package_name = None
+    want_package = f'{vendor}-{module}'
+    if package_name is not None and package_name != want_package:
+        failures.append(f'包名={package_name!r}（规则 10 要求 {want_package!r}）')
 
     want_deps = internal_deps(meta, os.path.abspath(cargo))
     if want_deps is not None:
