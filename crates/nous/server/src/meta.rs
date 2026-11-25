@@ -389,9 +389,7 @@ pub fn endpoints() -> Vec<Endpoint> {
     let mut all: Vec<Endpoint> = enabled_routes()
         .map(|route| Endpoint {
             method: route.method,
-            // 注册表只认 `:id` 一种写法：静态表里是 `{id}`，插件声明本来就是 `:id`，
-            // 这里统一折一次 —— 否则同一个 `endpoints[]` 里两种写法并存。
-            path: nous_routes::to_registry_path(route.path),
+            path: route.path.to_string(),
             module: route.module,
         })
         .collect();

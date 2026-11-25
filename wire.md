@@ -477,9 +477,6 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
   长相，例如 `Element_Models`；老模块的小写连字符名（`data-manager` / `sessions`）继续有效。
   `name` 是 `/v1/plugins/:name/*` 与 `/v1/_routes` 的 `module` 标签，也是桌面端的显示名 ——
   **目录名与包名是它的小写形**（`crates/element/models`、`element-models`），两者不是同一个字符串。
-- 注册表里所有路径只认一种写法：`{id}` 一律折成 `:id`（`nous_routes::to_registry_path`）。
-  `/v1/_routes`、`openapi.json`、`capabilities.modules[].endpoints` 三处同一个字符串，
-  静态表与插件声明都经过它 —— 不会出现「同一条端点两种写法」。
 - `modules[].vendor`：**出品方**（规则 10，`docs/plugins.md` 的 `vendor` 列），例如 `nous` / `data`。
   与 `version` 同一份生成表（`plugin.toml` 的 `vendor`，`server/build.rs` 编译期读出来），
   桌面端拿它当插件列表的副标题（`data-manager` 的供应商是 `data`）。
