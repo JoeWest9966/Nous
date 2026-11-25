@@ -14,7 +14,7 @@
 |---|---|
 | 所有 handler 都在 `crates/nous/server/src/`，`routes.rs` 一千多行 | 加一条端点就得改 `server`，插件再小也得排队 |
 | 归属靠 `meta::ROUTES` 一张**手写静态表**声明 | 声明与实现是两份东西，只能靠判据对齐；搬/删容易漂 |
-| `plugin.toml` 的 `endpoints` 全是空数组 | 清单里读不出某个插件到底提供了什么端点 |
+| `plugin.toml` 的 `endpoints` 全是空数组 | 清单里读不出某个插件到底提供了什么端点（2026-11-25 已把这个字段整个删掉，见 `docs/plugins.md` 规则 11） |
 
 Magento 2 的做法是：模块自带 controller，`etc/*/routes.xml` 声明路由，框架启动时把各模块的
 路由聚成一张表，唯一入口只做 dispatch + 中间件。**我们现在搬的就是这个：模块自带 controller。**
@@ -124,7 +124,8 @@ cargo test --workspace                                       # 全量
 ## 6 · 已知遗留
 
 - `nous-server` 仍是**唯一监听处**（`app` 层定义），这点不变；搬的是 handler 与声明。
-- `plugin.toml` 的 `endpoints` 仍是空数组：端点由**代码声明**，不从清单生成。
+- ~~`plugin.toml` 的 `endpoints` 仍是空数组~~：**已修**——这个字段已删除（规则 11），端点只由
+  插件的 `routes()` 声明，`capabilities` / `_routes` / `openapi` 三处都从注册表生成。
   要让它也自动生成，得等 `/v1/_routes` 变成"从注册表导出清单"的生成物 —— 另开票。
 - 元素库扫描失败的行为微调：搬家前走 `ServerError`（`repo_error` 映射），搬家后统一
   `500 {"error": "扫元素库失败：…"}`。形态没变（还是 `{error}` 一句话），状态码在
@@ -148,3 +149,4 @@ cargo test --workspace                                       # 全量
 | 2026-11-25 | 改名票：`stats` → `data/data-manager`（vendor=data，包名 `data-data-manager`）；端点路径 `/v1/stats/*` 一个字不变 |
 | 2026-11-25 | **改名票**：`stats` → 出品方 `data` 的 `data-manager`（目录 `crates/data/data-manager`、包名 `data-data-manager`，端点路径 `/v1/stats/*` 一个字没动）；规则 10 由此立起来 |
 | 2026-11-25 | `data-manager` 交出 8 条 `GET /v1/stats/*`：`Host::stats_paths` 注入两个库路径；`server/src/stats.rs` 删除（`openapi` 搬回 `server/routes.rs`），静态表删 8 行 |
+| 2026-11-25 | `plugin.toml` 删掉 `endpoints` 字段（28 个清单）：端点唯一真相是 `routes()`，清单只记身份（规则 11） |

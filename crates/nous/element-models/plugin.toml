@@ -13,4 +13,3 @@ nous-runtime = "^0.1"
 
 [provides]
 capability = "element-models"
-endpoints  = []

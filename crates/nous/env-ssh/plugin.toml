@@ -9,4 +9,3 @@ nous-env = "^0.1"
 
 [provides]
 capability = "env-ssh"
-endpoints  = []            # 端点由 #48 的注册表生成

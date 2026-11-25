@@ -52,6 +52,13 @@
    Magento 2 同理：模块名永远是 `Magento_Catalog`，中文在 `i18n/zh_Hans.csv`，不在代码里另起名字。
    判据：客户端仓 `grep` 不到任何模块名常量（NousDesk 侧那条由它自己的测试守）。
 
+11. **端点只有一个真相：插件的 `routes()`。** `plugin.toml` **没有** `endpoints` 字段
+    （曾经有个永远为 `[]` 的栏，看着像"这个插件没有端点"）。端点的三处读口都由代码声明生成：
+    `GET /v1/capabilities` 的 `modules[].endpoints`、`GET /v1/_routes`、`GET /v1/openapi.json`
+    —— 同一份 `routes()`，不可能分叉。清单只管**身份**（name / vendor / version / layer / crate /
+    requires），不管"我有哪些 URL"。
+    判据：`scripts/check-plugins.sh` 见到 `provides.endpoints` 就红（`endpoints 已作废`）。
+
 ## 表
 
 | module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |
@@ -87,7 +94,7 @@
 | `triggers` | nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口）+ `PATCH /v1/triggers/{code}`（#73：改 schedule/params/enabled，code 不可变） | 否 | #57/#58 落地；调度节拍归 `dispatcher` |
 | `elements` | nous | `nous-elements` | app | 编译期 | `GET /v1/elements`（两段全量 + 引用解析）+ `GET/PUT/DELETE /v1/elements/{kind}/{id}`（单条读写 / 删）+ `POST /v1/elements/{kind}`（新建）+ `POST /v1/elements/push`（手动补推）；写一次提交一次，同一个 `requestId` 重放不二次提交 | 否 | 元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点 |
 | `element-models` | nous | `nous-element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
-| `routes` | nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 的 `endpoints` 仍是空数组（端点由代码声明，不从清单生成） |
+| `routes` | nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 不再有 `endpoints` 字段（规则 11：端点只由 `routes()` 声明，三处读口都从它生成） |
 | `archive` | nous | — | app | 编译期 | `archive` / `purge` / `archive_list` / `restore`；端点族 `POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票 |
 | `data-manager` | data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |

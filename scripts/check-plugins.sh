@@ -224,8 +224,11 @@ for directory in dirs:
             capability = provides.get('capability')
             if capability is not None and capability != module:
                 failures.append(f'capability={capability!r}（module 列是 {module!r}）')
-            if provides.get('endpoints') != []:
-                failures.append('endpoints 必须是 []（本票不生成端点）')
+            # 规则 11：端点只有一个真相 —— 插件的 `routes()`；注册表（capabilities /
+            # `_routes` / openapi）从它生成。清单里不许再抄一份（曾经是永远空的 `[]`，
+            # 让人以为"这个插件没端点"）。
+            if 'endpoints' in provides:
+                failures.append('provides.endpoints 已作废（规则 11）：端点由 routes() 声明，清单不复制')
 
     # 插件版本**独立演进**（Magento 2 的模块版本语义，`docs/plugins.md` 规则 8）：
     # 不再 == workspace / Cargo.toml 的版本。只守两条：合法 semver、比 HEAD 里的值不倒退。

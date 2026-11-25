@@ -8,4 +8,3 @@ crate = "nous-skills"
 
 [provides]
 capability = "skills"
-endpoints  = []

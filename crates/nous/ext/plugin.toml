@@ -10,4 +10,3 @@ nous-ext-sdk = "^0.1"
 
 [provides]
 capability = "ext"
-endpoints  = []         # 本票一律留空；端点由 #48 的注册表生成
