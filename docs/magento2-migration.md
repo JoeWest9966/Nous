@@ -196,6 +196,7 @@ cargo test --workspace                                       # 全量
 | 日期 | 动作 |
 |---|---|
 | 2026-11-24 | 建 `nous-routes`（契约层）+ `server::plugins`（收集/装配/登记）；`device` 交出 `GET /v1/machines`（静态表删 1 行） |
+| 2026-11-25 | **目录与 vendor 也改成 PascalCase**（29 个目录 `crates/Nous/PresetsAdmin` / `crates/Data/DataManager` / `crates/Element/Models`，`vendor = "Nous"` / `"Data"` / `"Element"`）。包名、crate 标识、capability、URL 一个字没动。三处推导判据同算法改成 `_pascal`（按 camel hump 断词），`plugin-versions.py` 补「目录改名 = minor」（纯改名提交里 `plugin.toml` 一行没变、`git show` 的 +/- 是空的，靠行判据会落成 patch，16 个模块全落错档）。坑 2：快照里 `modules[].version` 也要跟着插件版本走，`presets-admin` 红了一次 |
 | 2026-11-25 | **规则 12 第二个：`device` → `Nous_Device`**（vendor/目录/包名一字不动，只改全名与版本 0.7.0 → 0.8.0）。同时补齐尾段 **CamelCase → kebab** 推导（`Nous_PresetsAdmin` → 目录 `presets-admin`）。三个判据跟着改：`plugin-versions.rs` 的测试原本按小写名硬凑目录，`Nous_Device` 直接被跳过 → 判据空转（`只比对了 9 个模块`）；修成由全名推目录，并补 `rule12_name_and_dir_derivation` 自检。Desk 侧新增 `module_matches`（`Nous_Device` ↔ `device` 都认），否则改名当天「设备」页会被判成未登记而灰掉 |
 | 2026-11-25 | **规则 12 落地**：模块全名照 Magento 2 的 `Vendor_Module`（`Element_Models`），
 目录与包名按当时口径是小写（后来 2026-11-25 改成 PascalCase 目录 + `vendor = "Element"`）。第一个迁的是 `element-models`：

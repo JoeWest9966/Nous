@@ -14,7 +14,7 @@
 ## 布局
 
 ```
-crates/<vendor>/<module>/   ← 插件边界就是 crate 边界；目录只表达所有权
+crates/<Vendor>/<Module>/   ← 插件边界就是 crate 边界；目录只表达所有权（PascalCase，规则 12）
 exts/                       ← 运行时外挂（按帧协议走 stdio，以 `exts/*` 编进 workspace）
 wire.md                     ← 对外契约（宪法）：只在这里改契约
 docs/                       ← 设计与判据（plugins / deploy / storage / triggers / permissions / decisions / pitfalls）
