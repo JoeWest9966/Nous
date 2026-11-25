@@ -8,4 +8,3 @@ crate = "nous-presets-admin"
 
 [provides]
 capability = "presets-admin"
-endpoints  = []

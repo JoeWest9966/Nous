@@ -9,4 +9,3 @@ nous-env = "^0.1"
 
 [provides]
 capability = "repo"
-endpoints  = []

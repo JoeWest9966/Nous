@@ -9,4 +9,3 @@ nous-durable = "^0.1"
 
 [provides]
 capability = "fixture"
-endpoints  = []         # 本票一律留空；端点由 #48 的注册表生成

@@ -9,4 +9,3 @@ nous-repo = "^0.1"
 
 [provides]
 capability = "elements"
-endpoints  = []

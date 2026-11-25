@@ -8,4 +8,3 @@ crate = "nous-prompts"
 
 [provides]
 capability = "prompts"
-endpoints  = []

@@ -8,4 +8,3 @@ crate = "nous-routes"
 
 [provides]
 capability = "routes"
-endpoints  = []

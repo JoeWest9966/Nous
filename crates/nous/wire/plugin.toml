@@ -7,4 +7,3 @@ crate = "nous-wire"
 [requires]                 # cargo metadata 里的内部 workspace 依赖
 
 [provides]
-endpoints  = []         # 本票一律留空；端点由 #48 的注册表生成

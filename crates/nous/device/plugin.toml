@@ -9,4 +9,3 @@ nous-routes = "^0.1"
 
 [provides]
 capability = "device"
-endpoints  = []
