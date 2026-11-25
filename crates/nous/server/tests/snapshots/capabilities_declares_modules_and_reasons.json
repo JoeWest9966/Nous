@@ -91,7 +91,7 @@
     },
     {
       "name": "presets",
-      "version": "0.1.27",
+      "version": "0.1.28",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -166,7 +166,7 @@
     },
     {
       "name": "archive",
-      "version": "0.1.27",
+      "version": "0.1.28",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -182,7 +182,7 @@
     },
     {
       "name": "combos",
-      "version": "0.1.27",
+      "version": "0.1.28",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -199,7 +199,7 @@
     },
     {
       "name": "triggers",
-      "version": "0.1.27",
+      "version": "0.1.28",
       "kind": "运行时外挂",
       "layer": "app",
       "required": false,
@@ -236,7 +236,7 @@
     },
     {
       "name": "data-manager",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
