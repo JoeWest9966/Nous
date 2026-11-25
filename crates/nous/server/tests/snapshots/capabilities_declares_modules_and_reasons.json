@@ -7,7 +7,7 @@
   "modules": [
     {
       "name": "sessions",
-      "version": "0.1.27",
+      "version": "0.6.7",
       "kind": "编译期",
       "layer": "app",
       "required": true,
@@ -36,7 +36,7 @@
     },
     {
       "name": "env",
-      "version": "0.1.27",
+      "version": "0.2.5",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
@@ -49,7 +49,7 @@
     },
     {
       "name": "repo",
-      "version": "0.1.27",
+      "version": "0.5.13",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
@@ -97,6 +97,7 @@
       "required": false,
       "crate": "—",
       "description": "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`）",
+      "versionSource": "release",
       "enabled": true,
       "endpoints": [
         "GET /v1/presets",
@@ -116,7 +117,7 @@
     },
     {
       "name": "presets-admin",
-      "version": "0.1.27",
+      "version": "0.1.2",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -147,7 +148,7 @@
     },
     {
       "name": "skills",
-      "version": "0.1.27",
+      "version": "0.2.2",
       "kind": "声明式",
       "layer": "app",
       "required": false,
@@ -171,6 +172,7 @@
       "required": false,
       "crate": "—",
       "description": "面板时代归档端点；Rust 版只落地了真删 + 墓碑，完整四方法另票",
+      "versionSource": "release",
       "enabled": true,
       "endpoints": [
         "POST /v1/sessions/:id/archive",
@@ -186,6 +188,7 @@
       "required": false,
       "crate": "—",
       "description": "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读",
+      "versionSource": "release",
       "enabled": true,
       "endpoints": [
         "GET /v1/combos/:section",
@@ -202,6 +205,7 @@
       "required": false,
       "crate": "—",
       "description": "#57/#58 落地；调度节拍归 `dispatcher`",
+      "versionSource": "release",
       "enabled": true,
       "endpoints": [
         "GET /v1/triggers",
@@ -232,7 +236,7 @@
     },
     {
       "name": "stats",
-      "version": "0.1.27",
+      "version": "0.2.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -252,7 +256,7 @@
     },
     {
       "name": "device",
-      "version": "0.1.27",
+      "version": "0.7.0",
       "kind": "编译期",
       "layer": "app",
       "required": true,
@@ -273,7 +277,7 @@
     },
     {
       "name": "prompts",
-      "version": "0.1.27",
+      "version": "0.2.2",
       "kind": "编译期",
       "layer": "app",
       "required": true,
@@ -291,7 +295,7 @@
     },
     {
       "name": "ext",
-      "version": "0.1.27",
+      "version": "0.6.6",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -318,7 +322,7 @@
     },
     {
       "name": "elements",
-      "version": "0.1.27",
+      "version": "0.2.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,

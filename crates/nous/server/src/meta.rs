@@ -546,15 +546,23 @@ pub fn capabilities(origin: &str) -> Value {
                     .then_some(ReasonCode::NotImplemented)
             });
             // #88：六列是新加的，老桌面端只读 name/enabled/endpoints/reason，照旧能解析。
+            // #93：`version` 是这个**插件自己的**版本（从它自己的 plugin.toml 生成，见
+            // `plugin_versions`），不是发行版号 —— 否则 14 个模块永远显示同一个数，
+            // 「关于 → 插件」列表上看不出谁动过。取不到才回退发行版号，并加
+            // `versionSource: "release"` 如实说明（回退不静默）。
+            let (version, fallback) = crate::plugin_versions::version_of(name);
             let mut module = json!({
                 "name": name,
-                "version": env!("CARGO_PKG_VERSION"),
+                "version": version,
                 "kind": entry.kind.as_str(),
                 "layer": entry.layer.as_str(),
                 "required": entry.required,
                 "crate": entry.crate_name,
                 "description": entry.description,
             });
+            if fallback {
+                module["versionSource"] = json!("release");
+            }
             match reason {
                 Some(code) => {
                     module["enabled"] = json!(false);

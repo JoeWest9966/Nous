@@ -99,7 +99,8 @@ pub async fn readme(
     };
     Json(serde_json::json!({
         "module": name,
-        "version": env!("CARGO_PKG_VERSION"),
+        // #93：与 `/v1/capabilities` 同一张生成表 —— 文档所属的也是**这个插件自己的**版本。
+        "version": crate::plugin_versions::version_of(&name).0,
         "markdown": markdown,
         "bytes": markdown.len(),
     }))

@@ -43,3 +43,7 @@ nous-triggers.db-shm
 nous-plugins.db
 nous-plugins.db-wal
 nous-plugins.db-shm
+
+# 脚本的 Python 字节码缓存（`scripts/*.py` 会被判据反复 import）
+__pycache__/
+*.pyc

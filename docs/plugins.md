@@ -31,8 +31,10 @@
 
 8. **插件版本独立**：`plugin.toml` 的 `version` 是**这个插件自己的** semver，不再等于
    workspace / `Cargo.toml` 的版本（那是发行版号，跟着 `chore(release)` 走）。Magento 2 的模块
-   版本也是各走各的，根仓不压一个数。当前所有插件都停在 `0.1.26` 只是**起点**（来历见
-   「按仓库痕迹重推 14 个插件版本」那张票），之后各自涨。
+   版本也是各走各的，根仓不压一个数。每个插件的当前版本是**按仓库痕迹推出来的**，见
+   `docs/plugin-versions.md`（表 + 口径 + 每个 minor 档的来处），之后各自涨。
+   `/v1/capabilities` 的 `modules[].version` 报的就是这个数（`server/build.rs` 从
+   `plugin.toml` 生成静态表，不手写第二份；取不到才回退发行版号并带 `versionSource: "release"`）。
    **跨度要求**（一张票动到几件，按最大的那条涨一次，别连涨三档）：
 
    | 动了什么 | 涨到 |

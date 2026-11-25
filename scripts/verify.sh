@@ -104,6 +104,16 @@ else
 	bad "plugin.toml 体检未过（详见 check-plugins.sh 的 checked/mismatched 汇总）"
 fi
 
+# 0d. 版本线考古（issue #93）：plugin.toml 的版本与 git 痕迹、docs/plugin-versions.md 三方同源
+step "0d. 版本线考古（plugin-versions.py --check --doc-check）"
+if ! python3 -c 'import tomllib' 2>/dev/null; then
+	bad "python3 没有 tomllib（需要 3.11+），版本线判据跑不了"
+elif python3 scripts/plugin-versions.py --check --doc-check; then
+	ok "28 份 plugin.toml 的版本 == 从 git 痕迹推出来的版本，且 docs/plugin-versions.md 的表没漂"
+else
+	bad "版本线考古不一致（上面逐条指名）：改了插件就得按规则 8 自己涨，别手改文档表"
+fi
+
 # 1. 单元测试 + 一致性套件
 if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	step "1. cargo test --workspace（含改写自 pi testing 的一致性套件）"
