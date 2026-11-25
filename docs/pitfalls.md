@@ -396,3 +396,24 @@ entry id 是**全局单调**的（一条序列被所有会话共用），真库�
 **怎么防**：上下文只能按**会话**查（`nous_durable::session::transcript::entries_in`，
 按 id 降序取最新 N 条再翻转）；判据写进 `providers_elements.rs::a_real_turn_answers_through_the_elements_provider`
 —— 断言供应商请求体里有用户那句话（`contains("ping")`），不只看答案落库。
+
+## rsync 到残留的 /tmp 目录会把 docs 多嵌一层（2026-11-24）
+
+**症状**：第二次跑 `deploy.sh`，在「落产物」那步 `cp: /tmp/nous-docs/plugins 没有那个文件或目录`。
+
+**根因**：`rsync -a $stage/docs $HOST:/tmp/nous-docs` —— 目标目录上次中断时还在，
+rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plugins`；脚本按
+`/tmp/nous-docs/plugins` 取，于是落空。首次部署不会撞上，第二次才炸。
+
+**怎么防**：同步前先 `rm -rf` 目标，源和目标都写尾斜杠（`$stage/docs/` → `/tmp/nous-docs/`），
+语义才是「把里面的内容放到那里」；`upload_artifacts` 与 `--docs-only` 两处都按这个写。
+
+## 共用 main 工作树里未提交的改动会被别人的 commit 卷走（2026-11-24）
+
+**症状**：本地改的 `scripts/deploy.sh` 在 `git status` 里消失，却出现在别人推的 commit 里
+（message 也跟内容无关）；`git log -S` 才查得到。
+
+**根因**：`/opt/Nous-src` 是多会话共用的 main 工作树，别人 `git add -A` 不区分「谁改的」。
+
+**怎么防**：动代码前先 `git worktree add /opt/Nous-src-<主题> -b fix/<主题>`，共用 main
+上一秒都不留未提交文件（AGENTS.md 的「一个 worktree 一个分支」就是为这个）。

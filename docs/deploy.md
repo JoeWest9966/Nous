@@ -194,3 +194,15 @@ Desk 写（运行期）。**后读的优先**，所以 Desk 改过的变量以 `
 - 不 `chown`/`chgrp` 任何 `/opt/*`。
 - 脚本里没有任何凭据：`git grep -inE 'sshpass|password|secret|crabport' scripts/` 必须 0 命中
   （判据 15）。能改宿主状态文件的人仍能解锁/改配置；这里给的是“没有顺手删掉这回事”，不是物理防线。
+
+## 8 · 2026-11-24 · 0.1.26 部署记录（插件 README 端点）
+
+- 产物 `nous-app-940ba150-x86_64-unknown-linux-musl`（在远程开发机编 musl 静态，
+  `NOUS_APP_BIN=` 交给 `deploy.sh`，本机不编译），`current` 已切，上一版
+  `298f386e` 留着回退。
+- `docs/plugins/` 28 份随产物落到版本目录；端点 `GET /v1/plugins/{name}/readme`
+  实测 200（`sessions`，`version = 0.1.26`，正文中文标题）。
+- `deploy-check.sh`：绿 12 / 红 0 / SKIP 3（3 条人工哨兵），判据 12
+  `sessions README 可读（bytes=325）`。
+- 这次踩到并修掉：`/tmp/nous-docs` 残留时 rsync 会把 `docs/` 多嵌一层，部署在
+  「落产物」cp 失败（见 `pitfalls.md` 同日那条）。
