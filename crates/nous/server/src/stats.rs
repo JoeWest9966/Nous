@@ -1,6 +1,6 @@
 //! #62：三条 stats 端点的 HTTP 装配（只读）。
 //!
-//! 聚合逻辑在 `nous-stats`；这里只做三件事：解析查询参数、取库路径、把 `{error}` 变成
+//! 聚合逻辑在 `data-data-manager`；这里只做三件事：解析查询参数、取库路径、把 `{error}` 变成
 //! 语义状态码。库路径来自 `AppState` 的 `stats` 装配（生产由 `main` 注入 `NOUS_DB` 与
 //! `plugins_db_path()` 的同一套推导），没有装配时回 409，不假装空数据。
 
@@ -35,18 +35,18 @@ pub struct UsageQuery {
 }
 
 impl UsageQuery {
-    fn window(&self) -> Result<nous_stats::UsageWindow> {
+    fn window(&self) -> Result<data_data_manager::UsageWindow> {
         if let (Some(from), Some(to)) = (self.from, self.to) {
             if from >= to {
                 return Err(ServerError::BadRequest("from 必须小于 to".to_string()));
             }
         }
-        Ok(nous_stats::UsageWindow { from: self.from, to: self.to })
+        Ok(data_data_manager::UsageWindow { from: self.from, to: self.to })
     }
 
-    fn group_by(&self) -> Result<nous_stats::GroupBy> {
+    fn group_by(&self) -> Result<data_data_manager::GroupBy> {
         let raw = self.group_by.as_deref().unwrap_or("day");
-        nous_stats::GroupBy::parse(raw).ok_or_else(|| {
+        data_data_manager::GroupBy::parse(raw).ok_or_else(|| {
             ServerError::BadRequest(format!("group_by 只能是 day|model|conversation，收到 {raw:?}"))
         })
     }
@@ -60,7 +60,7 @@ pub async fn usage(
     let runtime = runtime(&state)?;
     let window = query.window()?;
     let group_by = query.group_by()?;
-    nous_stats::usage(&runtime.durable_db, window, group_by)
+    data_data_manager::usage(&runtime.durable_db, window, group_by)
         .map(Json)
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
@@ -68,7 +68,7 @@ pub async fn usage(
 /// `GET /v1/stats/tasks`。
 pub async fn tasks(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let runtime = runtime(&state)?;
-    nous_stats::tasks(&runtime.durable_db)
+    data_data_manager::tasks(&runtime.durable_db)
         .map(Json)
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
@@ -76,7 +76,7 @@ pub async fn tasks(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
 /// `GET /v1/stats/db`。
 pub async fn db(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let runtime = runtime(&state)?;
-    nous_stats::db(&runtime.durable_db, &runtime.plugins_db)
+    data_data_manager::db(&runtime.durable_db, &runtime.plugins_db)
         .map(Json)
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
@@ -84,7 +84,7 @@ pub async fn db(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
 /// `GET /v1/stats/overview`：durable 库的 X 光片（解剖屏）。
 pub async fn overview(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let runtime = runtime(&state)?;
-    nous_stats::overview(&runtime.durable_db)
+    data_data_manager::overview(&runtime.durable_db)
         .map(Json)
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
@@ -92,7 +92,7 @@ pub async fn overview(State(state): State<Arc<AppState>>) -> Result<Json<Value>>
 /// `GET /v1/stats/conversations`：会话树（会话树屏）。
 pub async fn conversations(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let runtime = runtime(&state)?;
-    nous_stats::conversations(&runtime.durable_db)
+    data_data_manager::conversations(&runtime.durable_db)
         .map(Json)
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
@@ -106,7 +106,7 @@ pub async fn conversation(
     let id: i64 = id
         .parse()
         .map_err(|_| ServerError::BadRequest(format!("session id is not a number: {id:?}")))?;
-    match nous_stats::conversation(&runtime.durable_db, id)
+    match data_data_manager::conversation(&runtime.durable_db, id)
         .map_err(|error| ServerError::Internal(error.to_string()))?
     {
         Some(value) => Ok(Json(value)),
@@ -117,7 +117,7 @@ pub async fn conversation(
 /// `GET /v1/stats/cost`：账单屏（四组桶 + note）。
 pub async fn cost(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let runtime = runtime(&state)?;
-    nous_stats::cost(&runtime.durable_db)
+    data_data_manager::cost(&runtime.durable_db)
         .map(Json)
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
@@ -125,12 +125,12 @@ pub async fn cost(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
 /// `GET /v1/stats/health`：维修屏（任务 / 提交 / 文档 / WAL / 空闲页 / 工单）。
 pub async fn health(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
     let runtime = runtime(&state)?;
-    nous_stats::health(&runtime.durable_db, now_ms())
+    data_data_manager::health(&runtime.durable_db, now_ms())
         .map(Json)
         .map_err(|error| ServerError::Internal(error.to_string()))
 }
 
-/// 健康屏的「卡住」判据要一个时钟；时间由端点注入（`nous-stats` 层零时钟）。
+/// 健康屏的「卡住」判据要一个时钟；时间由端点注入（`data-data-manager` 层零时钟）。
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

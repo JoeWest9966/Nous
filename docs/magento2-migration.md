@@ -83,7 +83,7 @@ impl nous_element_models::routes::Host for AppState {
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
 | `env` | 1 | 目录解析（`NOUS_START_DIRS`），无 IO 以外的状态 |
-| `stats` | 8 | 统计库只读查询（`nous-stats`） |
+| `data-manager` | 8 | 统计库只读查询（`data-data-manager`；端点路径不变） |
 | `archive` | 3 | 归档/墓碑（`nous-durable` sessions） |
 | `skills` | 6 | 私库读写（`nous-repo`）+ 变体表 |
 | `prompts` | 6 | 私库读写（`nous-repo`） |
@@ -97,7 +97,7 @@ impl nous_element_models::routes::Host for AppState {
 | `repo` | 30 | 最杂：git 面全在这一家（`nous-repo` 已是 platform，宿主只需给根路径） |
 | `device` | 7 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，建议**最后搬**（它们读注册表本身） |
 
-建议顺序：`env` → `stats` → `archive` → `skills` / `prompts` / `elements` → `combos` →
+建议顺序：`env` → `data-manager` → `archive` → `skills` / `prompts` / `elements` → `combos` →
 `presets(-admin)` → `ext` → `triggers` → `repo` → `sessions` → `device`。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
@@ -109,7 +109,7 @@ impl nous_element_models::routes::Host for AppState {
 ./scripts/check-plugins.sh                                   # 模块/层/版本与 docs/plugins.md 对齐
 cargo test -p nous-routes                                    # 契约：折写路径 + 挂载后真能打到 handler
 cargo test -p nous-server --test capabilities_shapes \
-  --test capabilities_manifest --test stats_manifest         # 注册表三处同源 + 多重集一致
+  --test capabilities_manifest --test data_manager_manifest         # 注册表三处同源 + 多重集一致
 cargo test --workspace                                       # 全量
 ```
 
@@ -144,3 +144,4 @@ cargo test --workspace                                       # 全量
 | 2026-11-24 | `element-models` 交出 `GET /v1/models/elements`，`Host::elements_repo` 由 `server` 实现；`server/src/models.rs` 只剩 `ModelsResponse` 适配 |
 | 2026-11-24 | `verify.sh` 判据 5/6/12 转绿（`os_env::run_capture_async`、`chord::sqlite::inspect`）；本轮不搬端点 |
 | 2026-11-24 | 客户端去掉「模块名 → 中文名」表（`docs/plugins.md` 规则 9）：模块名只有英文一处真相，新插件客户端自动出现 |
+| 2026-11-25 | 改名票：`stats` → `data/data-manager`（vendor=data，包名 `data-data-manager`）；端点路径 `/v1/stats/*` 一个字不变 |

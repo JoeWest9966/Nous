@@ -49,7 +49,7 @@ fn manifest_covers_every_user_facing_module_and_no_dev_module() {
     let manifest = nous_server::meta::MANIFEST;
     let names: Vec<&str> = manifest.iter().map(|e| e.name).collect();
     for name in ["sessions", "env", "repo", "presets", "presets-admin", "skills", "archive",
-                 "combos", "triggers", "stats", "device", "prompts", "ext", "elements"] {
+                 "combos", "triggers", "data-manager", "device", "prompts", "ext", "elements"] {
         assert!(names.contains(&name), "MANIFEST 缺 {name}");
     }
     assert!(!names.contains(&"fixture"), "dev 层不是用户功能面");

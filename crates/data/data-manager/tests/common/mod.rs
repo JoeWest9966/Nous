@@ -14,7 +14,7 @@ impl Db {
     /// 新空库：`Storage::open` 跑本库迁移（durable_schema v2）。
     pub fn new(tag: &str) -> Self {
         let path = std::env::temp_dir().join(format!(
-            "nous-stats62-{tag}-{}-{:?}.sqlite",
+            "data-data-manager62-{tag}-{}-{:?}.sqlite",
             std::process::id(),
             std::thread::current().id(),
         ));

@@ -43,7 +43,7 @@ nous-server = [
   # 元素库（组 / 包）的 HTTP 面
   "nous-elements",
   # #62 只读观测聚合
-  "nous-stats",
+  "data-data-manager",
   # 模型编目插件（元素组 → 编目）：server 调它的投影与端点
   "nous-element-models",
   # 端点契约层（插件自带 handler 的声明 = 注册）

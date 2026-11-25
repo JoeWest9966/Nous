@@ -5,7 +5,7 @@
 //! `crates/nous-engine/tests/fixtures/kernel_stats/` 就是它的产物（截断后）。
 //!
 //! ```bash
-//! cargo run -q -p nous-stats --example dump -- fixtures/agent.small.sqlite /tmp
+//! cargo run -q -p data-data-manager --example dump -- fixtures/agent.small.sqlite /tmp
 //! ```
 //!
 //! 库路径与输出目录都从命令行来：这个 example 不写死任何库文件名。
@@ -14,7 +14,7 @@
 
 fn main() {
     let db = std::env::args().nth(1).unwrap_or_else(|| {
-        eprintln!("用法：cargo run -q -p nous-stats --example dump -- <库路径> [输出目录]");
+        eprintln!("用法：cargo run -q -p data-data-manager --example dump -- <库路径> [输出目录]");
         std::process::exit(2);
     });
     let path = std::path::Path::new(&db);
@@ -26,15 +26,15 @@ fn main() {
         )
         .unwrap();
     };
-    write("stats_overview", nous_stats::overview(path).unwrap());
-    let convs = nous_stats::conversations(path).unwrap();
+    write("stats_overview", data_data_manager::overview(path).unwrap());
+    let convs = data_data_manager::conversations(path).unwrap();
     let first = convs["list"].get(0).and_then(|r| r["id"].as_i64()).unwrap_or(1);
     write("stats_conversations", convs);
     write(
         "stats_conversation",
-        nous_stats::conversation(path, first).unwrap().unwrap(),
+        data_data_manager::conversation(path, first).unwrap().unwrap(),
     );
-    write("stats_cost", nous_stats::cost(path).unwrap());
-    write("stats_health", nous_stats::health(path, 1_700_000_000_000).unwrap());
+    write("stats_cost", data_data_manager::cost(path).unwrap());
+    write("stats_health", data_data_manager::health(path, 1_700_000_000_000).unwrap());
     println!("dumped to {out}, first conv id={first}");
 }

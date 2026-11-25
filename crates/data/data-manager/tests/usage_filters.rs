@@ -3,7 +3,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::Db;
-use nous_stats::{GroupBy, UsageWindow};
+use data_data_manager::{GroupBy, UsageWindow};
 use serde_json::Value;
 
 #[test]
@@ -13,8 +13,8 @@ fn window_is_half_open_and_actually_filters_requests() {
     for i in 0..6 {
         db.assistant(i + 1, 10, start + i as i64 * 1000, "p", "m", i, 0, false);
     }
-    let full = nous_stats::usage(&db.path, UsageWindow::default(), GroupBy::Day).unwrap();
-    let sliced = nous_stats::usage(
+    let full = data_data_manager::usage(&db.path, UsageWindow::default(), GroupBy::Day).unwrap();
+    let sliced = data_data_manager::usage(
         &db.path,
         UsageWindow { from: Some(start + 2000), to: Some(start + 5000) },
         GroupBy::Day,
@@ -25,7 +25,7 @@ fn window_is_half_open_and_actually_filters_requests() {
     assert_eq!(sliced_requests, 3, "[from,to) 闭开：命中 t=2000,3000,4000");
     assert!(sliced_requests < full_requests, "过滤必须真的生效（严格小于全量）");
     // 上界 exclusive：to 那一毫秒不计。
-    let upper = nous_stats::usage(
+    let upper = data_data_manager::usage(
         &db.path,
         UsageWindow { from: Some(start + 5000), to: None },
         GroupBy::Day,
@@ -43,7 +43,7 @@ fn model_keys_are_the_distinct_provider_model_pairs_from_entries() {
     let entries = db.entries_projection_for_keys();
     let expected: BTreeSet<String> = db.all_keys();
     assert_eq!(expected.len(), 3, "手里的去重集合先钉住");
-    let report = nous_stats::usage(&db.path, UsageWindow::default(), GroupBy::Model).unwrap();
+    let report = data_data_manager::usage(&db.path, UsageWindow::default(), GroupBy::Model).unwrap();
     let actual: BTreeSet<String> = report["rows"]
         .as_array().unwrap()
         .iter()

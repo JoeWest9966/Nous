@@ -1521,7 +1521,7 @@ dependencies = [
  "nous-runtime",
  "nous-sessions",
  "nous-skills",
- "nous-stats",
+ "data-data-manager",
  "nous-store",
  "nous-telemetry",
  "nous-tools",
@@ -1561,7 +1561,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nous-stats"
+name = "data-data-manager"
 version = "0.1.27"
 dependencies = [
  "nous-chord",

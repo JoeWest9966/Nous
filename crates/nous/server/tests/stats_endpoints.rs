@@ -14,7 +14,7 @@ use tower::ServiceExt;
 
 fn temp_db(tag: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
-        "nous-stats62-http-{tag}-{}-{:?}.sqlite",
+        "data-data-manager62-http-{tag}-{}-{:?}.sqlite",
         std::process::id(),
         std::thread::current().id(),
     ));
@@ -34,7 +34,7 @@ fn app(db: &PathBuf) -> axum::Router {
     let source = nous_server::ImportedSource::open(db).unwrap();
     let state = AppState::with_source(source).with_stats(StatsRuntime {
         durable_db: db.clone(),
-        plugins_db: db.with_file_name("nous-stats62-http-never.sqlite"),
+        plugins_db: db.with_file_name("data-data-manager62-http-never.sqlite"),
     });
     router(state)
 }
@@ -86,8 +86,8 @@ async fn all_three_stats_routes_and_openapi_are_declared_and_live() {
 
     let (_, caps) = get(&app, "/v1/capabilities").await;
     let stats = caps["modules"].as_array().unwrap()
-        .iter().find(|m| m["name"] == json!("stats"))
-        .expect("capabilities 必须声明 stats 模块");
+        .iter().find(|m| m["name"] == json!("data-manager"))
+        .expect("capabilities 必须声明 data-manager 模块");
     assert_eq!(stats["enabled"], json!(true));
     let endpoints: Vec<&str> = stats["endpoints"].as_array().unwrap()
         .iter().map(|v| v.as_str().unwrap()).collect();
@@ -97,7 +97,7 @@ async fn all_three_stats_routes_and_openapi_are_declared_and_live() {
     // openapi 的 paths 与 _routes 同源：三条声明在两边都在。
     let (_, routes) = get(&app, "/v1/_routes").await;
     let route_paths: Vec<&str> = routes["routes"].as_array().unwrap()
-        .iter().filter(|r| r["module"] == json!("stats"))
+        .iter().filter(|r| r["module"] == json!("data-manager"))
         .map(|r| r["path"].as_str().unwrap()).collect();
     assert_eq!(route_paths.len(), 8);
     std::fs::remove_file(&db).ok();

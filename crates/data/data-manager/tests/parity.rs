@@ -123,7 +123,7 @@ fn overview_reports_real_dbstat_bytes_and_pragmas() {
     assistant_entry(&db, 2, 1, 1_700_000_000_000, "m", (10, 20, 5, 1, 0), false, false);
     assistant_entry(&db, 3, 1, 1_700_000_001_000, "m", (7, 3, 0, 0, 0), false, false);
 
-    let out = nous_stats::overview(&db.path).unwrap();
+    let out = data_data_manager::overview(&db.path).unwrap();
     // pragma 是真数。
     assert!(out["pragmas"]["pageSize"].as_i64().unwrap() > 0, "{out}");
     assert!(out["pragmas"]["pageCount"].as_i64().unwrap() > 0);
@@ -160,7 +160,7 @@ fn conversations_aggregate_per_conversation_and_totals() {
     assistant_entry(&db, 3, 1, 1_700_000_010_000, "m2", (5, 5, 0, 0, 0), false, true); // total 10
     assistant_entry(&db, 4, 2, 1_700_000_020_000, "m1", (1, 1, 0, 0, 0), false, false); // total 2
 
-    let out = nous_stats::conversations(&db.path).unwrap();
+    let out = data_data_manager::conversations(&db.path).unwrap();
     assert_eq!(out["count"], json!(2));
     let list = out["list"].as_array().unwrap();
 
@@ -194,7 +194,7 @@ fn conversation_detail_has_tasks_documents_submissions_and_prompt() {
     submission_row(&db, 20, 1, "unanswered");
     document_row(&db, 30, 1, "pi.agent");
 
-    let out = nous_stats::conversation(&db.path, 1).unwrap().expect("会话 1 存在");
+    let out = data_data_manager::conversation(&db.path, 1).unwrap().expect("会话 1 存在");
     // entries 按时间正序，seq 是真 commit_seq。
     let entries = out["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 2);
@@ -220,7 +220,7 @@ fn conversation_detail_has_tasks_documents_submissions_and_prompt() {
     assert_eq!(prompt["totals"]["messages"], json!(2));
 
     // 不存在的会话 → None（端点层 404）。
-    assert!(nous_stats::conversation(&db.path, 999).unwrap().is_none());
+    assert!(data_data_manager::conversation(&db.path, 999).unwrap().is_none());
     std::fs::remove_file(&db.path).ok();
 }
 
@@ -231,7 +231,7 @@ fn cost_buckets_carry_usage_breakdown_and_hour_bucket() {
     assistant_entry(&db, 1, 1, 1_700_000_000_000, "m1", (10, 20, 5, 2, 1), false, false);
     assistant_entry(&db, 2, 1, 1_708_640_000_000, "m2", (7, 3, 1, 4, 2), false, false);
 
-    let out = nous_stats::cost(&db.path).unwrap();
+    let out = data_data_manager::cost(&db.path).unwrap();
     let totals = &out["totals"];
     assert_eq!(totals["entries"], json!(2));
     assert_eq!(totals["input"], json!(17));
@@ -270,7 +270,7 @@ fn health_reports_stuck_slowest_submissions_and_revisions() {
     submission_row(&db, 11, 1, "done");
     document_row(&db, 20, 1, "pi.agent");
 
-    let out = nous_stats::health(&db.path, now).unwrap();
+    let out = data_data_manager::health(&db.path, now).unwrap();
     // 卡住任务。
     let stuck = out["tasks"]["stuck"].as_array().unwrap();
     assert_eq!(stuck.len(), 1);

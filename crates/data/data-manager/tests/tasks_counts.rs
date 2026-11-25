@@ -23,7 +23,7 @@ fn by_state_running_equals_a_direct_sql_count_on_the_same_db() {
     ).unwrap();
     assert_eq!(direct, 2);
 
-    let report = nous_stats::tasks(&db.path).unwrap();
+    let report = data_data_manager::tasks(&db.path).unwrap();
     let by_state = &report["byState"];
     let states: BTreeSet<&str> = by_state.as_object().unwrap().keys().map(String::as_str).collect();
     assert_eq!(states, BTreeSet::from([
@@ -37,7 +37,7 @@ fn by_state_running_equals_a_direct_sql_count_on_the_same_db() {
 #[test]
 fn empty_db_reports_all_zero_states_and_no_active_tasks() {
     let db = Db::new("tasks-empty");
-    let report = nous_stats::tasks(&db.path).unwrap();
+    let report = data_data_manager::tasks(&db.path).unwrap();
     assert_eq!(report["active"], json!(0));
     for state in ["pending", "running", "waiting", "sleeping", "completing", "terminal"] {
         assert_eq!(report["byState"][state], json!(0), "{state} 空库为 0");

@@ -266,7 +266,7 @@ entry 条数、tokens 与 cost、工具调用数、用过的模型集合、首�
 数据监控室「维修」屏：任务、提交、文档、WAL 字节、freelist、维修命令六块。
 
 - 任务：总数、按状态分组（每组带样本）、卡住数、休眠数、平均与 p95 耗时、最慢一条。
-  `stuck` = 超过 10 分钟仍未终态的 `running/completing/waiting`；时钟由端点注入（`nous-stats` 零时钟）。
+  `stuck` = 超过 10 分钟仍未终态的 `running/completing/waiting`；时钟由端点注入（`data-data-manager` 零时钟）。
 - 提交：总数、按状态分组、尚未回执的那几条（id / 会话 / 状态）。
 - 文档：文档数、按 kind 分组、修订数、base / delta 与比例。
 - WAL 与 freelist：各自的空闲量与字节数。

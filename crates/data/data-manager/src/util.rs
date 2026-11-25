@@ -27,7 +27,7 @@ pub(crate) fn get(db: &dyn SqliteExecutor, sql: &str) -> Result<Option<SqliteRow
 }
 
 /// 巡检读数的入口全在 `nous_chord::sqlite::inspect`（数据面方言只写在内核层，
-/// 见判据 5）：`stats` 只做呈现，不自己拼 `PRAGMA`。
+/// 见判据 5）：`data-manager` 只做呈现，不自己拼 `PRAGMA`。
 pub(crate) use nous_chord::sqlite::inspect::{pragma_i64, pragma_text};
 
 /// 取整数列（缺席 / 非整数 → 0）。只用于读数聚合，缺值当零是故意的。
