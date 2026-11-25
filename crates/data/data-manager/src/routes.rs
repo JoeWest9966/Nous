@@ -116,7 +116,7 @@ impl UsageQuery {
 }
 
 /// `GET /v1/stats/usage`：按 `day` / `model` / `conversation` 归桶的用量。
-async fn usage<H: Host>(
+async fn usage<H: Host + Clone + Send + Sync + 'static>(
     State(host): State<H>,
     Query(query): Query<UsageQuery>,
 ) -> EndpointResult {
@@ -129,13 +129,13 @@ async fn usage<H: Host>(
 }
 
 /// `GET /v1/stats/tasks`：任务按状态计数 + 最近样本。
-async fn tasks<H: Host>(State(host): State<H>) -> EndpointResult {
+async fn tasks<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> EndpointResult {
     let paths = paths(&host)?;
     crate::tasks(&paths.durable).map(Json).map_err(Refusal::internal)
 }
 
 /// `GET /v1/stats/db`：两个库的字节 / 行数 / quickCheck / schema。
-async fn db<H: Host>(State(host): State<H>) -> EndpointResult {
+async fn db<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> EndpointResult {
     let paths = paths(&host)?;
     crate::db(&paths.durable, &paths.plugins)
         .map(Json)
@@ -143,13 +143,13 @@ async fn db<H: Host>(State(host): State<H>) -> EndpointResult {
 }
 
 /// `GET /v1/stats/overview`：durable 库的 X 光片（解剖屏）。
-async fn overview<H: Host>(State(host): State<H>) -> EndpointResult {
+async fn overview<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> EndpointResult {
     let paths = paths(&host)?;
     crate::overview(&paths.durable).map(Json).map_err(Refusal::internal)
 }
 
 /// `GET /v1/stats/conversations`：会话树。
-async fn conversations<H: Host>(State(host): State<H>) -> EndpointResult {
+async fn conversations<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> EndpointResult {
     let paths = paths(&host)?;
     crate::conversations(&paths.durable)
         .map(Json)
@@ -157,7 +157,7 @@ async fn conversations<H: Host>(State(host): State<H>) -> EndpointResult {
 }
 
 /// `GET /v1/stats/conversation/:id`：一条会话的明细（回放屏，含 prompt 重建）。
-async fn conversation<H: Host>(
+async fn conversation<H: Host + Clone + Send + Sync + 'static>(
     State(host): State<H>,
     Path(id): Path<String>,
 ) -> EndpointResult {
@@ -172,13 +172,13 @@ async fn conversation<H: Host>(
 }
 
 /// `GET /v1/stats/cost`：账单屏（四组桶 + note）。
-async fn cost<H: Host>(State(host): State<H>) -> EndpointResult {
+async fn cost<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> EndpointResult {
     let paths = paths(&host)?;
     crate::cost(&paths.durable).map(Json).map_err(Refusal::internal)
 }
 
 /// `GET /v1/stats/health`：维修屏（任务 / 提交 / 文档 / WAL / 空闲页 / 工单）。
-async fn health<H: Host>(State(host): State<H>) -> EndpointResult {
+async fn health<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> EndpointResult {
     let paths = paths(&host)?;
     crate::health(&paths.durable, now_ms())
         .map(Json)
