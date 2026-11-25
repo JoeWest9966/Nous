@@ -9,7 +9,7 @@ use std::path::Path;
 #[test]
 fn data_manager_plugin_manifest_module_layer_and_routes_are_registered() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let plugin = std::fs::read_to_string(root.join("../../data/data-manager/plugin.toml")).unwrap();
+    let plugin = std::fs::read_to_string(root.join("../../Data/DataManager/plugin.toml")).unwrap();
     assert!(plugin.contains("name = \"data-manager\""));
     assert!(plugin.contains("layer = \"app\""));
     assert!(plugin.contains("crate = \"data-data-manager\""));
