@@ -4,12 +4,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Nous 元素库（组 / 包）：groups/<id>.json、packages/<id>.json 的读写，写一次提交一次"
+description = "Nous 元素库（组 / 包）：groups/<id>.json、packages/<id>.json 的读写，写一次提交一次；端点也归本插件"
 
 [dependencies]
+axum = { workspace = true }
+nous-env = { workspace = true }
 nous-repo = { workspace = true }
+nous-routes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt"] }

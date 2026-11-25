@@ -14,8 +14,9 @@ nous-tools = ["nous-ai", "nous-env"]
 nous-runtime = ["nous-ai"]
 nous-durable = ["nous-chord", "nous-ai", "nous-wire", "nous-telemetry", "nous-env", "nous-ai-types"]
 
-# 元素库只碰私库原语（写一次提交一次的原子事务在 repo 里），不自己 spawn git。
-nous-elements = ["nous-repo"]
+# 元素库只碰私库原语（写一次提交一次的原子事务在 repo 里），不自己 spawn git；
+# 端点也归本插件，所以还要 axum / nous-routes 和一条路径解析（nous-env）。
+nous-elements = ["nous-env", "nous-repo", "nous-routes"]
 
 # #73 dispatcher 用 durable sleeping 任务落 tick、store 读写账本、chord 处理增量。
 nous-dispatcher = ["nous-chord", "nous-durable", "nous-store"]

@@ -400,6 +400,7 @@ op 就发一帧" → 0 帧负向红。
 | `nous-routes` | 无 | 端点契约层：一条声明同时是「装进 Router」和「注册表登记」，谁都不依赖（否则与 server 成环） |
 | `element-models` | `nous-elements` `nous-runtime` `nous-env` `nous-repo` `nous-routes` | 模型编目插件：读元素库、投影成编目、自带 `GET /v1/models/elements` 与密钥写面 |
 | `data-archive` | `nous-durable` `nous-routes` | #67 会话归档插件：三条命令走 durable 的 session commands（活库写锁 + 补偿方向在那里），端点由 `routes()` 声明 |
+| `nous-elements` | `nous-env` `nous-repo` `nous-routes` | 元素库插件：盘上真相与「写一次提交一次」在 repo，自带 8 条 `/v1/elements*`（读写 / 锁 / 补推） |
 
 **这张表不是许可证**：它只回答「这条边有没有人签字」，不替代判据 2（内核层不许依赖应用层）
 或判据 §1.1（`nous-app` 的 normal 依赖里不许有 `rusqlite` / `nous-chord`）。扩边只在实现真的

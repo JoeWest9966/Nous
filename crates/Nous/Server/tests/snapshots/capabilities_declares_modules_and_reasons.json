@@ -349,22 +349,22 @@
     },
     {
       "name": "elements",
-      "version": "0.2.4",
+      "version": "0.3.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
       "crate": "`nous-elements`",
       "vendor": "Nous",
-      "description": "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；旧面板 `k3skws` 块的 Rust 落点",
+      "description": "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Nous/Elements/src/routes.rs`）",
       "enabled": true,
       "endpoints": [
         "GET /v1/elements",
-        "GET /v1/elements/{kind}",
-        "GET /v1/elements/{kind}/{id}",
-        "PUT /v1/elements/{kind}/{id}",
-        "POST /v1/elements/{kind}",
-        "DELETE /v1/elements/{kind}/{id}",
-        "POST /v1/elements/{kind}/{id}/lock",
+        "GET /v1/elements/:kind",
+        "POST /v1/elements/:kind",
+        "GET /v1/elements/:kind/:id",
+        "PUT /v1/elements/:kind/:id",
+        "DELETE /v1/elements/:kind/:id",
+        "POST /v1/elements/:kind/:id/lock",
         "POST /v1/elements/push"
       ]
     }

@@ -1244,3 +1244,42 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 的翻译，就把这对映射提到 `nous-routes`（契约层）里做一次；现在只有两个插件，提前抽会
 造出一个只有一个实现的 trait。另外：真机上「归档 → 归档库页刷新 → 打捞」那一眼还没验
 （见 `docs/` 的部署判据），部署后要补。
+
+---
+
+## 2026-11-25 元素库 8 条端点搬进插件（`nous-elements`，零新增接缝）
+
+**背景**：搬家票第 5 个插件。`elements` 与前面四个都不同 —— 它**早就是一个独立 crate**
+（`crates/Nous/Elements`，602 行），盘上真相、id 校验、锁语义、「写一次提交一次」的事务
+全在里面；不搬的只有 8 条端点（`server/src/elements.rs`，377 行纯翻译层）。
+
+**决定**：
+
+- **宿主能力只有一个方法**：`Host::elements_repo() -> Option<Arc<Repo>>`。比 `data-manager`
+  的 `stats_paths`（两个路径）还窄 —— 因为元素库要的不是路径，是那个已经开好的仓库句柄
+  （写锁、`requestId` 回执、git 提交都在里面）。给路径等于让插件自己 `Repo::open` 第二份，
+  两份写锁 = 两条提交线。
+- **`RepoError → 状态码` 的翻译搬进插件**（`Refusal::from_repo`），不再留一份在
+  `server/src/repos.rs` 旁边。搬家前后逐字一致：`BadRequest` / `InvalidPath` → 400、
+  `Validation` → 400 + `{field, problem}`、`NotFound` → 404、`Conflict` → 409（那句
+  「先重新打开这个文件，再存一次」原样保留）、`Busy` → 409、`Locked` → 423、`Io` → 500。
+  分界只在一处判，8 个 handler 都走它。
+- **`REPO_KEY` 跟着插件走**：`nous_elements::routes::REPO_KEY` 是「元素库在
+  `AppState.repos` 里叫什么」的唯一真相。`models.rs`（编目适配）也改成读它 —— 于是
+  插件、`element-models`、`models.rs` 三处看到的是同一个键，不可能有人另开一份 `NOUS_ELEMENTS`。
+- **`wire.md` 一个字没动**：8 条路径与全部回包形状逐字保留，NousDesk 零改动。
+
+**为什么**：这票的价值不是「又搬了 8 条」，而是证明**接缝可以有多窄**。`data-manager`
+要两个路径、`archive` 要三条命令，`elements` 只要一个句柄 —— 三种接缝摆在一起，
+后面搬 `skills` / `prompts`（同样是「领域逻辑已在 crate 里、只缺端点」）时直接照抄第三种。
+
+**代价**：`Refusal` 从枚举变成「状态码 + 文案 + 可选 `{field, problem}`」的结构体 ——
+插件不再拥有「哪些状态码合法」的知识，只搬运。这是刻意的：`Locked`(423) 这种码是
+`nous-repo` 的语义，插件抄一遍就是第二份真相。
+
+**反悔点**：如果第三个插件也开始需要「`RepoError` → 状态码」这套翻译（`skills` / `prompts`
+很可能），就把 `Refusal::from_repo` 提到 `nous-routes` 里做一次共享实现；现在只有这一个
+插件要，提前抽会造出一个只有一份实现的公共函数。另外：注册表写法从 `{kind}` 变成
+`:kind`（`nous-routes` 折的），`capabilities` 的 `endpoints[]` 快照跟着变 —— 如果哪天
+Desk 端有代码按 `{kind}` 字面比字符串，那处要改成认两种写法（现在只 `normalize_path`
+折 `:`，已核 `capability.rs:108`）。
