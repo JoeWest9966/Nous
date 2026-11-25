@@ -52,6 +52,22 @@
    Magento 2 同理：模块名永远是 `Magento_Catalog`，中文在 `i18n/zh_Hans.csv`，不在代码里另起名字。
    判据：客户端仓 `grep` 不到任何模块名常量（NousDesk 侧那条由它自己的测试守）。
 
+10. **`vendor` 是出品方（Magento 2 语义），不是功能分类、也不是"全仓一律 nous"。**
+    Magento 里 `Magento_Catalog` → composer 包 `magento/module-catalog`、`Amasty_Shiprestriction`
+    → `amasty/module-shiprestriction`：**同一个 Magento 装里可以有多家 vendor 并列**，每家自己的
+    模块用自己的前缀，vendor 就是那家出品方。我们照抄这条，包名用扁平形（不写 `module-`）：
+
+    - 目录：`crates/<vendor>/<module>`
+    - 清单行、`plugin.toml` 的 `vendor` / `name` 与目录一致
+    - **包名**（`Cargo.toml` 的 `[package] name`）= `<vendor>-<module>`，全小写连字符：
+      `nous-stats`、`data-data-manager`
+
+    所以「换出品方」不是改一行文档：目录挪到 `crates/<新 vendor>/`、包名跟着换前缀、
+    `docs/dependency-graph.toml` 与 `docs/harness.md` §7 的边名一起改（这些是票面要写清的）。
+    现状：28 个模块 vendor 全是 `nous`、包名全 `nous-<module>` —— 这条规则不是新增负担，
+    是把既有事实写死，让下一次「data 这个出品方」有据可依。
+    判据：`scripts/check-plugins.sh` 逐条比对（目录 / 清单行 / `plugin.toml` / 包名四处同源）。
+
 ## 表
 
 | module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |
