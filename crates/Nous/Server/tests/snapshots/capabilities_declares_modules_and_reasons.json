@@ -121,7 +121,7 @@
     },
     {
       "name": "presets-admin",
-      "version": "0.2.0",
+      "version": "0.3.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -172,7 +172,7 @@
     },
     {
       "name": "archive",
-      "version": "0.2.0",
+      "version": "0.3.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -334,7 +334,7 @@
     },
     {
       "name": "Element_Models",
-      "version": "0.2.0",
+      "version": "0.3.4",
       "kind": "编译期",
       "layer": "app",
       "required": false,
