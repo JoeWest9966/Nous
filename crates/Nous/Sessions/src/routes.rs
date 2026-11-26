@@ -36,7 +36,7 @@ use futures::{Stream, StreamExt};
 use nous_durable::session::Session;
 use nous_durable::storage::cursor::{Cursor, ScanOrder};
 use nous_durable::storage::sessions::ENTRIES_MAX_LIMIT;
-use nous_wire::RemoteEvent;
+use nous_wire::{Generation, RemoteEvent};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
@@ -69,6 +69,12 @@ pub trait Host {
 
     /// SSE 扇出通道。
     fn hub(&self) -> Arc<Hub>;
+
+    /// 当前编目（`/v1/models` 那份）。`config` 换模型时按新模型的表夹档位。
+    fn models(&self) -> nous_device::ModelsResponse;
+
+    /// 运行时装配好的编目（有 provider 注入时优先）；`None` 就退回 [`Host::models`]。
+    fn assembled_models(&self) -> Option<nous_device::ModelsResponse>;
 }
 
 /// `Arc<T>` 也是宿主：路由装进 `Router<Arc<AppState>>` 时不用再写一层转发。
@@ -84,6 +90,12 @@ impl<T: Host + ?Sized> Host for Arc<T> {
     }
     fn hub(&self) -> Arc<Hub> {
         (**self).hub()
+    }
+    fn models(&self) -> nous_device::ModelsResponse {
+        (**self).models()
+    }
+    fn assembled_models(&self) -> Option<nous_device::ModelsResponse> {
+        (**self).assembled_models()
     }
 }
 
@@ -241,7 +253,7 @@ async fn config<H: Host>(
             .and_then(Value::as_str)
             .zip(model.get("modelId").and_then(Value::as_str));
         if let Some((provider, model_id)) = wanted {
-            if let Some(item) = state
+            if let Some(item) = host
                 .assembled_models()
                 .unwrap_or_else(|| host.models().clone())
                 .items
@@ -358,7 +370,7 @@ async fn entries<H: Host>(
             "session {session} not found"
         )));
     }
-    let (mut items, next) = state
+    let (mut items, next) = host
         .source()
         .entries_page(session, limit, cursor.as_ref())?;
     if let Some(kind) = query.kind.as_deref() {
@@ -449,7 +461,7 @@ async fn fork<H: Host>(
         serde_json::from_slice(&body)
             .map_err(|error| SessionError::BadRequest(format!("fork body: {error}")))?
     };
-    let result = state
+    let result = host
         .commands()
         .fork(session, body.entry_id, body.name)
         .await?;

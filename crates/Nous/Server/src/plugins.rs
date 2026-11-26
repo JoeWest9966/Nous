@@ -240,6 +240,14 @@ impl nous_sessions::routes::Host for AppState {
     fn hub(&self) -> Arc<nous_sessions::Hub> {
         AppState::hub(self).clone()
     }
+
+    fn models(&self) -> nous_device::ModelsResponse {
+        AppState::models(self)
+    }
+
+    fn assembled_models(&self) -> Option<nous_device::ModelsResponse> {
+        AppState::assembled_models(self)
+    }
 }
 
 /// `repo` 插件要的四件事：仓库句柄、变体绑定表、上游镜像根、变体引用反查。

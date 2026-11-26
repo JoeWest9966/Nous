@@ -118,3 +118,11 @@ pub fn from_command(error: nous_durable::session::commands::CommandError) -> Ses
         CommandError::Session(other) => SessionError::Internal(other.to_string()),
     }
 }
+
+impl axum::response::IntoResponse for SessionError {
+    fn into_response(self) -> axum::response::Response {
+        let status = axum::http::StatusCode::from_u16(self.status())
+            .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        (status, axum::Json(self.body())).into_response()
+    }
+}
