@@ -120,7 +120,7 @@ pub(crate) fn precondition_refusal(message: impl Into<String>) -> HttpRefusal {
 }
 
 /// 503：宿主没装配（触发器运行时 / 注入时钟），端点直说，不假装判定过。
-pub(crate) fn service_unavailable_refusal(message: impl Into<String>) -> HttpRefusal {
+pub fn service_unavailable_refusal(message: impl Into<String>) -> HttpRefusal {
     HttpRefusal::new(503, json!({ "error": message.into() }))
 }
 

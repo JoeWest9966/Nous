@@ -194,7 +194,7 @@ impl nous_env::routes::Host for AppState {
             .await
             .map_err(|error| match error {
                 RemoteDirsError::MachineNotFound => refused(404, "机器不在编目里".into()),
-                RemoteDirsError::Unreachable(message) => refused(502, message),
+                RemoteDirsError::Unreachable(message) => refused(502, &message),
                 RemoteDirsError::RelativePath => refused(400, "path 必须是绝对路径".into()),
                 RemoteDirsError::NotFound => refused(404, "远端目录不存在".into()),
                 RemoteDirsError::PermissionDenied => {
