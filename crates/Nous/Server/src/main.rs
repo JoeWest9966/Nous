@@ -330,7 +330,7 @@ async fn run() -> Result<(), RunError> {
         nous_server::ImportedSource::open(&db)?,
         commands.clone(),
     );
-    commands.attach(SessionObserver::new(state.clone()));
+    commands.attach(SessionObserver::new(state.hub.clone()));
 
     // spec §3.4：监听地址是本进程自己的配置，不是「服务器地址发现」。生产配置里
     // 不许出现 `NOUS_SERVER_ADDR`（spec ch1 判据 11：发现唯一，走 resolve），所以

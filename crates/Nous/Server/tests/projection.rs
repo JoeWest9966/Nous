@@ -8,7 +8,7 @@ mod common;
 use common::{live_record, FakeSource};
 use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCommitChange};
 use nous_durable::types::{EntryRecord, SubmissionRecord};
-use nous_server::{project, AppState};
+use nous_server::{, AppState};
 use nous_wire::RemoteEvent;
 use serde_json::{json, Value};
 

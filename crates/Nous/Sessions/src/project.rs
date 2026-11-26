@@ -20,7 +20,7 @@ use nous_durable::types::{EntryRecord, SubmissionRecord, TaskRecord};
 use nous_wire::{RemoteEvent, SubmissionRecord as WireSubmission};
 use serde_json::{json, Value};
 
-use crate::error::{Result, ServerError};
+use crate::error::{Result, SessionError};
 
 /// 一次提交 → 帧，按 publication 里的顺序展开。
 pub fn events(publication: &CommitPublication) -> Result<Vec<RemoteEvent>> {
@@ -51,7 +51,7 @@ fn document_events(document: &DocumentCommitChange) -> Result<Vec<RemoteEvent>> 
 
     let mut events = Vec::new();
     let changes = message_changes(&CommitChange::Document(document.clone()))
-        .map_err(|error| ServerError::Internal(format!("message projection: {error}")))?;
+        .map_err(|error| SessionError::Internal(format!("message projection: {error}")))?;
     if !changes.is_empty() {
         events.push(RemoteEvent::MessageUpdate {
             changes,
@@ -60,7 +60,7 @@ fn document_events(document: &DocumentCommitChange) -> Result<Vec<RemoteEvent>> 
         });
     }
     let tools = tool_changes(&CommitChange::Document(document.clone()))
-        .map_err(|error| ServerError::Internal(format!("tool projection: {error}")))?;
+        .map_err(|error| SessionError::Internal(format!("tool projection: {error}")))?;
     for tool in tools {
         events.push(match tool {
             ToolChange::Start {
@@ -185,5 +185,27 @@ fn detail_text(detail: &Value) -> String {
     match detail {
         Value::String(text) => text.clone(),
         other => other.to_string(),
+    }
+}
+
+/// 一条改动属于哪个会话。判不出来（`Conversation` 元数据 / `Copy` 无归属）就跳过 ——
+/// `wire.md` 没有会话元数据帧。
+pub fn session_of(change: &CommitChange) -> Option<i64> {
+    match change {
+        CommitChange::Conversation(record) => Some(record.id),
+        CommitChange::Entry(record) => Some(record.conversation_id),
+        CommitChange::Task(record) => Some(record.conversation_id),
+        CommitChange::Submission(record) => Some(record.fields.conversation_id),
+        CommitChange::Document(document) => match document {
+            DocumentCommitChange::Change {
+                conversation_id, ..
+            }
+            | DocumentCommitChange::Retire {
+                conversation_id, ..
+            } => Some(*conversation_id),
+            DocumentCommitChange::Copy {
+                conversation_id, ..
+            } => Some(*conversation_id),
+        },
     }
 }

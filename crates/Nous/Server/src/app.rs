@@ -162,7 +162,7 @@ impl AppState {
             combos: None,
             combo_action: None,
         });
-        commands.attach(SessionObserver::new(state.clone()));
+        commands.attach(SessionObserver::new(state.hub.clone()));
         Ok(state)
     }
 
@@ -632,14 +632,7 @@ impl AppState {
     /// 各自带 `conversationId`（session 作用域的文档在 `record.scope` 里）。按改动分派，
     /// 免得把 A 会话的 delta 推到 B 会话的 SSE 上。
     pub fn publish_publication(&self, publication: &CommitPublication) -> Result<()> {
-        for change in &publication.changes {
-            let Some(session) = session_of(change) else {
-                continue;
-            };
-            self.hub
-                .publish_all(session, project::of_change(change)?);
-        }
-        Ok(())
+        nous_sessions::observer::publish_publication(&self.hub, publication).map_err(Into::into)
     }
 
     /// 把一个已投成帧的事件直接发给会话。判据用这条注入**合帧器的真实输入**。
@@ -648,23 +641,3 @@ impl AppState {
     }
 }
 
-/// 一条改动属于哪个会话。
-fn session_of(change: &CommitChange) -> Option<i64> {
-    match change {
-        CommitChange::Conversation(record) => Some(record.id),
-        CommitChange::Entry(record) => Some(record.conversation_id),
-        CommitChange::Task(record) => Some(record.conversation_id),
-        CommitChange::Submission(record) => Some(record.fields.conversation_id),
-        CommitChange::Document(document) => match document {
-            DocumentCommitChange::Change {
-                conversation_id, ..
-            }
-            | DocumentCommitChange::Retire {
-                conversation_id, ..
-            } => *conversation_id,
-            DocumentCommitChange::Copy {
-                conversation_id, ..
-            } => Some(*conversation_id),
-        },
-    }
-}

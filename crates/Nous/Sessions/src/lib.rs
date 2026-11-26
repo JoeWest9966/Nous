@@ -7,12 +7,19 @@
 //! 宿主只实现 [`routes::Host`]。这三层先于端点搬进来 —— 它们本来就是会话的语义，
 //! 留在 `server` 里会让「会话是谁的」这个问题没有答案。
 
+pub mod coalesce;
 pub mod commands;
 pub mod error;
+pub mod hub;
+pub mod observer;
+pub mod project;
 pub mod records;
 pub mod source;
 pub mod turn;
 
 pub use error::{Result, SessionError};
 pub use records::{CreateSessionRequest, CreatedSession};
+pub use coalesce::{Framing, FRAME_INTERVAL};
+pub use hub::Hub;
+pub use observer::SessionObserver;
 pub use source::SessionSource;
