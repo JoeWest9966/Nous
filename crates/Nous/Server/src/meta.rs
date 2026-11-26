@@ -135,35 +135,13 @@ pub fn route_enabled(module: &str) -> bool {
 
 /// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
 pub const ROUTES: &[RegisteredRoute] = &[
-    // #61：combos 两条端点（开关是引擎算出来的，Desk 只显示 + 写穿）；#82 补试跑。
-    // #68：只读目录浏览（env 插件）。
-    // #76：变体（skills / extend）。
-    // #77：上游追踪（sources + 10 条 upstream 动作）挂在 skills 私库上。
     // sessions 的 17 条里 16 条已归插件；**这一条留在 server**（要宿主组装根与提示词注入）。
+    // 其余 8 条 `Device` 端点（`/v1/models` / `/v1/default` / `/v1/catalog/refresh` /
+    // `/v1/device` / `/v1/capabilities` / `/v1/_routes` / `/v1/openapi.json` /
+    // `/v1/plugins/{name}/readme`）已搬进 `Device` 插件的 `routes()` 声明。
+    //
+    // **静态表只剩这一行** —— 再往里加行之前先问一句：它为什么不能住在它自己的插件里？
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/models", module: "Device" },
-    RegisteredRoute { method: "PUT", path: "/v1/default", module: "Device" },
-    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "Device" },
-    // #49：置顶写穿走 sessions 模块；与 rename/read 一样经同一个 `Session` 写者。
-    // #64：写入面与 selection 两行状态都属于 sessions 模块。
-    // #67 的世代归档三端点已搬进 `data/archive` 插件（`routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/device", module: "Device" },
-    // `extensions` 的 15 条已搬进 `Library_Extend` 插件（`library-extend` 的 `routes()` 声明），
-    // 静态表只减不增。
-    // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
-    // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Nous_Triggers` 插件
-    // （`nous-triggers` 的 `routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Device" },
-    // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘。
-    // 归 `device`（不是"server"）：`_routes` / `capabilities` 只吐**清单里开着的模块**，
-    // "server" 不在 MANIFEST 的 14 条里 —— 归它等于这条端点永远不出现在 /v1/_routes，
-    // 客户端会一直报「路由漂移」。device 是 0.1.25 里唯一「宿主级只读」的模块。
-    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "Device" },
-    // 机读总表：从注册表（本表 ∪ 插件声明）生成，自身也归 device。
-    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "Device" },
-    // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
-    // 元素库（组 / 包）：盘上真相在私库，写一次提交一次。
-    RegisteredRoute { method: "GET", path: "/v1/_routes", module: "Device" },
 ];
 
 /// `#88`：清单的一行。五个展示列逐格抄自 `docs/plugins.md` 主表，
