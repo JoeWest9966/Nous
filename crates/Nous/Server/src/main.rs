@@ -343,13 +343,18 @@ async fn run() -> Result<(), RunError> {
     let plugins_db = plugins_db_path(&db);
     let trigger_store = nous_store::Store::open(&plugins_db)
         .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
-    // #60：presets 写者 = 模板私库根（NOUS_PRESETS）+ 同一份插件库（修订表）。
-    // 路径解析只走 env 插件，不在这里自己读环境变量。
-    let preset_store = Arc::new(nous_server::presets::PresetStore::new(
-        nous_env::PRESETS.resolve(),
-        std::path::PathBuf::from(&plugins_db),
-    ));
-    let state = state.with_presets(preset_store);
+    // #60：模板面 = 模板私库根（NOUS_PRESETS）+ 同一份插件库（修订表）+ 三个外部名册根。
+    // 路径解析只走 env 插件，不在这里自己读环境变量；写者在插件里，宿主只交来源。
+    let state = state.with_presets(nous_presets_admin::routes::Sources {
+        root: nous_env::PRESETS.resolve(),
+        db: std::path::PathBuf::from(&plugins_db),
+        skills: nous_env::SKILLS.resolve(),
+        prompts: nous_env::PROMPTS.resolve(),
+        extensions: nous_env::EXTEND.resolve(),
+        triggers: nous_env::TRIGGERS.resolve(),
+        models: None,
+        device_model: None,
+    });
     // #61：combos 复用同一份模板私库根；触发器名册从 NOUS_TRIGGER 读（两个根都只在这里解析一次）。
     let state = state.with_combos_roots(
         nous_env::PRESETS.resolve(),

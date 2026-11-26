@@ -15,7 +15,7 @@ mod views;
 
 pub use error::{RepoError, Result};
 pub use git::materialize_head_dir;
-pub use files::{WriteFile, WrittenFile, MAX_FILE_BYTES};
+pub use files::{sha256, WriteFile, WrittenFile, MAX_FILE_BYTES};
 pub use publish::{
     validate_manifest, CommitDetail, CommitFile, CommitResult, LifecycleResult, Pushed, WriteCommit,
     WriteCommitResult,

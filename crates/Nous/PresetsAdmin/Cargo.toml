@@ -4,9 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "模板管理：形状闸 / 引用解析 / 名册投影（app 层，纯函数，不碰盘）"
+description = "模板管理（Nous_PresetsAdmin）：形状闸 / 引用解析 / 名册投影 + 自己的 32 条端点"
 
 [dependencies]
+axum = { workspace = true }
+nous-env = { workspace = true }
+nous-repo = { workspace = true }
+nous-routes = { workspace = true }
+nous-store = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

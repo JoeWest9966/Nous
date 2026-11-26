@@ -1,10 +1,13 @@
-//! #60 presets：模板 / 预设的资源化端点 + 引擎内修订表。
+//! 本插件自己的端点：`/v1/presets*` 全 19 条（#60 的 HTTP 面）。
+//!
+//! Magento 2 那种「模块自带 controller」：handler 住在插件里，插件不认识 `server` 的
+//! `AppState`，只声明它需要什么（[`Host`]：模板私库根 + 插件库路径 + 几个外部名册根），
+//! 由宿主实现并注入。判定（形状 / 引用 / 展开）是同一个 crate 的纯函数层 ——
+//! 这一层只做 HTTP ↔ 盘面翻译。
 //!
 //! 盘是唯一真相：`<root>/<section>/<name>/<manifest>`，进程内**没有**常驻 map。
 //! 每次读都扫目录；每次写都整段串行锁，然后重扫。修订只落 `nous-plugins.db` 的
 //! `presets_revisions`，不 spawn git（#75 的私库 git 历史是另一件事）。
-//!
-//! 判定（形状 / 引用 / 展开）全在 `nous_presets_admin` —— 这一层只做 HTTP ↔ 盘面翻译。
 //! 段清单读 `<root>/sections.json`：段 ID 就是文件夹名，每段自带清单文件名与校验器
 //! （`Session-Template` = `preset.json`，`Ultimate-Template` = `ultimate.json`）。
 
@@ -18,23 +21,125 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::{Json, Router};
-use nous_presets_admin as admin;
-use nous_presets_admin::{ArchivedItem, Ctx, Item, ModelLevels, ParamDecl, Section, TriggerDecl};
+use axum::Json;
+use crate as admin;
+use crate::{ArchivedItem, Ctx, Item, ModelLevels, ParamDecl, Section, TriggerDecl};
 use nous_repo::Repo;
+use nous_routes::Route;
 use nous_store::Store;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::error::{Result, ServerError};
 use nous_store::PresetRevision as Revision;
+
+/// 这个插件在注册表里的模块名（`docs/plugins.md` 的 module 列）。
+pub const MODULE: &str = "Nous_PresetsAdmin";
+
+/// 一条端点的拒绝理由：搬家前 `ServerError` 的六个分支，状态码与文案一字没改。
+///
+/// 为什么不用 `ServerError`：插件不认识 `server`（`docs/magento2-migration.md` §3.3 第 3 条），
+/// 拒绝理由必须活在自己这一侧；宿主实现 [`Host`] 时把自己的错误翻成这个形状。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    BadRequest(String),
+    NotFound(String),
+    /// 状态冲突（已存在 / 已被改过）。409 是「现在不行」，400 是「参数这么写不行」。
+    Conflict(String),
+    /// If-Match 不匹配（412）。
+    PreconditionFailed(String),
+    /// 目标被锁定（423）。
+    Locked(String),
+    Internal(String),
+}
+
+impl Refusal {
+    pub fn status(&self) -> StatusCode {
+        match self {
+            Self::BadRequest(_) => StatusCode::BAD_REQUEST,
+            Self::NotFound(_) => StatusCode::NOT_FOUND,
+            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
+            Self::Locked(_) => StatusCode::LOCKED,
+            Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            Self::BadRequest(message)
+            | Self::NotFound(message)
+            | Self::Conflict(message)
+            | Self::PreconditionFailed(message)
+            | Self::Locked(message)
+            | Self::Internal(message) => message,
+        }
+    }
+
+    /// 宿主侧翻错误用：`ServerError` 的六个分支一对一搬过来。
+    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        let message = message.into();
+        match status {
+            StatusCode::BAD_REQUEST => Self::BadRequest(message),
+            StatusCode::NOT_FOUND => Self::NotFound(message),
+            StatusCode::CONFLICT => Self::Conflict(message),
+            StatusCode::PRECONDITION_FAILED => Self::PreconditionFailed(message),
+            StatusCode::LOCKED => Self::Locked(message),
+            _ => Self::Internal(message),
+        }
+    }
+
+    fn internal(error: impl std::fmt::Display) -> Self {
+        Self::Internal(error.to_string())
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl std::error::Error for Refusal {}
+
+impl IntoResponse for Refusal {
+    fn into_response(self) -> Response {
+        let status = self.status();
+        (status, Json(json!({ "error": self.message() }))).into_response()
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Refusal>;
 
 /// 归档目录名（**段目录里**的隐藏目录：`<root>/<段>/.archive/<名>`）。
 pub const ARCHIVE_DIR: &str = ".archive";
 
+/// 宿主能力：这个插件要的那几件事，一个方法一个能力。
+///
+/// 插件不认识 `AppState`（`docs/magento2-migration.md` §3.3 第 3 条）；宿主在
+/// `crates/Nous/Server/src/plugins.rs` 里实现这个 trait 并注入。
+///
+/// `None` = 宿主没装配：所有端点回 `409 {"error":"presets not configured"}`
+/// （搬家前未装配时这些路径是 404 —— 404 是「没有这条路径」，409 是「这条路径现在不行」，
+/// 后者才说得清「模板面没接上」）。
+pub trait Host {
+    /// 模板私库根 + 插件库路径 + 外部名册根。`None` = 没装配。
+    fn preset_sources(&self) -> Option<Sources>;
+}
+
+/// `Arc<T>` 也是宿主：路由装进 `Router<Arc<AppState>>` 时不用再写一层转发。
+impl<T: Host + ?Sized> Host for Arc<T> {
+    fn preset_sources(&self) -> Option<Sources> {
+        (**self).preset_sources()
+    }
+}
+
 /// 解析要问的那几个外部根。生产从 `env` 插件取；测试显式注入，不读进程环境。
 #[derive(Debug, Clone)]
 pub struct Sources {
+    /// 模板私库根（`NOUS_PRESETS`）：`<root>/<section>/<name>/<manifest>`。
+    pub root: PathBuf,
+    /// 插件库（`nous-plugins.db`）：修订表与幂等回执都在这一个文件里。
+    pub db: PathBuf,
     pub skills: PathBuf,
     pub prompts: PathBuf,
     pub extensions: PathBuf,
@@ -47,10 +152,12 @@ pub struct Sources {
 impl Sources {
     pub fn from_env() -> Self {
         Self {
+            root: nous_env::PRESETS.resolve(),
+            db: PathBuf::new(),
             skills: nous_env::SKILLS.resolve(),
             prompts: nous_env::PROMPTS.resolve(),
             extensions: nous_env::EXTEND.resolve(),
-            triggers: crate::combos::triggers_root(),
+            triggers: nous_env::TRIGGERS.resolve(),
             models: None,
             device_model: None,
         }
@@ -92,14 +199,10 @@ struct Receipt {
 }
 
 impl PresetStore {
-    pub fn new(root: PathBuf, db: PathBuf) -> Self {
-        Self { root, db, lock: Mutex::new(()), sources: Sources::from_env() }
-    }
-
-    /// 测试 / 夹具：换掉外部根与编目，不读进程环境。
-    pub fn with_sources(mut self, sources: Sources) -> Self {
-        self.sources = sources;
-        self
+    /// 从宿主给的那一份 [`Sources`] 建。**不读进程环境** —— 路径解析归 `env` 插件，
+    /// 由宿主装配时算好（`main` 一次、测试一次），这里只接。
+    pub fn new(sources: Sources) -> Self {
+        Self { root: sources.root.clone(), db: sources.db.clone(), lock: Mutex::new(()), sources }
     }
 
     /// 段清单：`<root>/sections.json`；没有就按目录名兜底两段。
@@ -109,16 +212,16 @@ impl PresetStore {
             Ok(text) => Some(text),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => {
-                return Err(ServerError::Internal(format!("读 sections.json 失败: {error}")))
+                return Err(Refusal::Internal(format!("读 sections.json 失败: {error}")))
             }
         };
-        admin::read_sections(text.as_deref()).map_err(ServerError::Internal)
+        admin::read_sections(text.as_deref()).map_err(Refusal::Internal)
     }
 
     fn section(&self, id: &str) -> Result<Section> {
         admin::find(&self.sections()?, id)
             .cloned()
-            .ok_or_else(|| ServerError::NotFound(format!("没有这一段：{id}")))
+            .ok_or_else(|| Refusal::NotFound(format!("没有这一段：{id}")))
     }
 
     fn section_dir(&self, section: &Section) -> PathBuf {
@@ -142,7 +245,7 @@ impl PresetStore {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(out),
             Err(error) => {
-                return Err(ServerError::Internal(format!("扫 {} 失败: {error}", section.id)))
+                return Err(Refusal::Internal(format!("扫 {} 失败: {error}", section.id)))
             }
         };
         for entry in entries.flatten() {
@@ -171,10 +274,10 @@ impl PresetStore {
         let dir = self.preset_dir(section, name);
         let path = dir.join(&section.manifest);
         let bytes = fs::read(&path).map_err(|_| {
-            ServerError::NotFound(format!("preset 不存在: {}/{name}", section.id))
+            Refusal::NotFound(format!("preset 不存在: {}/{name}", section.id))
         })?;
         let body = serde_json::from_slice(&bytes).map_err(|error| {
-            ServerError::BadRequest(format!("{} 坏了: {error}", section.manifest))
+            Refusal::BadRequest(format!("{} 坏了: {error}", section.manifest))
         })?;
         Ok(Item { name: name.to_string(), dir: dir.to_string_lossy().into_owned(), body, bytes })
     }
@@ -324,22 +427,22 @@ impl PresetStore {
         let Some(repo) = self.git() else { return Ok(()) };
         repo.commit(paths, message, request_id)
             .map(|_| ())
-            .map_err(|error| ServerError::BadRequest(format!("git 提交失败：{error}")))
+            .map_err(|error| Refusal::BadRequest(format!("git 提交失败：{error}")))
     }
 
     fn store(&self) -> Result<Store> {
-        Store::open(&self.db).map_err(|error| ServerError::Internal(format!("打开插件库失败: {error}")))
+        Store::open(&self.db).map_err(|error| Refusal::Internal(format!("打开插件库失败: {error}")))
     }
 
     fn receipt(&self, section: &str, name: &str, kind: &WriteKind, request_id: &str) -> Result<Option<Receipt>> {
         let text = self.store()?
             .preset_receipt(section, name, kind.as_str(), request_id)
-            .map_err(|error| ServerError::Internal(format!("读回执失败: {error}")))?;
+            .map_err(|error| Refusal::Internal(format!("读回执失败: {error}")))?;
         match text {
             None => Ok(None),
             Some(text) => {
                 let value: Value = serde_json::from_str(&text)
-                    .map_err(|error| ServerError::Internal(format!("回执坏了: {error}")))?;
+                    .map_err(|error| Refusal::Internal(format!("回执坏了: {error}")))?;
                 let status = match value["status"].as_i64() {
                     Some(201) => StatusCode::CREATED,
                     Some(200) => StatusCode::OK,
@@ -361,14 +464,14 @@ impl PresetStore {
     ) -> Result<()> {
         self.store()?
             .remember_preset_write(section, name, kind.as_str(), request_id, &body.to_string())
-            .map_err(|error| ServerError::Internal(format!("记回执失败: {error}")))?;
+            .map_err(|error| Refusal::Internal(format!("记回执失败: {error}")))?;
         Ok(())
     }
 
     fn revisions(&self, section: &str, name: &str) -> Result<Vec<Revision>> {
         self.store()?
             .preset_revisions(section, name)
-            .map_err(|error| ServerError::Internal(format!("读修订失败: {error}")))
+            .map_err(|error| Refusal::Internal(format!("读修订失败: {error}")))
     }
 
     fn version(&self, section: &str, name: &str) -> Result<i64> {
@@ -379,31 +482,31 @@ impl PresetStore {
     fn append_revision(&self, section: &str, name: &str, bytes: &[u8], request_id: &str) -> Result<i64> {
         self.store()?
             .append_preset_revision(section, name, bytes, "local", now_ms(), &sha256_hex(bytes), request_id)
-            .map_err(|error| ServerError::Internal(format!("写修订失败: {error}")))
+            .map_err(|error| Refusal::Internal(format!("写修订失败: {error}")))
     }
 
     /// 原子写盘：临时文件 + rename，写完的字节就是之后 roster 的 sha 来源。
     fn write_file(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        let dir = path.parent().ok_or_else(|| ServerError::Internal("没有父目录".into()))?;
+        let dir = path.parent().ok_or_else(|| Refusal::Internal("没有父目录".into()))?;
         fs::create_dir_all(dir)
-            .map_err(|error| ServerError::Internal(format!("建目录失败: {error}")))?;
+            .map_err(|error| Refusal::Internal(format!("建目录失败: {error}")))?;
         let temp = dir.join(".preset.json.tmp");
         {
             let mut file = fs::File::create(&temp)
-                .map_err(|error| ServerError::Internal(format!("建临时文件失败: {error}")))?;
+                .map_err(|error| Refusal::Internal(format!("建临时文件失败: {error}")))?;
             file.write_all(bytes)
                 .and_then(|_| file.sync_all())
-                .map_err(|error| ServerError::Internal(format!("写临时文件失败: {error}")))?;
+                .map_err(|error| Refusal::Internal(format!("写临时文件失败: {error}")))?;
         }
         fs::rename(&temp, path)
-            .map_err(|error| ServerError::Internal(format!("原子替换失败: {error}")))?;
+            .map_err(|error| Refusal::Internal(format!("原子替换失败: {error}")))?;
         Ok(())
     }
 
     fn write_section_json(&self, section: &Section, file: &str, value: &Value) -> Result<()> {
         let path = self.section_dir(section).join(file);
         let mut bytes = serde_json::to_vec_pretty(value)
-            .map_err(|error| ServerError::Internal(format!("序列化失败: {error}")))?;
+            .map_err(|error| Refusal::Internal(format!("序列化失败: {error}")))?;
         bytes.push(b'\n');
         self.write_file(&path, &bytes)
     }
@@ -413,15 +516,15 @@ impl PresetStore {
     fn move_into_archive(&self, section: &Section, name: &str) -> Result<Vec<String>> {
         let from = self.preset_dir(section, name);
         if !from.is_dir() {
-            return Err(ServerError::NotFound(format!("工作区里没有 {name}/")));
+            return Err(Refusal::NotFound(format!("工作区里没有 {name}/")));
         }
         let to = self.section_dir(section).join(ARCHIVE_DIR).join(name);
         if to.exists() {
-            return Err(ServerError::Conflict(format!("已归档过：{name}")));
+            return Err(Refusal::Conflict(format!("已归档过：{name}")));
         }
         fs::create_dir_all(to.parent().unwrap())
-            .map_err(|error| ServerError::Internal(format!("建归档目录失败: {error}")))?;
-        fs::rename(&from, &to).map_err(|error| ServerError::Internal(format!("搬进归档失败: {error}")))?;
+            .map_err(|error| Refusal::Internal(format!("建归档目录失败: {error}")))?;
+        fs::rename(&from, &to).map_err(|error| Refusal::Internal(format!("搬进归档失败: {error}")))?;
         Ok(vec![
             format!("{}/{}", section.id, name),
             format!("{}/{ARCHIVE_DIR}/{name}", section.id),
@@ -431,13 +534,13 @@ impl PresetStore {
     fn move_out_of_archive(&self, section: &Section, name: &str) -> Result<Vec<String>> {
         let from = self.section_dir(section).join(ARCHIVE_DIR).join(name);
         if !from.is_dir() {
-            return Err(ServerError::NotFound(format!("归档区里没有 {name}/")));
+            return Err(Refusal::NotFound(format!("归档区里没有 {name}/")));
         }
         let to = self.preset_dir(section, name);
         if to.exists() {
-            return Err(ServerError::Conflict(format!("目标已存在：{name}")));
+            return Err(Refusal::Conflict(format!("目标已存在：{name}")));
         }
-        fs::rename(&from, &to).map_err(|error| ServerError::Internal(format!("搬出归档失败: {error}")))?;
+        fs::rename(&from, &to).map_err(|error| Refusal::Internal(format!("搬出归档失败: {error}")))?;
         Ok(vec![
             format!("{}/{}", section.id, name),
             format!("{}/{ARCHIVE_DIR}/{name}", section.id),
@@ -458,9 +561,9 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
 }
 
-/// 文件字节的 sha256：复用 `crate::version` 里那份标准实现，不另抄一份（抄错过一次）。
+/// 文件字节的 sha256：与 `nous_repo::files::etag` 同一份标准实现（不另抄一份，抄错过一次）。
 fn sha256_hex(input: &[u8]) -> String {
-    let digest = crate::version::sha256(input);
+    let digest = nous_repo::sha256(input);
     let mut out = String::with_capacity(64);
     for byte in digest {
         use std::fmt::Write as _;
@@ -539,7 +642,7 @@ fn trigger_decls(root: &Path) -> Vec<TriggerDecl> {
 }
 
 fn check_name(raw: &str) -> Result<String> {
-    admin::check_name(raw).map_err(ServerError::BadRequest)
+    admin::check_name(raw).map_err(Refusal::BadRequest)
 }
 
 fn gate_message(problems: &[String]) -> String {
@@ -550,16 +653,16 @@ fn gate_message(problems: &[String]) -> String {
     }
 }
 
-fn repo_error(error: nous_repo::RepoError) -> ServerError {
+fn repo_error(error: nous_repo::RepoError) -> Refusal {
     use nous_repo::RepoError as E;
     match error {
-        E::BadRequest(message) | E::InvalidPath(message) => ServerError::BadRequest(message),
-        E::Validation { field, problem } => ServerError::BadRequest(format!("{field}: {problem}")),
-        E::NotFound(message) => ServerError::NotFound(message),
-        E::Conflict { message, .. } => ServerError::Conflict(message),
-        E::Busy(message) => ServerError::Conflict(message),
-        E::Locked(message) => ServerError::Locked(message),
-        E::LockPoisoned | E::Io(_) => ServerError::Internal(error.to_string()),
+        E::BadRequest(message) | E::InvalidPath(message) => Refusal::BadRequest(message),
+        E::Validation { field, problem } => Refusal::BadRequest(format!("{field}: {problem}")),
+        E::NotFound(message) => Refusal::NotFound(message),
+        E::Conflict { message, .. } => Refusal::Conflict(message),
+        E::Busy(message) => Refusal::Conflict(message),
+        E::Locked(message) => Refusal::Locked(message),
+        E::LockPoisoned | E::Io(_) => Refusal::Internal(error.to_string()),
     }
 }
 
@@ -569,13 +672,18 @@ fn pretty(bytes: &Value) -> Vec<u8> {
     out
 }
 
-/// 把状态装进 AppState 的字段里（只有 server 这一层需要）。
-pub type SharedStore = std::sync::Arc<PresetStore>;
+/// 宿主能力 → 这一层的写者。`None` = 没装配，所有端点回 409（不是空 200、也不是 404）。
+fn store_of<H: Host>(host: &H) -> Result<PresetStore> {
+    host.preset_sources()
+        .map(PresetStore::new)
+        .ok_or_else(|| Refusal::Conflict("presets not configured".to_string()))
+}
 
 // ── HTTP handlers ──────────────────────────────────────────────────────────
 
 /// `GET /v1/presets`：段清单，每段带 count（不硬编码段名到客户端）。
-pub async fn sections(State(store): State<SharedStore>) -> Result<Json<Value>> {
+pub async fn sections<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let sections = store.sections()?;
     let mut items = Vec::new();
     for section in &sections {
@@ -592,7 +700,8 @@ pub async fn sections(State(store): State<SharedStore>) -> Result<Json<Value>> {
 }
 
 /// `GET /v1/presets/model`：预设能引用的模型清单（只读，沿用原状）。
-pub async fn model(State(store): State<SharedStore>) -> Result<Json<Value>> {
+pub async fn model<H: Host + Clone + Send + Sync + 'static>(State(host): State<H>) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let path = store.root.join("models.json");
     let value = match fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(json!({ "models": [] })),
@@ -602,14 +711,15 @@ pub async fn model(State(store): State<SharedStore>) -> Result<Json<Value>> {
 }
 
 /// `GET /v1/presets/:section`：overview（名册 + 归档 + 词表 + 仓状态）。**每次现扫盘**。
-pub async fn roster(
-    State(store): State<SharedStore>,
+pub async fn roster<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let sections = store.sections()?;
     let section = admin::find(&sections, &section_id)
         .cloned()
-        .ok_or_else(|| ServerError::NotFound(format!("没有这一段：{section_id}")))?;
+        .ok_or_else(|| Refusal::NotFound(format!("没有这一段：{section_id}")))?;
     let ctx = store.ctx(&sections);
     let tracked = store.tracked(&section);
     let order = store.order(&section);
@@ -661,14 +771,15 @@ pub async fn roster(
 }
 
 /// `GET /v1/presets/:section/categories`：段内类别名册（含零计数类别）。
-pub async fn categories(
-    State(store): State<SharedStore>,
+pub async fn categories<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let sections = store.sections()?;
     let section = admin::find(&sections, &section_id)
         .cloned()
-        .ok_or_else(|| ServerError::NotFound(format!("没有这一段：{section_id}")))?;
+        .ok_or_else(|| Refusal::NotFound(format!("没有这一段：{section_id}")))?;
     let mut names = store.vocabulary(&section);
     for item in store.scan(&section)? {
         if let Some(list) = item.body.get("category").and_then(Value::as_array) {
@@ -696,22 +807,23 @@ pub struct CategoryOpBody {
 ///
 /// 改名 / 删除要连带改每条预设挂着的类别（含子路径）—— 只改词表的话，
 /// 下一次读会被「每条挂着的」补回来，等于没改。
-pub async fn mutate_categories(
-    State(store): State<SharedStore>,
+pub async fn mutate_categories<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<CategoryOpBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let sections = store.sections()?;
     let section = admin::find(&sections, &section_id)
         .cloned()
-        .ok_or_else(|| ServerError::NotFound(format!("没有这一段：{section_id}")))?;
+        .ok_or_else(|| Refusal::NotFound(format!("没有这一段：{section_id}")))?;
     let name = body.name.trim().to_string();
     if name.is_empty() {
-        return Err(ServerError::BadRequest("类别名不能为空".into()));
+        return Err(Refusal::BadRequest("类别名不能为空".into()));
     }
     let to = body.to.as_deref().map(str::trim).filter(|text| !text.is_empty());
     if matches!(body.op.as_str(), "rename") && to.is_none() {
-        return Err(ServerError::BadRequest("改名要给 to".into()));
+        return Err(Refusal::BadRequest("改名要给 to".into()));
     }
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -736,7 +848,7 @@ pub async fn mutate_categories(
             }
         }
         other => {
-            return Err(ServerError::BadRequest(format!("不认识的 op: {other}（只有 add / remove / rename）")))
+            return Err(Refusal::BadRequest(format!("不认识的 op: {other}（只有 add / remove / rename）")))
         }
     }
     let vocab = admin::sort_categories(vocab);
@@ -797,15 +909,16 @@ pub struct SetCategoryBody {
 }
 
 /// `POST /v1/presets/:section/category`：改**一条**预设挂着的类别。
-pub async fn set_category(
-    State(store): State<SharedStore>,
+pub async fn set_category<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<SetCategoryBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let sections = store.sections()?;
     let section = admin::find(&sections, &section_id)
         .cloned()
-        .ok_or_else(|| ServerError::NotFound(format!("没有这一段：{section_id}")))?;
+        .ok_or_else(|| Refusal::NotFound(format!("没有这一段：{section_id}")))?;
     let name = check_name(&body.name)?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     let item = store.one(&section, &name)?;
@@ -827,10 +940,11 @@ pub async fn set_category(
 }
 
 /// `GET /v1/presets/:section/:name`：原文 + ETag（= version）。
-pub async fn get_preset(
-    State(store): State<SharedStore>,
+pub async fn get_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name)): AxumPath<(String, String)>,
 ) -> Result<Response> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let file = store.one(&section, &name)?;
     let version = store.version(&section.id, &name)?;
@@ -845,7 +959,7 @@ pub async fn get_preset(
     response.headers_mut().insert(
         header::ETAG,
         header::HeaderValue::from_str(&version.to_string())
-            .map_err(|error| ServerError::Internal(format!("ETag: {error}")))?,
+            .map_err(|error| Refusal::Internal(format!("ETag: {error}")))?,
     );
     Ok(response)
 }
@@ -865,35 +979,39 @@ pub struct ValidateBody {
 
 /// `GET /v1/presets/:section/validate|resolve?name=` 与 `POST`（体 `{name}` 或 `{spec}`）：
 /// 只读，不写盘、不提交。面板的编辑框靠它做校验 / 画 chip —— 跟建会话走同一份判据。
-pub async fn validate_get(
-    State(store): State<SharedStore>,
+pub async fn validate_get<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Query(query): Query<ValidateQuery>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     validate_inner(&store, &section_id, "validate", ValidateBody { name: query.name, spec: None }).await
 }
 
-pub async fn validate_post(
-    State(store): State<SharedStore>,
+pub async fn validate_post<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<ValidateBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     validate_inner(&store, &section_id, "validate", body).await
 }
 
-pub async fn resolve_get(
-    State(store): State<SharedStore>,
+pub async fn resolve_get<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Query(query): Query<ValidateQuery>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     validate_inner(&store, &section_id, "resolve", ValidateBody { name: query.name, spec: None }).await
 }
 
-pub async fn resolve_post(
-    State(store): State<SharedStore>,
+pub async fn resolve_post<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<ValidateBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     validate_inner(&store, &section_id, "resolve", body).await
 }
 
@@ -906,7 +1024,7 @@ async fn validate_inner(
     let sections = store.sections()?;
     let section = admin::find(&sections, section_id)
         .cloned()
-        .ok_or_else(|| ServerError::NotFound(format!("没有这一段：{section_id}")))?;
+        .ok_or_else(|| Refusal::NotFound(format!("没有这一段：{section_id}")))?;
     let by_name = body.name;
     let (spec, dir_name) = match by_name {
         Some(raw) => {
@@ -914,14 +1032,14 @@ async fn validate_inner(
             let item = store.one(&section, &name)?;
             let problems = admin::problems_for(&section, &item.body, Some(&name));
             if !problems.is_empty() {
-                return Err(ServerError::BadRequest(gate_message(&problems)));
+                return Err(Refusal::BadRequest(gate_message(&problems)));
             }
             (item.body, Some(name))
         }
         None => {
             let spec = body
                 .spec
-                .ok_or_else(|| ServerError::BadRequest("要么给 name，要么给 spec".into()))?;
+                .ok_or_else(|| Refusal::BadRequest("要么给 name，要么给 spec".into()))?;
             (spec, None)
         }
     };
@@ -968,24 +1086,25 @@ pub struct WriteBody {
 
 fn request_id_of(body: &WriteBody) -> Result<String> {
     body.request_id.clone().filter(|value| !value.is_empty())
-        .ok_or_else(|| ServerError::BadRequest("requestId is required".to_string()))
+        .ok_or_else(|| Refusal::BadRequest("requestId is required".to_string()))
 }
 
 /// `PUT /v1/presets/:section/:name`：建或覆盖；dry_run=1 只校验不落盘。
-pub async fn put_preset(
-    State(store): State<SharedStore>,
+pub async fn put_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name)): AxumPath<(String, String)>,
     Query(query): Query<PutQuery>,
     headers: HeaderMap,
     Json(body): Json<WriteBody>,
 ) -> Result<Response> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let name = check_name(&name)?;
     let request_id = request_id_of(&body)?;
     let preset = body.preset;
     let problems = admin::problems_for(&section, &preset, Some(&name));
     if !problems.is_empty() {
-        return Err(ServerError::BadRequest(gate_message(&problems)));
+        return Err(Refusal::BadRequest(gate_message(&problems)));
     }
     let bytes = pretty(&preset);
     if query.dry_run.as_deref() == Some("1") {
@@ -1004,7 +1123,7 @@ pub async fn put_preset(
         .map(str::trim);
     if let Some(expected) = if_match {
         if existing.is_none() || expected.trim_matches('"') != version.to_string() {
-            return Err(ServerError::PreconditionFailed(format!(
+            return Err(Refusal::PreconditionFailed(format!(
                 "If-Match 不匹配：要 {expected}，盘上是 {version}"
             )));
         }
@@ -1038,15 +1157,16 @@ pub struct PatchBody {
 }
 
 /// `PATCH /v1/presets/:section/:name`：只改元数据位。
-pub async fn patch_preset(
-    State(store): State<SharedStore>,
+pub async fn patch_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name)): AxumPath<(String, String)>,
     Json(body): Json<PatchBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let name = check_name(&name)?;
     let request_id = body.request_id.clone().filter(|value| !value.is_empty())
-        .ok_or_else(|| ServerError::BadRequest("requestId is required".to_string()))?;
+        .ok_or_else(|| Refusal::BadRequest("requestId is required".to_string()))?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(receipt) = store.receipt(&section.id, &name, &WriteKind::Patch, &request_id)? {
         return Ok(Json(receipt.body));
@@ -1088,7 +1208,7 @@ pub async fn patch_preset(
     }
     let problems = admin::problems_for(&section, &preset, Some(&current));
     if !problems.is_empty() {
-        return Err(ServerError::BadRequest(gate_message(&problems)));
+        return Err(Refusal::BadRequest(gate_message(&problems)));
     }
     let bytes = pretty(&preset);
     store.write_file(&store.manifest_path(&section, &current), &bytes)?;
@@ -1109,10 +1229,10 @@ fn rename_dir(
     let old = store.preset_dir(section, from);
     let new = store.preset_dir(section, to);
     if !old.is_dir() {
-        return Err(ServerError::NotFound(format!("工作区里没有 {from}/")));
+        return Err(Refusal::NotFound(format!("工作区里没有 {from}/")));
     }
     if new.exists() {
-        return Err(ServerError::Conflict(format!("已经有 {to}/ 了 —— 改名前先处理它")));
+        return Err(Refusal::Conflict(format!("已经有 {to}/ 了 —— 改名前先处理它")));
     }
     let mut paths = Vec::new();
     // 引用它的终极模板（跨段）。
@@ -1128,13 +1248,13 @@ fn rename_dir(
         }
     }
 
-    fs::rename(&old, &new).map_err(|error| ServerError::Internal(format!("改名失败: {error}")))?;
+    fs::rename(&old, &new).map_err(|error| Refusal::Internal(format!("改名失败: {error}")))?;
     let manifest = new.join(&section.manifest);
     let rewrite = |path: &Path, key: &str, value: &str| -> Result<()> {
         let mut raw: Value = fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .ok_or_else(|| ServerError::Internal(format!("读清单失败：{}", path.display())))?;
+            .ok_or_else(|| Refusal::Internal(format!("读清单失败：{}", path.display())))?;
         raw[key] = json!(value);
         store.write_file(path, &pretty(&raw))
     };
@@ -1166,10 +1286,11 @@ fn set_order(store: &PresetStore, section: &Section, name: &str, order: i64) -> 
 }
 
 /// `DELETE /v1/presets/:section/:name`：软删 = 搬进 `.archive/`（盘保留，会话创建时不列）。
-pub async fn delete_preset(
-    State(store): State<SharedStore>,
+pub async fn delete_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name)): AxumPath<(String, String)>,
 ) -> Result<StatusCode> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let name = check_name(&name)?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -1186,11 +1307,12 @@ pub struct CopyBody {
 }
 
 /// `POST /v1/presets/:section/:name/copy`：复制成另一条（清单里的 `name` 跟着改）。
-pub async fn copy_preset(
-    State(store): State<SharedStore>,
+pub async fn copy_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name)): AxumPath<(String, String)>,
     Json(body): Json<CopyBody>,
 ) -> Result<Response> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let from = check_name(&name)?;
     let to = check_name(&body.name)?;
@@ -1200,20 +1322,20 @@ pub async fn copy_preset(
     }
     let source = store.preset_dir(&section, &from);
     if !source.is_dir() {
-        return Err(ServerError::NotFound(format!("preset 不存在: {}/{from}", section.id)));
+        return Err(Refusal::NotFound(format!("preset 不存在: {}/{from}", section.id)));
     }
     let dest = store.preset_dir(&section, &to);
     if dest.exists() {
-        return Err(ServerError::Conflict(format!("目标已存在: {}/{}", section.id, to)));
+        return Err(Refusal::Conflict(format!("目标已存在: {}/{}", section.id, to)));
     }
     let mut preset = store.one(&section, &from)?.body;
     preset["name"] = json!(to);
     let problems = admin::problems_for(&section, &preset, Some(&to));
     if !problems.is_empty() {
-        return Err(ServerError::BadRequest(gate_message(&problems)));
+        return Err(Refusal::BadRequest(gate_message(&problems)));
     }
     // 整目录复制（PRESET.md 等说明文件跟着走），清单单独重写成新名字。
-    copy_dir(&source, &dest).map_err(|error| ServerError::Internal(format!("复制失败: {error}")))?;
+    copy_dir(&source, &dest).map_err(|error| Refusal::Internal(format!("复制失败: {error}")))?;
     let bytes = pretty(&preset);
     store.write_file(&dest.join(&section.manifest), &bytes)?;
     let version = store.append_revision(&section.id, &to, &bytes, &body.request_id)?;
@@ -1244,11 +1366,12 @@ pub struct OrderBody {
     _request_id: Option<String>,
 }
 
-pub async fn put_order(
-    State(store): State<SharedStore>,
+pub async fn put_order<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<OrderBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     let names: Vec<String> = store.scan(&section)?.into_iter().map(|item| item.name).collect();
@@ -1267,10 +1390,11 @@ pub async fn put_order(
     Ok(Json(json!({ "section": section.id, "order": ordered })))
 }
 
-pub async fn get_order(
-    State(store): State<SharedStore>,
+pub async fn get_order<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     Ok(Json(json!({ "section": section.id, "order": store.order(&section) })))
 }
@@ -1301,26 +1425,27 @@ pub struct CreateBody {
 }
 
 /// `POST /v1/presets/:section/create`：起手式三种（`spec` / `from: device` / 空白）。
-pub async fn create_preset(
-    State(store): State<SharedStore>,
+pub async fn create_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<CreateBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let sections = store.sections()?;
     let section = admin::find(&sections, &section_id)
         .cloned()
-        .ok_or_else(|| ServerError::NotFound(format!("没有这一段：{section_id}")))?;
+        .ok_or_else(|| Refusal::NotFound(format!("没有这一段：{section_id}")))?;
     let name = check_name(&body.name)?;
     let summary = body.summary.trim().to_string();
     if summary.is_empty() {
-        return Err(ServerError::BadRequest(format!("{name}: summary 不能空 —— 人靠这一行决定开不开它")));
+        return Err(Refusal::BadRequest(format!("{name}: summary 不能空 —— 人靠这一行决定开不开它")));
     }
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     if store.preset_dir(&section, &name).exists() {
-        return Err(ServerError::BadRequest(format!("{name}/ 已经在了 —— 换个名字，或者直接去改它")));
+        return Err(Refusal::BadRequest(format!("{name}/ 已经在了 —— 换个名字，或者直接去改它")));
     }
     if store.section_dir(&section).join(ARCHIVE_DIR).join(&name).exists() {
-        return Err(ServerError::BadRequest(format!(
+        return Err(Refusal::BadRequest(format!(
             "{name}/ 在 .archive/ 里 —— 点「恢复」把它捡回来，别建第二个"
         )));
     }
@@ -1341,10 +1466,10 @@ pub async fn create_preset(
         let trigger = body.trigger.as_deref().map(str::trim).unwrap_or("");
         let session = body.session.as_deref().map(str::trim).unwrap_or("");
         if trigger.is_empty() {
-            return Err(ServerError::BadRequest(format!("{name}: 得选一个触发器 —— 没有触发器就没有「什么时候」")));
+            return Err(Refusal::BadRequest(format!("{name}: 得选一个触发器 —— 没有触发器就没有「什么时候」")));
         }
         if session.is_empty() {
-            return Err(ServerError::BadRequest(format!("{name}: 得选一条会话模板 —— 触发器只管「什么时候」")));
+            return Err(Refusal::BadRequest(format!("{name}: 得选一条会话模板 —— 触发器只管「什么时候」")));
         }
         spec["trigger"] = json!(trigger);
         spec["session"] = json!(session);
@@ -1360,13 +1485,13 @@ pub async fn create_preset(
 
     let problems = admin::problems_for(&section, &spec, Some(&name));
     if !problems.is_empty() {
-        return Err(ServerError::BadRequest(gate_message(&problems)));
+        return Err(Refusal::BadRequest(gate_message(&problems)));
     }
     if section.is_ultimate() {
         let ctx = store.ctx(&sections);
         let reference = admin::ultimate_reference_problems(&spec, &ctx);
         if !reference.is_empty() {
-            return Err(ServerError::BadRequest(gate_message(&reference)));
+            return Err(Refusal::BadRequest(gate_message(&reference)));
         }
     }
 
@@ -1404,27 +1529,30 @@ pub struct RenameBody {
 /// `POST /v1/presets/:section/{archive,restore,purge}`（体 `{name}`）。
 ///
 /// 三个静态段各挂一个薄 handler：路径里只有一个参数，`AxumPath` 只能收一个。
-pub async fn archive_preset(
-    State(store): State<SharedStore>,
+pub async fn archive_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<NameBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     lifecycle(&store, &section_id, "archive", body).await
 }
 
-pub async fn restore_preset(
-    State(store): State<SharedStore>,
+pub async fn restore_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<NameBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     lifecycle(&store, &section_id, "restore", body).await
 }
 
-pub async fn purge_preset(
-    State(store): State<SharedStore>,
+pub async fn purge_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<NameBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     lifecycle(&store, &section_id, "purge", body).await
 }
 
@@ -1449,17 +1577,17 @@ async fn lifecycle(
         "purge" => {
             let path = store.section_dir(&section).join(ARCHIVE_DIR).join(&name);
             if !path.is_dir() {
-                return Err(ServerError::NotFound(format!("归档区里没有 {name}")));
+                return Err(Refusal::NotFound(format!("归档区里没有 {name}")));
             }
             fs::remove_dir_all(&path)
-                .map_err(|error| ServerError::Internal(format!("彻底删除失败: {error}")))?;
+                .map_err(|error| Refusal::Internal(format!("彻底删除失败: {error}")))?;
             (
                 vec![format!("{}/{ARCHIVE_DIR}/{name}", section.id)],
                 format!("preset: 彻底删除 {name}"),
             )
         }
         _ => {
-            return Err(ServerError::BadRequest(format!(
+            return Err(Refusal::BadRequest(format!(
                 "不认识的 op: {op}（只有 archive / restore / purge）"
             )))
         }
@@ -1474,16 +1602,17 @@ async fn lifecycle(
 }
 
 /// `POST /v1/presets/:section/rename`（体 `{name, to}`）。
-pub async fn rename_preset(
-    State(store): State<SharedStore>,
+pub async fn rename_preset<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<RenameBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let from = check_name(&body.name)?;
     let to = check_name(&body.to)?;
     if from == to {
-        return Err(ServerError::BadRequest("新名字和旧名字一样".into()));
+        return Err(Refusal::BadRequest("新名字和旧名字一样".into()));
     }
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     rename_dir(&store, &section, &from, &to, body.request_id.as_deref().unwrap_or(""))?;
@@ -1507,20 +1636,21 @@ pub struct FileSaveBody {
 }
 
 /// `GET /v1/presets/:section/files?name=`：这条预设目录里有哪些文件。
-pub async fn files(
-    State(store): State<SharedStore>,
+pub async fn files<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let name = check_name(&query.name)?;
     let dir = store.preset_dir(&section, &name);
     if !dir.is_dir() {
-        return Err(ServerError::NotFound(format!("preset 不存在: {}/{name}", section.id)));
+        return Err(Refusal::NotFound(format!("preset 不存在: {}/{name}", section.id)));
     }
     let mut out = Vec::new();
     collect_files(&dir, "", &mut out)
-        .map_err(|error| ServerError::Internal(format!("列文件失败: {error}")))?;
+        .map_err(|error| Refusal::Internal(format!("列文件失败: {error}")))?;
     out.sort_by(|a: &Value, b: &Value| {
         a["path"].as_str().unwrap_or("").cmp(b["path"].as_str().unwrap_or(""))
     });
@@ -1546,42 +1676,44 @@ fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<Value>) -> std::io::Res
 }
 
 /// `GET|PUT /v1/presets/:section/file`：单个文件的原文 / 写回（ETag = 字节的 sha256）。
-pub async fn file_get(
-    State(store): State<SharedStore>,
+pub async fn file_get<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let name = check_name(&query.name)?;
     let rel = check_rel_path(query.path.as_deref().unwrap_or(""))?;
     let path = store.preset_dir(&section, &name).join(&rel);
     let bytes = fs::read(&path)
-        .map_err(|_| ServerError::NotFound(format!("文件不存在: {name}/{rel}")))?;
+        .map_err(|_| Refusal::NotFound(format!("文件不存在: {name}/{rel}")))?;
     let text = String::from_utf8(bytes.clone())
-        .map_err(|_| ServerError::BadRequest(format!("{rel} 不是 UTF-8 文本")))?;
+        .map_err(|_| Refusal::BadRequest(format!("{rel} 不是 UTF-8 文本")))?;
     Ok(Json(json!({
         "section": section.id, "name": name, "path": rel, "text": text, "etag": sha256_hex(&bytes)
     })))
 }
 
-pub async fn file_put(
-    State(store): State<SharedStore>,
+pub async fn file_put<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<FileSaveBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let name = check_name(&body.name)?;
     let rel = check_rel_path(&body.path)?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     if store.one(&section, &name).is_err() {
-        return Err(ServerError::NotFound(format!("preset 不存在: {}/{name}", section.id)));
+        return Err(Refusal::NotFound(format!("preset 不存在: {}/{name}", section.id)));
     }
     let path = store.preset_dir(&section, &name).join(&rel);
     if let Some(base) = body.base.as_deref() {
         let current = fs::read(&path).ok();
         let current_etag = current.as_deref().map(sha256_hex);
         if current_etag.as_deref() != Some(base) {
-            return Err(ServerError::Conflict(format!(
+            return Err(Refusal::Conflict(format!(
                 "文件已被改过（盘上是 {}，你手里是 {base}）",
                 current_etag.unwrap_or_else(|| "不存在".into())
             )));
@@ -1590,17 +1722,17 @@ pub async fn file_put(
     // 写**这一段的清单文件**时先过形状闸：写坏了不是「未保存」，而是这条当场失效。
     if rel == section.manifest {
         let value: Value = serde_json::from_str(&body.text)
-            .map_err(|error| ServerError::BadRequest(format!("{} 不是合法 JSON: {error}", section.manifest)))?;
+            .map_err(|error| Refusal::BadRequest(format!("{} 不是合法 JSON: {error}", section.manifest)))?;
         let problems = admin::problems_for(&section, &value, Some(&name));
         if !problems.is_empty() {
-            return Err(ServerError::BadRequest(gate_message(&problems)));
+            return Err(Refusal::BadRequest(gate_message(&problems)));
         }
         if section.is_ultimate() {
             let sections = store.sections()?;
             let ctx = store.ctx(&sections);
             let reference = admin::ultimate_reference_problems(&value, &ctx);
             if !reference.is_empty() {
-                return Err(ServerError::BadRequest(gate_message(&reference)));
+                return Err(Refusal::BadRequest(gate_message(&reference)));
             }
         }
         let bytes = body.text.clone().into_bytes();
@@ -1618,22 +1750,23 @@ pub async fn file_put(
 fn check_rel_path(raw: &str) -> Result<String> {
     let path = raw.trim();
     if path.is_empty() {
-        return Err(ServerError::BadRequest("path 不能为空".into()));
+        return Err(Refusal::BadRequest("path 不能为空".into()));
     }
     if path.starts_with('/') || path.contains('\\') {
-        return Err(ServerError::BadRequest(format!("路径必须是预设目录里的相对路径：{path}")));
+        return Err(Refusal::BadRequest(format!("路径必须是预设目录里的相对路径：{path}")));
     }
     if path.split('/').any(|part| part == ".." || part == ".") {
-        return Err(ServerError::BadRequest(format!("路径里有 .. 或 .：{path}")));
+        return Err(Refusal::BadRequest(format!("路径里有 .. 或 .：{path}")));
     }
     Ok(path.to_string())
 }
 
 /// `GET /v1/presets/:section/pending`：仓状态 + 待提交单元（一条预设一个 unit）。
-pub async fn pending(
-    State(store): State<SharedStore>,
+pub async fn pending<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let Some(repo) = store.git() else {
         return Ok(Json(json!({
@@ -1705,16 +1838,17 @@ pub struct MessageBody {
 }
 
 /// `POST /v1/presets/:section/publish`：形状闸 → 提交这一段。闸不过一个字节都不动。
-pub async fn publish(
-    State(store): State<SharedStore>,
+pub async fn publish<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<MessageBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     let problems = store.gate(&section)?;
     if !problems.is_empty() {
-        return Err(ServerError::BadRequest(gate_message(&problems)));
+        return Err(Refusal::BadRequest(gate_message(&problems)));
     }
     let Some(repo) = store.git() else {
         return Ok(Json(json!({ "ok": true, "commit": null, "pushed": null, "noRemote": true })));
@@ -1740,11 +1874,12 @@ pub async fn publish(
 }
 
 /// `POST /v1/presets/:section/sync`：提交指定的路径（不指定 = 这一段的全部待提交）。
-pub async fn sync(
-    State(store): State<SharedStore>,
+pub async fn sync<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
     Json(body): Json<MessageBody>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     let Some(repo) = store.git() else {
@@ -1774,19 +1909,21 @@ pub async fn sync(
 }
 
 /// `POST /v1/presets/:section/reload`：没有常驻名册，重扫就是「每次读都扫」，如实回 ok。
-pub async fn reload(
-    State(store): State<SharedStore>,
+pub async fn reload<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath(section_id): AxumPath<String>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let count = store.scan(&section)?.len();
     Ok(Json(json!({ "ok": true, "section": section.id, "count": count })))
 }
 
-pub async fn list_revisions(
-    State(store): State<SharedStore>,
+pub async fn list_revisions<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name)): AxumPath<(String, String)>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let _ = store.one(&section, &name)?;
     let revisions = store.revisions(&section.id, &name)?;
@@ -1801,15 +1938,16 @@ pub async fn list_revisions(
     Ok(Json(json!({ "section": section.id, "name": name, "items": items })))
 }
 
-pub async fn get_revision(
-    State(store): State<SharedStore>,
+pub async fn get_revision<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name, n)): AxumPath<(String, String, String)>,
 ) -> Result<Json<Value>> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
-    let n = n.parse::<i64>().map_err(|_| ServerError::BadRequest(format!("非法修订号: {n}")))?;
+    let n = n.parse::<i64>().map_err(|_| Refusal::BadRequest(format!("非法修订号: {n}")))?;
     let revision = store.revisions(&section.id, &name)?
         .into_iter().find(|r| r.n == n)
-        .ok_or_else(|| ServerError::NotFound(format!("修订不存在: {}/{name}#{n}", section.id)))?;
+        .ok_or_else(|| Refusal::NotFound(format!("修订不存在: {}/{name}#{n}", section.id)))?;
     Ok(Json(json!({
         "section": section.id,
         "name": name,
@@ -1828,11 +1966,12 @@ pub struct RollbackBody {
     request_id: String,
 }
 
-pub async fn rollback(
-    State(store): State<SharedStore>,
+pub async fn rollback<H: Host + Clone + Send + Sync + 'static>(
+    State(host): State<H>,
     AxumPath((section_id, name)): AxumPath<(String, String)>,
     Json(body): Json<RollbackBody>,
 ) -> Result<Response> {
+    let store = store_of(&host)?;
     let section = store.section(&section_id)?;
     let _serial = store.lock.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(receipt) = store.receipt(&section.id, &name, &WriteKind::Rollback, &body.request_id)? {
@@ -1840,7 +1979,7 @@ pub async fn rollback(
     }
     let revision = store.revisions(&section.id, &name)?
         .into_iter().find(|r| r.n == body.n)
-        .ok_or_else(|| ServerError::NotFound(format!("修订不存在: {}/{name}#{}", section.id, body.n)))?;
+        .ok_or_else(|| Refusal::NotFound(format!("修订不存在: {}/{name}#{}", section.id, body.n)))?;
     let bytes = revision.body.into_bytes();
     store.write_file(&store.manifest_path(&section, &name), &bytes)?;
     let version = store.append_revision(&section.id, &name, &bytes, &body.request_id)?;
@@ -1849,54 +1988,59 @@ pub async fn rollback(
     Ok((StatusCode::OK, Json(response)).into_response())
 }
 
-/// presets 的路由，自带 SharedStore state，由调用方合并进主 Router。
-pub fn routes(state: SharedStore) -> Router<()> {
-    let presets: Router<()> = Router::new()
-        .route("/v1/presets", axum::routing::get(sections))
-        .route("/v1/presets/model", axum::routing::get(model))
-        .route("/v1/presets/{section}", axum::routing::get(roster))
-        .route(
-            "/v1/presets/{section}/order",
-            axum::routing::get(get_order).put(put_order),
-        )
-        .route(
-            "/v1/presets/{section}/categories",
-            axum::routing::get(categories).post(mutate_categories),
-        )
-        .route("/v1/presets/{section}/category", axum::routing::post(set_category))
-        .route("/v1/presets/{section}/create", axum::routing::post(create_preset))
-        .route("/v1/presets/{section}/rename", axum::routing::post(rename_preset))
-        .route("/v1/presets/{section}/archive", axum::routing::post(archive_preset))
-        .route("/v1/presets/{section}/restore", axum::routing::post(restore_preset))
-        .route("/v1/presets/{section}/purge", axum::routing::post(purge_preset))
-        .route(
-            "/v1/presets/{section}/validate",
-            axum::routing::get(validate_get).post(validate_post),
-        )
-        .route(
-            "/v1/presets/{section}/resolve",
-            axum::routing::get(resolve_get).post(resolve_post),
-        )
-        .route("/v1/presets/{section}/files", axum::routing::get(files))
-        .route(
-            "/v1/presets/{section}/file",
-            axum::routing::get(file_get).put(file_put),
-        )
-        .route("/v1/presets/{section}/pending", axum::routing::get(pending))
-        .route("/v1/presets/{section}/sync", axum::routing::post(sync))
-        .route("/v1/presets/{section}/publish", axum::routing::post(publish))
-        .route("/v1/presets/{section}/reload", axum::routing::post(reload))
-        .route(
-            "/v1/presets/{section}/{name}",
-            axum::routing::get(get_preset)
-                .put(put_preset)
-                .patch(patch_preset)
-                .delete(delete_preset),
-        )
-        .route("/v1/presets/{section}/{name}/copy", axum::routing::post(copy_preset))
-        .route("/v1/presets/{section}/{name}/revisions", axum::routing::get(list_revisions))
-        .route("/v1/presets/{section}/{name}/revisions/{n}", axum::routing::get(get_revision))
-        .route("/v1/presets/{section}/{name}/rollback", axum::routing::post(rollback))
-        .with_state(state);
-    presets
+/// 本插件的 32 条声明（19 条 `presets-admin` + 13 条 `presets`）。
+///
+/// 路径只写在这里：`nous-routes` 把 `{section}` 折成注册表要的 `:section`，
+/// `capabilities` / `/v1/_routes` / `/v1/openapi.json` 三处读的是同一份。
+/// 一条端点同时挂多个方法（`GET|POST`、`GET|PUT`）时，声明里**每个方法一行** ——
+/// 注册表按「方法 + 路径」记账，一行塞两个方法会让 openapi 少一条。
+pub fn routes<H>() -> Vec<Route<H>>
+where
+    H: Host + Clone + Send + Sync + 'static,
+{
+    use axum::routing::{delete, get, patch, post, put};
+
+    macro_rules! route {
+        ($method:literal, $path:literal, $module:expr, $build:expr) => {
+            Route::new($method, $path, $module, $build)
+        };
+    }
+
+    // 段面与名册归 `presets`；写面 / 校验 / 文件 / 发布归 `presets-admin`（`docs/plugins.md`）。
+    const P: &str = "presets";
+    const A: &str = MODULE;
+    vec![
+        route!("GET", "/v1/presets", P, || get(sections::<H>)),
+        route!("GET", "/v1/presets/model", P, || get(model::<H>)),
+        route!("GET", "/v1/presets/{section}", P, || get(roster::<H>)),
+        route!("GET", "/v1/presets/{section}/order", A, || get(get_order::<H>)),
+        route!("PUT", "/v1/presets/{section}/order", A, || put(put_order::<H>)),
+        route!("GET", "/v1/presets/{section}/categories", A, || get(categories::<H>)),
+        route!("POST", "/v1/presets/{section}/categories", A, || post(mutate_categories::<H>)),
+        route!("POST", "/v1/presets/{section}/category", A, || post(set_category::<H>)),
+        route!("POST", "/v1/presets/{section}/create", A, || post(create_preset::<H>)),
+        route!("POST", "/v1/presets/{section}/rename", A, || post(rename_preset::<H>)),
+        route!("POST", "/v1/presets/{section}/archive", A, || post(archive_preset::<H>)),
+        route!("POST", "/v1/presets/{section}/restore", A, || post(restore_preset::<H>)),
+        route!("POST", "/v1/presets/{section}/purge", A, || post(purge_preset::<H>)),
+        route!("GET", "/v1/presets/{section}/validate", A, || get(validate_get::<H>)),
+        route!("POST", "/v1/presets/{section}/validate", A, || post(validate_post::<H>)),
+        route!("GET", "/v1/presets/{section}/resolve", A, || get(resolve_get::<H>)),
+        route!("POST", "/v1/presets/{section}/resolve", A, || post(resolve_post::<H>)),
+        route!("GET", "/v1/presets/{section}/files", A, || get(files::<H>)),
+        route!("GET", "/v1/presets/{section}/file", A, || get(file_get::<H>)),
+        route!("PUT", "/v1/presets/{section}/file", A, || put(file_put::<H>)),
+        route!("GET", "/v1/presets/{section}/pending", A, || get(pending::<H>)),
+        route!("POST", "/v1/presets/{section}/sync", A, || post(sync::<H>)),
+        route!("POST", "/v1/presets/{section}/publish", A, || post(publish::<H>)),
+        route!("POST", "/v1/presets/{section}/reload", A, || post(reload::<H>)),
+        route!("GET", "/v1/presets/{section}/{name}", P, || get(get_preset::<H>)),
+        route!("PUT", "/v1/presets/{section}/{name}", P, || put(put_preset::<H>)),
+        route!("PATCH", "/v1/presets/{section}/{name}", P, || patch(patch_preset::<H>)),
+        route!("DELETE", "/v1/presets/{section}/{name}", P, || delete(delete_preset::<H>)),
+        route!("POST", "/v1/presets/{section}/{name}/copy", P, || post(copy_preset::<H>)),
+        route!("GET", "/v1/presets/{section}/{name}/revisions", P, || get(list_revisions::<H>)),
+        route!("GET", "/v1/presets/{section}/{name}/revisions/{n}", P, || get(get_revision::<H>)),
+        route!("POST", "/v1/presets/{section}/{name}/rollback", P, || post(rollback::<H>)),
+    ]
 }

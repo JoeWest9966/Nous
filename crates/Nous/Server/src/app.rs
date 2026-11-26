@@ -40,8 +40,8 @@ pub struct AppState {
     repos: std::collections::BTreeMap<String, std::sync::Arc<nous_repo::Repo>>,
     /// #76：变体绑定表路径（skills / extend）。
     variant_tables: std::collections::BTreeMap<String, std::path::PathBuf>,
-    /// #60：模板私库 + 修订表的写者（整段串行锁）。按 env 的路径解析，进程内不留 map。
-    presets: Option<crate::presets::SharedStore>,
+    /// #60：模板私库 + 修订表的装配来源（整段串行锁在插件里）。按 env 的路径解析，进程内不留 map。
+    presets: Option<nous_presets_admin::routes::Sources>,
     /// #62：stats 的只读句柄（两个库路径）。没有装配时端点回 409，不假装空数据。
     /// #62/搬家：data-manager 插件的只读句柄（两个库路径）。
     stats: Option<data_data_manager::routes::Paths>,
@@ -88,7 +88,7 @@ impl AppState {
     }
 
     /// 把 presets 写者接上（main 装配一次；测试按临时目录注入）。
-    pub fn with_presets(self: Arc<Self>, store: crate::presets::SharedStore) -> Arc<Self> {
+    pub fn with_presets(self: Arc<Self>, sources: nous_presets_admin::routes::Sources) -> Arc<Self> {
         Arc::new(Self {
             source: self.source.clone(),
             commands: self.commands.clone(),
@@ -107,14 +107,14 @@ impl AppState {
             repos: self.repos.clone(),
             upstream_data: self.upstream_data.clone(),
             variant_tables: self.variant_tables.clone(),
-            presets: Some(store),
+            presets: Some(sources),
             stats: self.stats.clone(),
             combos: self.combos.clone(),
             combo_action: self.combo_action.clone(),
         })
     }
 
-    pub fn presets(&self) -> Option<&crate::presets::SharedStore> {
+    pub fn presets(&self) -> Option<&nous_presets_admin::routes::Sources> {
         self.presets.as_ref()
     }
 

@@ -1,4 +1,4 @@
-//! 模板管理插件（`presets-admin`）：形状闸 / 引用解析 / 名册投影。
+//! 模板管理插件（`Nous_PresetsAdmin`）：形状闸 / 引用解析 / 名册投影 + 自己的 32 条端点。
 //!
 //! **这一层不碰盘、不碰网、不看时钟** —— 盘面由 `server` 读进来（`Item`），判定与拼装在这里。
 //! 所以「面板说这条开不了」和「建会话时它真开不了」走的是同一份函数。
@@ -8,6 +8,7 @@
 //! 形状 / 引用 / 展开三件事跟 HTTP 无关，混在 handler 里就没法单测，也没法给别的入口复用。
 
 pub mod resolve;
+pub mod routes;
 pub mod section;
 pub mod shape;
 pub mod view;

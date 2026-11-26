@@ -93,6 +93,12 @@ pub fn etag(content: &[u8]) -> String {
     out
 }
 
+/// 纯 Rust 的 sha256（FIPS 180-4）。`etag` 与需要内容指纹的插件共用这一份 ——
+/// 两处各抄一遍实现，抄错过一次（`presets` 的修订 sha 与 etag 必须逐字节相等）。
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    simple_sha256(data)
+}
+
 fn simple_sha256(data: &[u8]) -> [u8; 32] {
     // 纯 Rust 紧凑实现（不引入依赖）：FIPS 180-4。
     const K: [u32; 64] = [

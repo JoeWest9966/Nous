@@ -117,18 +117,14 @@ pub fn router(state: Arc<AppState>) -> Router {
     let router = router.merge(crate::trigger_projects::attach(Router::new()));
     // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。
     let router = crate::upstream::attach(router);
-    // #60：presets 用独立的写者（私库根 + 插件库路径），未装配时 handler 诚实回 409。
-    // presets 子路由自带 SharedStore state；合并进主 Router 不动其余端点的 AppState。
     // 插件自己的端点：`nous-routes` 的声明就是注册，注册表读的也是同一份。
+    // `/v1/presets*` 的 32 条也走这条（#60 搬进 `Nous_PresetsAdmin`）：插件自带 handler，
+    // 宿主只实现它的 `Host`（`plugins.rs`），未装配时插件自己回 409。
     let mut router = router;
     for route in crate::plugins::routes() {
         router = route.mount(router);
     }
-    let router = router.with_state(state.clone());
-    match state.presets() {
-        Some(store) => router.merge(crate::presets::routes(store.clone())),
-        None => router,
-    }
+    router.with_state(state.clone())
 }
 
 /// `GET /v1/openapi.json`：从注册表（静态表 ∪ 插件声明）生成的只读机读视图。

@@ -18,6 +18,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(data_data_manager::routes::routes::<Arc<AppState>>());
     all.extend(data_archive::routes::routes::<Arc<AppState>>());
     all.extend(nous_elements::routes::routes::<Arc<AppState>>());
+    all.extend(nous_presets_admin::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -114,4 +115,14 @@ impl data_archive::routes::Host for AppState {
 /// `ServerError` → 插件侧的拒绝理由：状态码与文案逐字搬过去（不在这里换口径）。
 fn refusal(error: crate::ServerError) -> data_archive::routes::Refusal {
     data_archive::routes::Refusal::new(error.status(), error.message())
+}
+
+/// `Nous_PresetsAdmin` 要的那一件事：模板私库根 + 插件库 + 外部名册根。
+///
+/// 搬家前这几条路径由 `server::presets::Sources::from_env()` 自己读环境；现在由宿主
+/// 装配一次（`main` 的 `with_presets`），插件只接 —— 路径解析仍然只有 `env` 插件一处。
+impl nous_presets_admin::routes::Host for AppState {
+    fn preset_sources(&self) -> Option<nous_presets_admin::routes::Sources> {
+        self.presets().cloned()
+    }
 }
