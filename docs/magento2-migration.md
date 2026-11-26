@@ -122,7 +122,7 @@ impl element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（85 条）
+### 4.1 已搬（137 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
@@ -138,20 +138,20 @@ impl element_models::routes::Host for AppState {
 | `combos` | `GET /v1/combos/:section` · `PATCH /v1/combos/:section/:name` · `POST /v1/combos/:section/:name/fire` · `POST /v1/presets/Ultimate-Template/launch`（4 条） | `feat(combos)` | **第一次「一个模块一份新 crate」**：搬家前 `server/src/combos.rs`（370 行）+ `combos_actions.rs`（219 行）两个文件，整份搬成 `crates/Nous/Combos/{store,actions}.rs`。宿主能力四件事：两个盘面根（`Host::combo_roots`）、触发器判定视图（`Host::trigger_spec`）、注入时钟（`Host::combo_clock`）、起会话 + 写血缘（`Host::launch_session`）。**判定仍是 dispatcher 的纯函数**（`evaluate` / `reason_text` 直接依赖，不经宿主）；**起会话仍是 durable 的命令面**（`create_conversation` + `record_origin` 在宿主实现里，插件不自己开库）。`AppState.combos` / `combo_action` 的类型直接换成插件类型（`nous_combos::ComboStore` / `nous_combos::Clock`），不留两套同形结构；`meta::ROUTES` 删 4 行 |
 | `Nous_Prompts` | `GET /v1/prompts` · `GET /v1/prompts/files` · `GET/PUT /v1/prompts/file` · `POST /v1/prompts/{create,publish}`（6 条） | `feat(prompts)` | 骨架下沉后的第二次搬家，**形状与 `skills` 完全一致**（只读投影要根路径、编辑面要仓库句柄），所以只花了「抄一遍 + 改标签」。真正的产出是**共享 `Refusal`**：`RepoError → 状态码` 的翻译此前在 `elements` / `skills` 各抄了一份，这是第三份 —— 正好踩中 `decisions.md` 记的反悔点。**落点不是 `nous-routes`**（放那里会成环：`env → routes → repo → env`），而是 `nous_repo::Refusal`（拥有 `RepoError` 的那一层）；`nous-routes` 只出 HTTP 回包壳 `HttpRefusal`，保持零 `nous-*` 依赖。`resource_admin.rs` 只剩扩展一仓（309 → 217 行，`create` handler 整块消失：它只为 prompts 存在）。`meta::prompts()` 与静态表 6 行一并删（104 → 98）。**模块全名同时改成 `Nous_Prompts`**（规则 12「逐个改成全名」；目录 / 包名 / capability / URL 都不动） |
 | `Nous_Extend` | `GET /v1/extensions` · `POST /v1/extensions/reload` · `GET /v1/extensions/files` · `GET/PUT /v1/extensions/file` · `POST /v1/extensions/publish` · 管理面 9 条（`create` / `duplicate` / `install` / `uninstall` / `categories` ×2 / `category` / `trash` / `trash/purge`）（15 条） | `feat(extend)` | 到目前为止**接缝最厚的一票**：15 条端点分三种宿主能力才能搬 —— 编辑页 4 条要私库句柄（`nous_repo::Repo`，键 `extend`）、管理面 9 条要 [`AdminStore`] 盘面 + 运行时、清单/重载 2 条要运行时，另加 `?usage=1` 的反查（第五条能力，返回 `Result` 而不是 `Option`：搬前是 `?` 直传状态码，折成 `None` 会把 500 说成「未装配」）。**同票改名** `ext` → `Nous_Extend`：目录 `crates/Nous/Ext` → `crates/Nous/Extend`、包名 `nous-ext` → `nous-extend`、crate 标识 `nous_ext` → `nous_extend`、capability `ext` → `extend`（URL 段仍是 `extensions`，私库键仍是 `extend` —— 这两个小写世界不跟全名走）。`ext_admin.rs`（157 行）与 `resource_admin.rs`（217 行，最后一个 `Kind`）**整份删除**，`meta::extensions()` 一并删；静态表 94 → 79 行 |
+| `repo` | `/v1/repos/{repo}/*` 全 30 条（本体 20 + 变体 6 + 上游 10 字段 4） | `refactor(repo)` | **存量最大的一票**：`server/src/repos.rs`（356 行 / 20 条）+ `server/src/upstream.rs`（211 行 / 10 条）整份搬成 `crates/Nous/Repo/src/routes.rs`。`nous-repo` 本就是 platform 层、已依赖 `nous-env`，所以加 `nous-routes` 不成环 （`env → … → repo` 方向不变）。宿主能力四个方法：`repo(kind)` / `variant_table(kind)` / `upstream_data()` / `source_usage(field)` —— 前三个是「进程启动时打开了什么」，最后一个是 `variants/usage` 的反查（会话记录归 durable，插件不自己开库）。**同票补掉 `nous_repo::Refusal` 的行为缺口**：`Conflict` 分支此前只回 `{error}`，丢了磁盘当前 `{content, etag}`（#75 票面要求，Desk 靠它显示盘上现在是什么）—— 补在 `body()` 里，`elements` / `skills` / `prompts` 三个已搬插件同时受益（它们的 `HttpRefusal::new(status, refusal.body())` 天然透传）。`server/src/repos.rs` 只剩装配（`from_env` / `from_path` / `variant_tables_from_env`）与 `repo_error` —— 后者只剩 `trigger_projects.rs` 一个调用方，等 `feat/triggers-plugin` 落地后随它一起收进 `Refusal`。静态表 79 → 49 行 |
+| `Nous_Triggers` | 定义面 11 条：`GET/POST /v1/triggers` · `GET /v1/triggers/categories` · `POST /v1/triggers/category` · `PATCH/PUT /v1/triggers/:code` · `POST /v1/triggers/:code/{archive,restore,purge,fire}` · `GET /v1/triggers/:code/fires`；工程面 13 条：`/v1/trigger-projects` 的 `files` / `file`（GET/PUT）/ `create` / `publish` / `{archive,restore,purge}` / `categories`（GET/POST）/ `category` / `sync`（24 条） | `feat(triggers)` | **接缝最薄的一票**：24 条端点只要两条宿主能力（`triggers_runtime` + `triggers_repo`），2024 行 handler 整份搬进新 crate；插件**出生即全名**，没有改名那趟 |
 
-### 4.2 待搬（79 条 / 6 个模块）
+### 4.2 待搬（25 条 / 2 个模块）
 
 按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
-（静态表总数：搬家起点 162 行 → 现在 79 行；插件自带的端点 `Route::new` 共 85 条）。
+（静态表总数：搬家起点 162 行 → 现在 **25 行**；插件自带的端点 `Route::new` 共 **109 条**）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
-| `triggers` | 24 | 触发器库 + 调度（`nous-dispatcher`） |
 | `sessions` | 17 | 最厚：读投影 + 写命令 + SSE 出口（`events` 尤其要小心） |
-| `repo` | 30 | 最杂：git 面全在这一家（`nous-repo` 已是 platform，宿主只需给根路径） |
-| `device` | 7 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，建议**最后搬**（它们读注册表本身） |
+| `Nous_Device` | 8 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，**最后搬**（它们读注册表本身） |
 
-建议顺序：`triggers` → `repo` → `sessions` → `device`。
+建议顺序：`sessions` → `Nous_Device`。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
 搬进 `device` 之前得先让「注册表」成为宿主能力（`Host::declarations()`），否则会成环。

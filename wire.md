@@ -77,8 +77,9 @@
 ### 触发器管理面（#80：trigger-catalog）
 
 `PATCH /v1/triggers/{code}` 见上（#73，本票不重做）。#80 补新建 / 整份改定义 / 归档 / 捞回 / 真删 / 类别。
-实现仍在 `nous-server` 的 `triggers` 面，定义与账仍只在 `nous-store` 的 `triggers` / `fires` 两张表；
-不新增 crates、不新增数据目录、不另开写通道。
+实现在 `Nous_Triggers` 插件（`crates/Nous/Triggers`，模块全名 `Nous_Triggers`；
+搬家票之前写作「`nous-server` 的 `triggers` 面」），定义与账仍只在 `nous-store` 的
+`triggers` / `fires` 两张表；协议形状与状态码一个字没变。不新增数据目录、不另开写通道。
 
 | 方法 + 路径 | 语义 |
 |---|---|
@@ -474,11 +475,15 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
   `"versionSource": "release"` 如实说明回退（回退不静默）。
   `GET /v1/plugins/:name/readme` 的 `version` 同一来源。
 - `modules[].name` 是**模块全名**（`docs/plugins.md` 规则 12）：照 Magento 2 的 `Vendor_Module`
-  长相，例如 `Element_Models`；老模块的小写连字符名（`data-manager` / `sessions`）继续有效。
+  长相，例如 `Nous_Device`；老模块的小写连字符名（`data-manager` / `sessions`）继续有效。
   `name` 是 `/v1/plugins/:name/*` 与 `/v1/_routes` 的 `module` 标签，也是桌面端的显示名。
-  **同一样东西的三套写法**（`docs/plugins.md` 规则 12）：全名 `Element_Models`、目录
-  `crates/Element/Models`（PascalCase）、包名 `element-models`（cargo 全小写）与 capability
-  `models`。客户端只认 `name`，别从包名或目录名反推。
+  **同一样东西的三套写法**（`docs/plugins.md` 规则 12）：全名 `Nous_Device`、目录
+  `crates/Nous/Device`（PascalCase）、包名 `nous-device`（cargo 全小写）与 capability
+  `device`。客户端只认 `name`，别从包名或目录名反推。
+- **2026-11-27 改名**：`Element_Models` → `Models`（只动全名；目录 `crates/Element/Models`、
+  包名 `element-models`、capability `models`、元素库组 id `element-models` 一个字没动）。
+  桌面端不改代码：它只透传 `name`，插件页那一行从 `Element_Models` 变成 `Models`。
+  `/v1/plugins/Element_Models/readme` 从此 404 `unknown_module`（名字是身份，不做别名）。
 - `modules[].vendor`：**出品方**（规则 10，`docs/plugins.md` 的 `vendor` 列），**PascalCase**：
   `Nous` / `Data` / `Element`（目录第一段就是它；全名第一段是它的小写形）。
   与 `version` 同一份生成表（`plugin.toml` 的 `vendor`，`server/build.rs` 编译期读出来），

@@ -10,6 +10,22 @@
 
 ---
 
+## 2026-11-26 · `Refusal` 的富化格跟语义走，不跟 HTTP 壳走
+
+**决定**：`RepoError::Conflict` 的 `{content, etag}` 两格补进 `nous_repo::Refusal::body()`，
+**不放**在 `nous_routes::HttpRefusal` 里自动推导。
+
+**理由**：`HttpRefusal` 只认识 `(status: u16, body: Value)` 两格，它的契约就是「传输壳，
+不认领域错误类型」—— 让它去推 `content` 就得认出 `RepoError`，那一层立刻多一条 `nous-repo`
+依赖，而成环判定（`env → routes → repo → env`）当初正是为了躲这个才把语义层放进 `nous-repo`。
+富化格是**语义**（「409 时该给客户端看什么」），归拥有 `RepoError` 的那一层。
+
+**反悔点**：如果第二个「非 `RepoError` 来源」的拒绝也需要带富化格（比如 `triggers` 的
+`If-Match` 冲突也要回盘上当前正文），那就说明富化格的形状是跨领域的，该把它提成
+`HttpRefusal::with_field(key, value)` 这种通用构造器 —— 但**仍然不推**，只让插件显式给。
+
+---
+
 ## 2026-11-17 · `message_update.changes[]` 的 8 个变体（上游已把它整条事件流砍掉）
 
 **决定**：保留 `wire.md` 的 `message_update.changes[]` 与 `nous-wire` 的 8 个
@@ -1482,3 +1498,83 @@ Desk 需另票把 `module_name()` 改为 `extend`（与上一决定同口径）�
 
 反悔条件：若客户端不能接受 `/v1/plugins/skills/readme` 404 与 capabilities 名字变化，
 则回退整票（含 vendor 目录），而不是只回退 README 文件名。
+
+3. 产物文档名从 `ext.md` 变成 `Nous_Extend.md`（`deploy.sh` 按全名落盘）。
+
+## 2026-11-26 · `Nous_Triggers`：24 条端点搬进新插件，两条宿主能力
+
+**搬什么**：`/v1/triggers*`（11）+ `/v1/trigger-projects*`（13），合计 24 条，
+落在新 crate `crates/Nous/Triggers`（包 `nous-triggers`，capability `triggers`）。
+源文件 `server/src/triggers.rs`（950 行）+ `server/src/trigger_projects.rs`（1074 行）
+整份消失，静态表 79 → 55 行。
+
+**为什么新开 crate 而不是塞进现有插件**：`triggers` 在 `docs/plugins.md` 里本来就是个
+app 层模块（还是两行：`triggers` 运行时外挂 + `trigger-catalog`），只是没有自己的 crate。
+搬家票做的就是「补上那个 crate」—— 于是两行并成一行，形态从「运行时外挂」变「编译期」。
+
+**接缝判断：为什么是两条能力、不是一条**。这是本票唯一值得争的地方。
+
+24 条端点看着是同一个人家的，但它们操作的是**两种不同的东西**：
+
+- `/v1/triggers*` = 库里的一行定义（`nous-store` 的 `triggers`/`fires`）+ 点火账 + 调度健康。
+- `/v1/trigger-projects*` = 盘上的一个 cargo 项目目录（源码、能编译、能发布）。
+
+合成一个「触发器宿主」大对象（`triggers_host() -> Trait` 之类）会更整齐，但那等于说
+「能点火的人自然也拿到了 git 写锁、也能起 cargo」—— 假的。两条就两条：
+`triggers_runtime()` 与 `triggers_repo()`。
+
+`triggers_runtime` 返回 `Option<&TriggerRuntime>`（借用）而不是 `Option<Arc<..>>`：
+`TriggerRuntime` 本来就住在 `AppState` 里（搬家前就是 `Option<TriggerRuntime>`），
+handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没有一个要所有权。
+顺手加一层 `Arc` 只会让 `plugins.rs` 的 `impl Host` 多一次 clone。
+
+**`FAUX_MODEL_ID` 下沉到 `nous-ai`**：点火成功后的 faux 轮次要构造
+`TurnRequest.model`，用的是 `server::runtime::FAUX_MODEL_ID`（`"echo"`）。插件不能
+依赖 `server`，但也不该抄一份字面量（faux 的回复正文里带着这个 id，抄一份就会漂）。
+它本来就该归拥有 `FauxProvider` 的那一层 —— 落在 `nous-ai`（0.2.1），
+`server/src/runtime.rs` 用 `pub use` 转出去，既有调用点一个字都不用改。
+
+**`HttpRefusal` 补 `Display` + `Error`**：CLI `nous-app --triggers` 与
+`GET /v1/triggers` 是**同一个函数**（#58 判据 4），搬走之后 CLI 那一侧 `?` 需要能转换。
+不补这两个 impl 就得在 CLI 里包一层「同一份 JSON 的再装配」——那正是搬运票要消灭的东西。
+`nous-routes` 0.2.1 → 0.2.2（纯加法，patch）。
+
+**行为唯一的改动**：`RepoError::Conflict` 的回包文案统一了。
+`trigger_projects.rs` 原来自己写「……—— 文件被别处改过了，先重新读盘再存」，
+现在跟三套私库一样走 `nous_repo::Refusal::from_repo`（「……—— 先重新打开这个文件，
+再存一次」）。两句话说的是同一件事，四处各写一份才是 bug；没有测试钉旧文案。
+
+**代价 / 反悔点**：
+
+1. 新 crate 出生即全名（规则 12），**没有改名那趟** —— 这是 `prompts`/`ext` 两次
+   改名得出的结论：新东西直接叫对名字，比事后改便宜。
+2. 静态表只剩 `repo`(30) / `sessions`(17) / `Nous_Device`(8)。`repo` 那 30 条是
+   下一个，也是「`nous-repo` 该不该自带 HTTP」这个决定的最后机会 —— 现在它还是
+   platform 层、零 axum，选择「宿主注入根路径」的话这条线能保住。
+3. Desk 侧不用动：`Feature` 表里没有「触发器」这一项，`Nous_Triggers` 只在
+   `capabilities.modules` 里多一行（改名窗口的问题在 `Nous_Extend` 那次已经踩过）。
+
+## 2026-11-27 模块全名 `Element_Models` → `Models`
+
+**决定**：`crates/Element/Models/plugin.toml` 的 `name` 改成 `Models`，插件版本 `0.2.0` →
+`0.3.0`（规则 8：身份行改了就是 minor —— `plugin-versions.py` 的 `MANIFEST_KEYS` 也认这一条）。
+
+**只动了全名。** 目录 `crates/Element/Models`、包名 `element-models`、capability `models`、
+元素库组 id `GROUP_ID = "element-models"`（`wire.md` 1016 规定固定）一个字没动。规则 12 的
+三套写法各自独立，所以全名改变不影响磁盘、不影响 cargo、不影响盘上数据 —— 只影响
+`/v1/capabilities` 的 `modules[].name`、`/v1/_routes` 的 `module` 标签、`/v1/plugins/:name/readme`
+的路由名，以及桌面端插件页那一行（客户端只透传 `name`，不改代码、不存对照表，规则 9）。
+
+**为什么**：全名 `Element_Models` 里 `Element` 是 vendor 段，模块段是 `Models`，读起来重复；
+`Nous_Device` 那种两段式是为了 Magento 的 `Vendor_Module` 长相，但这里模块段本身就是
+完整语义（「模型」），vendor 已经由 `modules[].vendor` 与目录第一段表达。
+
+**代价**：旧的 URL 名字直接 404 `unknown_module` —— 不做别名、不保留兼容名。理由是「名字是
+身份」（规则 12）：留一个别名就等于插件有两个名字，`/v1/_routes` 的 `module` 标签、
+`docs/plugins.md`、`plugin.toml` 三处都得能对上一个，别名会立刻把这个不变量破掉。
+桌面端没有硬编码，跟着引擎报的名字走，所以这一改动对它零成本。
+
+**反悔点**：如果哪天发现全名第一段必须与 vendor 一致这条规则要被机器判据强制（目前
+`check-plugins.sh` 只在 `_` 存在时比对第一段与 vendor），那 `Models` 这种无 vendor 段的全名
+就会成为「老式小写连字符名」之外的第三种形态，判据得再补一档 —— 那时要么改成
+`Element_Models`（本决定作废），要么把「全名可省略 vendor 段」写进规则 12。

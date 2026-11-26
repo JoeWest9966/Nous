@@ -321,14 +321,14 @@ async fn a_broken_cursor_or_limit_is_400_not_500() {
 struct BrokenSource;
 
 impl nous_server::SessionSource for BrokenSource {
-    fn sessions(&self) -> nous_server::Result<Vec<nous_durable::storage::sessions::SessionItem>> {
-        Err(nous_server::ServerError::Internal("boom".to_string()))
+    fn sessions(&self) -> nous_sessions::Result<Vec<nous_durable::storage::sessions::SessionItem>> {
+        Err(nous_sessions::SessionError::Internal("boom".to_string()))
     }
-    fn entries(&self, _: i64) -> nous_server::Result<Vec<Value>> {
-        Err(nous_server::ServerError::Internal("boom".to_string()))
+    fn entries(&self, _: i64) -> nous_sessions::Result<Vec<Value>> {
+        Err(nous_sessions::SessionError::Internal("boom".to_string()))
     }
-    fn live_message(&self, _: i64) -> nous_server::Result<Option<Value>> {
-        Err(nous_server::ServerError::Internal("boom".to_string()))
+    fn live_message(&self, _: i64) -> nous_sessions::Result<Option<Value>> {
+        Err(nous_sessions::SessionError::Internal("boom".to_string()))
     }
 }
 

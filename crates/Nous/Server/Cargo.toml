@@ -33,6 +33,7 @@ nous-prompts = { workspace = true }
 library-skill = { workspace = true }
 nous-env-ssh = { workspace = true }
 library-extend = { workspace = true }
+nous-triggers = { workspace = true }
 nous-sessions = { workspace = true }
 data-data-manager = { workspace = true }
 data-archive = { workspace = true }

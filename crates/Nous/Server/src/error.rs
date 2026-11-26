@@ -86,3 +86,25 @@ impl std::fmt::Display for ServerError {
 impl std::error::Error for ServerError {}
 
 pub type Result<T> = std::result::Result<T, ServerError>;
+
+/// 会话层错误（`nous_sessions::SessionError`）→ 本层。十个变体一对一。
+///
+/// 这层 `From` 是过渡期的接住网：17 条端点还写在 `routes.rs` 里的时候，它们用
+/// `Result<T, ServerError>`；搬进插件之后只剩 `SessionError::into_refusal()` 一个出口。
+impl From<nous_sessions::SessionError> for ServerError {
+    fn from(error: nous_sessions::SessionError) -> Self {
+        use nous_sessions::SessionError as E;
+        match error {
+            E::BadRequest(m) => ServerError::BadRequest(m),
+            E::BadGateway(m) => ServerError::BadGateway(m),
+            E::Forbidden(m) => ServerError::Forbidden(m),
+            E::NotFound(m) => ServerError::NotFound(m),
+            E::Conflict(m) => ServerError::Conflict(m),
+            E::Validation { field, problem } => ServerError::Validation { field, problem },
+            E::PreconditionFailed(m) => ServerError::PreconditionFailed(m),
+            E::Locked(m) => ServerError::Locked(m),
+            E::ServiceUnavailable(m) => ServerError::ServiceUnavailable(m),
+            E::Internal(m) => ServerError::Internal(m),
+        }
+    }
+}

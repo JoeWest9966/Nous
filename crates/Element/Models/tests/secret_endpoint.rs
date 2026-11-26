@@ -107,11 +107,11 @@ fn both_endpoints_are_declared_under_the_plugin_module() {
     assert_eq!(
         declared,
         vec![
-            ("GET".to_string(), "/v1/models/elements".to_string(), "Element_Models"),
+            ("GET".to_string(), "/v1/models/elements".to_string(), "Models"),
             (
                 "PUT".to_string(),
                 "/v1/providers/:id/secret".to_string(),
-                "Element_Models"
+                "Models"
             ),
         ],
         "注册表写法必须是 wire.md 的 :id 形式"

@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use nous_durable::storage::sessions::SessionItem;
-use nous_server::{Result, ServerError, SessionSource};
+use nous_server::{ServerError, SessionSource};
+// `SessionSource` 的方法返回插件自己的错误类型（搬家后 trait 住在 `nous-sessions`）。
+use nous_sessions::Result;
 use serde_json::{json, Value};
 
 pub struct FakeSource {

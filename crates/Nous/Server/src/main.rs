@@ -148,6 +148,13 @@ impl From<Box<dyn std::error::Error>> for RunError {
     }
 }
 
+/// 会话层的错误在启动期只是「一般失败」：没有 HTTP 回包可发，理由表也还没到那一步。
+impl From<nous_sessions::SessionError> for RunError {
+    fn from(error: nous_sessions::SessionError) -> Self {
+        Self::Failed(error.to_string().into())
+    }
+}
+
 impl From<String> for RunError {
     fn from(message: String) -> Self {
         Self::Failed(message.into())
@@ -162,6 +169,14 @@ impl From<&str> for RunError {
 
 impl From<std::io::Error> for RunError {
     fn from(error: std::io::Error) -> Self {
+        Self::Failed(Box::new(error))
+    }
+}
+
+/// 插件把端点共用函数（触发器观测读口）搬出去之后，CLI 侧拿到的是
+/// `HttpRefusal`：语义拒绝 + 状态码。`Display` 打的就是回包里那句人话。
+impl From<nous_routes::HttpRefusal> for RunError {
+    fn from(error: nous_routes::HttpRefusal) -> Self {
         Self::Failed(Box::new(error))
     }
 }
@@ -250,9 +265,9 @@ async fn run() -> Result<(), RunError> {
             let plugins_db = plugins_db_path(&db);
             let store = nous_store::Store::open(&plugins_db)
                 .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
-            let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store)?;
+            let definitions = nous_triggers::TriggerRuntime::open_definitions_only(&store)?;
             // CLI 里没有调度循环在跑：lastTickAt = null，lag 由纯函数现算（也是 0）。
-            let report = nous_server::triggers::observation_report(&store, &definitions, None, now_ms())?;
+            let report = nous_triggers::observation_report(&store, &definitions, None, now_ms())?;
             println!("{}", serde_json::to_string(&report).map_err(|e| e.to_string())?);
             return Ok(());
         }
@@ -373,7 +388,7 @@ async fn run() -> Result<(), RunError> {
         triggers_root(),
     );
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
-    let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {
+    let lookup: nous_triggers::TemplateLookup = Arc::new(move |name: &str| {
         let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
         let address = serde_json::json!({
             "kind": "presets.Session-Template",
@@ -392,7 +407,7 @@ async fn run() -> Result<(), RunError> {
             .flatten()
             .and_then(|doc| doc.value.get("body").and_then(serde_json::Value::as_str).map(str::to_string))
     });
-    let trigger_runtime = nous_server::triggers::TriggerRuntime::new(
+    let trigger_runtime = nous_triggers::TriggerRuntime::new(
         trigger_store,
         commands.session().clone(),
         lookup,
@@ -403,7 +418,7 @@ async fn run() -> Result<(), RunError> {
     // #82：试跑判定复用 #73 的 evaluate —— 时钟由这里注入一次，许可名单看当前触发器定义。
     let clock_allowed = {
         let store = trigger_runtime.store.lock().await;
-        nous_server::triggers::TriggerRuntime::open_definitions_only(&store)
+        nous_triggers::TriggerRuntime::open_definitions_only(&store)
             .map(|definitions| definitions.iter().any(|definition| {
                 definition.spec().on.as_deref().is_some_and(|on| on == "cron" || on == "clock")
                     || definition.spec().schedule.is_some()

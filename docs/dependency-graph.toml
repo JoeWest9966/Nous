@@ -14,7 +14,8 @@ nous-env = ["nous-chord", "nous-routes"]
 
 # 私库层：`Refusal`（`RepoError → 状态码` 的唯一翻译）也在这里 —— 它拥有 `RepoError`，
 # 翻译自己家的错误，依赖方向永远是对的。放 `nous-routes` 会成环（`env → routes → repo → env`）。
-nous-repo = ["nous-env"]
+# 端点住在本 crate（`/v1/repos/*` 三十条）：路径解析走 nous-env，声明走 nous-routes。
+nous-repo = ["nous-env", "nous-routes"]
 nous-ai = ["nous-telemetry", "nous-ai-types"]
 nous-tools = ["nous-ai", "nous-env"]
 nous-runtime = ["nous-ai"]
@@ -34,6 +35,10 @@ nous-prompts = ["nous-env", "nous-repo", "nous-routes"]
 # 扩展插件：运行时 + 自带 15 条 /v1/extensions* 端点。编辑页的盘面规矩走
 # nous_repo::entries（不在这里 spawn git），回包壳走 nous-routes；运行时与审计仍只依赖 durable。
 library-extend = ["nous-durable", "nous-ext-sdk", "nous-repo", "nous-routes"]
+
+# 触发器插件：点火与观测只要 store/durable/sessions/ai/dispatcher；工程面另需
+# 私库（唯一 git 面）与唯一的执行面（publish 跑 cargo），端点走 nous-routes。
+nous-triggers = ["nous-store", "nous-durable", "nous-sessions", "nous-ai", "nous-dispatcher", "nous-repo", "nous-tools", "nous-routes"]
 
 
 # #73 dispatcher 用 durable sleeping 任务落 tick、store 读写账本、chord 处理增量。
@@ -55,6 +60,8 @@ nous-server = [
   "nous-env-ssh",
   # #81 扩展管理面（create/duplicate/install/类别词表/usage）
   "library-extend",
+  # #57/#58/#73/#80 触发器：定义面 + 工程面（24 条 /v1/triggers* 与 /v1/trigger-projects*）
+  "nous-triggers",
   # #72 prompts 的目录只读投影 + #71/#83 skills（解析层 + 自带 6 条端点）
   "nous-prompts", "library-skill",
   # #75 五套私库文件面 + #76 variant + #77 upstream

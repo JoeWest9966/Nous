@@ -24,7 +24,7 @@ use nous_durable::storage::sessions::{
 pub use nous_durable::SearchItem;
 use serde_json::{json, Value};
 
-use crate::error::{Result, ServerError};
+use crate::error::{self, Result, SessionError};
 
 /// 端点要读的两类东西：会话快照 + 分页历史。
 pub trait SessionSource: Send + Sync {
@@ -77,7 +77,7 @@ pub trait SessionSource: Send + Sync {
     /// #85：一次性搜索投影。服务端扫一次库，不让客户端逐会话拉历史。
     fn search(&self, query: &str, kind: &str) -> Result<Vec<SearchItem>> {
         let _ = (query, kind);
-        Err(ServerError::Conflict("search not configured".into()))
+        Err(SessionError::Conflict("search not configured".into()))
     }
 
     /// #85：谁在用某个扩展 / 技能。读会话记录的对应字段。
@@ -98,7 +98,7 @@ impl ImportedSource {
         let path = path.as_ref().to_path_buf();
         // 开库时就试读一次：路径错了要在装配期报，不要等第一个请求。
         ImportedStore::read(&path)
-            .map_err(|error| ServerError::Internal(format!("open {}: {error}", path.display())))?;
+            .map_err(|error| SessionError::Internal(format!("open {}: {error}", path.display())))?;
         Ok(Arc::new(Self {
             path,
             model_levels: std::sync::Mutex::new(BTreeMap::new()),
@@ -122,7 +122,7 @@ impl ImportedSource {
 
     fn store(&self) -> Result<ImportedStore> {
         ImportedStore::read(&self.path).map_err(|error| {
-            ServerError::Internal(format!("read {}: {error}", self.path.display()))
+            SessionError::Internal(format!("read {}: {error}", self.path.display()))
         })
     }
 }
@@ -136,12 +136,12 @@ impl SessionSource for ImportedSource {
     fn sessions(&self) -> Result<Vec<SessionItem>> {
         let levels = self.model_levels.lock().unwrap_or_else(|e| e.into_inner());
         nous_durable::storage::sessions::render_sessions_with_levels(&self.store()?, &levels)
-        .map_err(|error| ServerError::Internal(format!("render /v1/sessions: {error}")))
+        .map_err(|error| SessionError::Internal(format!("render /v1/sessions: {error}")))
     }
 
     fn entries(&self, session: i64) -> Result<Vec<Value>> {
         nous_durable::storage::sessions::render_entries(&self.store()?, session)
-            .map_err(|error| ServerError::Internal(format!("render entries: {error}")))
+            .map_err(|error| SessionError::Internal(format!("render entries: {error}")))
     }
 
     fn entries_page(
@@ -151,17 +151,17 @@ impl SessionSource for ImportedSource {
         cursor: Option<&Cursor>,
     ) -> Result<(Vec<Value>, Option<Cursor>)> {
         render_entries_page(&self.store()?, session, limit, cursor)
-            .map_err(|error| ServerError::Internal(format!("render entries page: {error}")))
+            .map_err(|error| SessionError::Internal(format!("render entries page: {error}")))
     }
 
     fn live_message(&self, session: i64) -> Result<Option<Value>> {
         render_live_message(&self.store()?, session)
-            .map_err(|error| ServerError::Internal(format!("render live message: {error}")))
+            .map_err(|error| SessionError::Internal(format!("render live message: {error}")))
     }
 
     fn search(&self, query: &str, kind: &str) -> Result<Vec<SearchItem>> {
         let store = self.store()?;
-        let map_err = |error| ServerError::Internal(format!("search {kind}: {error}"));
+        let map_err = |error| SessionError::Internal(format!("search {kind}: {error}"));
         let mut items = match kind {
             "sessions" => nous_durable::search_sessions(&store, query).map_err(map_err)?,
             "documents" => nous_durable::search_documents(&store, query).map_err(map_err)?,
@@ -190,6 +190,6 @@ impl SessionSource for ImportedSource {
 
     fn usage(&self, field: &str) -> Result<Value> {
         nous_durable::usage(&self.store()?, field)
-            .map_err(|error| ServerError::Internal(format!("usage {field}: {error}")))
+            .map_err(|error| SessionError::Internal(format!("usage {field}: {error}")))
     }
 }

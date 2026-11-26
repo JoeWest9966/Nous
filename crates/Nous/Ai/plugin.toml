@@ -1,6 +1,6 @@
 name = "ai"
 vendor = "Nous"
-version = "0.2.0"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+version = "0.2.1"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；FAUX_MODEL_ID 落到这里 = 新公开常量，patch（点火路径与 faux 装配共用一份，不许再各写各的）
 layer = "platform"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-ai"
 

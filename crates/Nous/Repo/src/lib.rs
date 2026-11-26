@@ -10,6 +10,7 @@ mod error;
 mod files;
 mod git;
 mod publish;
+pub mod routes;
 mod upstream;
 mod variants;
 mod views;

@@ -73,11 +73,24 @@ pub struct Refusal {
     pub message: String,
     /// 内容闸未过时带上的两格（`RepoError::Validation`）：`{field, problem}`。
     pub validation: Option<(String, String)>,
+    /// `RepoError::Conflict` 的回包富化：磁盘当前正文（票面 #75 要求 409 带它）。
+    ///
+    /// Desk 靠这一格在 If-Match 失败时显示「盘上现在是什么」，所以搬到插件里
+    /// 也得照搬——少了它客户端只能重新拉一次。
+    pub content: Option<String>,
+    /// `RepoError::Conflict` 的回包富化：磁盘当前 etag。
+    pub etag: Option<String>,
 }
 
 impl Refusal {
     pub fn new(status: u16, message: impl Into<String>) -> Self {
-        Self { status, message: message.into(), validation: None }
+        Self {
+            status,
+            message: message.into(),
+            validation: None,
+            content: None,
+            etag: None,
+        }
     }
 
     pub fn bad_request(message: impl Into<String>) -> Self {
@@ -114,11 +127,18 @@ impl Refusal {
                 status: 400,
                 message: "内容闸未过".to_string(),
                 validation: Some((field, problem)),
+                content: None,
+                etag: None,
             },
             RepoError::NotFound(m) => Self::not_found(m),
-            RepoError::Conflict { message, .. } => {
-                Self::conflict(format!("{message} —— 先重新打开这个文件，再存一次"))
-            }
+            // 409 的三格照搬：`{error}` 之外还带磁盘当前正文与 etag（#75 票面）。
+            RepoError::Conflict { message, current, etag } => Self {
+                status: 409,
+                message: format!("{message} —— 先重新打开这个文件，再存一次"),
+                validation: None,
+                content: current.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()),
+                etag,
+            },
             RepoError::Busy(m) => Self::conflict(m),
             RepoError::Locked(m) => Self::locked(m),
             RepoError::Io(m) => Self::internal(m),
@@ -132,6 +152,12 @@ impl Refusal {
         if let Some((field, problem)) = &self.validation {
             body["field"] = serde_json::json!(field);
             body["problem"] = serde_json::json!(problem);
+        }
+        if let Some(content) = &self.content {
+            body["content"] = serde_json::json!(content);
+        }
+        if let Some(etag) = &self.etag {
+            body["etag"] = serde_json::json!(etag);
         }
         body
     }

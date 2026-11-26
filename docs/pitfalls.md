@@ -6,6 +6,22 @@
 
 ---
 
+## 2026-11-26 · 新插一个 `impl` 块，把上一块的 `#[async_trait]` 抢走了
+
+**症状**：`error[E0195]: lifetime parameters or bounds on method `remote_subdirs` do not match the
+trait declaration` —— 报的是**另一个插件**（`env`）的方法，而你这次只动了 `repo`。
+
+**原因**：`plugins.rs` 里每个 `impl … Host for AppState` 挤在一起，属性宏写在 impl **正上方**。
+用「在某行前插入一段」的方式加新 impl 时，那段插入点选在了 `#[async_trait::async_trait]` 和
+原来的 `impl` **之间** —— 于是宏挂到了新 impl 上（新 impl 全是同步方法，加了也无害），
+原 impl 丢了宏，它的 `async fn` 就对不上 trait 声明了。
+
+**下次怎么做**：插入新 `impl` 时，锚点选**属性宏之后**（`impl xxx::Host for AppState {` 这一行），
+或者插完立刻 `grep -n 'async_trait::async_trait' -A2` 看一眼它下面跟的是哪个 impl。
+这个错编译器的报错位置会指向受害的那个 impl（`plugins.rs:236`），而不是作业现场，很容易查错方向。
+
+---
+
 ## 2026-11-17 · 文档里写了一个真控制字符 ⇒ 这份文档从搜索里消失
 
 **症状**：`rg '500ms' docs/` 明明该命中 `docs/storage.md`，输出里却整个没有这份文件；`grep`
@@ -470,3 +486,28 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 **怎么防**：判据补 `single_pascal` 一支，并钉正反哨兵：`dir_of("Skill")=="Skill"`、
 `dir_of("Models")=="Models"`、`module_name_ok("Skill")` 为真，同时
 `Nous_device` / `nous-device_Extra` 仍为假。新增全名形态时先补判据再改清单。
+
+## 2026-11-26 · `docs/plugins.md` 的表格行里不许出现裸 `|`
+
+**症状**：`capabilities_manifest` 报「六列在 docs/plugins.md 里一行都对不上」，
+打印出来的行看着完全正确。
+
+**根因**：那一行里写了 `` `PATCH|PUT /v1/triggers/{code}` `` —— 表格用 `|` 分列，
+裸的竖线把一行切成两半，`split('|')` 得到的不是 10 格，六列比对自然全错。
+同一类还有**行尾漏了 `|`**（少一格，cells 长度也跟着变）。
+
+**怎么防**：端点列表里要写两个方法就写「`PATCH / PUT`」，不要用竖线；加完行先数
+`awk 'NR==行号' | grep -o '|' | wc -l` 应该是 9 个。
+
+**症状**：只把 `plugin.toml` 的 `name` 从 `Element_Models` 改成 `Models`（目录、包名、capability、
+组 id 一个字没动），`scripts/plugin-versions.py --doc-check` 立刻红两条，`capabilities_shapes`
+的字段快照也跟着漂。
+
+**根因**：这两处都按「插件身份」算，不看目录 —— `MANIFEST_KEYS` 里有 `name`，改它就是 minor
+（考古从 `0.2.0` 跳到 `0.3.0`）；快照里 `modules[].version` 报的是插件自己的版本（规则 8），
+版本一涨快照就漂。改名票的「只改一行」是假的：还要改 `meta.rs` 的 `MANIFEST`、`/v1/_routes`
+的 `MODULE`、版本线表（`Models` 与顺带 +patch 的 `server` 两行）、快照。
+
+**怎么防**：改全名前先按这五处列清单（`plugin.toml` / `MODULE` / `MANIFEST` / 版本线表 /
+快照），改完依次跑 `check-plugins.sh`、`plugin-versions.py --check --doc-check`、
+`cargo test -p nous-server`。别用 `--write-doc` 图省事 —— 它会顺手改写其它插件那几行。

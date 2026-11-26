@@ -1,17 +1,11 @@
-//! 触发器工程面（n8qkkj 的宿主）：一个触发器 = 一个独立 cargo 项目。
+//! 触发器项目面：`/v1/trigger-projects*` 那 13 条端点。
 //!
-//! 与 `/v1/triggers`（定义 + 调度 + 点火账）**不是同一层**：
-//! 那边是「库里的一行定义」，这边是「盘上的一个项目目录」，有源码、能编译、能发布。
-//! 这一层只做 HTTP ↔ `nous_repo` 的翻译；文件读写、etag、git、归档三代全在
-//! `nous_repo`（唯一 git 进程面），这里不拼第二条 `git add`。
+//! 搬自 `server/src/trigger_projects.rs`，一行逻辑没改。每个触发器项目是仓里一个
+//! 目录（`nous.json` + `Cargo.toml` + `src/main.rs`），「发布」= cargo check → cargo
+//! build → 写根 `index.json` → 只 add 这一个项目的文件 → 提交（可推则推）。
 //!
-//! 数据根：`NOUS_TRIGGERS`，默认 `/opt/Nous-Trigger`（与旧 n8qkkj 同一个目录）。
-//! 目录形状：`<root>/<name>/{nous.json,Cargo.toml,src/main.rs,README.md}`、
-//! `<root>/categories.json`、`<root>/index.json`、`<root>/.archive/<name>/`。
-//!
-//! **保存 ≠ 发布**：`PUT file` 只落盘；`POST publish` 才
-//! `cargo check → cargo build → index.json → commit → push`，中间进度拿不到，
-//! 失败用 422 + `stage` 说是哪一步。
+//! 起进程**不在这里**：走 `nous_tools::os_env::run_capture_async`（spec 第 1 章
+//! 判据 6 / 12 守的唯一执行面）。宿主要给的只有一件事：`triggers` 那个私库的句柄。
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -21,14 +15,17 @@ use std::time::Duration;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::Json;
 use nous_repo::{Pushed, Repo, RepoError, WriteFile};
+use nous_routes::HttpRefusal;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::app::AppState;
-use crate::error::{Result, ServerError};
+use crate::refusal::{bad, conflict, internal, not_found};
+use crate::routes::Host;
+
+/// 本模块的失败都是「拒绝 + 状态码」：语义在 `nous_routes::HttpRefusal`，不另造一套枚举。
+type Result<T> = std::result::Result<T, HttpRefusal>;
 
 /// 构建超时：旧 n8qkkj 是 180s；首次编译要比 check 长，给同一份预算。
 const BUILD_TIMEOUT: Duration = Duration::from_secs(180);
@@ -37,27 +34,12 @@ const MAX_BYTES: usize = nous_repo::MAX_FILE_BYTES;
 /// 只认这些扩展名/文件名，避免把 target/ 里的东西当源码列出来。
 const SKIP_DIRS: [&str; 4] = [".git", "target", ".archive", "node_modules"];
 
-pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    router
-        .route("/v1/trigger-projects", get(list))
-        .route("/v1/trigger-projects/files", get(files))
-        .route("/v1/trigger-projects/file", get(read).put(write))
-        .route("/v1/trigger-projects/create", post(create))
-        .route("/v1/trigger-projects/publish", post(publish))
-        .route("/v1/trigger-projects/archive", post(archive))
-        .route("/v1/trigger-projects/restore", post(restore))
-        .route("/v1/trigger-projects/purge", post(purge))
-        .route("/v1/trigger-projects/categories", get(categories).post(edit_vocab))
-        .route("/v1/trigger-projects/category", post(set_category))
-        .route("/v1/trigger-projects/sync", post(sync))
-}
-
 // ── 仓 / 路径 ───────────────────────────────────────────────────────────
 
-fn repo(state: &AppState) -> Result<Arc<Repo>> {
-    state.repo("triggers").ok_or_else(|| {
-        ServerError::Conflict(
-            "触发器仓没装配：NOUS_TRIGGERS 指向的目录不存在或不是 git 仓".into(),
+fn repo<H: Host>(host: &H) -> Result<Arc<Repo>> {
+    host.triggers_repo().ok_or_else(|| {
+        conflict(
+            "触发器仓没装配：NOUS_TRIGGERS 指向的目录不存在或不是 git 仓",
         )
     })
 }
@@ -72,7 +54,7 @@ fn check_name(name: &str) -> Result<()> {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-' | '.'))
     {
-        return Err(ServerError::BadRequest(format!(
+        return Err(bad(format!(
             "名字不合法：{name}（小写字母开头，只含小写 / 数字 / . _ -，3–64 位）"
         )));
     }
@@ -85,7 +67,7 @@ fn check_rel(path: &str) -> Result<()> {
         || path.starts_with('/')
         || path.split('/').any(|p| p.is_empty() || p == "." || p == "..")
     {
-        return Err(ServerError::BadRequest(format!("文件路径不合法：{path}")));
+        return Err(bad(format!("文件路径不合法：{path}")));
     }
     Ok(())
 }
@@ -94,24 +76,16 @@ fn project_dir(repo: &Repo, name: &str) -> Result<PathBuf> {
     check_name(name)?;
     let dir = repo.root().join(name);
     if !dir.is_dir() {
-        return Err(ServerError::NotFound(format!("没有这个触发器：{name}")));
+        return Err(not_found(format!("没有这个触发器：{name}")));
     }
     Ok(dir)
 }
 
-fn repo_error(error: RepoError) -> ServerError {
-    match error {
-        RepoError::BadRequest(m) | RepoError::InvalidPath(m) => ServerError::BadRequest(m),
-        RepoError::Validation { field, problem } => ServerError::Validation { field, problem },
-        RepoError::NotFound(m) => ServerError::NotFound(m),
-        RepoError::Conflict { message, .. } => ServerError::Conflict(format!(
-            "{message} —— 文件被别处改过了，先重新读盘再存"
-        )),
-        RepoError::Busy(m) => ServerError::Conflict(m),
-        RepoError::Locked(m) => ServerError::Locked(m),
-        RepoError::Io(m) => ServerError::Internal(m),
-        RepoError::LockPoisoned => ServerError::Internal("触发器仓写锁中毒".into()),
-    }
+/// `RepoError` → HTTP 回包：语义判在 `nous_repo::Refusal`（它拥有 `RepoError`），
+/// 这里只把 `(status, body())` 两格搬过来，不重新判一遍。
+fn repo_error(error: RepoError) -> HttpRefusal {
+    let refusal = nous_repo::Refusal::from_repo(error);
+    HttpRefusal::new(refusal.status, refusal.body())
 }
 
 fn pushed_json(pushed: Pushed) -> Value {
@@ -125,8 +99,8 @@ fn pushed_json(pushed: Pushed) -> Value {
 // ── 清单 ───────────────────────────────────────────────────────────────
 
 /// `GET /v1/trigger-projects`：旧 n8qkkj 的清单形状。
-async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+pub async fn list<H: Host>(State(host): State<H>) -> Result<Json<Value>> {
+    let repo = repo(&host)?;
     Ok(Json(list_value(&repo)?))
 }
 
@@ -287,22 +261,22 @@ fn read_manifest(dir: &Path) -> Option<Value> {
 // ── 文件面 ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct NameQuery {
+pub struct NameQuery {
     name: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct FileQuery {
+pub struct FileQuery {
     name: String,
     path: String,
 }
 
 /// `GET /v1/trigger-projects/files?name=`：递归清单，路径相对触发器目录。
-async fn files(
-    State(state): State<Arc<AppState>>,
+pub async fn files<H: Host>(
+    State(host): State<H>,
     Query(query): Query<NameQuery>,
 ) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     let dir = project_dir(&repo, &query.name)?;
     let mut files = Vec::new();
     walk(&dir, "", &mut files);
@@ -383,24 +357,24 @@ fn kind_of(path: &str) -> &'static str {
 }
 
 /// `GET /v1/trigger-projects/file?name=&path=`：正文 + etag + HEAD 基线。
-async fn read(
-    State(state): State<Arc<AppState>>,
+pub async fn read<H: Host>(
+    State(host): State<H>,
     Query(query): Query<FileQuery>,
 ) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     let _dir = project_dir(&repo, &query.name)?;
     check_rel(&query.path)?;
     let rel = format!("{}/{}", query.name, query.path);
     let file = repo.read_file(&rel).map_err(repo_error)?;
     if file.content.len() > MAX_BYTES {
-        return Err(ServerError::BadRequest(format!(
+        return Err(bad(format!(
             "文件超过 {}KB：{}",
             MAX_BYTES / 1024,
             query.path
         )));
     }
     let text = String::from_utf8(file.content).map_err(|_| {
-        ServerError::BadRequest(format!("拒绝非 UTF-8 文件：{}", query.path))
+        bad(format!("拒绝非 UTF-8 文件：{}", query.path))
     })?;
     let base = repo
         .pending_diff(&rel)
@@ -422,7 +396,7 @@ async fn read(
 }
 
 #[derive(Debug, Deserialize)]
-struct SaveBody {
+pub struct SaveBody {
     name: String,
     path: String,
     text: String,
@@ -432,15 +406,15 @@ struct SaveBody {
 }
 
 /// `PUT /v1/trigger-projects/file`：只落盘，不提交、不编译。
-async fn write(
-    State(state): State<Arc<AppState>>,
+pub async fn write<H: Host>(
+    State(host): State<H>,
     Json(body): Json<SaveBody>,
 ) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     let _dir = project_dir(&repo, &body.name)?;
     check_rel(&body.path)?;
     if body.text.len() > MAX_BYTES {
-        return Err(ServerError::BadRequest(format!(
+        return Err(bad(format!(
             "文件超过 {}KB：{}",
             MAX_BYTES / 1024,
             body.path
@@ -463,7 +437,7 @@ async fn write(
 // ── 新建 ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct CreateBody {
+pub struct CreateBody {
     name: String,
     #[serde(default)]
     summary: String,
@@ -472,24 +446,24 @@ struct CreateBody {
 }
 
 /// `POST /v1/trigger-projects/create`：生成能编过的骨架，**不提交**（建完是「未发布」）。
-async fn create(
-    State(state): State<Arc<AppState>>,
+pub async fn create<H: Host>(
+    State(host): State<H>,
     Json(body): Json<CreateBody>,
 ) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     check_name(&body.name)?;
     let dir = repo.root().join(&body.name);
     if dir.exists() {
-        return Err(ServerError::Conflict(format!("目录已存在：{}", body.name)));
+        return Err(conflict(format!("目录已存在：{}", body.name)));
     }
     if repo.root().join(".archive").join(&body.name).exists() {
-        return Err(ServerError::Conflict(format!(
+        return Err(conflict(format!(
             "归档里还有同名目录：{}（code 永不复用）",
             body.name
         )));
     }
     std::fs::create_dir_all(dir.join("src"))
-        .map_err(|e| ServerError::Internal(format!("建目录失败：{e}")))?;
+        .map_err(|e| internal(format!("建目录失败：{e}")))?;
     let summary = if body.summary.trim().is_empty() {
         "还没写说明"
     } else {
@@ -523,7 +497,7 @@ async fn create(
     ];
     for (path, content) in files {
         std::fs::write(dir.join(path), content)
-            .map_err(|e| ServerError::Internal(format!("写 {path} 失败：{e}")))?;
+            .map_err(|e| internal(format!("写 {path} 失败：{e}")))?;
     }
     Ok(Json(json!({ "name": body.name, "untracked": true })))
 }
@@ -531,7 +505,7 @@ async fn create(
 // ── 发布 ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct PublishBody {
+pub struct PublishBody {
     name: String,
 }
 
@@ -544,11 +518,11 @@ fn unprocessable(stage: &str, error: String) -> Response {
 }
 
 /// `POST /v1/trigger-projects/publish`：五步同步长请求。失败 422 + `stage`。
-async fn publish(
-    State(state): State<Arc<AppState>>,
+pub async fn publish<H: Host>(
+    State(host): State<H>,
     Json(body): Json<PublishBody>,
 ) -> Result<Response> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     let dir = project_dir(&repo, &body.name)?;
     if !dir.join("Cargo.toml").is_file() {
         return Ok(unprocessable("check", "缺 Cargo.toml，没法编译".into()));
@@ -733,37 +707,37 @@ fn write_index(repo: &Repo) -> std::result::Result<(), String> {
 // ── 归档三代 ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct ArchiveBody {
+pub struct ArchiveBody {
     name: String,
 }
 
-async fn archive(
-    State(state): State<Arc<AppState>>,
+pub async fn archive<H: Host>(
+    State(host): State<H>,
     Json(body): Json<ArchiveBody>,
 ) -> Result<Json<Value>> {
-    lifecycle(state, body, |repo, name| repo.archive(name, None)).await
+    lifecycle(host, body, |repo, name| repo.archive(name, None)).await
 }
 
-async fn restore(
-    State(state): State<Arc<AppState>>,
+pub async fn restore<H: Host>(
+    State(host): State<H>,
     Json(body): Json<ArchiveBody>,
 ) -> Result<Json<Value>> {
-    lifecycle(state, body, |repo, name| repo.restore(name, None)).await
+    lifecycle(host, body, |repo, name| repo.restore(name, None)).await
 }
 
-async fn purge(
-    State(state): State<Arc<AppState>>,
+pub async fn purge<H: Host>(
+    State(host): State<H>,
     Json(body): Json<ArchiveBody>,
 ) -> Result<Json<Value>> {
-    lifecycle(state, body, |repo, name| repo.purge(name, None)).await
+    lifecycle(host, body, |repo, name| repo.purge(name, None)).await
 }
 
-async fn lifecycle(
-    state: Arc<AppState>,
+async fn lifecycle<H: Host>(
+    host: H,
     body: ArchiveBody,
     action: impl FnOnce(&Repo, &str) -> std::result::Result<nous_repo::LifecycleResult, RepoError>,
 ) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     check_name(&body.name)?;
     let result = action(&repo, &body.name).map_err(repo_error)?;
     let push_error = match result.pushed {
@@ -851,9 +825,9 @@ fn insert_with_parents(set: &mut BTreeSet<String>, category: &str) {
 
 fn write_vocab(root: &Path, vocab: &[String]) -> Result<()> {
     let text = serde_json::to_string_pretty(vocab)
-        .map_err(|e| ServerError::Internal(format!("词表序列化失败：{e}")))?;
+        .map_err(|e| internal(format!("词表序列化失败：{e}")))?;
     std::fs::write(vocab_path(root), text + "\n")
-        .map_err(|e| ServerError::Internal(format!("写 categories.json 失败：{e}")))
+        .map_err(|e| internal(format!("写 categories.json 失败：{e}")))
 }
 
 /// 改所有 `nous.json` 的 `category` 数组：`rename` 带子类一起搬，`remove` 连子类一起摘。
@@ -897,20 +871,20 @@ fn rewrite_manifests(root: &Path, old: &str, new: Option<&str>) -> Result<()> {
             object.insert("category".into(), Value::Array(mapped));
         }
         let text = serde_json::to_string_pretty(&value)
-            .map_err(|e| ServerError::Internal(format!("序列化 {name}/nous.json 失败：{e}")))?;
+            .map_err(|e| internal(format!("序列化 {name}/nous.json 失败：{e}")))?;
         std::fs::write(&manifest_path, text + "\n")
-            .map_err(|e| ServerError::Internal(format!("写 {name}/nous.json 失败：{e}")))?;
+            .map_err(|e| internal(format!("写 {name}/nous.json 失败：{e}")))?;
     }
     Ok(())
 }
 
-async fn categories(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+pub async fn categories<H: Host>(State(host): State<H>) -> Result<Json<Value>> {
+    let repo = repo(&host)?;
     Ok(Json(json!({ "categories": vocab_with_usage(repo.root()) })))
 }
 
 #[derive(Debug, Deserialize)]
-struct VocabBody {
+pub struct VocabBody {
     op: String,
     name: String,
     #[serde(default)]
@@ -918,11 +892,11 @@ struct VocabBody {
 }
 
 /// `POST /v1/trigger-projects/categories`：`add` / `rename` / `remove`。不提交（sync 才提交）。
-async fn edit_vocab(
-    State(state): State<Arc<AppState>>,
+pub async fn edit_vocab<H: Host>(
+    State(host): State<H>,
     Json(body): Json<VocabBody>,
 ) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     let root = repo.root();
     let mut vocab = vocab_with_usage(root);
     match body.op.as_str() {
@@ -936,7 +910,7 @@ async fn edit_vocab(
                 .to
                 .as_deref()
                 .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| ServerError::BadRequest("rename 缺 to".into()))?;
+                .ok_or_else(|| bad("rename 缺 to"))?;
             check_category(to)?;
             for category in &mut vocab {
                 if category == &body.name {
@@ -953,7 +927,7 @@ async fn edit_vocab(
             });
             rewrite_manifests(root, &body.name, None)?;
         }
-        other => return Err(ServerError::BadRequest(format!("不认识的 op：{other}"))),
+        other => return Err(bad(format!("不认识的 op：{other}"))),
     }
     vocab.sort();
     vocab.dedup();
@@ -967,39 +941,39 @@ fn check_category(category: &str) -> Result<()> {
         || category.ends_with('/')
         || category.split('/').any(|p| p.is_empty() || p == "." || p == "..")
     {
-        return Err(ServerError::BadRequest(format!("类别不合法：{category}")));
+        return Err(bad(format!("类别不合法：{category}")));
     }
     Ok(())
 }
 
 #[derive(Debug, Deserialize)]
-struct SetCategoryBody {
+pub struct SetCategoryBody {
     name: String,
     category: Vec<String>,
 }
 
 /// `POST /v1/trigger-projects/category`：给一个触发器挂/换类别（单值写进 `category` 数组）。
-async fn set_category(
-    State(state): State<Arc<AppState>>,
+pub async fn set_category<H: Host>(
+    State(host): State<H>,
     Json(body): Json<SetCategoryBody>,
 ) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+    let repo = repo(&host)?;
     let dir = project_dir(&repo, &body.name)?;
     for category in &body.category {
         check_category(category)?;
     }
     let manifest_path = dir.join("nous.json");
     let text = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| ServerError::Internal(format!("读 nous.json 失败：{e}")))?;
+        .map_err(|e| internal(format!("读 nous.json 失败：{e}")))?;
     let mut value: Value = serde_json::from_str(&text)
-        .map_err(|e| ServerError::Internal(format!("nous.json 不是 JSON：{e}")))?;
+        .map_err(|e| internal(format!("nous.json 不是 JSON：{e}")))?;
     if let Some(object) = value.as_object_mut() {
         object.insert("category".into(), json!(body.category));
     }
     let text = serde_json::to_string_pretty(&value)
-        .map_err(|e| ServerError::Internal(format!("序列化 nous.json 失败：{e}")))?;
+        .map_err(|e| internal(format!("序列化 nous.json 失败：{e}")))?;
     std::fs::write(&manifest_path, text + "\n")
-        .map_err(|e| ServerError::Internal(format!("写 nous.json 失败：{e}")))?;
+        .map_err(|e| internal(format!("写 nous.json 失败：{e}")))?;
 
     let mut vocab = vocab_with_usage(repo.root());
     for category in &body.category {
@@ -1022,8 +996,8 @@ fn catalog_value(repo: &Repo) -> Result<Value> {
 }
 
 /// `POST /v1/trigger-projects/sync`：只提交词表 / 清单，不碰 `.rs`（代码要走 publish）。
-async fn sync(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let repo = repo(&state)?;
+pub async fn sync<H: Host>(State(host): State<H>) -> Result<Json<Value>> {
+    let repo = repo(&host)?;
     let mut paths = vec!["categories.json".to_string(), "index.json".to_string()];
     if let Ok(entries) = std::fs::read_dir(repo.root()) {
         for entry in entries.flatten() {
@@ -1072,3 +1046,4 @@ fn ymd(seconds: i64) -> String {
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}")
 }
+

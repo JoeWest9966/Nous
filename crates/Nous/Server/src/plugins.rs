@@ -26,6 +26,8 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_combos::routes::<Arc<AppState>>());
     all.extend(nous_prompts::routes::routes::<Arc<AppState>>());
     all.extend(library_extend::routes::routes::<Arc<AppState>>());
+    all.extend(nous_repo::routes::routes::<Arc<AppState>>());
+    all.extend(nous_triggers::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -116,12 +118,22 @@ impl library_extend::routes::Host for AppState {
         serde_json::Value,
         nous_routes::HttpRefusal,
     > {
-        self.source().usage("extensions").map_err(|error| {
-            nous_routes::HttpRefusal::new(
-                error.status().as_u16(),
-                serde_json::json!({ "error": error.message() }),
-            )
-        })
+        self.source().usage("extensions").map_err(refusal)
+    }
+}
+
+/// `triggers` 插件的两条宿主能力 —— 也就是搬走之后 `server` 还欠它的全部东西。
+///
+/// 一个是**库里的行**（点火运行时：账本 + 同一个 durable 会话），一个是**盘上的目录**
+/// （`triggers` 私库的写锁与 git）。凑成一条「触发器宿主」大对象看着更整齐，但那等于说
+/// 「能点火的人自然也拿到了 git 写锁」—— 假的。两条就两条。
+impl nous_triggers::routes::Host for AppState {
+    fn triggers_runtime(&self) -> Option<&nous_triggers::TriggerRuntime> {
+        self.triggers()
+    }
+
+    fn triggers_repo(&self) -> Option<Arc<nous_repo::Repo>> {
+        self.repo(nous_triggers::routes::REPO_KEY)
     }
 }
 
@@ -186,8 +198,11 @@ impl data_archive::routes::Host for AppState {
     }
 }
 
-/// `ServerError` → 公共壳 [`nous_routes::HttpRefusal`]：状态码与文案逐字搬过去（不在这里换口径）。
-fn refusal(error: crate::ServerError) -> nous_routes::HttpRefusal {
+/// 任何宿主层错误 → 公共壳 [`nous_routes::HttpRefusal`]：状态码与文案逐字搬过去
+/// （不在这里换口径）。泛型是因为插件各有自己的错误类型（`SessionError` 等），
+/// 它们都有 `Into<ServerError>` —— 状态码与文案仍由 `ServerError` 一处说了算。
+fn refusal(error: impl Into<crate::ServerError>) -> nous_routes::HttpRefusal {
+    let error: crate::ServerError = error.into();
     nous_routes::HttpRefusal::new(
         error.status().as_u16(),
         serde_json::json!({ "error": error.message() }),
@@ -201,6 +216,28 @@ fn refusal(error: crate::ServerError) -> nous_routes::HttpRefusal {
 impl nous_presets_admin::routes::Host for AppState {
     fn preset_sources(&self) -> Option<nous_presets_admin::routes::Sources> {
         self.presets().cloned()
+    }
+}
+
+/// `repo` 插件要的四件事：仓库句柄、变体绑定表、上游镜像根、变体引用反查。
+///
+/// 全同步、全返回 `Option`/`Result`：插件据此自己决定回 400/409/500，
+/// 宿主只负责「进程启动时打开了哪些仓库」这一件事。
+impl nous_repo::routes::Host for AppState {
+    fn repo(&self, kind: &str) -> Option<Arc<nous_repo::Repo>> {
+        AppState::repo(self, kind)
+    }
+
+    fn variant_table(&self, kind: &str) -> Option<std::path::PathBuf> {
+        AppState::variant_table(self, kind)
+    }
+
+    fn upstream_data(&self) -> Option<std::path::PathBuf> {
+        AppState::upstream_data(self)
+    }
+
+    fn source_usage(&self, field: &str) -> Result<serde_json::Value, nous_routes::HttpRefusal> {
+        self.source().usage(field).map_err(refusal)
     }
 }
 

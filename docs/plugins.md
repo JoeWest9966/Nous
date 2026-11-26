@@ -115,7 +115,7 @@
 | `chord` | Nous | `nous-chord` | kernel | 编译期 | context / json / delta / sqlite / watch / output | 是 | 语义基元 |
 | `durable` | Nous | `nous-durable` | kernel | 编译期 | 提交 / 文档 / 会话与 entry 查询 / scans | 是 | 存储与事务边界 |
 | `env` | Nous | `nous-env` | platform | 编译期 | `FileSystem` + `Shell` 两张 trait + 四条私库路径解析（`content.rs`：#63）+ **自带 `GET /v1/fs/dirs`**（`routes.rs`；`NOUS_START_DIRS` 只在这里读，远端分支是宿主能力 trait） | 是 | 契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`。自带 `GET /v1/fs/dirs`（远端分支是宿主能力 trait：`nous-env-ssh` 的 requires 里有本 crate，反向依赖会成环） |
-| `repo` | Nous | `nous-repo` | platform | 编译期 | 四套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75）+ 技能/扩展变体 worktree + 绑定表 + prune/publish/usage（#76）+ 上游追踪（sources / mirror / check / pin / sync / tree / file / copy / adopt；#77） | 是 | 唯一的 git 进程调用面；四条私库路径解析沿用 `env` |
+| `repo` | Nous | `nous-repo` | platform | 编译期 | 六套私库的文件 CRUD + git 发布 / 归档三代 / pending / diff / history（#75）+ 技能/扩展变体 worktree + 绑定表 + prune/publish/usage（#76）+ 上游追踪（sources / mirror / check / pin / sync / tree / file / copy / adopt；#77）；`/v1/repos/*` 三十条端点自带 handler（`routes.rs`，宿主实现 `Host`） | 是 | 唯一的 git 进程调用面；六条私库路径解析沿用 `env` |
 | `env-local` | Nous | (待建) `nous-env-local` | platform | 编译期 | `ExecutionEnv` 本地实现 | 是 | 今天的 `os_env.rs` 落点 |
 | `env-ssh` | Nous | `nous-env-ssh` | platform | 编译期 | `ExecutionEnv` 远端实现（ssh/scp + ControlMaster + 临时密钥） | 否 | 今天 `ssh-env.js`（631 行）；#78 落地 |
 | `ai-types` | Nous | `nous-ai-types` | kernel | 编译期 | TSchema / Message / Usage（纯） | 是 | 从 `nous-ai` 拆出，零 IO 零时钟（T2 已落地） |
@@ -126,7 +126,7 @@
 | `telemetry` | Nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
 | `store` | Nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
 | `Nous_Device` | Nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
-| `sessions` | Nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地），承载最小轮次与取消收敛 |
+| `sessions` | Nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地）：最小轮次与取消收敛 + 会话读投影（`source`）/ 写命令（`commands`）/ `POST /v1/sessions` 的形状（`records`）三层。这三层先于端点搬进来 —— 它们本来就是会话的语义 |
 | `documents` | Nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
 | `Nous_Prompts` | Nous | `nous-prompts` | app | 编译期 | 6 条端点自带 handler（`crates/Nous/Prompts/src/routes.rs`）：`GET /v1/prompts` 只读投影 + `files`/`file`/`create`/`publish` 编辑面；盘面规矩在 `nous-repo`，状态码翻译在 `nous-routes` | 是 | 默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Library_Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点 |
 | `Library_Extend` | Library | `library-extend` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 + 15 条端点自带 handler（`crates/Library/Extend/src/routes.rs`）：清单 / 重载 / 管理面 9 条（create / duplicate / install / uninstall / categories / category / trash）+ 编辑页 4 条（`files` / `file` / `publish`，盘面规矩与 git 提交复用 `nous-repo`） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划 |
@@ -139,9 +139,9 @@
 | `audit` | Nous | (待建) `nous-audit` | app | 编译期 | 事件追加与投影 | 否 | 今天 `activity.js`（55 行） |
 | `dispatcher` | Nous | `nous-dispatcher` | app | 编译期 | 注入 Clock + durable `sleeping` 任务的 60s 节拍、纯判定 `evaluate`、忙则跳过、失败隔离（trigger → 会话） | 否 | #73 落地；内核算核心三件之一，见下注 |
 | `exts/` | Nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
-| `triggers` | Nous | — | app | 运行时外挂 | `GET /v1/triggers` + `POST /v1/triggers/{code}/fire`（#57：定义与账本在 `nous-store`，点火走同一个 Session）+ `GET /v1/triggers/{code}/fires`（#58：账本可读，counts 从库现算，CLI `--triggers` 同一读口）+ `PATCH /v1/triggers/{code}`（#73：改 schedule/params/enabled，code 不可变） | 否 | #57/#58 落地；调度节拍归 `dispatcher` |
+| `Nous_Triggers` | Nous | `nous-triggers` | app | 编译期 | **定义面** 11 条自带 handler（`crates/Nous/Triggers/src/catalog.rs`）：`GET /v1/triggers`（观测 + 调度健康，CLI `--triggers` 同一读口）、`POST /v1/triggers`、`PATCH / PUT /v1/triggers/{code}`、`POST /v1/triggers/{code}/{archive,restore,purge,fire}`、`GET /v1/triggers/{code}/fires`、`GET /v1/triggers/categories`、`POST /v1/triggers/category`；**工程面** 13 条（`src/projects.rs`）：`/v1/trigger-projects*` 的清单 / 文件面 / 新建 / 发布（cargo check → build → index.json → 提交）/ 归档三代 / 类别词表 / sync | 否 | #57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行 |
 | `elements` | Nous | `nous-elements` | app | 编译期 | `GET /v1/elements`（两段全量 + 引用解析）+ `GET/PUT/DELETE /v1/elements/{kind}/{id}`（单条读写 / 删）+ `POST /v1/elements/{kind}`（新建）+ `POST /v1/elements/{kind}/{id}/lock`（上锁 / 解锁）+ `POST /v1/elements/push`（手动补推）；写一次提交一次，同一个 `requestId` 重放不二次提交 | 否 | 元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Nous/Elements/src/routes.rs`） |
-| `Element_Models` | Element | `element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
+| `Models` | Element | `element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
 | `routes` | Nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 不再有 `endpoints` 字段（规则 11：端点只由 `routes()` 声明，三处读口都从它生成） |
 | `archive` | Data | `data-archive` | app | 编译期 | 会话归档：`POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 三条端点自带 handler（`crates/Data/Archive/src/routes.rs`）；供应商 `data`，包名 `data-archive` |
 | `data-manager` | Data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
@@ -153,7 +153,6 @@
 | `trigger-spec` | Nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | Nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
 | `presets-admin` | Nous | `nous-presets-admin` | app | 编译期 | 模板管理：形状闸 / 引用解析（`resolved`）/ 名册投影 + **自己的 32 条 `/v1/presets*` 端点**（`routes.rs`；13 条归 `presets`、19 条归 `presets-admin`，照搬家前静态表原样） | 否 | 从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json` |
-| `trigger-catalog` | Nous | — | app | 运行时外挂 | 触发器清单（列/改/发布）：`POST /v1/triggers`、`PUT /v1/triggers/{code}`（#80：schedule/on/params/session/enabled 整份改）、`POST /v1/triggers/{code}/{archive,restore,purge}`（墓碑语义）、`GET /v1/triggers/categories` + `POST /v1/triggers/category`（类别词表），写入闸校验 cron 与 on | 否 | 今天 `n8qkkj` 块；实现落 `crates/Nous/Server/src/triggers*`，与 #73 的 PATCH 同一处 |
 
 ## 待判（还没归位，归位前不许进仓）
 
@@ -186,7 +185,7 @@
 本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 29 行：
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
 `store` `Library_Extend` `ext-probe` `ext-sdk` `sessions` `server` `fixture` `elements` `env-ssh` `repo`
-`routes` `prompts` `presets-admin` `dispatcher` `Nous_Device` `Skill` `documents` `Element_Models`
+`routes` `prompts` `presets-admin` `dispatcher` `Nous_Device` `Skill` `documents` `Models`
 `data-manager` `archive`。
 新增模块 → 先加一行；删模块 → 先删一行。
 
