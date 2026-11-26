@@ -1,10 +1,13 @@
-name = "prompts"
+name = "Nous_Prompts"
 vendor = "Nous"
-version = "0.2.2"
+version = "0.4.0"  # 模块全名改成 Nous_Prompts（规则 12 逐个改成全名）= 身份变更，minor
 layer = "app"
 crate = "nous-prompts"
 
 [requires]
+nous-env = "^0.1"
+nous-repo = "^0.1"
+nous-routes = "^0.1"
 
 [provides]
 capability = "prompts"

@@ -1,6 +1,6 @@
 name = "repo"
 vendor = "Nous"
-version = "0.5.14"  # 新增 entries 层（资源条目管理面下沉，三仓共用）
+version = "0.6.0"  # 新增 Refusal（RepoError → 状态码的唯一翻译，插件共用）= 新公开面，minor
 layer = "platform"
 crate = "nous-repo"
 

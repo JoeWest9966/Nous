@@ -1,6 +1,6 @@
 name = "routes"
 vendor = "Nous"
-version = "0.2.0"
+version = "0.3.0"  # 新增 HttpRefusal（状态码数值 + 回包体 → HTTP 响应）= 新公开面，minor
 layer = "platform"
 crate = "nous-routes"
 

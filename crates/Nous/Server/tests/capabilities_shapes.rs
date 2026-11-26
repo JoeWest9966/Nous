@@ -506,7 +506,7 @@ async fn capabilities_declares_modules_and_reasons() {
         "triggers",
         "extensions",
         "skills",
-        "prompts",
+        "Nous_Prompts",
         "Nous_Device",
         "ext",
     ] {

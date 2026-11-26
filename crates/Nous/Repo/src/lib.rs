@@ -18,7 +18,7 @@ pub use entries::{
     check_name, check_path, create_entry, list_entry_files, publish_entry, read_text,
     require_entry, write_text, EntryFile, Published, Skeleton, MAX_FILES, MAX_NAME, RESERVED,
 };
-pub use error::{RepoError, Result};
+pub use error::{Refusal, RepoError, Result};
 pub use git::materialize_head_dir;
 pub use files::{sha256, WriteFile, WrittenFile, MAX_FILE_BYTES};
 pub use publish::{

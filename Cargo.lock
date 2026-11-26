@@ -1500,9 +1500,15 @@ dependencies = [
 name = "nous-prompts"
 version = "0.1.33"
 dependencies = [
+ "axum",
+ "nous-env",
+ "nous-repo",
+ "nous-routes",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -1520,6 +1526,7 @@ name = "nous-routes"
 version = "0.1.33"
 dependencies = [
  "axum",
+ "serde_json",
  "tokio",
  "tower",
 ]

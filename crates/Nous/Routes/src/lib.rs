@@ -112,6 +112,73 @@ pub fn to_registry_path(path: &str) -> String {
     out
 }
 
+/// 端点的拒绝回包：状态码 + `{"error": …}`（+ 内容闸的两格）。
+///
+/// 这里**只认数字状态码和回包体**，不认任何领域错误类型 —— 所以本 crate 保持零
+/// `nous-*` 依赖（`nous-env` 依赖它，任何反向依赖都会成环：`env → routes → … → env`）。
+/// 「哪种 `RepoError` 回哪个码」的语义在 `nous_repo::Refusal`，插件把它的
+/// `(status, body())` 交过来即可。
+#[derive(Debug, Clone, PartialEq)]
+pub struct HttpRefusal {
+    pub status: u16,
+    pub body: serde_json::Value,
+}
+
+impl HttpRefusal {
+    pub fn new(status: u16, body: serde_json::Value) -> Self {
+        Self { status, body }
+    }
+
+    /// 从语义拒绝的一对（状态码数值 + 回包体）构造。
+    pub fn from_parts(status: u16, body: serde_json::Value) -> Self {
+        Self::new(status, body)
+    }
+
+    fn message(status: u16, message: impl Into<String>) -> Self {
+        Self::new(status, serde_json::json!({ "error": message.into() }))
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::message(400, message)
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::message(404, message)
+    }
+
+    pub fn conflict(message: impl Into<String>) -> Self {
+        Self::message(409, message)
+    }
+
+    pub fn locked(message: impl Into<String>) -> Self {
+        Self::message(423, message)
+    }
+
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self::message(500, message)
+    }
+}
+
+impl HttpRefusal {
+    /// 语义拒绝 → 回包。`(status, body())` 两格逐字搬运，不重新判。
+    pub fn of(status: u16, body: serde_json::Value) -> Self {
+        Self::new(status, body)
+    }
+
+    /// 拆回两格（测试与 `IntoResponse` 共用同一处分支）。
+    pub fn split(self) -> (u16, serde_json::Value) {
+        (self.status, self.body)
+    }
+}
+
+impl axum::response::IntoResponse for HttpRefusal {
+    fn into_response(self) -> axum::response::Response {
+        let status = axum::http::StatusCode::from_u16(self.status)
+            .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        (status, axum::Json(self.body)).into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
