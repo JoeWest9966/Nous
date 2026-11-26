@@ -1,6 +1,6 @@
 //! #84：扩展管理面的 HTTP 翻译层（create / duplicate / install / uninstall / 类别）。
 //!
-//! 文件动作在 `nous_ext::AdminStore` 的私库盘面上；运行动作经 #81 的同一个 `Runtime`，
+//! 文件动作在 `nous_extend::AdminStore` 的私库盘面上；运行动作经 #81 的同一个 `Runtime`，
 //! 不在这一层另存注册表。鉴权、错误形状、状态码都走 `ServerError`。
 
 use axum::extract::State;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::app::AppState;
 use crate::error::{Result, ServerError};
-use nous_ext::{CreateOptions, DuplicateOptions, ExtError};
+use nous_extend::{CreateOptions, DuplicateOptions, ExtError};
 
 fn bad(error: ExtError) -> ServerError {
     ServerError::BadRequest(error.to_string())
@@ -72,7 +72,7 @@ pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
         .route("/v1/extensions/trash/purge", axum::routing::post(purge_trash))
 }
 
-fn store(state: &AppState) -> Result<&nous_ext::AdminStore> {
+fn store(state: &AppState) -> Result<&nous_extend::AdminStore> {
     state.ext_admin().ok_or_else(|| ServerError::Conflict("扩展管理面未装配".into()))
 }
 
@@ -115,7 +115,7 @@ pub async fn install(State(state): State<Arc<AppState>>, Json(body): Json<NameBo
         result["state"] = json!("stopped");
         return Ok(Json(result));
     };
-    let loaded = nous_ext::LoadedManifest::load(&store.root.join(&body.name)).map_err(bad)?;
+    let loaded = nous_extend::LoadedManifest::load(&store.root.join(&body.name)).map_err(bad)?;
     runtime.start_one(loaded).map_err(bad)?;
     // 运行时内部五态的 normal 在 wire 上叫 running（与 /v1/extensions 的 items[] 同规矩）。
     let state = match runtime.state_of(&body.name).map(|state| state.as_str()) {

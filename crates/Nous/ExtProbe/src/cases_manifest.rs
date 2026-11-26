@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use nous_ext::{ArtifactMeta, Installer, RuntimeConfig};
+use nous_extend::{ArtifactMeta, Installer, RuntimeConfig};
 use serde_json::{json, Value};
 
 use crate::sandbox::{chmod_world, hostname, repo_root, Sandbox};
@@ -189,7 +189,7 @@ fn fixture_payload(version: &str) -> Vec<u8> {
 fn fixture_artifact(sandbox: &Sandbox, file: &str, expected: &[u8], actual: &[u8]) {
     std::fs::write(sandbox.artifacts.join(file), actual).expect("write artifact");
     let meta = ArtifactMeta {
-        hash: nous_ext::sha256::hex(expected),
+        hash: nous_extend::sha256::hex(expected),
         built_from: crate::sandbox::git_short(),
         build_machine: hostname(),
         protocol: 3,
@@ -222,12 +222,12 @@ pub fn byte_flip() -> i32 {
     .expect("write manifest");
     std::fs::write(sandbox.artifacts.join(typed["file"].as_str().unwrap()), fixture_payload("v0")).expect("write");
     let bytes = std::fs::read(sandbox.artifacts.join(typed["file"].as_str().unwrap())).expect("read");
-    let actual = nous_ext::sha256::hex(&bytes);
+    let actual = nous_extend::sha256::hex(&bytes);
     let runtime = sandbox.runtime();
     let result = runtime.start_all();
     let rejected = result
         .values()
-        .any(|result| matches!(result, Err(nous_ext::ExtError::HashMismatch { .. })));
+        .any(|result| matches!(result, Err(nous_extend::ExtError::HashMismatch { .. })));
     kv(&[
         ("rejected", if rejected { "1" } else { "0" }.to_string()),
         ("hash", actual[..4].to_string()),
@@ -253,7 +253,7 @@ pub fn triple_not_compatible() -> i32 {
     let runtime = sandbox.runtime_with(config);
     let result = runtime.start_all();
     let rejected = result.values().any(|result| {
-        matches!(result, Err(nous_ext::ExtError::TripleNotCompatible { .. }))
+        matches!(result, Err(nous_extend::ExtError::TripleNotCompatible { .. }))
     });
     kv(&[
         ("rejected", if rejected { "1" } else { "0" }.to_string()),
@@ -320,7 +320,7 @@ pub fn boot_load_failure() -> i32 {
     .expect("write");
     fixture_artifact(&sandbox, "exts-evil", &fixture_payload("v1"), &fixture_payload("v0"));
     let bytes = std::fs::read(sandbox.artifacts.join("exts-evil")).expect("read");
-    let actual = nous_ext::sha256::hex(&bytes);
+    let actual = nous_extend::sha256::hex(&bytes);
     let runtime = sandbox.runtime();
     let results = runtime.start_all();
     let failed = matches!(results.get("evil"), Some(Err(_)));
@@ -361,7 +361,7 @@ pub fn provenance() -> i32 {
     .expect("json");
     let bytes = fixture_payload("v1");
     let meta = ArtifactMeta {
-        hash: nous_ext::sha256::hex(&bytes),
+        hash: nous_extend::sha256::hex(&bytes),
         built_from: fixture
             .get("builtFrom")
             .and_then(Value::as_str)
@@ -393,7 +393,7 @@ pub fn provenance() -> i32 {
         let dir = installer.current(&manifest_typed.file).expect("current").0;
         let text = std::fs::read_to_string(dir.join("meta.json")).expect("meta");
         let value: Value = serde_json::from_str(&text).expect("json");
-        nous_ext::audit::Provenance {
+        nous_extend::audit::Provenance {
             hash: value.get("hash").and_then(Value::as_str).unwrap_or("").to_string(),
             built_from: value
                 .get("builtFrom")
@@ -468,7 +468,7 @@ pub fn atomic_swap_20x() -> i32 {
         one.version = version.to_string();
         let typed = one;
         let meta = ArtifactMeta {
-            hash: nous_ext::sha256::hex(&bytes),
+            hash: nous_extend::sha256::hex(&bytes),
             built_from: crate::sandbox::git_short(),
             build_machine: hostname(),
             protocol: 3,
@@ -502,7 +502,7 @@ pub fn install_worker(root: &str, version: &str) {
     let typed: nous_ext_sdk::manifest::Manifest =
         serde_json::from_value(manifest).expect("manifest");
     let meta = ArtifactMeta {
-        hash: nous_ext::sha256::hex(&bytes),
+        hash: nous_extend::sha256::hex(&bytes),
         built_from: crate::sandbox::git_short(),
         build_machine: hostname(),
         protocol: 3,

@@ -6,7 +6,7 @@ crate = "nous-ext-probe"
 
 [requires]                 # cargo metadata 里的内部 workspace 依赖
 nous-durable = "^0.1"
-nous-ext = "^0.1"
+nous-extend = "^0.1"
 nous-ext-sdk = "^0.1"
 nous-server = "^0.1"
 nous-wire = "^0.1"

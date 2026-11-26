@@ -1451,26 +1451,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "nous-ext"
-version = "0.1.34"
-dependencies = [
- "libc",
- "nous-durable",
- "nous-ext-sdk",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
 name = "nous-ext-probe"
 version = "0.1.34"
 dependencies = [
  "axum",
  "libc",
  "nous-durable",
- "nous-ext",
  "nous-ext-sdk",
+ "nous-extend",
  "nous-server",
  "nous-wire",
  "serde",
@@ -1485,6 +1473,18 @@ version = "0.1.34"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "nous-extend"
+version = "0.1.34"
+dependencies = [
+ "libc",
+ "nous-durable",
+ "nous-ext-sdk",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1581,7 +1581,7 @@ dependencies = [
  "nous-elements",
  "nous-env",
  "nous-env-ssh",
- "nous-ext",
+ "nous-extend",
  "nous-presets-admin",
  "nous-prompts",
  "nous-repo",

@@ -1,5 +1,5 @@
 [package]
-name = "nous-ext"
+name = "nous-extend"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

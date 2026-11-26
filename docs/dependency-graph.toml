@@ -50,7 +50,7 @@ nous-server = [
   # #78 远端执行环境
   "nous-env-ssh",
   # #81 扩展管理面（create/duplicate/install/类别词表/usage）
-  "nous-ext",
+  "nous-extend",
   # #72 prompts 的目录只读投影 + #71/#83 skills（解析层 + 自带 6 条端点）
   "nous-prompts", "nous-skills",
   # #75 五套私库文件面 + #76 variant + #77 upstream

@@ -391,7 +391,7 @@ async fn extensions_response_pins_empty_items() {
 /// #81：ext 运行时装配后，GET 回真清单：每个 item 的字段集合、类型与值来自装载结果。
 #[tokio::test]
 async fn extensions_response_reports_loaded_runtime_items() {
-    use nous_ext::{ExtState, Runtime, RuntimeConfig};
+    use nous_extend::{ExtState, Runtime, RuntimeConfig};
     let dir = tempfile::tempdir().unwrap();
     // 只装配一个最小运行时：没有扩展目录也要能读出空清单（不伪造内容）。
     std::fs::create_dir_all(dir.path().join("exts")).unwrap();
