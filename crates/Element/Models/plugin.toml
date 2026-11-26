@@ -1,6 +1,6 @@
-name = "Element_Models"
+name = "Models"
 vendor = "Element"
-version = "0.2.0"
+version = "0.3.0"
 layer = "app"
 crate = "element-models"
 

@@ -45,7 +45,7 @@ fn emit_plugin_versions() {
                 );
                 continue;
             };
-            // 模块名取**清单里的全名**（`docs/plugins.md` 规则 12）：`Element_Models` 的
+            // 模块名取**清单里的全名**（`docs/plugins.md` 规则 12）：`Models` 的
             // 目录叫 `models`、包叫 `element-models`，三者的对应关系只有清单说得清。
             let name = read_field(&text, "name").unwrap_or_else(|| {
                 module

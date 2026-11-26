@@ -25,7 +25,10 @@ use crate::Snapshot;
 
 /// 模块全名（规则 12）：`/v1/capabilities` 的 `modules[].name`、`/v1/_routes` 的
 /// `module` 标签都用它 —— 面板靠这个标签把端点挂到模块名下。
-pub const MODULE: &str = "Element_Models";
+///
+/// 2026-11-27 由 `Element_Models` 改成 `Models`（目录 `crates/Element/Models`、包名
+/// `element-models`、capability `models`、元素库组 id `element-models` 都没动）。
+pub const MODULE: &str = "Models";
 
 /// 宿主能力：这个插件只认识「给我元素库仓库」这一件事。
 ///

@@ -1382,3 +1382,28 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
 （`deploy.sh` 按全名落盘），**旧产物里那份 `prompts.md` 要重新同步一次**，否则
 `GET /v1/plugins/Nous_Prompts/readme` 会回 404 `readme_not_installed`。这是改名的
 可观测代价，记在这里免得当成 bug。
+
+## 2026-11-27 模块全名 `Element_Models` → `Models`
+
+**决定**：`crates/Element/Models/plugin.toml` 的 `name` 改成 `Models`，插件版本 `0.2.0` →
+`0.3.0`（规则 8：身份行改了就是 minor —— `plugin-versions.py` 的 `MANIFEST_KEYS` 也认这一条）。
+
+**只动了全名。** 目录 `crates/Element/Models`、包名 `element-models`、capability `models`、
+元素库组 id `GROUP_ID = "element-models"`（`wire.md` 1016 规定固定）一个字没动。规则 12 的
+三套写法各自独立，所以全名改变不影响磁盘、不影响 cargo、不影响盘上数据 —— 只影响
+`/v1/capabilities` 的 `modules[].name`、`/v1/_routes` 的 `module` 标签、`/v1/plugins/:name/readme`
+的路由名，以及桌面端插件页那一行（客户端只透传 `name`，不改代码、不存对照表，规则 9）。
+
+**为什么**：全名 `Element_Models` 里 `Element` 是 vendor 段，模块段是 `Models`，读起来重复；
+`Nous_Device` 那种两段式是为了 Magento 的 `Vendor_Module` 长相，但这里模块段本身就是
+完整语义（「模型」），vendor 已经由 `modules[].vendor` 与目录第一段表达。
+
+**代价**：旧的 URL 名字直接 404 `unknown_module` —— 不做别名、不保留兼容名。理由是「名字是
+身份」（规则 12）：留一个别名就等于插件有两个名字，`/v1/_routes` 的 `module` 标签、
+`docs/plugins.md`、`plugin.toml` 三处都得能对上一个，别名会立刻把这个不变量破掉。
+桌面端没有硬编码，跟着引擎报的名字走，所以这一改动对它零成本。
+
+**反悔点**：如果哪天发现全名第一段必须与 vendor 一致这条规则要被机器判据强制（目前
+`check-plugins.sh` 只在 `_` 存在时比对第一段与 vendor），那 `Models` 这种无 vendor 段的全名
+就会成为「老式小写连字符名」之外的第三种形态，判据得再补一档 —— 那时要么改成
+`Element_Models`（本决定作废），要么把「全名可省略 vendor 段」写进规则 12。

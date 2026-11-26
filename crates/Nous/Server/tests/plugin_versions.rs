@@ -25,7 +25,7 @@ fn repo_root() -> PathBuf {
 /// 模块全名 → 目录名（`docs/plugins.md` 规则 12）：去掉 vendor 段、按大写字母断词、
 /// 每段首字母大写（Magento 的 `app/code/Amasty/Shiprestriction`）。
 ///
-/// `Element_Models` → `Models`、`Nous_PresetsAdmin` → `PresetsAdmin`、`data-manager` → `DataManager`。
+/// `Nous_Device` → `Device`、`Nous_PresetsAdmin` → `PresetsAdmin`、`data-manager` → `DataManager`。
 /// 与 `scripts/check-plugins.sh` 的 `_pascal`、`scripts/layer-paths.sh` 的 `dir_of` 同算法。
 fn dir_of(module: &str) -> String {
     let tail = module.split_once('_').map(|(_, tail)| tail).unwrap_or(module);
@@ -140,7 +140,7 @@ async fn capabilities(app: &Router) -> Value {
 /// 规则 12 的两条纯函数先钉一遍：目录推导错了，上面那条比对就会扫到空目录而静默跳过。
 #[test]
 fn rule12_name_and_dir_derivation() {
-    assert_eq!(dir_of("Element_Models"), "Models");
+    assert_eq!(dir_of("Nous_Device"), "Device");
     assert_eq!(dir_of("Nous_Device"), "Device");
     assert_eq!(dir_of("Nous_PresetsAdmin"), "PresetsAdmin");
     assert_eq!(dir_of("data-manager"), "DataManager");
