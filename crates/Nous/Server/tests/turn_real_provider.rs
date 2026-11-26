@@ -497,7 +497,7 @@ async fn a_real_turn_emits_message_start_message_end_and_entry_appended_on_sse()
         nous_server::ImportedSource::open(&path).unwrap(),
         commands.clone(),
     );
-    commands.attach(SessionObserver::new(state.hub.clone()));
+    commands.attach(SessionObserver::new(state.hub().clone()));
     let state = state
         .with_runtime(Arc::new(assembled))
         .with_models(catalog_with_default("catalog", "sse-model"));
