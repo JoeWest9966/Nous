@@ -205,12 +205,12 @@
     },
     {
       "name": "Trigger_Core",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`nous-triggers`",
-      "vendor": "Nous",
+      "crate": "`trigger-core`",
+      "vendor": "Trigger",
       "description": "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行",
       "enabled": true,
       "endpoints": [
@@ -304,7 +304,7 @@
     },
     {
       "name": "Extend",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
