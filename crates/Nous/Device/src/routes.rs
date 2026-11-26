@@ -6,9 +6,13 @@
 use axum::routing::get;
 use axum::Json;
 
-/// 模块全名（`docs/plugins.md` 规则 12）：`vendor` 是 `nous`，模块名是 `Device`。
+/// 模块全名（`docs/plugins.md` 规则 12）：`Device`。
 /// `/v1/_routes` 的 `module`、`/v1/capabilities` 的 `modules[].name` 都用这一个字面量。
-pub const MODULE: &str = "Nous_Device";
+///
+/// 曾叫 `Nous_Device`（`Vendor_Module` 两段式）。改成单段与 `Models` / `Skill` 同形 ——
+/// `vendor` 仍由 `plugin.toml` 的 `vendor = "Nous"` 带着走（规则 10），目录仍是
+/// `crates/Nous/Device`，所以出品方一分没丢，只是名字不再冗余地重复一次。
+pub const MODULE: &str = "Device";
 
 /// 机器编目：机器 + 注解 + 能力字段 + 兼容 target 列表。
 ///

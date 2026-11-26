@@ -91,29 +91,29 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // #77：上游追踪（sources + 10 条 upstream 动作）挂在 skills 私库上。
     // sessions 的 17 条里 16 条已归插件；**这一条留在 server**（要宿主组装根与提示词注入）。
     RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/models", module: "Nous_Device" },
-    RegisteredRoute { method: "PUT", path: "/v1/default", module: "Nous_Device" },
-    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "Nous_Device" },
+    RegisteredRoute { method: "GET", path: "/v1/models", module: "Device" },
+    RegisteredRoute { method: "PUT", path: "/v1/default", module: "Device" },
+    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "Device" },
     // #49：置顶写穿走 sessions 模块；与 rename/read 一样经同一个 `Session` 写者。
     // #64：写入面与 selection 两行状态都属于 sessions 模块。
     // #67 的世代归档三端点已搬进 `data/archive` 插件（`routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/device", module: "Nous_Device" },
+    RegisteredRoute { method: "GET", path: "/v1/device", module: "Device" },
     // `extensions` 的 15 条已搬进 `Library_Extend` 插件（`library-extend` 的 `routes()` 声明），
     // 静态表只减不增。
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
     // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Nous_Triggers` 插件
     // （`nous-triggers` 的 `routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Nous_Device" },
+    RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Device" },
     // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘。
     // 归 `device`（不是"server"）：`_routes` / `capabilities` 只吐**清单里开着的模块**，
     // "server" 不在 MANIFEST 的 14 条里 —— 归它等于这条端点永远不出现在 /v1/_routes，
     // 客户端会一直报「路由漂移」。device 是 0.1.25 里唯一「宿主级只读」的模块。
-    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "Nous_Device" },
+    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "Device" },
     // 机读总表：从注册表（本表 ∪ 插件声明）生成，自身也归 device。
-    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "Nous_Device" },
+    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "Device" },
     // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
     // 元素库（组 / 包）：盘上真相在私库，写一次提交一次。
-    RegisteredRoute { method: "GET", path: "/v1/_routes", module: "Nous_Device" },
+    RegisteredRoute { method: "GET", path: "/v1/_routes", module: "Device" },
 ];
 
 /// `GET /v1/_routes`：debug 视图与 capabilities 从同一张表吐出。
@@ -269,7 +269,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-combos`", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘" },
     ManifestEntry { name: "Nous_Triggers", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-triggers`", description: "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行" },
     ManifestEntry { name: "data-manager", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-data-manager`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
-    ManifestEntry { name: "Nous_Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
+    ManifestEntry { name: "Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "Nous_Prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Library_Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点" },
     ManifestEntry { name: "Library_Extend", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`library-extend`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划" },
     // 元素库：旧面板 `k3skws` 块的 Rust 落点；盘上真相 = 第五套私库。
