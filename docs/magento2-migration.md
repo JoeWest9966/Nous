@@ -122,7 +122,7 @@ impl element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（21 条）
+### 4.1 已搬（53 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
@@ -131,12 +131,13 @@ impl element_models::routes::Host for AppState {
 | `element-models` | `PUT /v1/providers/{id}/secret` | `feat(element-models)` | **新端点**（不是搬家）：插件自带 handler，宿主给 `Secrets::secrets_file` |
 | `data-manager` | `GET /v1/stats/{usage,tasks,db,overview,conversations,conversation/:id,cost,health}`（8 条） | `refactor(data-manager)` | 第一次「一个插件一次搬 8 条」：`Host::stats_paths` 只给两个库路径；`server/src/stats.rs` 整份删掉，`openapi` 归 `server/routes.rs`（它读的是注册表，不是统计）。**这就是 §3.4 的标杆** |
 | `archive` | `POST /v1/sessions/{id}/archive` · `GET /v1/archive` · `POST /v1/archive/{id}/restore`（3 条） | `feat(archive)` | 第二类接缝：**命令面**（`Host::archive_session` / `archive_generations` / `restore_session`），不是库路径 —— 归档要在活库写锁下写 gen 文件再提交墓碑，失败按方向补偿，那套语义在 `nous_durable::session::commands`。顺带把供应商换成 `data`（`crates/Data/Archive`、包名 `data-archive`）。`server/src/routes.rs` 的三条 handler 与 `RestoreBody` 整份删除 |
-| `elements` | `GET /v1/elements` · `GET/PUT/DELETE /v1/elements/{kind}/{id}` · `GET/POST /v1/elements/{kind}` · `POST /v1/elements/{kind}/{id}/lock` · `POST /v1/elements/push`（8 条） | `feat(elements)` | 第一次搬**已经是独立文件**的模块（`server/src/elements.rs` 377 行）：盘上真相与「写一次提交一次」本来就在 `nous-elements`，所以宿主能力只要 `Host::elements_repo()`（一个仓库句柄），比 `data-manager` 还窄。`RepoError → 状态码` 的翻译搬进插件的 `Refusal::from_repo`（一处判，含 `Validation` 的 `{field, problem}` 与 423）。`server/src/elements.rs` 整份删除；`models.rs` 的 `REPO_KEY` 改读 `nous_elements::routes::REPO_KEY` |
+| `elements` | `GET /v1/elements` · `GET/PUT/DELETE /v1/elements/{kind}/{id}` · `GET/POST /v1/elements/{kind}` · `POST /v1/elements/{kind}/{id}/lock` · `POST /v1/elements/push`（8 条）
+| `presets` + `presets-admin` | `/v1/presets*` 全 32 条（13 + 19） | `refactor(presets-admin)` | **第一次「两个模块共用一个插件的 handler」**：`crates/Nous/Server/src/presets.rs`（1902 行）整份搬成 `crates/Nous/PresetsAdmin/src/routes.rs`。宿主能力只有一个方法 `Host::preset_sources() -> Option<Sources>`（模板私库根 + 插件库 + 三个外部名册根 + 编目来源），`Sources` 由 `main` 装配一次、插件只接 —— 路径解析仍然只有 `env` 插件一处。`ServerError` 换成插件自己的 `Refusal`（六个分支一对一，状态码与文案一字没改）；`server` 侧 `presets::SharedStore` / `PresetStore` / `presets::routes()` 全删，`AppState.presets` 的类型直接换成 `routes::Sources`（不留两套同形结构）。**端点归属照搬家前静态表原样**（`GET order` 在 admin、`PUT order` 在 presets 这种手写漂移不夹带修） | | `feat(elements)` | 第一次搬**已经是独立文件**的模块（`server/src/elements.rs` 377 行）：盘上真相与「写一次提交一次」本来就在 `nous-elements`，所以宿主能力只要 `Host::elements_repo()`（一个仓库句柄），比 `data-manager` 还窄。`RepoError → 状态码` 的翻译搬进插件的 `Refusal::from_repo`（一处判，含 `Validation` 的 `{field, problem}` 与 423）。`server/src/elements.rs` 整份删除；`models.rs` 的 `REPO_KEY` 改读 `nous_elements::routes::REPO_KEY` |
 
-### 4.2 待搬（143 条 / 12 个模块）
+### 4.2 待搬（111 条 / 10 个模块）
 
 按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
-（静态表总数：搬家起点 162 行 → 现在 143 行；插件自带的端点 `Route::new` 共 22 条）。
+（静态表总数：搬家起点 162 行 → 现在 111 行；插件自带的端点 `Route::new` 共 54 条）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
@@ -144,8 +145,6 @@ impl element_models::routes::Host for AppState {
 | `skills` | 6 | 私库读写（`nous-repo`）+ 变体表 |
 | `prompts` | 6 | 私库读写（`nous-repo`） |
 | `combos` | 4 | 组合段读写 + 试跑（依赖 `sessions` 起轮） |
-| `presets` | 13 | 模板私库 + 修订表 |
-| `presets-admin` | 19 | 模板私库 + 形状闸 |
 | `ext` | 15 | 扩展私库 + 运行时（`nous-ext`）+ 管理面 |
 | `triggers` | 24 | 触发器库 + 调度（`nous-dispatcher`） |
 | `sessions` | 17 | 最厚：读投影 + 写命令 + SSE 出口（`events` 尤其要小心） |
@@ -153,7 +152,7 @@ impl element_models::routes::Host for AppState {
 | `device` | 7 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，建议**最后搬**（它们读注册表本身） |
 
 建议顺序：`env` → `skills` / `prompts` → `combos` →
-`presets(-admin)` → `ext` → `triggers` → `repo` → `sessions` → `device`。
+`ext` → `triggers` → `repo` → `sessions` → `device`。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
 搬进 `device` 之前得先让「注册表」成为宿主能力（`Host::declarations()`），否则会成环。
@@ -196,6 +195,7 @@ cargo test --workspace                                       # 全量
 | 日期 | 动作 |
 |---|---|
 | 2026-11-24 | 建 `nous-routes`（契约层）+ `server::plugins`（收集/装配/登记）；`device` 交出 `GET /v1/machines`（静态表删 1 行） |
+| 2026-11-26 | **`/v1/presets*` 32 条搬进 `Nous_PresetsAdmin`**（一个插件扛两个模块名：13 条归 `presets`、19 条归 `presets-admin`，照搬家前静态表原样）。宿主能力一个方法 `Host::preset_sources() -> Option<Sources>`；`Sources` 从 `server::presets::Sources::from_env()`（插件自己读环境）改成宿主装配一次（`main`），插件零环境读取。`ServerError` → 插件自己的 `Refusal`（六分支一对一）。三个坑：①注册表口径是 `:param`（`nous_routes::to_registry_path` 折的），静态表那半还写着 `{param}` —— 搬过来的声明是 `:param`，快照与 `presets_openapi` 两边都得归一才比得上；②`check-plugins.sh` 的 `requires` 是「对着 `cargo metadata` 算的」，加依赖必须同步清单；③纯改名 / 纯搬家之后 `plugin-versions.py` 的考古结论会跳（`server` 一路 0.2.9 → 0.3.21），别手改文档表，按提示涨 |
 | 2026-11-25 | **目录与 vendor 也改成 PascalCase**（29 个目录 `crates/Nous/PresetsAdmin` / `crates/Data/DataManager` / `crates/Element/Models`，`vendor = "Nous"` / `"Data"` / `"Element"`）。包名、crate 标识、capability、URL 一个字没动。三处推导判据同算法改成 `_pascal`（按 camel hump 断词），`plugin-versions.py` 补「目录改名 = minor」（纯改名提交里 `plugin.toml` 一行没变、`git show` 的 +/- 是空的，靠行判据会落成 patch，16 个模块全落错档）。坑 2：快照里 `modules[].version` 也要跟着插件版本走，`presets-admin` 红了一次 |
 | 2026-11-25 | **规则 12 第二个：`device` → `Nous_Device`**（vendor/目录/包名一字不动，只改全名与版本 0.7.0 → 0.8.0）。同时补齐尾段 **CamelCase → kebab** 推导（`Nous_PresetsAdmin` → 目录 `presets-admin`）。三个判据跟着改：`plugin-versions.rs` 的测试原本按小写名硬凑目录，`Nous_Device` 直接被跳过 → 判据空转（`只比对了 9 个模块`）；修成由全名推目录，并补 `rule12_name_and_dir_derivation` 自检。Desk 侧新增 `module_matches`（`Nous_Device` ↔ `device` 都认），否则改名当天「设备」页会被判成未登记而灰掉 |
 | 2026-11-25 | **规则 12 落地**：模块全名照 Magento 2 的 `Vendor_Module`（`Element_Models`），

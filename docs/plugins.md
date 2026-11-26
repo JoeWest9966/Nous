@@ -152,7 +152,7 @@
 | `prompt-text` | Nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
 | `trigger-spec` | Nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | Nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
-| `presets-admin` | Nous | `nous-presets-admin` | app | 编译期 | 模板管理：形状闸 / 引用解析（`resolved`）/ 名册投影；`/v1/presets` 的判定全走它（#60 端点面复用） | 否 | 从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json` |
+| `presets-admin` | Nous | `nous-presets-admin` | app | 编译期 | 模板管理：形状闸 / 引用解析（`resolved`）/ 名册投影 + **自己的 32 条 `/v1/presets*` 端点**（`routes.rs`；13 条归 `presets`、19 条归 `presets-admin`，照搬家前静态表原样） | 否 | 从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json` |
 | `trigger-catalog` | Nous | — | app | 运行时外挂 | 触发器清单（列/改/发布）：`POST /v1/triggers`、`PUT /v1/triggers/{code}`（#80：schedule/on/params/session/enabled 整份改）、`POST /v1/triggers/{code}/{archive,restore,purge}`（墓碑语义）、`GET /v1/triggers/categories` + `POST /v1/triggers/category`（类别词表），写入闸校验 cron 与 on | 否 | 今天 `n8qkkj` 块；实现落 `crates/Nous/Server/src/triggers*`，与 #73 的 PATCH 同一处 |
 
 ## 待判（还没归位，归位前不许进仓）
