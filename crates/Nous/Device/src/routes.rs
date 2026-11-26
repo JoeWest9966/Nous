@@ -381,6 +381,14 @@ pub async fn readme<H: Host>(
 
 // ── 视图组装：纯函数，能单测 ────────────────────────────────────────
 
+/// 某模块在清单里开着没有（`reason.is_none()`）。宿主侧判据也调这里，免得两份实现漂。
+pub fn line_enabled(manifest: &[ManifestLine], module: &str) -> bool {
+    manifest
+        .iter()
+        .find(|line| line.name == module)
+        .is_some_and(|line| line.reason.is_none())
+}
+
 /// 注册表 = 静态表 ∪ 插件声明，按清单开关过滤。
 ///
 /// 路径统一是 `:id` 形式（`wire.md` 的写法）；插件交上来的是 axum 的 `{id}`，
@@ -389,12 +397,20 @@ fn enabled_routes<'a>(
     manifest: &'a [ManifestLine],
     registered: &'a [Declaration],
 ) -> impl Iterator<Item = &'a Declaration> + 'a {
-    registered.iter().filter(move |route| {
-        manifest
-            .iter()
-            .find(|line| line.name == route.module)
-            .is_some_and(|line| line.reason.is_none())
-    })
+    registered
+        .iter()
+        .filter(move |route| line_enabled(manifest, route.module))
+}
+
+/// 注册表过滤后的端点 `(method, path, module)` —— 给宿主侧判据（`meta::endpoints`）用，
+/// 那边只转发，不自己再过滤一遍（规则 11：端点的家就是插件的 `routes()`）。
+pub fn enabled_endpoints(
+    manifest: &[ManifestLine],
+    registered: &[Declaration],
+) -> Vec<(&'static str, String, &'static str)> {
+    enabled_routes(manifest, registered)
+        .map(|route| (route.method, route.path.clone(), route.module))
+        .collect()
 }
 
 /// `/v1/capabilities` 的正文（`runtime.provider` 由调用方补，它要宿主的 provider 状态）。

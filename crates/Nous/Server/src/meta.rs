@@ -107,6 +107,32 @@ pub fn registered() -> Vec<nous_routes::Declaration> {
     all
 }
 
+/// 注册表的一行（宿主侧判据用）。**过滤逻辑不在这里** —— 它跟着视图住在
+/// `nous_device::routes`，这里只是把结果摊成宿主自己的结构体。
+#[derive(Debug, Clone)]
+pub struct Endpoint {
+    pub method: &'static str,
+    pub path: String,
+    pub module: &'static str,
+}
+
+/// 注册表 = 静态表 ∪ 插件声明，已按清单开关过滤。
+pub fn endpoints() -> Vec<Endpoint> {
+    nous_device::routes::enabled_endpoints(&manifest_lines(), &registered())
+        .into_iter()
+        .map(|(method, path, module)| Endpoint {
+            method,
+            path,
+            module,
+        })
+        .collect()
+}
+
+/// 某模块在清单里开着没有。转发到插件，免得两份实现漂。
+pub fn route_enabled(module: &str) -> bool {
+    nous_device::routes::line_enabled(&manifest_lines(), module)
+}
+
 /// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
 pub const ROUTES: &[RegisteredRoute] = &[
     // #61：combos 两条端点（开关是引擎算出来的，Desk 只显示 + 写穿）；#82 补试跑。
