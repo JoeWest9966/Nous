@@ -10,6 +10,32 @@
 
 ---
 
+## 2026-11-26 · 自省三件套：**原料归宿主，视图归插件**
+
+**决定**：`/v1/_routes`、`/v1/capabilities`、`/v1/openapi.json` 搬进 `Device` 插件，但
+「注册表」本身不进插件 —— 走宿主能力 `Host::manifest()` + `Host::registered()` 两份原料。
+`enabled` / `reason` / `not_implemented` 的判定、JSON 键名、OpenAPI 的 paths 折叠，**全在
+插件里**（`crates/Nous/Device/src/routes.rs` 的 `capabilities_body` / `routes_body` /
+`openapi_body`，纯函数，5 条单测）。
+
+**为什么不是「注册表也搬进插件」**：注册表 = 静态表 ∪ **所有**插件的 `routes()` 声明。
+它天然是「谁看得见全部」的角色 —— 只有宿主。让 `Device` 去 collect 别的插件等于让
+`Device` 依赖 15 个 crate（其中一个 `Sessions` 还反过来依赖 `Device`，直接成环）。
+
+**为什么不是「视图也留在宿主」**：那样 `Device` 只是转发宿主算好的 JSON，
+「端点的家」还是空的 —— 判据 12 会过，但搬家等于没搬。分界线画在**数据 vs 形状**：
+宿主给「有哪些模块、每个模块有哪些端点」，插件决定「这些怎么变成一个响应体」。
+依据是这三条端点的**形状是它们的语义**：`enabled` 的判定规则、`reason.code` 的四个值、
+OpenAPI 的 `operationId` 拼法，任何一条改口径都是这三条端点的契约变更，不是宿主的事。
+
+**副产品**：`meta::route_enabled` / `meta::endpoints` 变成两行转发（`line_enabled` /
+`enabled_endpoints` 由插件导出），宿主侧判据（`capabilities_shapes.rs` 的负向哨兵）
+调的还是同一份实现，不会漂。
+
+**反悔点**：如果第三个插件也要读注册表（目前只有 `Device`），说明「注册表」该提成
+`nous-routes` 里的一等公民（一个 `Registry` 类型，宿主构造一次、各插件只读）。
+判据：`grep -rn 'fn registered(&self)' crates/*/*/src/` 数到 2 就该翻。
+
 ## 2026-11-26 · `messages` 留在宿主侧，不当「一票全搬」的牺牲品
 
 **决定**：`/v1/sessions*` 十七条里十六条搬进 `nous-sessions`，`POST /v1/sessions/{id}/messages`

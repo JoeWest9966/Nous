@@ -8,20 +8,22 @@
 //! 目录顺序：`NOUS_DOCS_DIR`（部署脚本/运维显式指定）→ `<exe 所在目录>/docs/plugins`
 //! （跟着版本目录走，回退旧版本时文档也一起回退）。
 //!
-//! 名字只认 `meta::MANIFEST` 的 module 列：不是白名单里的名字一律 404，
-//! 顺带把 `..` / 绝对路径这类路径穿越挡在门外（文件名由我们拼，不接用户输入）。
+//! 名字只认清单的 module 列：不是白名单里的名字一律 404，顺带把 `..` / 绝对路径这类
+//! 路径穿越挡在门外（文件名由我们拼，不接用户输入）。
+//!
+//! 清单从 [`crate::routes::Host::manifest`] 拿 —— 这个端点搬进插件后，
+//! 白名单和版本号都走宿主交出来的那一份，本 crate 不自己抄。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
-use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
-use crate::app::AppState;
+use crate::routes::ManifestLine;
 
 /// 一页 README 的缓存：mtime + 长度没变就不重读。
 struct Cached {
@@ -45,9 +47,9 @@ pub fn docs_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("docs/plugins"))
 }
 
-/// 模块名 → 文档文件。名字必须在 MANIFEST 里，否则 `None`（= 404）。
-fn doc_path(root: &Path, module: &str) -> Option<PathBuf> {
-    if !crate::meta::MANIFEST.iter().any(|entry| entry.name == module) {
+/// 模块名 → 文档文件。名字必须在清单里，否则 `None`（= 404）。
+fn doc_path(root: &Path, module: &str, manifest: &[ManifestLine]) -> Option<PathBuf> {
+    if !manifest.iter().any(|line| line.name == module) {
         return None;
     }
     Some(root.join(format!("{module}.md")))
@@ -76,28 +78,32 @@ fn read_doc(path: &Path) -> Option<String> {
 /// `GET /v1/plugins/{name}/readme`
 ///
 /// 200：`{ module, version, markdown, bytes }`（取不到插件版本时另带 `versionSource: "release"`）。
-/// 404 `unknown_module`：名字不在 MANIFEST（拼错、或不是插件）。
+/// 404 `unknown_module`：名字不在清单（拼错、或不是插件）。
 /// 404 `readme_not_installed`：名单里有，但产物里没带这份文档（部署漏同步 / 老产物）。
-pub async fn readme(
-    State(_state): State<std::sync::Arc<AppState>>,
-    UrlPath(name): UrlPath<String>,
-) -> Response {
+pub fn readme(manifest: &[ManifestLine], name: &str) -> Response {
     let root = docs_root();
-    let Some(path) = doc_path(&root, &name) else {
+    let Some(path) = doc_path(&root, name, manifest) else {
         return not_found(
             "unknown_module",
-            &name,
+            name,
             format!("`{name}` 不在 capabilities 的模块清单里"),
         );
     };
     let Some(markdown) = read_doc(&path) else {
         return not_found(
             "readme_not_installed",
-            &name,
-            format!("产物里没有这份文档：{}（跑 scripts/deploy.sh --docs-only 同步）", path.display()),
+            name,
+            format!(
+                "产物里没有这份文档：{}（跑 scripts/deploy.sh --docs-only 同步）",
+                path.display()
+            ),
         );
     };
-    let (version, fallback) = crate::plugin_versions::version_of(&name);
+    let line = manifest.iter().find(|line| line.name == name);
+    let (version, fallback) = match line {
+        Some(line) => (line.version.clone(), line.version_from_release),
+        None => (String::new(), false),
+    };
     let mut body = serde_json::json!({
         "module": name,
         // #93：与 `/v1/capabilities` 同一张生成表 —— 文档所属的也是**这个插件自己的**版本。

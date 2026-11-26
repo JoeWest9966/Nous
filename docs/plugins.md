@@ -127,7 +127,7 @@
 | `runtime` | Nous | `nous-runtime` | platform | 编译期 | Host 配置 / 认证 / 执行绑定 | 是 | |
 | `telemetry` | Nous | `nous-telemetry` | platform | 编译期 | span / event 契约，默认 noop | 否 | |
 | `store` | Nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
-| `Device` | Nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
+| `Device` | Nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 / 自省 | 是 | #65：从 server 提成独立插件；自带 9 条端点（机器 / 模型三件套 / `device` / `_routes` / `capabilities` / `openapi.json` / 插件 README）；自省三件套的**原料归宿主、视图归插件** |
 | `sessions` | Nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地）：最小轮次与取消收敛 + 会话读投影（`source`）/ 写命令（`commands`）/ 请求形状（`records`）/ 事件流（`hub` / `coalesce` / `project` / `observer`）；`/v1/sessions*` 十七条里 十六条自带 handler，`messages` 留在宿主侧（要组装根的 driver / completions 与提示词注入） |
 | `documents` | Nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
 | `Nous_Prompts` | Nous | `nous-prompts` | app | 编译期 | 6 条端点自带 handler（`crates/Nous/Prompts/src/routes.rs`）：`GET /v1/prompts` 只读投影 + `files`/`file`/`create`/`publish` 编辑面；盘面规矩在 `nous-repo`，状态码翻译在 `nous-routes` | 是 | 默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点 |

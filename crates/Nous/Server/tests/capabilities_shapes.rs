@@ -503,7 +503,7 @@ async fn capabilities_declares_modules_and_reasons() {
         "presets-admin",
         "archive",
         "combos",
-        "Trigger_Core",
+        "Nous_Triggers",
         "extensions",
         "Skill",
         "Nous_Prompts",
@@ -653,8 +653,17 @@ async fn route_registry_and_enabled_endpoints_are_the_same_multiset() {
     );
     // 负向哨兵：注册表里每条声明都得真能在 Router 上打到 handler。
     // 405/500 才说明路由没注册或 handler 炸了；404 可能是资源的「不存在」语义。
+    // `route_enabled` 随视图一起搬进了 `Device` 插件；测试这边用清单行自己判
+    // （`reason.is_none()` 就是「清单开着」，与插件里的判定同源）。
+    let manifest = nous_server::meta::manifest_lines();
+    let open = |module: &str| {
+        manifest
+            .iter()
+            .find(|line| line.name == module)
+            .is_some_and(|line| line.reason.is_none())
+    };
     for route in nous_server::meta::ROUTES {
-        if !nous_server::meta::route_enabled(route.module) {
+        if !open(route.module) {
             continue;
         }
         let uri = route.path

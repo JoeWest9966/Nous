@@ -64,7 +64,7 @@
 
 | module | 提交数 | minor 档 | patch 档 | 推出 | 现填 | 起点提交 |
 |---|---|---|---|---|---|---|
-| `Device` | 21 | 3 | 17 | 0.4.0 | 0.10.0 | `a1a1d508` 2026-11-20 |
+| `Device` | 25 | 4 | 20 | 0.5.0 | 0.11.0 | `a1a1d508` 2026-11-20 |
 | `Extend` | 21 | 2 | 18 | 0.3.0 | 0.10.0 | `82662470` 2026-11-17 |
 | `Models` | 14 | 2 | 11 | 0.3.0 | 0.3.0 | `a335681e` 2026-11-24 |
 | `Nous_Prompts` | 6 | 2 | 3 | 0.3.0 | 0.4.0 | `4b0f8348` 2026-11-20 |
@@ -89,7 +89,7 @@
 | `repo` | 39 | 2 | 36 | 0.3.1 | 0.7.0 | `c49abb76` 2026-11-20 |
 | `routes` | 9 | 1 | 7 | 0.2.2 | 0.3.0 | `cfd815c8` 2026-11-24 |
 | `runtime` | 6 | 1 | 4 | 0.2.0 | 0.2.0 | `9ab7ab9e` 2026-11-17 |
-| `server` | 265 | 1 | 263 | 0.2.63 | 0.3.30 | `dea670b0` 2026-11-17 |
+| `server` | 269 | 1 | 267 | 0.2.67 | 0.3.31 | `dea670b0` 2026-11-17 |
 | `sessions` | 21 | 5 | 15 | 0.6.0 | 0.8.0 | `f7e1ed54` 2026-11-18 |
 | `store` | 14 | 1 | 12 | 0.2.0 | 0.2.0 | `249d729f` 2026-11-18 |
 | `telemetry` | 5 | 1 | 3 | 0.2.0 | 0.2.0 | `203d5d99` 2026-11-16 |
@@ -111,7 +111,7 @@ kernel / platform / dev 层的 crate。规则 8 管的是**所有** `plugin.toml
 | `documents` | `0841e2ae` 盘面树端点族 · `f46dea65` 归档 tree.json 导入 · `705d1490` 从发行面下线（删端点） |
 | `elements` | `51949cc8` 锁（locked 进 JSON + 端点判据） |
 | `env` | `385129a7` GET /v1/fs/dirs |
-| `Library_Extend` | `58bd05b3` 端点族名改硬 · `a8736d61` 解冻（reload） · `250f7507` 管理面 7 条 · `1985977f` 编辑骨架 4 条 · `61259789` 垃圾站 2 条 · 本次改名 159fc902（vendor / 目录 / 包名） |
+| `Extend` | `58bd05b3` 端点族名改硬 · `a8736d61` 解冻（reload） · `250f7507` 管理面 7 条 · `1985977f` 编辑骨架 4 条 · `61259789` 垃圾站 2 条 · 本次改名 159fc902（vendor / 目录 / 包名） |
 | `prompts` | `58bd05b3` 端点族名改硬 · `1985977f` 编辑骨架 5 条 |
 | `repo` | `03f0dd38` 10 条 /v1/repos · `55b9494c` 变体 7 条 · `ea4041ac` 上游追踪 12 条 · `ee77955b` 归档区读面 |
 | `server` | `c8735a6f` readme 端点出生 · `5650ba41` 归到 device（换归属 = 契约变） |
@@ -124,7 +124,7 @@ kernel / platform / dev 层的 crate。规则 8 管的是**所有** `plugin.toml
 `data-manager` 的前世是 `stats`（`crates/Nous/stats` → `crates/Data/DataManager`，2026-11-25）。
 脚本按 `rename_chain` 顺着 `git mv` 的 R 记录往回找，所以它的提交数与 minor 档把 `stats` 时期
 一起算上了：**同一个插件的版本线，不因改名重新起算**。
-本次 `Library_Extend`（`crates/Nous/Extend` → `crates/Library/Extend`）与
+本次 `Extend`（`crates/Nous/Extend` → `crates/Library/Extend`）与
 `Skill`（`crates/Nous/Skills` → `crates/Library/Skill`）同理由 `rename_chain` 接回旧档案，
 所以表里的提交数比旧名时多一条，起点提交不变。
 

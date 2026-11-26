@@ -1,42 +1,23 @@
-//! 静态元数据端点：`device` / `selection` / `extensions` /
-//! `capabilities` / `_routes`（#47 + #48 合并后的唯一注册表）。
+//! 静态元数据的**数据面**：清单（`MANIFEST`）与静态表（`ROUTES`）在这里。
+//!
+//! 视图不在这里了 —— `/v1/capabilities`、`/v1/_routes`、`/v1/openapi.json` 的组装
+//! 搬进了 `crates/Nous/Device/src/routes.rs`（`Device` 插件，规则 11：端点的家就是
+//! 插件的 `routes()`）。本文件只剩两份原料：清单行（[`manifest_lines`]）和注册表
+//! （[`registered`]），由 `plugins.rs` 的 `impl nous_device::routes::Host` 交出去。
 //!
 //! `Skill` / `Nous_Prompts` 已搬进各自的插件（`routes()` 声明 + 自己的 handler）。
 //!
 //! 这里只做**数据装配**，没有第二份事实源：进程配置来自环境，能力声明是这张表本身。
 //! 形状以 `wire.md` + `NousDesk/crates/nous-engine/src/types.rs` 为准；未知字段透传给客户端。
 //!
-//! `ROUTES` 是 `/v1/*` 端点的唯一真相：`router()` 从这里装配真路由、`capabilities()` 从这里生成
-//! `endpoints`、`_routes` 从这里吐调试视图。三处同源，才撑得住「声明不许说谎」。
-//!
-//! #65：device 段（机器 / 模型 / 默认模型）已经搬到 `nous-device` 插件，这里只留转发。
+//! `ROUTES` 只装**还没搬进插件的**端点；搬一个就从这里删一行（搬运进度见
+//! `docs/magento2-migration.md`）。`/v1/*` 的完整真相 = `ROUTES` ∪ 各插件 `routes()`，
+//! 两者由 [`registered`] 合流后交给插件判 enabled。
 
 use std::path::PathBuf;
 
 use nous_env::{ContentPath, PRESETS};
 use serde_json::{json, Value};
-
-/// `GET /v1/device`。`node` 是引擎版本标识（About 面板显示），`startedAt` 是 epoch 毫秒。
-/// 数据装配归 `nous-device`；build / target 来自 server 的产物身份（它才知道自己是什么二进制）。
-pub fn device(models: &nous_device::ModelsResponse) -> Value {
-    let body = nous_device::device(models);
-    let default = body["model"].clone();
-    // 字段顺序按 wire.md 的既有快照钉住（serde_json 开了 preserve_order）。
-    json!({
-        "self": body["self"],
-        "origin": body["origin"],
-        "node": env!("CARGO_PKG_VERSION"),
-        "version": env!("CARGO_PKG_VERSION"),
-        "build": crate::version::build_id(),
-        "target": crate::version::target_triple(),
-        "startedAt": body["startedAt"],
-        "model": default,
-        "faux": body["faux"],
-        "data": body["data"],
-        "catalog": body["catalog"],
-        "available": body["available"],
-    })
-}
 
 /// `GET /v1/selection`：当前没有选中的会话，诚实回 `null`（客户端 0 处依赖）。
 pub fn selection() -> Value {
@@ -83,88 +64,51 @@ pub struct RegisteredRoute {
     pub module: &'static str,
 }
 
-/// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
-pub const ROUTES: &[RegisteredRoute] = &[
-    // #61：combos 两条端点（开关是引擎算出来的，Desk 只显示 + 写穿）；#82 补试跑。
-    // #68：只读目录浏览（env 插件）。
-    // #76：变体（skills / extend）。
-    // #77：上游追踪（sources + 10 条 upstream 动作）挂在 skills 私库上。
-    // sessions 的 17 条里 16 条已归插件；**这一条留在 server**（要宿主组装根与提示词注入）。
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/models", module: "Device" },
-    RegisteredRoute { method: "PUT", path: "/v1/default", module: "Device" },
-    RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "Device" },
-    // #49：置顶写穿走 sessions 模块；与 rename/read 一样经同一个 `Session` 写者。
-    // #64：写入面与 selection 两行状态都属于 sessions 模块。
-    // #67 的世代归档三端点已搬进 `data/archive` 插件（`routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/device", module: "Device" },
-    // `extensions` 的 15 条已搬进 `Extend` 插件（`library-extend` 的 `routes()` 声明），
-    // 静态表只减不增。
-    // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
-    // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Trigger_Core` 插件
-    // （`trigger-core` 的 `routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Device" },
-    // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘。
-    // 归 `device`（不是"server"）：`_routes` / `capabilities` 只吐**清单里开着的模块**，
-    // "server" 不在 MANIFEST 的 14 条里 —— 归它等于这条端点永远不出现在 /v1/_routes，
-    // 客户端会一直报「路由漂移」。device 是 0.1.25 里唯一「宿主级只读」的模块。
-    RegisteredRoute { method: "GET", path: "/v1/plugins/{name}/readme", module: "Device" },
-    // 机读总表：从注册表（本表 ∪ 插件声明）生成，自身也归 device。
-    RegisteredRoute { method: "GET", path: "/v1/openapi.json", module: "Device" },
-    // #60：13 条 presets 资源化端点（清单即详情 + 修订表）。
-    // 元素库（组 / 包）：盘上真相在私库，写一次提交一次。
-    RegisteredRoute { method: "GET", path: "/v1/_routes", module: "Device" },
-];
-
-/// `GET /v1/_routes`：debug 视图与 capabilities 从同一张表吐出。
+/// 清单的一行交给 `Device` 插件（`capabilities` / `_routes` / `readme` 的原料之一）。
 ///
-/// `modules` 覆盖全部清单行（含未实现的，便于 desk 调试），`routes` 只列清单开着且
-/// 代码注册了的端点——和 enabled 模块的 `endpoints` 多重集相等（不声明不存在的端点，
-/// 未装配运行时的 `ext` 端点仍回 200 空清单，但真路径永远来自同一张表）。
-pub fn routes_view() -> Value {
-    json!({
-        "routes": endpoints()
-            .into_iter()
-            .map(|route| json!({ "module": route.module, "method": route.method, "path": route.path }))
-            .collect::<Vec<_>>(),
-        "modules": MANIFEST
-            .iter()
-            .map(|entry| json!({ "name": entry.name, "enabled": route_enabled(entry.name) }))
-            .collect::<Vec<_>>(),
-    })
-}
-
-/// `GET /v1/openapi.json`：从 `ROUTES` 生成 paths，与 capabilities/_routes 三处同源。
-pub fn openapi_paths() -> Value {
-    let mut paths = serde_json::Map::new();
-    for route in endpoints() {
-        let entry = paths.entry(route.path.clone()).or_insert_with(|| json!({}));
-        if let Some(object) = entry.as_object_mut() {
-            object.insert(
-                route.method.to_ascii_lowercase(),
-                json!({ "operationId": format!("{} {}", route.method, route.path) }),
-            );
-        }
-    }
-    Value::Object(paths)
-}
-
-/// 某模块是否在发行清单里开着且可用（给判据与 _routes 用）。
-pub fn route_enabled(module: &str) -> bool {
+/// 宿主只做「读清单 + 查版本」，**视图组装在插件里**：`enabled` 要同时看清单开关和
+/// 注册表里有没有它的端点，那个判定归端点自己。
+pub fn manifest_lines() -> Vec<nous_device::routes::ManifestLine> {
     MANIFEST
         .iter()
-        .find(|entry| entry.name == module)
-        .is_some_and(|entry| entry.reason.is_none())
+        .map(|entry| {
+            let (version, fallback) = crate::plugin_versions::version_of(entry.name);
+            nous_device::routes::ManifestLine {
+                name: entry.name,
+                reason: entry.reason.map(|code| nous_device::routes::Refusal {
+                    code: code.as_str(),
+                    message: code.message(entry.name),
+                }),
+                layer: entry.layer.as_str(),
+                kind: entry.kind.as_str(),
+                required: entry.required,
+                crate_name: entry.crate_name,
+                description: entry.description,
+                version,
+                vendor: crate::plugin_versions::vendor_of(entry.name).map(str::to_string),
+                version_from_release: fallback,
+            }
+        })
+        .collect()
 }
 
-fn enabled_routes() -> impl Iterator<Item = &'static RegisteredRoute> {
-    ROUTES.iter().filter(|route| route_enabled(route.module))
+/// 注册表 = 静态表（还没搬走的端点）∪ 各插件的 `routes()` 声明。**未过滤**：
+/// 按清单开关过滤是插件的事（它才知道 `enabled` 怎么判）。
+pub fn registered() -> Vec<nous_routes::Declaration> {
+    let mut all: Vec<nous_routes::Declaration> = ROUTES
+        .iter()
+        .map(|route| nous_routes::Declaration {
+            method: route.method,
+            path: route.path.to_string(),
+            module: route.module,
+        })
+        .collect();
+    all.extend(crate::plugins::declarations());
+    all
 }
 
-/// 合流后的一条端点：静态表（还没搬进插件的）∪ 插件声明（`nous-routes`）。
-///
-/// 路径统一是 `:id` 形式（`wire.md` 的写法）；插件交上来的是 axum 的 `{id}`，
-/// 由 `Route::registry_path` 折成同一种，注册表里不会出现两种写法。
+/// 注册表的一行（宿主侧判据用）。**过滤逻辑不在这里** —— 它跟着视图住在
+/// `nous_device::routes`，这里只是把结果摊成宿主自己的结构体。
 #[derive(Debug, Clone)]
 pub struct Endpoint {
     pub method: &'static str,
@@ -172,27 +116,33 @@ pub struct Endpoint {
     pub module: &'static str,
 }
 
-/// 注册表 = 静态表 ∪ 插件声明。搬一个端点就从 `ROUTES` 删一行。
+/// 注册表 = 静态表 ∪ 插件声明，已按清单开关过滤。
 pub fn endpoints() -> Vec<Endpoint> {
-    let mut all: Vec<Endpoint> = enabled_routes()
-        .map(|route| Endpoint {
-            method: route.method,
-            path: route.path.to_string(),
-            module: route.module,
+    nous_device::routes::enabled_endpoints(&manifest_lines(), &registered())
+        .into_iter()
+        .map(|(method, path, module)| Endpoint {
+            method,
+            path,
+            module,
         })
-        .collect();
-    for declaration in crate::plugins::declarations() {
-        if !route_enabled(declaration.module) {
-            continue;
-        }
-        all.push(Endpoint {
-            method: declaration.method,
-            path: declaration.path,
-            module: declaration.module,
-        });
-    }
-    all
+        .collect()
 }
+
+/// 某模块在清单里开着没有。转发到插件，免得两份实现漂。
+pub fn route_enabled(module: &str) -> bool {
+    nous_device::routes::line_enabled(&manifest_lines(), module)
+}
+
+/// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
+pub const ROUTES: &[RegisteredRoute] = &[
+    // sessions 的 17 条里 16 条已归插件；**这一条留在 server**（要宿主组装根与提示词注入）。
+    // 其余 8 条 `Device` 端点（`/v1/models` / `/v1/default` / `/v1/catalog/refresh` /
+    // `/v1/device` / `/v1/capabilities` / `/v1/_routes` / `/v1/openapi.json` /
+    // `/v1/plugins/{name}/readme`）已搬进 `Device` 插件的 `routes()` 声明。
+    //
+    // **静态表只剩这一行** —— 再往里加行之前先问一句：它为什么不能住在它自己的插件里？
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
+];
 
 /// `#88`：清单的一行。五个展示列逐格抄自 `docs/plugins.md` 主表，
 /// `capabilities_manifest.rs` 逐格比对，不许第二份手抄。
@@ -269,7 +219,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-combos`", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘" },
     ManifestEntry { name: "Trigger_Core", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`trigger-core`", description: "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行" },
     ManifestEntry { name: "data-manager", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-data-manager`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
-    ManifestEntry { name: "Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
+    ManifestEntry { name: "Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；自带 9 条端点（机器 / 模型三件套 / `device` / `_routes` / `capabilities` / `openapi.json` / 插件 README）；自省三件套的**原料归宿主、视图归插件**" },
     ManifestEntry { name: "Nous_Prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点" },
     ManifestEntry { name: "Extend", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`library-extend`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划" },
     // 元素库：旧面板 `k3skws` 块的 Rust 落点；盘上真相 = 第五套私库。
@@ -306,77 +256,3 @@ impl ReasonCode {
     }
 }
 
-/// `GET /v1/capabilities`：一个发行版一张清单，endpoints 全从注册表生成。
-///
-/// 形状是前向兼容的：未来（#51）可能给 module 加可选的 `kind` 字段，那是**加法**，
-/// 不替换 `name` / `enabled` / `endpoints` / `reason` 的既有语义。
-pub fn capabilities(origin: &str) -> Value {
-    let modules: Vec<Value> = MANIFEST
-        .iter()
-        .map(|entry| {
-            let name = entry.name;
-            let registered: Vec<Endpoint> = endpoints()
-                .into_iter()
-                .filter(|route| route.module == name)
-                .collect();
-            // 清单关掉的模块即便有代码也不声明；清单开着但没代码就 not_implemented。
-            let reason = entry.reason.or_else(|| {
-                registered
-                    .is_empty()
-                    .then_some(ReasonCode::NotImplemented)
-            });
-            // #88：六列是新加的，老桌面端只读 name/enabled/endpoints/reason，照旧能解析。
-            // #93：`version` 是这个**插件自己的**版本（从它自己的 plugin.toml 生成，见
-            // `plugin_versions`），不是发行版号 —— 否则 14 个模块永远显示同一个数，
-            // 「关于 → 插件」列表上看不出谁动过。取不到才回退发行版号，并加
-            // `versionSource: "release"` 如实说明（回退不静默）。
-            let (version, fallback) = crate::plugin_versions::version_of(name);
-            // 规则 10：`vendor` 是出品方（`nous` / `data` …），桌面端拿它当副标题。
-            // 没有清单的模块（外挂 / 待建）这里是 null —— 不猜、不编一个 nous 顶上。
-            let vendor = crate::plugin_versions::vendor_of(name);
-            let mut module = json!({
-                "name": name,
-                "version": version,
-                "kind": entry.kind.as_str(),
-                "layer": entry.layer.as_str(),
-                "required": entry.required,
-                "crate": entry.crate_name,
-                "vendor": vendor,
-                "description": entry.description,
-            });
-            if fallback {
-                module["versionSource"] = json!("release");
-            }
-            match reason {
-                Some(code) => {
-                    module["enabled"] = json!(false);
-                    module["reason"] = json!({ "code": code.as_str(), "message": code.message(name) });
-                }
-                None => {
-                    module["enabled"] = json!(true);
-                    module["endpoints"] = json!(registered
-                        .iter()
-                        .map(|route| format!("{} {}", route.method, route.path))
-                        .collect::<Vec<_>>());
-                }
-            }
-            module
-        })
-        .collect();
-    json!({
-        "contract": 1,
-        "server": { "name": "nous", "version": env!("CARGO_PKG_VERSION") },
-        "modules": modules,
-        "runtime": {
-            "provider": {
-                "configured": false,
-                "message": "没有配置真实 provider 凭证，发消息会 503",
-            }
-        },
-        // 一个地址 + 服务表：engine 是它自己，triggers 尚未实现。
-        "services": [
-            { "name": "engine", "base": origin },
-            { "name": "triggers", "base": origin, "enabled": true },
-        ],
-    })
-}

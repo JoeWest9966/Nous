@@ -2,7 +2,7 @@
   "contract": 1,
   "server": {
     "name": "nous",
-    "version": "0.1.40"
+    "version": "0.1.41"
   },
   "modules": [
     {
@@ -94,7 +94,7 @@
     },
     {
       "name": "presets",
-      "version": "0.1.40",
+      "version": "0.1.41",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -205,12 +205,12 @@
     },
     {
       "name": "Trigger_Core",
-      "version": "0.2.0",
+      "version": "0.1.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`trigger-core`",
-      "vendor": "Trigger",
+      "crate": "`nous-triggers`",
+      "vendor": "Nous",
       "description": "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行",
       "enabled": true,
       "endpoints": [
@@ -263,24 +263,24 @@
     },
     {
       "name": "Device",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "kind": "编译期",
       "layer": "app",
       "required": true,
       "crate": "`nous-device`",
       "vendor": "Nous",
-      "description": "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写",
+      "description": "#65：从 server 提成独立插件；自带 9 条端点（机器 / 模型三件套 / `device` / `_routes` / `capabilities` / `openapi.json` / 插件 README）；自省三件套的**原料归宿主、视图归插件**",
       "enabled": true,
       "endpoints": [
+        "GET /v1/machines",
         "GET /v1/models",
         "PUT /v1/default",
         "POST /v1/catalog/refresh",
         "GET /v1/device",
         "GET /v1/capabilities",
-        "GET /v1/plugins/{name}/readme",
-        "GET /v1/openapi.json",
         "GET /v1/_routes",
-        "GET /v1/machines"
+        "GET /v1/openapi.json",
+        "GET /v1/plugins/:name/readme"
       ]
     },
     {
@@ -304,7 +304,7 @@
     },
     {
       "name": "Extend",
-      "version": "0.10.0",
+      "version": "0.9.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
