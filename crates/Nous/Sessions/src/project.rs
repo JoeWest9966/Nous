@@ -197,12 +197,13 @@ pub fn session_of(change: &CommitChange) -> Option<i64> {
         CommitChange::Task(record) => Some(record.conversation_id),
         CommitChange::Submission(record) => Some(record.fields.conversation_id),
         CommitChange::Document(document) => match document {
+            // `Change` / `Retire` 的归属**本来就是可选的**（session 作用域的文档没有会话）。
             DocumentCommitChange::Change {
                 conversation_id, ..
             }
             | DocumentCommitChange::Retire {
                 conversation_id, ..
-            } => Some(*conversation_id),
+            } => *conversation_id,
             DocumentCommitChange::Copy {
                 conversation_id, ..
             } => Some(*conversation_id),
