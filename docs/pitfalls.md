@@ -6,6 +6,22 @@
 
 ---
 
+## 2026-11-26 · 新插一个 `impl` 块，把上一块的 `#[async_trait]` 抢走了
+
+**症状**：`error[E0195]: lifetime parameters or bounds on method `remote_subdirs` do not match the
+trait declaration` —— 报的是**另一个插件**（`env`）的方法，而你这次只动了 `repo`。
+
+**原因**：`plugins.rs` 里每个 `impl … Host for AppState` 挤在一起，属性宏写在 impl **正上方**。
+用「在某行前插入一段」的方式加新 impl 时，那段插入点选在了 `#[async_trait::async_trait]` 和
+原来的 `impl` **之间** —— 于是宏挂到了新 impl 上（新 impl 全是同步方法，加了也无害），
+原 impl 丢了宏，它的 `async fn` 就对不上 trait 声明了。
+
+**下次怎么做**：插入新 `impl` 时，锚点选**属性宏之后**（`impl xxx::Host for AppState {` 这一行），
+或者插完立刻 `grep -n 'async_trait::async_trait' -A2` 看一眼它下面跟的是哪个 impl。
+这个错编译器的报错位置会指向受害的那个 impl（`plugins.rs:236`），而不是作业现场，很容易查错方向。
+
+---
+
 ## 2026-11-17 · 文档里写了一个真控制字符 ⇒ 这份文档从搜索里消失
 
 **症状**：`rg '500ms' docs/` 明明该命中 `docs/storage.md`，输出里却整个没有这份文件；`grep`
