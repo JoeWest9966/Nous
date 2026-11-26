@@ -232,7 +232,9 @@ pub async fn models<H: Host>(State(host): State<H>) -> Json<ModelsResponse> {
 ///
 /// 顺序：注入的静态编目（测试快照 / faux 验收）→ 远端刷新 → 元素库的模型入口组
 /// → 文件/内联来源。
-fn current_catalog<H: Host>(host: &H) -> Result<ModelsResponse, String> {
+/// `messages` 还留在 `server`，它起一轮前也要按同一个顺序解模型引用 —— 所以这个函数
+/// 是 `pub` 的：编目的读取顺序只有这一处，跨 crate 也只许调它。
+pub fn current_catalog<H: Host>(host: &H) -> Result<ModelsResponse, String> {
     if host.injected_models() {
         return Ok(host.models());
     }

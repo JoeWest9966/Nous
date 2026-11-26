@@ -234,7 +234,8 @@ async fn messages(
     }
     let faux = state.provider_kind() == "faux";
     // #70：模型解析在**受理之前**。没有来源就 503，不许先 202 再沉默。
-    let catalog = current_catalog(&state).map_err(ServerError::ServiceUnavailable)?;
+    let catalog = nous_device::routes::current_catalog(&state)
+        .map_err(ServerError::ServiceUnavailable)?;
     let session_model = state
         .source()
         .sessions()?

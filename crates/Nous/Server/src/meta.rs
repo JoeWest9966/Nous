@@ -85,7 +85,7 @@ pub fn manifest_lines() -> Vec<nous_device::routes::ManifestLine> {
                 crate_name: entry.crate_name,
                 description: entry.description,
                 version,
-                vendor: crate::plugin_versions::vendor_of(entry.name),
+                vendor: crate::plugin_versions::vendor_of(entry.name).map(str::to_string),
                 version_from_release: fallback,
             }
         })
