@@ -8,7 +8,9 @@ description = "模板管理（Nous_PresetsAdmin）：形状闸 / 引用解析 / 
 
 [dependencies]
 axum = { workspace = true }
+nous-device = { workspace = true }
 nous-env = { workspace = true }
+nous-prompts = { workspace = true }
 nous-repo = { workspace = true }
 nous-routes = { workspace = true }
 nous-store = { workspace = true }

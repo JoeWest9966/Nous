@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::{Path as AxumPath, Query, State};
@@ -144,9 +144,12 @@ pub struct Sources {
     pub prompts: PathBuf,
     pub extensions: PathBuf,
     pub triggers: PathBuf,
-    /// 注入的模型编目（faux / 测试）。`None` = 按 `nous_device` 的来源现读。
+    /// 注入的模型编目（faux / 测试）。`None` = 按 `catalog_env` 的来源现读。
     pub models: Option<Vec<ModelLevels>>,
     pub device_model: Option<(String, String)>,
+    /// 编目来源（文件路径等）。**由宿主算好**（`main` 的 `CatalogEnvironment::from_env()`）：
+    /// 插件不读环境变量，路径解析仍然只有一处。
+    pub catalog_env: nous_device::CatalogEnvironment,
 }
 
 impl Sources {
@@ -160,6 +163,7 @@ impl Sources {
             triggers: nous_env::TRIGGERS.resolve(),
             models: None,
             device_model: None,
+            catalog_env: nous_device::CatalogEnvironment::from_env(),
         }
     }
 }
@@ -400,8 +404,7 @@ impl PresetStore {
         if let Some(models) = &self.sources.models {
             return (models.clone(), self.sources.device_model.clone());
         }
-        let catalog = nous_device::load_models(&nous_device::CatalogEnvironment::from_env())
-            .unwrap_or_default();
+        let catalog = nous_device::load_models(&self.sources.catalog_env).unwrap_or_default();
         let models = catalog
             .items
             .iter()

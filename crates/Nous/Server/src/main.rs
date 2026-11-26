@@ -354,6 +354,7 @@ async fn run() -> Result<(), RunError> {
         triggers: nous_env::TRIGGERS.resolve(),
         models: None,
         device_model: None,
+        catalog_env: nous_device::CatalogEnvironment::from_env(),
     });
     // #61：combos 复用同一份模板私库根；触发器名册从 NOUS_TRIGGER 读（两个根都只在这里解析一次）。
     let state = state.with_combos_roots(
