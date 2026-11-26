@@ -51,7 +51,7 @@
     },
     {
       "name": "repo",
-      "version": "0.5.13",
+      "version": "0.5.14",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
@@ -153,13 +153,13 @@
     },
     {
       "name": "skills",
-      "version": "0.2.2",
-      "kind": "声明式",
+      "version": "0.3.0",
+      "kind": "编译期",
       "layer": "app",
       "required": false,
       "crate": "`nous-skills`",
       "vendor": "Nous",
-      "description": "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`）",
+      "description": "默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `ext` 共用同一份；不 spawn git（发布走 `nous-repo`）",
       "enabled": true,
       "endpoints": [
         "GET /v1/skills",

@@ -1,5 +1,7 @@
-//! 静态元数据端点：`device` / `selection` / `skills` / `prompts` /
-//! `extensions` / `capabilities` / `_routes`（#47 + #48 合并后的唯一注册表）。
+//! 静态元数据端点：`device` / `selection` / `prompts` / `extensions` /
+//! `capabilities` / `_routes`（#47 + #48 合并后的唯一注册表）。
+//!
+//! `skills` 已搬进 `nous-skills` 插件（`routes()` 声明 + 自己的 handler）。
 //!
 //! 这里只做**数据装配**，没有第二份事实源：进程配置来自环境，能力声明是这张表本身。
 //! 形状以 `wire.md` + `NousDesk/crates/nous-engine/src/types.rs` 为准；未知字段透传给客户端。
@@ -11,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use nous_env::{ContentPath, PRESETS, PROMPTS, SKILLS};
+use nous_env::{ContentPath, PRESETS, PROMPTS};
 use serde_json::{json, Value};
 
 /// `GET /v1/device`。`node` 是引擎版本标识（About 面板显示），`startedAt` 是 epoch 毫秒。
@@ -57,45 +59,6 @@ fn content_status(path: ContentPath) -> (PathBuf, Value, bool) {
         })
     };
     (root, status, present)
-}
-
-/// `GET /v1/skills`：目录不存在就是空表，不伪造内容、不 404。
-///
-/// 盘上真相由 `nous_skills` 插件解析（`SKILL.md` frontmatter / 附件 / 类别词表）。
-/// 这里只做 wire 投影：目录路径转字符串、`Option` 转 `null`，`tracked` 恒 null
-/// （#71 不碰 git，判定留给别的票）。`repo` 块只给 root + present（#63 形状）。
-pub fn skills() -> Value {
-    let (root, mut status, present) = content_status(SKILLS);
-    let scanned = nous_skills::scan(&root);
-    let entries = scanned
-        .skills
-        .iter()
-        .map(|skill| {
-            let load = if let Some(detail) = &skill.load.detail {
-                json!({ "state": skill.load.state, "detail": detail })
-            } else {
-                json!({ "state": skill.load.state })
-            };
-            json!({
-                "name": skill.name,
-                "description": skill.description,
-                "category": skill.category,
-                "hidden": skill.hidden,
-                "tracked": skill.tracked,
-                "dir": skill.dir.to_string_lossy().into_owned(),
-                "file": skill.file.as_ref().map(|p| p.to_string_lossy().into_owned()),
-                "attachments": skill.attachments,
-                "load": load,
-            })
-        })
-        .collect::<Vec<Value>>();
-    status["categories"] = json!(scanned.categories);
-    status["skills"] = json!(entries);
-    status["repo"] = json!({
-        "root": root.to_string_lossy().into_owned(),
-        "present": present,
-    });
-    status
 }
 
 /// `GET /v1/prompts`：真读 `NOUS_PROMPTS`（#72），落在只读插件里，默认配置写错也如实报。
@@ -208,13 +171,7 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "Nous_Device" },
-    RegisteredRoute { method: "GET", path: "/v1/skills", module: "skills" },
-    // 资源仓管理面：编辑页要的文件清单 / 单文件读写 / 新建 / 发布（三仓共用一副骨架）。
-    RegisteredRoute { method: "GET", path: "/v1/skills/files", module: "skills" },
-    RegisteredRoute { method: "GET", path: "/v1/skills/file", module: "skills" },
-    RegisteredRoute { method: "PUT", path: "/v1/skills/file", module: "skills" },
-    RegisteredRoute { method: "POST", path: "/v1/skills/create", module: "skills" },
-    RegisteredRoute { method: "POST", path: "/v1/skills/publish", module: "skills" },
+    // `skills` 的 6 条已搬进插件（`nous-skills` 的 `routes()` 声明），静态表只减不增。
     RegisteredRoute { method: "GET", path: "/v1/prompts/files", module: "prompts" },
     RegisteredRoute { method: "GET", path: "/v1/prompts/file", module: "prompts" },
     RegisteredRoute { method: "PUT", path: "/v1/prompts/file", module: "prompts" },
@@ -431,7 +388,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`）" },
     // #60：模板管理的判定层（TS 内核 `presets.js` / `presets-api.js` 的归位）。
     ManifestEntry { name: "presets-admin", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-presets-admin`", description: "从 TS 内核 `presets.js` 750 + `presets-api.js` 947 归位；段清单读 `<root>/sections.json`" },
-    ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Declarative, required: false, crate_name: "`nous-skills`", description: "数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`）" },
+    ManifestEntry { name: "skills", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-skills`", description: "默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `ext` 共用同一份；不 spawn git（发布走 `nous-repo`）" },
     ManifestEntry { name: "archive", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-archive`", description: "三条端点自带 handler（`crates/Data/Archive/src/routes.rs`）；供应商 `data`，包名 `data-archive`" },
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读" },

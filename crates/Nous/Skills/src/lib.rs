@@ -1,10 +1,16 @@
-//! skills 插件：`SKILL.md` 的盘上真相（#71）。
+//! skills 插件：`SKILL.md` 的盘上真相（#71）+ 6 条 `/v1/skills*` 端点。
 //!
-//! 只读：扫目录、解析 frontmatter、数附件、汇总类别词表。
-//! **不碰 git、不 spawn 进程、不写回私库** —— tracked 本票返回 `null`。
+//! 两半：
+//!
+//! - **解析**（[`scan`] / [`assemble_prompts`]）：只读，扫目录、解析 frontmatter、
+//!   数附件、汇总类别词表。不碰 git、不 spawn 进程、不写回私库。
+//! - **端点**（[`routes`]）：`GET /v1/skills` 是上面那层投影；另外五条是编辑页的
+//!   管理面，盘面规矩在 `nous_repo::entries`，这里只做 HTTP 翻译。
 
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub mod routes;
 
 use serde_json::Value;
 

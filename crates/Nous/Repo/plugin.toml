@@ -1,6 +1,6 @@
 name = "repo"
 vendor = "Nous"
-version = "0.5.13"
+version = "0.5.14"  # 新增 entries 层（资源条目管理面下沉，三仓共用）
 layer = "platform"
 crate = "nous-repo"
 

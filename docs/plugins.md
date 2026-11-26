@@ -148,7 +148,7 @@
 | `build-worker` | Nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | Nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
 | `combos` | Nous | — | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读 |
-| `skills` | Nous | `nous-skills` | app | 声明式 | `SKILL.md` frontmatter / 附件 / 类别词表解析 + `/v1/skills` 只读投影（#71）+ 管理面 `/v1/skills/{files,file,create,publish}`（编辑页；文件 CRUD 与 git 提交复用 `nous-repo`） | 否 | 数据；默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；只列盘上真相，不碰 git（发布走 `nous-repo`） |
+| `skills` | Nous | `nous-skills` | app | 编译期 | 6 条端点自带 handler（`crates/Nous/Skills/src/routes.rs`）：`GET /v1/skills`（只读投影，`?usage=1` 反查谁在用）+ `/v1/skills/{files,file,create,publish}`（编辑页） | 否 | 默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `ext` 共用同一份；不 spawn git（发布走 `nous-repo`） |
 | `prompt-text` | Nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
 | `trigger-spec` | Nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | Nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |

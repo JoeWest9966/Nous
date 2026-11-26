@@ -19,6 +19,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(data_archive::routes::routes::<Arc<AppState>>());
     all.extend(nous_elements::routes::routes::<Arc<AppState>>());
     all.extend(nous_presets_admin::routes::routes::<Arc<AppState>>());
+    all.extend(nous_skills::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -48,6 +49,25 @@ impl element_models::routes::Host for AppState {
 impl nous_elements::routes::Host for AppState {
     fn elements_repo(&self) -> Option<Arc<nous_repo::Repo>> {
         self.repo(nous_elements::routes::REPO_KEY)
+    }
+}
+
+/// `skills` 插件要的三件事：技能私库句柄、它的根目录、以及「谁在用」的反查。
+///
+/// 前两个是同一份私库的两种取法：管理面要 [`nous_repo::Repo`]（写锁与 git 提交在里面），
+/// 只读投影要路径（`nous_skills::scan` 只吃路径）。第三个走 `SessionSource::usage` ——
+/// 会话记录归 `nous-durable`，插件不自己开库。
+impl nous_skills::routes::Host for AppState {
+    fn skills_repo(&self) -> Option<Arc<nous_repo::Repo>> {
+        self.repo(nous_skills::routes::REPO_KEY)
+    }
+
+    fn skills_root(&self) -> std::path::PathBuf {
+        nous_env::SKILLS.resolve()
+    }
+
+    fn skills_usage(&self) -> Option<serde_json::Value> {
+        self.source().usage("skills").ok()
     }
 }
 

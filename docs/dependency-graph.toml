@@ -18,6 +18,10 @@ nous-durable = ["nous-chord", "nous-ai", "nous-wire", "nous-telemetry", "nous-en
 # 端点也归本插件，所以还要 axum / nous-routes 和一条路径解析（nous-env）。
 nous-elements = ["nous-env", "nous-repo", "nous-routes"]
 
+# 技能插件：解析层只读盘面；端点归本插件后要 axum / nous-routes，
+# 盘面规矩（名字校验、清单、骨架、发布）走 nous-repo::entries，路径解析走 nous-env。
+nous-skills = ["nous-env", "nous-repo", "nous-routes"]
+
 # #73 dispatcher 用 durable sleeping 任务落 tick、store 读写账本、chord 处理增量。
 nous-dispatcher = ["nous-chord", "nous-durable", "nous-store"]
 
@@ -37,7 +41,7 @@ nous-server = [
   "nous-env-ssh",
   # #81 扩展管理面（create/duplicate/install/类别词表/usage）
   "nous-ext",
-  # #72 prompts + #71/#83 skills 的目录只读投影
+  # #72 prompts 的目录只读投影 + #71/#83 skills（解析层 + 自带 6 条端点）
   "nous-prompts", "nous-skills",
   # #75 五套私库文件面 + #76 variant + #77 upstream
   "nous-repo",

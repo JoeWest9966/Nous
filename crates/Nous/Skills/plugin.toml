@@ -1,10 +1,13 @@
 name = "skills"
 vendor = "Nous"
-version = "0.2.2"
+version = "0.3.0"  # 6 条端点归本插件 = minor（规则 8）
 layer = "app"
 crate = "nous-skills"
 
 [requires]
+nous-env = "^0.1"
+nous-repo = "^0.1"
+nous-routes = "^0.1"
 
 [provides]
 capability = "skills"
