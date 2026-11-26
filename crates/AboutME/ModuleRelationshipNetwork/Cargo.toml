@@ -1,0 +1,16 @@
+[package]
+name = "aboutme-module-relationship-network"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "模块关系网插件：把各插件 plugin.toml 的 requires 投影成模块级依赖图（app 层）"
+
+[dependencies]
+axum = { workspace = true }
+nous-routes = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }

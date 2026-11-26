@@ -3,6 +3,17 @@
 version = 4
 
 [[package]]
+name = "aboutme-module-relationship-network"
+version = "0.1.41"
+dependencies = [
+ "axum",
+ "nous-routes",
+ "serde_json",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1585,6 +1596,7 @@ dependencies = [
 name = "nous-server"
 version = "0.1.41"
 dependencies = [
+ "aboutme-module-relationship-network",
  "async-trait",
  "axum",
  "base64 0.22.1",

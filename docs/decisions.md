@@ -1696,3 +1696,34 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 **反悔点**：如果哪天机器判据要求「全名必须带 vendor 段」（即 `Vendor_Module` 是唯一合法形态），
 `Extend` / `Skill` / `Models` 三个单段名要一起补成 `Library_Extend` / `Library_Skill` /
 `Element_Models` —— 那时改的就是规则 12 本身，不是这三个模块。
+## 2026-11-26 · 模块关系网：**构建期抄清单 + 只表达 crate 边**
+
+**决定**：新增插件 `AboutME_ModuleRelationshipNetwork`（vendor `AboutME`，目录
+`crates/AboutME/ModuleRelationshipNetwork`，包 `aboutme-module-relationship-network`），
+一条端点 `GET /v1/modules/graph` —— 把各插件 `plugin.toml [requires]` 投影成模块级依赖图。
+
+三条具体选择：
+
+1. **原料是 `plugin.toml [requires]`，不是运行时探测。** 那份字段由 `scripts/check-plugins.sh`
+   与 `cargo metadata` **双向逐条比对**（少写 / 多写都红），所以它已经是「插件真依赖了谁」的
+   可信抄本。运行时扫源码 / 动态挂载探测会给出不确定的结果，还在 `j1900` 上白烧启动时间。
+2. **生成放在 `build.rs`（`include!`），不放仓库里的 JSON。** 与 `crates/Nous/Server/build.rs`
+   （#93 的 `PLUGIN_VERSIONS`）同一套模式：编译期抄一次，图与产物同一份，启动零 IO；也不像
+   `build.rs` 里跑 `cargo metadata` 那样递归调 cargo（增量构建会锁）。进仓的 JSON 需要一条 CI
+   生成校验才不漂，那是多一个机制，收益只是「不重编译也能看到图变化」—— 现在不需要。
+3. **只表达 crate 边，语义依赖不进图。** 「`Extend` 干活得靠 `env` 给路径」这类判断
+   内核里一个字段都没有（`Extend` 自己调标准库拿 `temp_dir`，`[requires]` 里没有 `nous-env`）。
+   本插件不替任何人编：缺的就不在图上，被依赖却没有对应模块的包名进 `unmapped`（不静默丢弃）。
+
+**为什么不挂在 `Device` 上**：`Device` 管的是「模型 / 机器编目 + 自省视图」，依赖图是另一件事；
+塞进去会让插件版本、README、归属声明都开始回答两个问题。
+
+**命名**：全名 `AboutME_ModuleRelationshipNetwork` —— `check-plugins.sh` 的 `NAME_OK` 只允许
+**一个**下划线（`Vendor_Module`），所以 `Module_Relationship_Network` 那种多段下划线写法过不了
+判据；`Module` 作为模块段的第一个词保留，不是被删掉的。
+
+**反悔点**：① 如果图的边开始被用来做**功能判定**（比如「依赖没启用就灰入口」），那它就不能是
+只读投影，得先在内核里给语义依赖一个手写字段并对它做判据 —— 那时这条「只表达 crate 边」作废。
+② 如果要求「不重编译就更新图」，改成读盘 + mtime 缓存（照 `GET /v1/plugins/{name}/readme`），
+`generatedFor` 随之失去意义。③ 如果模块数涨到几百、图超过 1MB，一次给全会变成启动负担，
+那时改分页 / 按模块取（客户端已经在按模块渲染）。
