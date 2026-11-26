@@ -1056,10 +1056,10 @@ for p in m['packages']:
 		KEPT=$(printf '%s\n' "$RAW" | dev_reject | grep -vE '(/tests/|tests\.rs$)' | sed '/^$/d' | sort || true)
 		DROPPED=$(comm -23 <(printf '%s\n' "$RAW" | sed '/^$/d' | sort) <(printf '%s\n' "$KEPT") || true)
 		report_dropped "12." "$DROPPED" || return 1
-		# 哨兵：**恰好 1 个文件**，且就是扩展监管的 `crates/Nous/Ext/src/spawn.rs`
+		# 哨兵：**恰好 1 个文件**，且就是扩展监管的 `crates/Nous/Extend/src/spawn.rs`
 		NF=$(printf '%s\n' "$KEPT" | grep -c . || true)
-		if [ "$NF" -ne 1 ] || [ "$(printf '%s\n' "$KEPT")" != "crates/Nous/Ext/src/spawn.rs" ]; then
-			echo "进程创建点不是恰好 1 个文件 == crates/Nous/Ext/src/spawn.rs（实得 $NF 个）："
+		if [ "$NF" -ne 1 ] || [ "$(printf '%s\n' "$KEPT")" != "crates/Nous/Extend/src/spawn.rs" ]; then
+			echo "进程创建点不是恰好 1 个文件 == crates/Nous/Extend/src/spawn.rs（实得 $NF 个）："
 			printf '%s\n' "$KEPT" | sed 's/^/       /'
 			return 1
 		fi

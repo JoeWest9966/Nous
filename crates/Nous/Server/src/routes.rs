@@ -75,16 +75,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/config", post(config))
         .route("/v1/sessions/{id}/purge", post(purge))
         .route("/v1/selection", get(selection).post(write_selection))
-        .route("/v1/extensions", get(extensions))
-        .route("/v1/extensions/reload", post(reload_extensions))
-        .route("/v1/extensions/create", post(crate::ext_admin::create))
-        .route("/v1/extensions/duplicate", post(crate::ext_admin::duplicate))
-        .route("/v1/extensions/install", post(crate::ext_admin::install))
-        .route("/v1/extensions/uninstall", post(crate::ext_admin::uninstall))
-        .route("/v1/extensions/categories", get(crate::ext_admin::get_categories).post(crate::ext_admin::post_categories))
-        .route("/v1/extensions/category", post(crate::ext_admin::category))
-        .route("/v1/extensions/trash", get(crate::ext_admin::get_trash))
-        .route("/v1/extensions/trash/purge", post(crate::ext_admin::purge_trash))
         .route("/v1/search", get(search))
         .route("/v1/triggers", get(triggers).post(crate::triggers::create_trigger))
         .route("/v1/triggers/categories", get(crate::triggers::categories))
@@ -102,7 +92,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         // #90：原先挂在 documents::attach 上的自省端点，下线后归主路由。
         .route("/v1/_routes", get(routes_view));
     // 资源仓管理面（技能 / 提示词 / 扩展的编辑页）：文件读写 + 新建 + 发布，翻译层在独立模块。
-    let router = router.merge(crate::resource_admin::attach(Router::new()));
     // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `element-models`）。
     // #75：repo 路由挂在带 state 的 Router 上。
     let router = crate::repos::attach(router);
@@ -324,40 +313,6 @@ async fn purge(
 }
 
 
-/// `GET /v1/extensions`：ext 冻结，空清单。`?usage=1` 时回答「谁在用」（#85）。
-async fn extensions(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<UsageQuery>,
-) -> Result<Json<Value>> {
-    if query.requested() {
-        return Ok(Json(state.source().usage("extensions")?));
-    }
-    let items = state.ext().map(|runtime| runtime.items());
-    Ok(Json(crate::meta::extensions(items.as_deref())))
-}
-
-/// `POST /v1/extensions/reload`：按盘上现状重装所有已装载扩展（#81）。
-/// 返回 `{ reloaded: [name...] }`；失败的保留旧进程，错误进扩展自己的诊断。
-async fn reload_extensions(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let runtime = state.ext().ok_or_else(|| {
-        crate::error::ServerError::Conflict("extensions runtime not configured".to_string())
-    })?;
-    let reloaded = runtime.reload_all();
-    Ok(Json(json!({ "reloaded": reloaded })))
-}
-
-/// `?usage=1`：反查模式开关。缺席 / 0 / false / 其它值都不是反查，
-/// 不因为一个可选参数让整个端点 400（serde 的 `bool` 会把 `1` 判成非法）。
-#[derive(Debug, Deserialize)]
-struct UsageQuery {
-    usage: Option<String>,
-}
-
-impl UsageQuery {
-    fn requested(&self) -> bool {
-        matches!(self.usage.as_deref(), Some("1" | "true"))
-    }
-}
 
 /// `GET /v1/search?q=&kind=&limit=`（#85）：服务端扫一次会话正文 / 文档，
 /// `q` 少于两个字符 → 400，`limit` 上限 100 且 `truncated` 明确。

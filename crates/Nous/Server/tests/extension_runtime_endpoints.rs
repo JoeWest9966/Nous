@@ -192,7 +192,7 @@ fn extension(body: &Value, name: &str) -> Value {
 #[test]
 fn spawn_installs_parent_death_signal_and_closes_race() {
     let source = std::fs::read_to_string(
-        workspace_root().join("crates/Nous/Ext/src/spawn.rs"),
+        workspace_root().join("crates/Nous/Extend/src/spawn.rs"),
     )
     .unwrap();
     // 命中行必须落在真执行路径上：`if false && prctl(...)`、`cfg!(never) && …`

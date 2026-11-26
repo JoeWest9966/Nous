@@ -18,7 +18,6 @@
 
 pub mod app;
 pub mod auth;
-pub mod ext_admin;
 pub mod clock;
 pub mod coalesce;
 pub mod commands;
@@ -35,7 +34,6 @@ pub mod project;
 pub mod providers;
 pub mod routes;
 pub mod repos;
-pub mod resource_admin;
 pub mod runtime;
 pub mod source;
 pub mod trigger_projects;
