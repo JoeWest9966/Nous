@@ -1596,9 +1596,15 @@ dependencies = [
 name = "nous-skills"
 version = "0.1.32"
 dependencies = [
+ "axum",
+ "nous-env",
+ "nous-repo",
+ "nous-routes",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
+ "tower",
 ]
 
 [[package]]

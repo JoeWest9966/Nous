@@ -122,7 +122,7 @@ impl element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（53 条）
+### 4.1 已搬（59 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
@@ -133,16 +133,16 @@ impl element_models::routes::Host for AppState {
 | `archive` | `POST /v1/sessions/{id}/archive` · `GET /v1/archive` · `POST /v1/archive/{id}/restore`（3 条） | `feat(archive)` | 第二类接缝：**命令面**（`Host::archive_session` / `archive_generations` / `restore_session`），不是库路径 —— 归档要在活库写锁下写 gen 文件再提交墓碑，失败按方向补偿，那套语义在 `nous_durable::session::commands`。顺带把供应商换成 `data`（`crates/Data/Archive`、包名 `data-archive`）。`server/src/routes.rs` 的三条 handler 与 `RestoreBody` 整份删除 |
 | `elements` | `GET /v1/elements` · `GET/PUT/DELETE /v1/elements/{kind}/{id}` · `GET/POST /v1/elements/{kind}` · `POST /v1/elements/{kind}/{id}/lock` · `POST /v1/elements/push`（8 条）
 | `presets` + `presets-admin` | `/v1/presets*` 全 32 条（13 + 19） | `refactor(presets-admin)` | **第一次「两个模块共用一个插件的 handler」**：`crates/Nous/Server/src/presets.rs`（1902 行）整份搬成 `crates/Nous/PresetsAdmin/src/routes.rs`。宿主能力只有一个方法 `Host::preset_sources() -> Option<Sources>`（模板私库根 + 插件库 + 三个外部名册根 + 编目来源），`Sources` 由 `main` 装配一次、插件只接 —— 路径解析仍然只有 `env` 插件一处。`ServerError` 换成插件自己的 `Refusal`（六个分支一对一，状态码与文案一字没改）；`server` 侧 `presets::SharedStore` / `PresetStore` / `presets::routes()` 全删，`AppState.presets` 的类型直接换成 `routes::Sources`（不留两套同形结构）。**端点归属照搬家前静态表原样**（`GET order` 在 admin、`PUT order` 在 presets 这种手写漂移不夹带修） | | `feat(elements)` | 第一次搬**已经是独立文件**的模块（`server/src/elements.rs` 377 行）：盘上真相与「写一次提交一次」本来就在 `nous-elements`，所以宿主能力只要 `Host::elements_repo()`（一个仓库句柄），比 `data-manager` 还窄。`RepoError → 状态码` 的翻译搬进插件的 `Refusal::from_repo`（一处判，含 `Validation` 的 `{field, problem}` 与 423）。`server/src/elements.rs` 整份删除；`models.rs` 的 `REPO_KEY` 改读 `nous_elements::routes::REPO_KEY` |
+| `skills` | `GET /v1/skills` · `GET /v1/skills/files` · `GET/PUT /v1/skills/file` · `POST /v1/skills/{create,publish}`（6 条） | `feat(skills)` | 第一次「端点住在共用骨架里」的搬家：6 条里 5 条原在 `server/src/resource_admin.rs`（skills / prompts / extensions 三仓共用一副骨架），不能把骨架整体塞给一个插件。**盘面规矩先下沉**到 `nous_repo::entries`（名字 / 路径校验、递归清单、骨架落盘、发布），三个仓共用同一份；然后 `skills` 插件拿走自己那 6 条，`resource_admin.rs` 只剩 prompts / extensions（522 → 309 行）。宿主能力三个方法：`skills_repo` / `skills_root` / `skills_usage`（前两个是同一份私库的两种取法：写面要仓库句柄、只读投影要路径）。`meta::skills()` 与静态表 6 行一并删（143 → 137） |
 
-### 4.2 待搬（111 条 / 10 个模块）
+### 4.2 待搬（105 条 / 10 个模块）
 
 按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
-（静态表总数：搬家起点 162 行 → 现在 111 行；插件自带的端点 `Route::new` 共 54 条）。
+（静态表总数：搬家起点 162 行 → 现在 105 行；插件自带的端点 `Route::new` 共 60 条）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
 | `env` | 1 | 目录解析（`NOUS_START_DIRS`），无 IO 以外的状态 |
-| `skills` | 6 | 私库读写（`nous-repo`）+ 变体表 |
 | `prompts` | 6 | 私库读写（`nous-repo`） |
 | `combos` | 4 | 组合段读写 + 试跑（依赖 `sessions` 起轮） |
 | `ext` | 15 | 扩展私库 + 运行时（`nous-ext`）+ 管理面 |
@@ -151,7 +151,7 @@ impl element_models::routes::Host for AppState {
 | `repo` | 30 | 最杂：git 面全在这一家（`nous-repo` 已是 platform，宿主只需给根路径） |
 | `device` | 7 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，建议**最后搬**（它们读注册表本身） |
 
-建议顺序：`env` → `skills` / `prompts` → `combos` →
+建议顺序：`env` → `prompts` → `combos` →
 `ext` → `triggers` → `repo` → `sessions` → `device`。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
@@ -215,3 +215,4 @@ vendor `Nous` → `Element`、补一条 `MANIFEST`（它自带两条端点却不
 | 2026-11-25 | `plugin.toml` 删掉 `endpoints` 字段（28 个清单）：端点唯一真相是 `routes()`，清单只记身份（规则 11） |
 | 2026-11-25 | `archive` 交出 3 条世代归档端点，落 `crates/Data/Archive`（vendor=`data`、包名 `data-archive`、模块全名 `archive`）：宿主能力是**命令面** `Host::{archive_session, archive_generations, restore_session}`（实现只在 `server/src/plugins.rs`，全走同一个 `CommandSource`）；`server/src/routes.rs` 的 `archive` / `archive_index` / `restore` / `RestoreBody` 整份删；静态表删 3 行 |
 | 2026-11-25 | `elements` 交出 8 条 `/v1/elements*`（组 / 包读写与锁）：宿主能力只有一个 `Host::elements_repo()` —— 盘上真相与「写一次提交一次」本来就在 `nous-elements`（这个模块早就是独立 crate，只缺端点）。`RepoError → 状态码` 的翻译搬进插件的 `Refusal::from_repo`（一处判：400 / 404 / 409 / 423 / 500，`Validation` 多带 `{field, problem}`）；`server/src/elements.rs` 整份删；静态表删 8 行（151 → 143）。坑：搬家后注册表写法从 `{kind}` 变成 `:kind`（`nous-routes` 折的），`capabilities` 的 `endpoints[]` 快照与断言要跟着改 |
+| 2026-11-25 | `skills` 交出 6 条 `/v1/skills*`：第一次搬「端点住在三仓共用骨架里」的模块 —— 先把盘面规矩下沉到 `nous_repo::entries`（名字 / 路径校验、递归清单、骨架落盘、发布），`resource_admin.rs` 只剩 prompts / extensions 两仓（522 → 309 行）；宿主能力 `skills_repo` / `skills_root` / `skills_usage`；`meta::skills()` 与静态表 6 行删（143 → 137）。坑：`publish` 的回包形状必须与 `CommitResult` 逐字一致（`commit` 是 hash 字符串不是对象），改形状会把 `resource_admin_endpoints` 打红 |

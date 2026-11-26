@@ -4,11 +4,17 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "skills 插件：SKILL.md frontmatter / 附件 / 类别词表的只读解析（app 层，#71）"
+description = "skills 插件：SKILL.md frontmatter / 附件 / 类别词表的只读解析 + 6 条 /v1/skills* 端点（app 层，#71）"
 
 [dependencies]
+axum = { workspace = true }
+nous-env = { workspace = true }
+nous-repo = { workspace = true }
+nous-routes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

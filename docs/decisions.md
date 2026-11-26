@@ -1283,3 +1283,46 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 `:kind`（`nous-routes` 折的），`capabilities` 的 `endpoints[]` 快照跟着变 —— 如果哪天
 Desk 端有代码按 `{kind}` 字面比字符串，那处要改成认两种写法（现在只 `normalize_path`
 折 `:`，已核 `capability.rs:108`）。
+
+---
+
+## 2026-11-26 技能六端点搬进插件（`nous-skills`）—— 骨架先下沉，再搬端点
+
+**背景**：搬家票第 6 个插件。`skills` 与前面五个都不同：6 条端点里 **5 条不住在自己的文件里**，
+而是和 `prompts` / `extensions` 挤在 `server/src/resource_admin.rs` 那一副**三仓共用骨架**里
+（一个 `Kind` 枚举 + 一套 `files/file/create/publish` handler）。
+
+**决定**：
+
+- **先下沉，再搬家。** 把骨架里的盘面规矩（`check_name` / `check_path` / 递归清单 /
+  骨架落盘 / 发布）提到 `nous_repo::entries`（platform 层，本来就是「私库文件 CRUD + git 发布」
+  那一层），三仓共用同一份；然后 `skills` 插件拿走自己那 6 条，`resource_admin.rs` 只剩
+  prompts / extensions（522 → 309 行）。
+- **不把整副骨架塞给一个插件。** 如果为了「搬 skills」把 `Kind::Prompts` / `Kind::Extensions`
+  也搬进 `nous-skills`，那 `skills` 插件就得依赖 `nous-ext`（运行时）—— 一个只读解析插件
+  被迫背上扩展运行时，依赖图当场破。所以切分线画在「盘面规矩（共用）」与「HTTP 翻译（各仓各的）」之间。
+- **宿主能力三个方法**：`skills_repo()`（写面要仓库句柄：写锁、etag、git 提交都在里面）、
+  `skills_root()`（只读投影要路径：`nous_skills::scan` 只吃 `&Path`）、
+  `skills_usage()`（`?usage=1` 反查归 `SessionSource`，插件不自己开库）。
+  前两个是同一份私库的两种取法，不是一个能力拆两半。
+- **`meta::skills()` 整份删除**（投影逻辑搬进插件的 `skills` handler），静态表删 6 行
+  （143 → 137）。
+- **`publish` 的回包形状逐字不变**：`{commit, pushed, refs}`，`commit` 是 hash **字符串**
+  （只推没提交时 `null`）。我第一版把它塞成了对象，`resource_admin_endpoints` 当场打红 ——
+  这条形状是三仓共用的，改一处三个仓一起坏。
+
+**为什么**：`elements` 证明的是「接缝可以只有一个句柄」，`skills` 证明的是
+**「端点不在自己的文件里也能搬」** —— 前提是先把共用部分放到它该在的层，而不是让插件互相依赖。
+后面 `prompts`（同样 5 条在骨架里）和 `ext`（4 条）是抄这一票：骨架已经下沉，它们只需
+拿走自己的 HTTP 翻译。
+
+**代价**：`nous-repo` 多了 `entries` 这一层（约 380 行），`nous-skills` 从「零 IO 的只读解析」
+变成「app 层的插件」—— 它的 `plugin.toml` `layer` 仍是 `app`（本来也是），但 `requires` 从空
+变成三条。`resource_admin.rs` 里 `Kind::Skills` 那一支整支消失，`MAX_FILES` / `RESERVED` 等
+常量也只剩一份（在 `nous_repo`）。
+
+**反悔点**：如果 `prompts` 搬的时候发现骨架还剩「只有 skills 用」的分支（例如技能独有的
+frontmatter 校验），那说明切分线画错了 —— 应当把那条分支挪回插件，而不是在 `nous_repo`
+里加 `if kind == Skills`。另外：`nous_repo::entries` 现在同时服务「HTTP 端点」和「插件」，
+如果哪天它开始需要知道 HTTP 状态码，那就说明它越界了（它只回 `RepoError`，状态码翻译在
+各插件/`resource_admin` 的 `from_repo` / `repo_error`）。

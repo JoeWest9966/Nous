@@ -80,7 +80,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/config", post(config))
         .route("/v1/sessions/{id}/purge", post(purge))
         .route("/v1/selection", get(selection).post(write_selection))
-        .route("/v1/skills", get(skills))
         .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
         .route("/v1/extensions/reload", post(reload_extensions))
@@ -426,17 +425,6 @@ async fn reload_extensions(State(state): State<Arc<AppState>>) -> Result<Json<Va
     })?;
     let reloaded = runtime.reload_all();
     Ok(Json(json!({ "reloaded": reloaded })))
-}
-
-/// `GET /v1/skills`：空目录就是空表。`?usage=1` 时回答「谁在用」（#85）。
-async fn skills(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<UsageQuery>,
-) -> Result<Json<Value>> {
-    if query.requested() {
-        return Ok(Json(state.source().usage("skills")?));
-    }
-    Ok(Json(crate::meta::skills()))
 }
 
 /// `?usage=1`：反查模式开关。缺席 / 0 / false / 其它值都不是反查，
