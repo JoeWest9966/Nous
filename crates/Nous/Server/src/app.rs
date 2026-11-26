@@ -111,6 +111,7 @@ impl AppState {
             stats: self.stats.clone(),
             combos: self.combos.clone(),
             combo_action: self.combo_action.clone(),
+        })
     }
 
     pub fn presets(&self) -> Option<&nous_presets_admin::routes::Sources> {
@@ -413,6 +414,7 @@ impl AppState {
             ext_admin: self.ext_admin.clone(),
             combos: self.combos.clone(),
             combo_action: self.combo_action.clone(),
+        })
     }
 
     /// #76：变体绑定表路径（未装配返回 None，由路由回 409）。
@@ -584,6 +586,7 @@ impl AppState {
             }),
             combos: self.combos.clone(),
             combo_action: self.combo_action.clone(),
+        })
     }
 
     pub fn ext_admin(&self) -> Option<&nous_ext::AdminStore> {
@@ -616,6 +619,7 @@ impl AppState {
             stats: Some(runtime),
             combos: self.combos.clone(),
             combo_action: self.combo_action.clone(),
+        })
     }
 
     pub fn combos(&self) -> Option<&nous_combos::ComboStore> {
