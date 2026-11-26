@@ -122,7 +122,7 @@ impl element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（137 条）
+### 4.1 已搬（153 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
@@ -141,17 +141,18 @@ impl element_models::routes::Host for AppState {
 | `repo` | `/v1/repos/{repo}/*` 全 30 条（本体 20 + 变体 6 + 上游 10 字段 4） | `refactor(repo)` | **存量最大的一票**：`server/src/repos.rs`（356 行 / 20 条）+ `server/src/upstream.rs`（211 行 / 10 条）整份搬成 `crates/Nous/Repo/src/routes.rs`。`nous-repo` 本就是 platform 层、已依赖 `nous-env`，所以加 `nous-routes` 不成环 （`env → … → repo` 方向不变）。宿主能力四个方法：`repo(kind)` / `variant_table(kind)` / `upstream_data()` / `source_usage(field)` —— 前三个是「进程启动时打开了什么」，最后一个是 `variants/usage` 的反查（会话记录归 durable，插件不自己开库）。**同票补掉 `nous_repo::Refusal` 的行为缺口**：`Conflict` 分支此前只回 `{error}`，丢了磁盘当前 `{content, etag}`（#75 票面要求，Desk 靠它显示盘上现在是什么）—— 补在 `body()` 里，`elements` / `skills` / `prompts` 三个已搬插件同时受益（它们的 `HttpRefusal::new(status, refusal.body())` 天然透传）。`server/src/repos.rs` 只剩装配（`from_env` / `from_path` / `variant_tables_from_env`）与 `repo_error` —— 后者只剩 `trigger_projects.rs` 一个调用方，等 `feat/triggers-plugin` 落地后随它一起收进 `Refusal`。静态表 79 → 49 行 |
 | `Nous_Triggers` | 定义面 11 条：`GET/POST /v1/triggers` · `GET /v1/triggers/categories` · `POST /v1/triggers/category` · `PATCH/PUT /v1/triggers/:code` · `POST /v1/triggers/:code/{archive,restore,purge,fire}` · `GET /v1/triggers/:code/fires`；工程面 13 条：`/v1/trigger-projects` 的 `files` / `file`（GET/PUT）/ `create` / `publish` / `{archive,restore,purge}` / `categories`（GET/POST）/ `category` / `sync`（24 条） | `feat(triggers)` | **接缝最薄的一票**：24 条端点只要两条宿主能力（`triggers_runtime` + `triggers_repo`），2024 行 handler 整份搬进新 crate；插件**出生即全名**，没有改名那趟 |
 
-### 4.2 待搬（25 条 / 2 个模块）
+| `sessions` | `/v1/sessions*` 17 条里的 **16 条** | `refactor(sessions)` | 三段走完：①`source` / `commands` / `records` 三层语义下沉；②`hub` / `coalesce` / `project` / `observer` 事件流机制下沉；③16 条 handler 搬进 `crates/Nous/Sessions/src/routes.rs`。**`POST /v1/sessions/{id}/messages` 留在 `server`** —— 它要的是宿主组装根（`AssembledRuntime` 的 driver / completions）与提示词注入（`nous-prompts` / skills 库），都是 app 层的装配物，不是会话语义；它注册时仍报 `MODULE = "sessions"`，所以 capabilities 上 sessions 还是 17 条。`SessionError` 十个变体成了会话三层的共用错误（`server` 侧一层 `From` 接住过渡期调用点），并实现了 `IntoResponse` （axum handler 的返回类型要求）。`routes.rs` 1108 → 200 行（只剩 8 条 `Nous_Device`）。静态表 25 → 9 行 |
+
+### 4.2 待搬（9 条 / 1 个模块）
 
 按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
-（静态表总数：搬家起点 162 行 → 现在 **25 行**；插件自带的端点 `Route::new` 共 **109 条**）。
+（静态表总数：搬家起点 162 行 → 现在 **9 行**（8 条 `Nous_Device` + 1 条 `messages`）；插件自带的端点 `Route::new` 共 **125 条**）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
-| `sessions` | 17 | 最厚：读投影 + 写命令 + SSE 出口（`events` 尤其要小心）。**骨架已下沉**（见 §7 2026-11-26）：`source` / `commands` / `records` 三层已在 `nous-sessions`，宿主能力只剩「给一条 `Session` + 一条 `Hub`」，端点搬过来时不用再动语义 |
 | `Nous_Device` | 8 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，**最后搬**（它们读注册表本身） |
 
-建议顺序：`sessions` → `Nous_Device`。
+建议顺序：只剩 `Nous_Device` 一家（读注册表本身，**最后搬**）。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
 搬进 `device` 之前得先让「注册表」成为宿主能力（`Host::declarations()`），否则会成环。
