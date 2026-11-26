@@ -109,7 +109,8 @@ impl AppState {
             variant_tables: self.variant_tables.clone(),
             presets: Some(sources),
             stats: self.stats.clone(),
-        })
+            combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
     }
 
     pub fn presets(&self) -> Option<&nous_presets_admin::routes::Sources> {
@@ -410,7 +411,8 @@ impl AppState {
             repos: self.repos.clone(), upstream_data: self.upstream_data.clone(), variant_tables: tables,
             presets: self.presets.clone(), stats: self.stats.clone(), ext: self.ext.clone(),
             ext_admin: self.ext_admin.clone(),
-        })
+            combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
     }
 
     /// #76：变体绑定表路径（未装配返回 None，由路由回 409）。
@@ -580,7 +582,8 @@ impl AppState {
                 })));
                 admin
             }),
-        })
+            combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
     }
 
     pub fn ext_admin(&self) -> Option<&nous_ext::AdminStore> {
@@ -611,7 +614,8 @@ impl AppState {
             variant_tables: self.variant_tables.clone(),
             presets: self.presets.clone(),
             stats: Some(runtime),
-        })
+            combos: self.combos.clone(),
+            combo_action: self.combo_action.clone(),
     }
 
     pub fn combos(&self) -> Option<&nous_combos::ComboStore> {
