@@ -18,9 +18,6 @@
       "endpoints": [
         "POST /v1/sessions/:id/messages",
         "GET /v1/sessions",
-        "GET /v1/unread",
-        "GET /v1/origins",
-        "POST /v1/read/:id",
         "POST /v1/sessions",
         "GET /v1/sessions/:id/entries",
         "GET /v1/sessions/:id/events",
@@ -30,6 +27,9 @@
         "POST /v1/sessions/:id/pin",
         "POST /v1/sessions/:id/config",
         "POST /v1/sessions/:id/purge",
+        "GET /v1/unread",
+        "GET /v1/origins",
+        "POST /v1/read/:id",
         "GET /v1/selection",
         "POST /v1/selection",
         "GET /v1/search"
