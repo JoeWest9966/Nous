@@ -148,6 +148,13 @@ impl From<Box<dyn std::error::Error>> for RunError {
     }
 }
 
+/// 会话层的错误在启动期只是「一般失败」：没有 HTTP 回包可发，理由表也还没到那一步。
+impl From<nous_sessions::SessionError> for RunError {
+    fn from(error: nous_sessions::SessionError) -> Self {
+        Self::Failed(error.to_string().into())
+    }
+}
+
 impl From<String> for RunError {
     fn from(message: String) -> Self {
         Self::Failed(message.into())
