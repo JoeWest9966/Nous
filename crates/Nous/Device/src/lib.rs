@@ -83,7 +83,7 @@ impl Default for ModelsResponse {
 /// 编目来源的环境快照。调用方（`server`）负责读 `NOUS_*`，这里不做隐式全局读取。
 /// `remote_*` 是 `POST /v1/catalog/refresh` 的入口；`cache_path` 是刷新成功后的本地落点，
 /// 未给时沿用 `file_path`。密钥只在内存里（本结构体 + 请求头），任何序列化都不带它。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CatalogEnvironment {
     pub inline: Option<String>,
     pub file: Option<PathBuf>,

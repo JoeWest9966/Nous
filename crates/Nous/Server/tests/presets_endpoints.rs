@@ -16,7 +16,7 @@ use axum::http::{Request, StatusCode};
 use axum::Router;
 use nous_durable::storage::sessions::SessionItem;
 use nous_presets_admin::ModelLevels;
-use nous_server::presets::Sources;
+use nous_presets_admin::routes::Sources;
 use nous_server::{router, AppState, Result, ServerError, SessionSource};
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -69,6 +69,8 @@ impl Fixture {
         )
         .unwrap();
         let sources = Sources {
+            root: root.clone(),
+            db: db.clone(),
             skills,
             prompts,
             extensions,
@@ -79,15 +81,14 @@ impl Fixture {
                 thinking_levels: vec!["off".into(), "medium".into()],
             }]),
             device_model: Some(("volc-ark".into(), "flash".into())),
+            catalog_env: Default::default(),
         };
 
         let source: std::sync::Arc<dyn SessionSource> = std::sync::Arc::new(EmptySource);
         // 先建插件库（迁移出 presets_revisions / preset_write_receipts），再注入写者。
         let _ = nous_store::Store::open(&db).unwrap();
-        let store = std::sync::Arc::new(
-            nous_server::presets::PresetStore::new(root.clone(), db.clone()).with_sources(sources),
-        );
-        let app = router(AppState::with_source(source).with_presets(store));
+        // 搬家后：宿主只交来源（`Sources`），写者与 handler 都在插件里。
+        let app = router(AppState::with_source(source).with_presets(sources));
         Self { _guard: guard, dir, root, db, app }
     }
 
