@@ -205,15 +205,10 @@ impl nous_presets_admin::routes::Host for AppState {
     }
 }
 
-/// `env` 插件要的那一件事：远端目录浏览。
+/// `repo` 插件要的四件事：仓库句柄、变体绑定表、上游镜像根、变体引用反查。
 ///
-/// 本地分支不走这里（插件自己读 `NOUS_START_DIRS`、自己判本机名）；只有 `?machine=`
-/// 指向别的机器时才落到这条。远端实现的 `requires` 里有 `nous-env`，所以只能由宿主
-/// 注入 —— 这也是它本来就该有的方向：契约层不知道有几个实现、更不知道远端用什么连。
-///
-/// 状态码的分界（编目里没有 404 / 连不上 502 / 路径相对 400 / 没权限 403）在这里判一次，
-/// 装进公共壳 [`nous_routes::HttpRefusal`]。
-#[async_trait::async_trait]
+/// 全同步、全返回 `Option`/`Result`：插件据此自己决定回 400/409/500，
+/// 宿主只负责「进程启动时打开了哪些仓库」这一件事。
 impl nous_repo::routes::Host for AppState {
     fn repo(&self, kind: &str) -> Option<Arc<nous_repo::Repo>> {
         AppState::repo(self, kind)
@@ -232,6 +227,15 @@ impl nous_repo::routes::Host for AppState {
     }
 }
 
+/// `env` 插件要的那一件事：远端目录浏览。
+///
+/// 本地分支不走这里（插件自己读 `NOUS_START_DIRS`、自己判本机名）；只有 `?machine=`
+/// 指向别的机器时才落到这条。远端实现的 `requires` 里有 `nous-env`，所以只能由宿主
+/// 注入 —— 这也是它本来就该有的方向：契约层不知道有几个实现、更不知道远端用什么连。
+///
+/// 状态码的分界（编目里没有 404 / 连不上 502 / 路径相对 400 / 没权限 403）在这里判一次，
+/// 装进公共壳 [`nous_routes::HttpRefusal`]。
+#[async_trait::async_trait]
 impl nous_env::routes::Host for AppState {
     async fn remote_subdirs(
         &self,
