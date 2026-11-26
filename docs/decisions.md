@@ -1247,6 +1247,35 @@ Desk 的关于页挂着「漂移 1 条」）。`device` 是 0.1.25 里唯一的�
 
 ---
 
+## 2026-11-26 · 三份私有 `Refusal` 归档进 `nous_routes::HttpRefusal`（第五个插件之后）
+
+**背景**：`decisions.md` 在 `archive` / `elements` 那两票各记了一次反悔点 ——「等第三个插件也要
+`RepoError → 状态码` 这套翻议时，提到公共层做一次」。`prompts` 那票踩中了，并且实测出落点不是
+`nous-routes`：`env` 插件自带 `GET /v1/fs/dirs` 之后有了 `env → routes` 这条边，而
+`repo → env` 已经在，把语义层放 `routes` 会成环 `env → routes → repo → env`。正解是
+`nous_repo::Refusal`（拥有 `RepoError` 的那层），`nous-routes` 只出传输壳。
+
+**这一步做的是什么**：把 `env` / `combos` / `archive` 三个插件各自的私有 `Refusal`
+（形状都是「状态码 + 文案」，其中 `env` / `archive` 用 `StatusCode`，`combos` 用 `StatusCode`）
+统一换成公共壳 `nous_routes::HttpRefusal`（`u16` + JSON 体）。
+
+**为什么不全走 `nous_repo::Refusal`**：那层是给 `RepoError` 用的语义翻译，而这三个插件的
+拒绝理由分别来自 `BrowseError`、`RemoteDirsError`、`ServerError`、盘面校验 —— 它们跟 git
+无关。硬套 `nous_repo::Refusal` 会让插件为了一个回包形状去依赖 `nous-repo`，方向反了。
+
+**两个新构造子留在插件里**：`HttpRefusal` 只有 400 / 404 / 409 / 423 / 500 五个现成构造子。
+`combos` 需要 412（`If-Match` 版本不匹配）和 503（触发器运行时未装配），这两个**语义只在
+`combos` 里**，所以放在 `combos` 而不是公共壳：
+`precondition_refusal` / `service_unavailable_refusal`（`pub`，宿主的 `impl` 也要用）。
+
+**代价**：`HttpRefusal` 的 `status` 是 `u16` 而不是 `StatusCode`；`IntoResponse` 里
+`from_u16().unwrap_or(500)`。这意味着写错一个状态码数字不会在编译期被抓到。可接受：
+新增状态码时必须穿过这层，而这里每个数字都有现成语义构造子可用。
+
+**反悔点**：如果第四个插件也要 412 或 503，就把这两个构造子提到 `HttpRefusal` 里（那时
+它们是公共语义了）；如果 `HttpRefusal` 的 `u16` 导致一次真实的状态码写错事故，就改回
+`StatusCode`（代价是 `nous-routes` 仍然只依赖 axum，没有额外耦合）。
+
 ## 2026-11-25 元素库 8 条端点搬进插件（`nous-elements`，零新增接缝）
 
 **背景**：搬家票第 5 个插件。`elements` 与前面四个都不同 —— 它**早就是一个独立 crate**
