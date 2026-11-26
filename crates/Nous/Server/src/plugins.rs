@@ -203,8 +203,11 @@ impl data_archive::routes::Host for AppState {
     }
 }
 
-/// `ServerError` → 公共壳 [`nous_routes::HttpRefusal`]：状态码与文案逐字搬过去（不在这里换口径）。
-fn refusal(error: crate::ServerError) -> nous_routes::HttpRefusal {
+/// 任何宿主层错误 → 公共壳 [`nous_routes::HttpRefusal`]：状态码与文案逐字搬过去
+/// （不在这里换口径）。泛型是因为插件各有自己的错误类型（`SessionError` 等），
+/// 它们都有 `Into<ServerError>` —— 状态码与文案仍由 `ServerError` 一处说了算。
+fn refusal(error: impl Into<crate::ServerError>) -> nous_routes::HttpRefusal {
+    let error: crate::ServerError = error.into();
     nous_routes::HttpRefusal::new(
         error.status().as_u16(),
         serde_json::json!({ "error": error.message() }),

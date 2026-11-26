@@ -308,7 +308,7 @@ impl AppState {
 
     /// 启动时补写孤儿终态：走**已经持有的那个写者**，不另开 `Session`。
     pub async fn reclaim_orphans(&self) -> Result<usize> {
-        self.commands.reclaim_orphans().await
+        self.commands.reclaim_orphans().await.map_err(Into::into)
     }
 
     /// 装上组装根（provider / tool 注册表），只在 `main` 里做一次。
