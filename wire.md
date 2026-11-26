@@ -969,7 +969,7 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 
 旧面板 `k3skws` 块的 Rust 落点。盘上真相是私库之一 `NOUS_ELEMENTS`
 （默认 `/opt/Nous-Elements`）：`groups/<id>.json`、`packages/<id>.json`，一份 JSON 一个元素。
-写事务（落盘 + 提交 + 尽力推）在 `nous-elements`，git 只在 `nous-repo` 里。
+写事务（落盘 + 提交 + 尽力推）在 `element-core`，git 只在 `nous-repo` 里。
 
 | 端点 | 回包 |
 |---|---|

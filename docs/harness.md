@@ -398,9 +398,9 @@ op 就发一帧" → 0 帧负向红。
 | `nous-server` | `nous-durable` `nous-wire` `nous-telemetry` `nous-ai` `nous-runtime` `nous-sessions` `nous-tools` `nous-store` `nous-env` · **#65** `nous-device` · **#78** `nous-env-ssh` · **#81** `nous-extend` · **#57/#80** `trigger-core` · **#72/#71/#83** `nous-prompts` `nous-skills` · **#75/#76/#77** `nous-repo` · **#62** `data-data-manager` · **#67** `data-archive` · **#73** `nous-dispatcher` · **#60** `nous-presets-admin` · **element-models** `element-models` · **路由契约** `nous-routes` | 组装根：拼 HTTP 面就要摸到这些插件（#44/#47/#48/#49/#51/#57 原始边；#89 补齐 7 条实际边；#73 补 dispatcher 边） |
 | `nous-store` | 无 | 独立迁移链；多一条边（尤其 `nous-durable`）就是判据 1 破 |
 | `nous-routes` | 无 | 端点契约层：一条声明同时是「装进 Router」和「注册表登记」。零 `nous-*` 依赖是硬要求 —— `nous-env` 依赖它，任何反向依赖都会成环（`env → routes → … → env`）。HTTP 回包壳 `HttpRefusal` 只认状态码数值 + JSON 体，不认领域错误类型 |
-| `element-models` | `nous-elements` `nous-runtime` `nous-env` `nous-repo` `nous-routes` | 模型编目插件：读元素库、投影成编目、自带 `GET /v1/models/elements` 与密钥写面 |
+| `element-models` | `element-core` `nous-runtime` `nous-env` `nous-repo` `nous-routes` | 模型编目插件：读元素库、投影成编目、自带 `GET /v1/models/elements` 与密钥写面 |
 | `data-archive` | `nous-durable` `nous-routes` | #67 会话归档插件：三条命令走 durable 的 session commands（活库写锁 + 补偿方向在那里），端点由 `routes()` 声明 |
-| `nous-elements` | `nous-env` `nous-repo` `nous-routes` | 元素库插件：盘上真相与「写一次提交一次」在 repo，自带 8 条 `/v1/elements*`（读写 / 锁 / 补推） |
+| `element-core` | `nous-env` `nous-repo` `nous-routes` | 元素库插件：盘上真相与「写一次提交一次」在 repo，自带 8 条 `/v1/elements*`（读写 / 锁 / 补推） |
 | `nous-combos` | `nous-dispatcher` `nous-durable` `nous-repo` `nous-routes` | #61/#82 组合插件：名册扫盘 + 开关写穿 + 试跑 / launch；判定走 dispatcher 的纯函数，起会话与写血缘走 durable 的命令面，内容版本号复用 repo 的 sha256 |
 | `library-skill` | `nous-env` `nous-repo` `nous-routes` | 技能插件：`SKILL.md` 解析层 + 自带 6 条 `/v1/skills*`；盘面规矩在 `nous_repo::entries`，与 `prompts` / `extend` 共用同一份 |
 | `nous-repo` | `nous-env` `nous-routes` | 私库层：六套私库的文件读写、git 发布，以及 `/v1/repos/*` 三十条端点（自带 handler + `Host` trait）。`Refusal`（`RepoError → 状态码` 的唯一翻译）也在这里 —— 它拥有 `RepoError`，翻译自己家的错误方向永远是对的 |

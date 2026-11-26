@@ -216,7 +216,9 @@ manifest_paths = sorted(glob.glob('crates/*/*/plugin.toml'))
 # 集合双向：目录 ↔ 清单 ↔ plugin.toml。待建 / 外挂行已从 rows 里排除。
 dir_set = {os.path.relpath(p).replace(os.sep, '/') for p in dirs}
 row_set = {f'crates/{v["vendor"]}/{v["dir"]}' for v in rows.values()}
-rows_by_dir = {v['dir']: (full, v) for full, v in rows.items()}
+rows_by_dir = {f'crates/{v["vendor"]}/{v["dir"]}': (full, v) for full, v in rows.items()}
+# key 用**完整目录**而不是目录名：规则 12 允许不同 vendor 下有同名 module
+# （`crates/Element/Core` 与 `crates/Trigger/Core`），目录名不唯一。
 manifest_dirs = {os.path.dirname(p).replace(os.sep, '/') for p in manifest_paths}
 for label, extra in (
     ('DIR_NO_ROW', dir_set - row_set),
@@ -257,7 +259,7 @@ for directory in dirs:
         failures.append(f'vendor={pm.get("vendor")!r}（应为目录的 {vendor!r}）')
     if name_vendor is not None and name_vendor != vendor.lower():
         failures.append(f'全名第一段是 {name_vendor!r}，与 vendor={vendor!r} 不符（规则 12）')
-    row_pair = rows_by_dir.get(module)
+    row_pair = rows_by_dir.get(rel)
     if row_pair is None:
         failures.append('docs/plugins.md 无对应行')
         row = None
