@@ -44,8 +44,8 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
     let plugin = std::fs::read_to_string(manifest.parent().unwrap().join("plugin.toml"))
         .expect("device/plugin.toml 必须存在");
     assert!(
-        plugin.contains("name = \"Nous_Device\""),
-        "plugin.toml 的 name（规则 12：全名 `Nous_Device`）"
+        plugin.contains("name = \"Device\""),
+        "plugin.toml 的 name（规则 12：全名 `Device`）"
     );
     assert!(plugin.contains("layer = \"app\""), "plugin.toml 的 layer=app");
 
@@ -80,8 +80,8 @@ fn device_is_a_registered_app_plugin_and_check_plugins_counts_one_more() {
         "清单应为 {expected} 行且 0 处不符：{}", summary.lines().last().unwrap_or_default());
 
     assert!(
-        doc.contains("| `Nous_Device` | Nous | `nous-device` | app |"),
-        "docs/plugins.md 必须有 Nous_Device 行（规则 12：全名 `Vendor_Module`，vendor 列是 PascalCase `Nous`）"
+        doc.contains("| `Device` | Nous | `nous-device` | app |"),
+        "docs/plugins.md 必须有 Device 行（规则 12；vendor 列是 PascalCase `Nous`）"
     );
 }
 

@@ -101,7 +101,6 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // `extensions` 的 15 条已搬进 `Library_Extend` 插件（`library-extend` 的 `routes()` 声明），
     // 静态表只减不增。
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
-    RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Trigger_Core` 插件
     // （`trigger-core` 的 `routes()` 声明），静态表只减不增。
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Nous_Device" },

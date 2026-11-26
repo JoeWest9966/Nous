@@ -1,6 +1,6 @@
-name = "Nous_Device"
+name = "Device"
 vendor = "Nous"
-version = "0.9.0"
+version = "0.10.0"
 layer = "app"
 crate = "nous-device"
 
