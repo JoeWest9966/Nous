@@ -270,7 +270,7 @@ async fn capabilities_declares_archive_enabled_without_reason() {
     let routes = router(app);
     let (_, body) = call(&routes, "GET", "/v1/capabilities", None).await;
     let module = body["modules"].as_array().unwrap().iter()
-        .find(|m| m["name"] == json!("archive")).expect("archive 模块仍在清单里");
+        .find(|m| m["name"] == json!("Data_Archive")).expect("Data_Archive 模块仍在清单里");
     assert_eq!(module["enabled"], json!(true), "实测 {:?}", module);
     assert!(module.get("reason").is_none(), "enabled 时 reason 消失");
 }

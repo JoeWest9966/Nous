@@ -501,7 +501,7 @@ async fn capabilities_declares_modules_and_reasons() {
         "repo",
         "presets",
         "presets-admin",
-        "archive",
+        "Data_Archive",
         "combos",
         "Nous_Triggers",
         "extensions",

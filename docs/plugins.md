@@ -101,8 +101,8 @@
 
     「vendor 永远是 B 形态」：**vendor 是目录与包名的一部分，模块由 vendor 独立命名，包名 `vendor-module`**
     —— 不存在「vendor 只活在字段里、目录平铺」的 A 形态。这句话是一次性决定，别再翻案。
-    老模块的小写连字符全名（`data-manager`、`sessions`）继续有效：无 `_` 时目录名 = 全名断词后
-    PascalCase（`DataManager` / `Sessions`）、包名 = `<vendor 小写>-<全名>`，**逐个改成全名**，
+    老模块的小写连字符全名（`sessions`、`env`、`repo`）继续有效：无 `_` 时目录名 = 全名断词后
+    PascalCase（`Sessions` / `Env`）、包名 = `<vendor 小写>-<全名>`，**逐个改成全名**，
     不做一次性改名。
     判据：`scripts/check-plugins.sh` 由全名**推出**目录名 / 包名 / capability，再与磁盘、清单、
     `docs/plugins.md` 三处逐条比对；`vendor` 必须等于目录名（PascalCase），且全名第一段 == vendor 的小写。
@@ -143,8 +143,8 @@
 | `elements` | Nous | `nous-elements` | app | 编译期 | `GET /v1/elements`（两段全量 + 引用解析）+ `GET/PUT/DELETE /v1/elements/{kind}/{id}`（单条读写 / 删）+ `POST /v1/elements/{kind}`（新建）+ `POST /v1/elements/{kind}/{id}/lock`（上锁 / 解锁）+ `POST /v1/elements/push`（手动补推）；写一次提交一次，同一个 `requestId` 重放不二次提交 | 否 | 元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Nous/Elements/src/routes.rs`） |
 | `Models` | Element | `element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
 | `routes` | Nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 不再有 `endpoints` 字段（规则 11：端点只由 `routes()` 声明，三处读口都从它生成） |
-| `archive` | Data | `data-archive` | app | 编译期 | 会话归档：`POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 三条端点自带 handler（`crates/Data/Archive/src/routes.rs`）；供应商 `data`，包名 `data-archive` |
-| `data-manager` | Data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
+| `Data_Archive` | Data | `data-archive` | app | 编译期 | 会话归档：`POST /v1/sessions/:id/archive` · `GET /v1/archive` · `POST /v1/archive/:id/restore`（#67：闭包复印进 `archives/gen-YYYYMMDD.db`，墓碑住 `qrd3wh.sessions`；purge 走 sessions） | 否 | 三条端点自带 handler（`crates/Data/Archive/src/routes.rs`）；供应商 `data`，包名 `data-archive` |
+| `Data_DataManager` | Data | `data-data-manager` | app | 编译期 | `GET /v1/stats/usage` + `GET /v1/stats/tasks` + `GET /v1/stats/db`（#62：只读聚合，不建表、不写库）+ 六屏明细 `overview` / `conversations` / `conversation/:id` / `cost` / `health`（数据监控室复原：dbstat 真页数 / prompt 重建 / usage 分项 + byHour / 健康明细） | 否 | 归口监控六屏；与 `--check` 共读口，tasks 现算 |
 | `build-worker` | Nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | Nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
 | `combos` | Nous | `nous-combos` | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘）；**四条端点自带 handler**（`routes.rs`） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘 |
@@ -186,7 +186,7 @@
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
 `store` `Library_Extend` `ext-probe` `ext-sdk` `sessions` `server` `fixture` `elements` `env-ssh` `repo`
 `routes` `prompts` `presets-admin` `dispatcher` `Nous_Device` `Skill` `documents` `Models`
-`data-manager` `archive`。
+`Data_DataManager` `Data_Archive`。
 新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用

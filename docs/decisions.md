@@ -1608,3 +1608,29 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 `check-plugins.sh` 只在 `_` 存在时比对第一段与 vendor），那 `Models` 这种无 vendor 段的全名
 就会成为「老式小写连字符名」之外的第三种形态，判据得再补一档 —— 那时要么改成
 `Element_Models`（本决定作废），要么把「全名可省略 vendor 段」写进规则 12。
+
+## 2026-11-26：`archive` / `data-manager` 补 vendor 段（`Data_Archive` / `Data_DataManager`）
+
+**背景**：规则 12 明写「逐个改成全名，不做一次性改名」。`Data` 这两个模块是清单里仅剩的两行
+「老式小写连字符全名」，但它们的目录（`crates/Data/Archive`）、包名（`data-archive`）、
+vendor（`Data`）都已经是规则 12 的形状 —— 差的只有全名本身没有 vendor 段。
+
+**决定**：`plugin.toml` 的 `name` 改成 `Data_Archive` / `Data_DataManager`，插件版本
+`0.2.1` → `0.3.0`、`0.4.0` → `0.5.0`（规则 8：身份行改了 = minor）。capability 仍是
+`archive` / `data-manager`：它由 module 段推到 kebab，全名加前缀不改变它。
+
+**和 `Models` 那票方向相反，两票都要立着**：那票是**去掉** vendor 段（`Element_Models` →
+`Models`，理由是模块段本身已是完整语义）；这票是**补上** vendor 段。分歧点是「全名首段是否
+必须等于 vendor」——`check-plugins.sh` 目前在 `name_vendor is None` 时不比对，那一档的用途是
+给存量过渡，不是一种长期形态。存量一旦清完，这一档就只剩 `sessions` / `env` / `repo` 这类。
+
+**代价**：`/v1/capabilities` 的 `modules[].name`、`/v1/_routes` 的 `module` 标签、
+`GET /v1/plugins/Data_Archive/readme` 的路由名都换名，旧名直接 404、不做别名（理由同 `Models`
+那票：别名等于插件有两个名字，三处同源立刻破）。URL 一个字没动（`/v1/archive*`、
+`/v1/stats/*`），盘上数据没动，NousDesk 没动（客户端只透传 `name`）。部署后要重同步 `docs/`，
+否则 readme 走 `readme_not_installed`。
+
+**反悔点**：`Data_DataManager` 这种「vendor 段与模块段同词」读起来最别扭。如果实践中发现这类
+重复比「首段缺失」更糟，就退回 `Models` 判例（模块段自足时不带 vendor 段），但那时必须把
+「vendor 段可省略」写进规则 12，并让 `check-plugins.sh` 的 `None` 分支从「存量豁免」升级成
+「合法形态」——不能靠豁免条款长期遮着。

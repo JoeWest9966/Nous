@@ -87,8 +87,8 @@ async fn all_three_stats_routes_and_openapi_are_declared_and_live() {
 
     let (_, caps) = get(&app, "/v1/capabilities").await;
     let stats = caps["modules"].as_array().unwrap()
-        .iter().find(|m| m["name"] == json!("data-manager"))
-        .expect("capabilities 必须声明 data-manager 模块");
+        .iter().find(|m| m["name"] == json!("Data_DataManager"))
+        .expect("capabilities 必须声明 Data_DataManager 模块");
     assert_eq!(stats["enabled"], json!(true));
     let endpoints: Vec<&str> = stats["endpoints"].as_array().unwrap()
         .iter().map(|v| v.as_str().unwrap()).collect();
@@ -98,7 +98,7 @@ async fn all_three_stats_routes_and_openapi_are_declared_and_live() {
     // openapi 的 paths 与 _routes 同源：三条声明在两边都在。
     let (_, routes) = get(&app, "/v1/_routes").await;
     let route_paths: Vec<&str> = routes["routes"].as_array().unwrap()
-        .iter().filter(|r| r["module"] == json!("data-manager"))
+        .iter().filter(|r| r["module"] == json!("Data_DataManager"))
         .map(|r| r["path"].as_str().unwrap()).collect();
     assert_eq!(route_paths.len(), 8);
     std::fs::remove_file(&db).ok();

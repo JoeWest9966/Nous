@@ -48,8 +48,8 @@ fn manifest_metadata_matches_the_plugins_table_cell_by_cell() {
 fn manifest_covers_every_user_facing_module_and_no_dev_module() {
     let manifest = nous_server::meta::MANIFEST;
     let names: Vec<&str> = manifest.iter().map(|e| e.name).collect();
-    for name in ["sessions", "env", "repo", "presets", "presets-admin", "Skill", "archive",
-                 "combos", "Nous_Triggers", "data-manager", "Nous_Device", "Nous_Prompts",
+    for name in ["sessions", "env", "repo", "presets", "presets-admin", "Skill", "Data_Archive",
+                 "combos", "Nous_Triggers", "Data_DataManager", "Nous_Device", "Nous_Prompts",
                  "Library_Extend", "elements", "Models"] {
         assert!(names.contains(&name), "MANIFEST 缺 {name}");
     }
