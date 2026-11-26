@@ -1,6 +1,6 @@
 name = "sessions"
 vendor = "Nous"
-version = "0.7.0"  # 读投影 / 写命令 / 请求形状三层下沉进本插件（新公开面）= minor
+version = "0.8.0"  # /v1/sessions* 十七端点搬进本插件（自带 handler + Host trait）= 新公开面，minor
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-sessions"
 
@@ -8,6 +8,7 @@ crate = "nous-sessions"
 nous-ai = "^0.1"
 nous-device = "^0.1"
 nous-durable = "^0.1"
+nous-routes = "^0.1"
 nous-wire = "^0.1"
 
 [provides]

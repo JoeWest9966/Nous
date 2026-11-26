@@ -27,6 +27,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_prompts::routes::routes::<Arc<AppState>>());
     all.extend(library_extend::routes::routes::<Arc<AppState>>());
     all.extend(nous_repo::routes::routes::<Arc<AppState>>());
+    all.extend(nous_sessions::routes::routes::<Arc<AppState>>());
     all.extend(nous_triggers::routes::routes::<Arc<AppState>>());
     all
 }
@@ -216,6 +217,28 @@ fn refusal(error: impl Into<crate::ServerError>) -> nous_routes::HttpRefusal {
 impl nous_presets_admin::routes::Host for AppState {
     fn preset_sources(&self) -> Option<nous_presets_admin::routes::Sources> {
         self.presets().cloned()
+    }
+}
+
+/// `sessions` 插件要的四件事：读投影、写命令、活库句柄、SSE 扇出。
+///
+/// 四件事都已经是 `AppState` 自己的字段（`source` / `commands` / `hub`），这里只是
+/// 换个句柄交出去 —— 会话的语义在插件里，宿主只负责「进程启动时装配了什么」。
+impl nous_sessions::routes::Host for AppState {
+    fn source(&self) -> Arc<dyn nous_sessions::SessionSource> {
+        AppState::source(self).clone()
+    }
+
+    fn commands(&self) -> Arc<dyn nous_sessions::commands::CommandSource> {
+        AppState::commands(self).clone()
+    }
+
+    fn durable_session(&self) -> Option<Arc<nous_durable::session::Session>> {
+        AppState::durable_session(self)
+    }
+
+    fn hub(&self) -> Arc<nous_sessions::Hub> {
+        AppState::hub(self).clone()
     }
 }
 

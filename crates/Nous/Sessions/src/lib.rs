@@ -14,6 +14,7 @@ pub mod hub;
 pub mod observer;
 pub mod project;
 pub mod records;
+pub mod routes;
 pub mod source;
 pub mod turn;
 

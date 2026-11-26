@@ -12,6 +12,11 @@ nous-wire = { workspace = true }
 nous-ai = { workspace = true }
 # `set_model_levels` 与 `CreateSessionRequest.model` 的形状（编目是 platform 层）。
 nous-device = { workspace = true }
+nous-routes = { workspace = true }
+
+# 端点住在本 crate（Magento 2「模块自带 controller」）：`/v1/sessions*` 的 17 条。
+axum = { workspace = true }
+futures = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

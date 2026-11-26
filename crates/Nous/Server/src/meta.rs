@@ -86,36 +86,19 @@ pub struct RegisteredRoute {
 /// 全部由本进程注册的 `/v1/*` 路由。**新增端点先在这里落一行**。
 pub const ROUTES: &[RegisteredRoute] = &[
     // #61：combos 两条端点（开关是引擎算出来的，Desk 只显示 + 写穿）；#82 补试跑。
-    RegisteredRoute { method: "GET", path: "/v1/sessions", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/unread", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/origins", module: "sessions" },
-    RegisteredRoute { method: "POST", path: "/v1/read/:id", module: "sessions" },
     // #68：只读目录浏览（env 插件）。
     // #76：变体（skills / extend）。
     // #77：上游追踪（sources + 10 条 upstream 动作）挂在 skills 私库上。
     RegisteredRoute { method: "GET", path: "/v1/models", module: "Nous_Device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "Nous_Device" },
     RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "Nous_Device" },
-    RegisteredRoute { method: "POST", path: "/v1/sessions", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/sessions/:id/entries", module: "sessions" },
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
-    RegisteredRoute { method: "GET", path: "/v1/sessions/:id/events", module: "sessions" },
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/abort", module: "sessions" },
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/fork", module: "sessions" },
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/rename", module: "sessions" },
     // #49：置顶写穿走 sessions 模块；与 rename/read 一样经同一个 `Session` 写者。
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/pin", module: "sessions" },
     // #64：写入面与 selection 两行状态都属于 sessions 模块。
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/config", module: "sessions" },
-    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/purge", module: "sessions" },
     // #67 的世代归档三端点已搬进 `data/archive` 插件（`routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
-    RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "Nous_Device" },
     // `extensions` 的 15 条已搬进 `Library_Extend` 插件（`library-extend` 的 `routes()` 声明），
     // 静态表只减不增。
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
-    RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Nous_Triggers` 插件
     // （`nous-triggers` 的 `routes()` 声明），静态表只减不增。
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Nous_Device" },
