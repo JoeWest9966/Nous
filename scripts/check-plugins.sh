@@ -48,7 +48,7 @@ NAME_OK = re.compile(r'^(?:[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z][A-Za-z0-9]*)?|[a-z][
 def split_name(name):
     """模块全名 → (vendor 段的小写, 目录名 PascalCase)。规则 12。
 
-    `Element_Models` → ('element', 'Models')；`Nous_PresetsAdmin` → ('nous', 'PresetsAdmin')；
+    `Nous_Device` → ('nous', 'Device')；`Nous_PresetsAdmin` → ('nous', 'PresetsAdmin')；
     老写法 `data-manager` → (None, 'DataManager')。
 
     目录名 = 尾段按大写字母断词、再**首字母大写连起来**（Magento 的 `app/code/Amasty/Shiprestriction`）：

@@ -421,7 +421,7 @@ upload_artifacts() {
 	cp "$UNIT_SRC" "$stage/nous-app.service.new"
 	# 插件 README 随产物发布：**不进二进制**（改文档不用重编译），落在版本目录的
 	# `docs/plugins/<模块全名>.md`。文件名用 `plugin.toml` 的 `name`（规则 12：全名可能是
-	# `Element_Models`，而目录叫 `models`、包叫 `element-models` —— 三者不同，端点按**全名**找人）。
+	# `Models`，而包叫 `element-models` —— 三者不同，端点按**全名**找人）。
 	# 端点 `GET /v1/plugins/{name}/readme` 运行时读盘。
 	mkdir -p "$stage/docs/plugins"
 	for manifest in crates/*/*/plugin.toml; do

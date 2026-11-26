@@ -486,3 +486,16 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 
 **怎么防**：端点列表里要写两个方法就写「`PATCH / PUT`」，不要用竖线；加完行先数
 `awk 'NR==行号' | grep -o '|' | wc -l` 应该是 9 个。
+
+**症状**：只把 `plugin.toml` 的 `name` 从 `Element_Models` 改成 `Models`（目录、包名、capability、
+组 id 一个字没动），`scripts/plugin-versions.py --doc-check` 立刻红两条，`capabilities_shapes`
+的字段快照也跟着漂。
+
+**根因**：这两处都按「插件身份」算，不看目录 —— `MANIFEST_KEYS` 里有 `name`，改它就是 minor
+（考古从 `0.2.0` 跳到 `0.3.0`）；快照里 `modules[].version` 报的是插件自己的版本（规则 8），
+版本一涨快照就漂。改名票的「只改一行」是假的：还要改 `meta.rs` 的 `MANIFEST`、`/v1/_routes`
+的 `MODULE`、版本线表（`Models` 与顺带 +patch 的 `server` 两行）、快照。
+
+**怎么防**：改全名前先按这五处列清单（`plugin.toml` / `MODULE` / `MANIFEST` / 版本线表 /
+快照），改完依次跑 `check-plugins.sh`、`plugin-versions.py --check --doc-check`、
+`cargo test -p nous-server`。别用 `--write-doc` 图省事 —— 它会顺手改写其它插件那几行。

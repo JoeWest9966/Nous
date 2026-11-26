@@ -62,7 +62,7 @@ def plugin_dirs():
     """`docs/plugins.md` 里所有有目录的模块：`目录名 -> crates/<vendor>/<目录名>`。
 
     目录名由模块全名推出（`docs/plugins.md` 规则 12，与 `scripts/layer-paths.sh` 同一算法）：
-    `Element_Models` → `crates/Element/Models`。
+    `Nous_PresetsAdmin` → `crates/Nous/PresetsAdmin`。
 
     key 用**模块全名**（`plugin.toml` 的 `name`）：`/v1/capabilities`、路由声明、本文档三者
     都按全名说话，目录名只是目录。

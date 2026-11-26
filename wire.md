@@ -475,11 +475,15 @@ body `{"name":"…"}`。回 200 `{"id":514,"name":"新的名字"}`。
   `"versionSource": "release"` 如实说明回退（回退不静默）。
   `GET /v1/plugins/:name/readme` 的 `version` 同一来源。
 - `modules[].name` 是**模块全名**（`docs/plugins.md` 规则 12）：照 Magento 2 的 `Vendor_Module`
-  长相，例如 `Element_Models`；老模块的小写连字符名（`data-manager` / `sessions`）继续有效。
+  长相，例如 `Nous_Device`；老模块的小写连字符名（`data-manager` / `sessions`）继续有效。
   `name` 是 `/v1/plugins/:name/*` 与 `/v1/_routes` 的 `module` 标签，也是桌面端的显示名。
-  **同一样东西的三套写法**（`docs/plugins.md` 规则 12）：全名 `Element_Models`、目录
-  `crates/Element/Models`（PascalCase）、包名 `element-models`（cargo 全小写）与 capability
-  `models`。客户端只认 `name`，别从包名或目录名反推。
+  **同一样东西的三套写法**（`docs/plugins.md` 规则 12）：全名 `Nous_Device`、目录
+  `crates/Nous/Device`（PascalCase）、包名 `nous-device`（cargo 全小写）与 capability
+  `device`。客户端只认 `name`，别从包名或目录名反推。
+- **2026-11-27 改名**：`Element_Models` → `Models`（只动全名；目录 `crates/Element/Models`、
+  包名 `element-models`、capability `models`、元素库组 id `element-models` 一个字没动）。
+  桌面端不改代码：它只透传 `name`，插件页那一行从 `Element_Models` 变成 `Models`。
+  `/v1/plugins/Element_Models/readme` 从此 404 `unknown_module`（名字是身份，不做别名）。
 - `modules[].vendor`：**出品方**（规则 10，`docs/plugins.md` 的 `vendor` 列），**PascalCase**：
   `Nous` / `Data` / `Element`（目录第一段就是它；全名第一段是它的小写形）。
   与 `version` 同一份生成表（`plugin.toml` 的 `vendor`，`server/build.rs` 编译期读出来），
