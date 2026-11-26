@@ -15,6 +15,21 @@ use tower::ServiceExt;
 
 mod common;
 
+/// `{param}` / `:param` → `:param`（注册表口径）。
+fn normalize_params(path: &str) -> String {
+    path.split('/')
+        .map(|seg| match (
+            seg.strip_prefix(':'),
+            seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')),
+        ) {
+            (Some(name), _) => format!(":{name}"),
+            (None, Some(name)) => format!(":{name}"),
+            _ => seg.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 fn wire_presets_paths() -> BTreeSet<String> {
     let wire = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../wire.md");
@@ -32,9 +47,15 @@ fn wire_presets_paths() -> BTreeSet<String> {
         let path = parts.next().unwrap_or("").trim();
         if !matches!(method, "GET" | "PUT" | "POST" | "PATCH" | "DELETE") { continue; }
         if !path.starts_with("/v1/presets") { continue; }
-        // wire 用 `:param`，OpenAPI 用 `{param}`：集合比对前归一化参数风格。
+        // 两边都归一成注册表口径（`nous_routes::to_registry_path` 折出来的 `:param`）：
+        // `wire.md` 与插件声明本来就是这个写法，静态表那半还是 axum 的 `{param}`。
+        // 归一方向只能是「往注册表口径收」—— 反着收会让插件声明看起来像另一条路径。
         let normalized = path.split('/').map(|seg| {
-            if let Some(name) = seg.strip_prefix(':') { format!("{{{name}}}") } else { seg.to_string() }
+            match (seg.strip_prefix(':'), seg.strip_prefix('{').and_then(|s| s.strip_suffix('}'))) {
+                (Some(name), _) => format!(":{name}"),
+                (None, Some(name)) => format!(":{name}"),
+                _ => seg.to_string(),
+            }
         }).collect::<Vec<_>>().join("/");
         paths.insert(format!("{method} {normalized}"));
     }
@@ -61,6 +82,7 @@ async fn openapi_presets_paths_match_the_contract_exactly() {
     let paths = body["paths"].as_object().unwrap_or_else(|| panic!("OpenAPI 缺 paths：{body}"));
     for (path, item) in paths {
         if !path.starts_with("/v1/presets") { continue; }
+        let path = normalize_params(path);
         for method in ["get", "put", "post", "patch", "delete"] {
             if item.get(method).is_some() {
                 generated.insert(format!("{} {path}", method.to_uppercase()));
@@ -80,8 +102,17 @@ async fn every_generated_preset_path_is_really_registrered_on_the_router() {
     for (path, item) in body["paths"].as_object().unwrap() {
         for method in ["get", "put", "post", "patch", "delete"] {
             if item.get(method).is_none() { continue; }
-            let uri = path.replace("{section}", "Session-Template").replace("{name}", "not-there")
-                .replace("{n}", "1");
+            // 两种写法都认（静态表 `{param}`、插件声明 `:param`）—— 搬家过程中两种并存。
+            let uri = ["{", ":"].iter().fold(path.to_string(), |acc, brace| {
+                let close = if *brace == "{" { "}" } else { "" };
+                ["section", "name", "n"].iter().fold(acc, |acc, name| {
+                    acc.replace(&format!("{brace}{name}{close}"), match *name {
+                        "section" => "Session-Template",
+                        "name" => "not-there",
+                        _ => "1",
+                    })
+                })
+            });
             let request = Request::builder().method(axum::http::Method::from_bytes(method.to_uppercase().as_bytes()).unwrap()).uri(uri.clone())
                 .body(Body::empty()).unwrap();
             let response = app.clone().oneshot(request).await.unwrap();
