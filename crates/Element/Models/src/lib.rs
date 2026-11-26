@@ -1,11 +1,11 @@
 //! models 插件：元素库里的「模型入口组」→ 模型编目投影。
 //!
-//! 盘上真相不在这个 crate 里，在元素库（`nous-elements`）：一个**约定组**
+//! 盘上真相不在这个 crate 里，在元素库（`element-core`）：一个**约定组**
 //! （[`GROUP_ID`]）引用一串**供应商包**，包里的 `models[]` 是模型清单；单个模型需要
 //! 独立治理时再加一个 `kind:"model"` 的**覆盖包**，按 `(provider, modelId)` 逐键合并。
 //!
 //! 这个 crate 只做三件纯事：解析、合并、投影。它**不读盘、不联网、不看时钟** ——
-//! 元素库的读写归 `nous-elements` / `nous-server`，密钥解析靠调用方给的 [`KeyLookup`]。
+//! 元素库的读写归 `element-core` / `nous-server`，密钥解析靠调用方给的 [`KeyLookup`]。
 //!
 //! 两条不越过的线：
 //!
@@ -21,7 +21,7 @@ pub mod secret;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use nous_elements::ElementItem;
+use element_core::ElementItem;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -300,7 +300,7 @@ pub fn provider_key_of(item: &ElementItem) -> String {
 
 /// 将供应商包映射到 Rust runtime 的 `ProviderConfig` JSON 形状。
 ///
-/// 未知字段不进入 runtime 配置（`nous-elements` 仍原样保存）；只传 runtime 真正消费的
+/// 未知字段不进入 runtime 配置（`element-core` 仍原样保存）；只传 runtime 真正消费的
 /// `name/baseUrl/api/apiKey/headers/authHeader/models[]`。密钥字段保持引用字符串，不解析真值。
 /// 这个元素是不是供应商包（`kind:"provider"`）。
 pub fn is_provider(item: &ElementItem) -> bool {
@@ -395,7 +395,7 @@ fn overlay_model_fields(overlay: &ElementItem) -> Value {
     let mut patch = Map::new();
     if let Value::Object(fields) = &overlay.fields {
         for (key, value) in fields {
-            if IDENTITY.contains(&key.as_str()) || key == nous_elements::LOCK_FIELD {
+            if IDENTITY.contains(&key.as_str()) || key == element_core::LOCK_FIELD {
                 continue;
             }
             patch.insert(key.clone(), value.clone());

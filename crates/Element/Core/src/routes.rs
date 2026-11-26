@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 use crate::{ElementItem, Kind, Scan};
 
 /// 这个插件在注册表里的模块名（`docs/plugins.md` 的 module 列）。
-pub const MODULE: &str = "elements";
+pub const MODULE: &str = "Element_Core";
 
 /// 这个插件在宿主 `AppState.repos` 里的键（与 `repos::REPO_KINDS` 同一处真相）。
 ///
@@ -447,14 +447,14 @@ mod tests {
         assert_eq!(
             declared,
             vec![
-                "GET /v1/elements [elements]",
-                "GET /v1/elements/:kind [elements]",
-                "POST /v1/elements/:kind [elements]",
-                "GET /v1/elements/:kind/:id [elements]",
-                "PUT /v1/elements/:kind/:id [elements]",
-                "DELETE /v1/elements/:kind/:id [elements]",
-                "POST /v1/elements/:kind/:id/lock [elements]",
-                "POST /v1/elements/push [elements]",
+                "GET /v1/elements [Element_Core]",
+                "GET /v1/elements/:kind [Element_Core]",
+                "POST /v1/elements/:kind [Element_Core]",
+                "GET /v1/elements/:kind/:id [Element_Core]",
+                "PUT /v1/elements/:kind/:id [Element_Core]",
+                "DELETE /v1/elements/:kind/:id [Element_Core]",
+                "POST /v1/elements/:kind/:id/lock [Element_Core]",
+                "POST /v1/elements/push [Element_Core]",
             ]
         );
     }

@@ -1,8 +1,8 @@
-name = "elements"
-vendor = "Nous"
-version = "0.3.1"  # 本地 Refusal 换成 nous_routes 的共享实现（规则 8）
+name = "Element_Core"
+vendor = "Element"
+version = "0.4.0"  # 模块全名 elements → Element_Core（规则 12 逐个改成全名）= 身份变更，minor
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
-crate = "nous-elements"
+crate = "element-core"
 
 [requires]                 # cargo metadata 里的内部 workspace 依赖
 nous-env = "^0.1"
@@ -10,4 +10,4 @@ nous-repo = "^0.1"
 nous-routes = "^0.1"
 
 [provides]
-capability = "elements"
+capability = "core"

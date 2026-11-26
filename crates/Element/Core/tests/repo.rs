@@ -6,7 +6,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use nous_elements::{check_id, get, is_locked, put, remove, resolve, scan, set_lock, Kind};
+use element_core::{check_id, get, is_locked, put, remove, resolve, scan, set_lock, Kind};
 use nous_repo::{Pushed, Repo, RepoError};
 use serde_json::json;
 
@@ -123,7 +123,7 @@ fn put_writes_canonical_json_and_commits_exactly_once() {
     assert_eq!(outcome.commit.as_ref().unwrap().pushed, Pushed::Unknown, "没有远端 = null");
 
     let text = std::fs::read_to_string(repo.root().join("groups/backend.json")).unwrap();
-    assert_eq!(text, nous_elements::serialize(&fields), "两空格 + 尾换行，未知字段原样在");
+    assert_eq!(text, element_core::serialize(&fields), "两空格 + 尾换行，未知字段原样在");
 
     let after: i32 = count(&repo).parse().unwrap();
     assert_eq!(after, before.parse::<i32>().unwrap() + 1);
