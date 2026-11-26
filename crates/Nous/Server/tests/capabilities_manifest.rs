@@ -23,7 +23,7 @@ fn doc_cells(module: &str) -> Vec<Vec<String>> {
 #[test]
 fn manifest_metadata_matches_the_plugins_table_cell_by_cell() {
     let manifest = nous_server::meta::MANIFEST;
-    assert_eq!(manifest.len(), 15, "#90 下线 documents、#60 补 presets-admin、元素库 elements 后 MANIFEST 应为 14 行");
+    assert_eq!(manifest.len(), 15, "#90 下线 documents、#60 补 presets-admin、元素库 elements 后 MANIFEST 应为 15 行");
     for entry in manifest {
         // 表头：`| module | vendor | crate | layer | 形态 | API 面 | 必需 | 备注 |`
         // split('|') → ["", module, vendor, crate, layer, 形态, API, 必需, 备注, ""]
