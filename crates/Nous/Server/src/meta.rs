@@ -254,7 +254,7 @@ impl ModuleKind {
 /// 清单：模块名 == `docs/plugins.md` 的 module 列（评论第二条的拍板）。
 /// `enabled` = 清单 ∩ 代码：没有注册路由的模块一律 disabled + reason。
 pub const MANIFEST: &[ManifestEntry] = &[
-    ManifestEntry { name: "sessions", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-sessions`", description: "**pi 本体**（#44 落地）：最小轮次与取消收敛 + 会话读投影（`source`）/ 写命令（`commands`）/ `POST /v1/sessions` 的形状（`records`）三层。这三层先于端点搬进来 —— 它们本来就是会话的语义" },
+    ManifestEntry { name: "sessions", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-sessions`", description: "**pi 本体**（#44 落地）：最小轮次与取消收敛 + 会话读投影（`source`）/ 写命令（`commands`）/ 请求形状（`records`）/ 事件流（`hub` / `coalesce` / `project` / `observer`）；`/v1/sessions*` 十七条里 十六条自带 handler，`messages` 留在宿主侧（要组装根的 driver / completions 与提示词注入）" },
     // #68：env 的本地目录浏览已落地，SSH 远端另票。
     ManifestEntry { name: "env", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-env`", description: "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`。自带 `GET /v1/fs/dirs`（远端分支是宿主能力 trait：`nous-env-ssh` 的 requires 里有本 crate，反向依赖会成环）" },
     // #75：四套私库共用的 git 发布 / 归档 / pending / diff / history。
