@@ -61,7 +61,10 @@ nous-server = [
 nous-store = []
 
 # #60 模板管理：纯判定，零 IO（盘面与 HTTP 都在 server）。
-nous-presets-admin = []
+# 端点也归本插件（#60 搬家）：handler 在插件里，所以要 axum / nous-routes、
+# 私库原语（nous-repo 的 sha256 与 git 面）、插件库（nous-store 的修订表）、
+# 路径解析（nous-env）、编目投影（nous-device）、提示词名册（nous-prompts）。
+nous-presets-admin = ["nous-device", "nous-env", "nous-prompts", "nous-repo", "nous-routes", "nous-store"]
 
 # 端点契约层：只认 axum 的 MethodRouter 形状，不依赖任何插件（否则会和 server 成环）。
 nous-routes = []

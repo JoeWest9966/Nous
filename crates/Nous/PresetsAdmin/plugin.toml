@@ -5,6 +5,12 @@ layer = "app"
 crate = "nous-presets-admin"
 
 [requires]
+nous-device = "^0.1"
+nous-env = "^0.1"
+nous-prompts = "^0.1"
+nous-repo = "^0.1"
+nous-routes = "^0.1"
+nous-store = "^0.1"
 
 [provides]
 capability = "presets-admin"

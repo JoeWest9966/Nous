@@ -1481,6 +1481,13 @@ dependencies = [
 name = "nous-presets-admin"
 version = "0.1.31"
 dependencies = [
+ "axum",
+ "nous-device",
+ "nous-env",
+ "nous-prompts",
+ "nous-repo",
+ "nous-routes",
+ "nous-store",
  "serde",
  "serde_json",
  "tempfile",
