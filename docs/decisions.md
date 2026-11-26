@@ -1426,3 +1426,56 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
    把 `Feature::Ext::module_name()` 改成 `extend`（同票，Desk 分支）。不改的表现是
    「功能页整块灰掉、理由是未登记」，不是崩 —— 但一样是 bug。
 3. 产物文档名从 `ext.md` 变成 `Nous_Extend.md`（`deploy.sh` 按全名落盘）。
+
+## 2026-11-26 · `Nous_Triggers`：24 条端点搬进新插件，两条宿主能力
+
+**搬什么**：`/v1/triggers*`（11）+ `/v1/trigger-projects*`（13），合计 24 条，
+落在新 crate `crates/Nous/Triggers`（包 `nous-triggers`，capability `triggers`）。
+源文件 `server/src/triggers.rs`（950 行）+ `server/src/trigger_projects.rs`（1074 行）
+整份消失，静态表 79 → 55 行。
+
+**为什么新开 crate 而不是塞进现有插件**：`triggers` 在 `docs/plugins.md` 里本来就是个
+app 层模块（还是两行：`triggers` 运行时外挂 + `trigger-catalog`），只是没有自己的 crate。
+搬家票做的就是「补上那个 crate」—— 于是两行并成一行，形态从「运行时外挂」变「编译期」。
+
+**接缝判断：为什么是两条能力、不是一条**。这是本票唯一值得争的地方。
+
+24 条端点看着是同一个人家的，但它们操作的是**两种不同的东西**：
+
+- `/v1/triggers*` = 库里的一行定义（`nous-store` 的 `triggers`/`fires`）+ 点火账 + 调度健康。
+- `/v1/trigger-projects*` = 盘上的一个 cargo 项目目录（源码、能编译、能发布）。
+
+合成一个「触发器宿主」大对象（`triggers_host() -> Trait` 之类）会更整齐，但那等于说
+「能点火的人自然也拿到了 git 写锁、也能起 cargo」—— 假的。两条就两条：
+`triggers_runtime()` 与 `triggers_repo()`。
+
+`triggers_runtime` 返回 `Option<&TriggerRuntime>`（借用）而不是 `Option<Arc<..>>`：
+`TriggerRuntime` 本来就住在 `AppState` 里（搬家前就是 `Option<TriggerRuntime>`），
+handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没有一个要所有权。
+顺手加一层 `Arc` 只会让 `plugins.rs` 的 `impl Host` 多一次 clone。
+
+**`FAUX_MODEL_ID` 下沉到 `nous-ai`**：点火成功后的 faux 轮次要构造
+`TurnRequest.model`，用的是 `server::runtime::FAUX_MODEL_ID`（`"echo"`）。插件不能
+依赖 `server`，但也不该抄一份字面量（faux 的回复正文里带着这个 id，抄一份就会漂）。
+它本来就该归拥有 `FauxProvider` 的那一层 —— 落在 `nous-ai`（0.2.1），
+`server/src/runtime.rs` 用 `pub use` 转出去，既有调用点一个字都不用改。
+
+**`HttpRefusal` 补 `Display` + `Error`**：CLI `nous-app --triggers` 与
+`GET /v1/triggers` 是**同一个函数**（#58 判据 4），搬走之后 CLI 那一侧 `?` 需要能转换。
+不补这两个 impl 就得在 CLI 里包一层「同一份 JSON 的再装配」——那正是搬运票要消灭的东西。
+`nous-routes` 0.2.1 → 0.2.2（纯加法，patch）。
+
+**行为唯一的改动**：`RepoError::Conflict` 的回包文案统一了。
+`trigger_projects.rs` 原来自己写「……—— 文件被别处改过了，先重新读盘再存」，
+现在跟三套私库一样走 `nous_repo::Refusal::from_repo`（「……—— 先重新打开这个文件，
+再存一次」）。两句话说的是同一件事，四处各写一份才是 bug；没有测试钉旧文案。
+
+**代价 / 反悔点**：
+
+1. 新 crate 出生即全名（规则 12），**没有改名那趟** —— 这是 `prompts`/`ext` 两次
+   改名得出的结论：新东西直接叫对名字，比事后改便宜。
+2. 静态表只剩 `repo`(30) / `sessions`(17) / `Nous_Device`(8)。`repo` 那 30 条是
+   下一个，也是「`nous-repo` 该不该自带 HTTP」这个决定的最后机会 —— 现在它还是
+   platform 层、零 axum，选择「宿主注入根路径」的话这条线能保住。
+3. Desk 侧不用动：`Feature` 表里没有「触发器」这一项，`Nous_Triggers` 只在
+   `capabilities.modules` 里多一行（改名窗口的问题在 `Nous_Extend` 那次已经踩过）。

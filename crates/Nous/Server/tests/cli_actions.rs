@@ -230,9 +230,9 @@ fn triggers_cli_prints_the_same_json_as_the_endpoint_reader() {
     // 同一份库 + 同一个函数：triggers 数组与端点读口**逐字节**相同（判据 4）。
     // scheduler 段不比：CLI 用真时钟、HTTP 侧测试用固定 0 —— 计时字段本来就随时刻漂。
     let store = nous_store::Store::open(&trigger_db).unwrap();
-    let definitions = nous_server::triggers::TriggerRuntime::open_definitions_only(&store).unwrap();
+    let definitions = nous_triggers::TriggerRuntime::open_definitions_only(&store).unwrap();
     let endpoint_reader =
-        nous_server::triggers::observation_report(&store, &definitions, None, 0).unwrap();
+        nous_triggers::observation_report(&store, &definitions, None, 0).unwrap();
     // **逐字节**：比 stdout 原文，不是比解析后的 Value —— 比 Value 的话，CLI 换成
     // `to_string_pretty` 也照样绿（实测：故意弄脏成 pretty，这条判据不红），
     // 而票面要的正是「同一份序列化」。字段顺序、键名、缩进任何一处漂都要红。

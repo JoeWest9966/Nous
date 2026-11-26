@@ -11,7 +11,7 @@ use axum::http::{Request, StatusCode};
 use nous_durable::actor::{Actor, ActorKind};
 use nous_durable::session::{ObserverRegistry, Session};
 use nous_durable::{EntryQuery, Storage};
-use nous_server::triggers::{FireOutcome, TemplateLookup, TriggerRuntime};
+use nous_triggers::{FireOutcome, TemplateLookup, TriggerRuntime};
 use nous_server::{router, AppState, DurableCommands, ImportedSource};
 use nous_store::{FireState, NewTriggerDefinition as NewTrigger, Store as TriggerStore};
 use serde_json::{json, Value};

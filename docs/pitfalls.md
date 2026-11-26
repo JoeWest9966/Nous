@@ -458,3 +458,15 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 判据脚本里的路径字面量（`verify.sh` 的 spawn 哨兵、
 `docs/boundary-baseline.txt`、`*_endpoints.rs` 里 `workspace_root().join(...)`）
 改名时最容易漏 —— 它们不在 React/cargo 的视野里，只有 `verify.sh` 会红。
+
+## 2026-11-26 · `docs/plugins.md` 的表格行里不许出现裸 `|`
+
+**症状**：`capabilities_manifest` 报「六列在 docs/plugins.md 里一行都对不上」，
+打印出来的行看着完全正确。
+
+**根因**：那一行里写了 `` `PATCH|PUT /v1/triggers/{code}` `` —— 表格用 `|` 分列，
+裸的竖线把一行切成两半，`split('|')` 得到的不是 10 格，六列比对自然全错。
+同一类还有**行尾漏了 `|`**（少一格，cells 长度也跟着变）。
+
+**怎么防**：端点列表里要写两个方法就写「`PATCH / PUT`」，不要用竖线；加完行先数
+`awk 'NR==行号' | grep -o '|' | wc -l` 应该是 9 个。

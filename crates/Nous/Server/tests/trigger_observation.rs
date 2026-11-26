@@ -14,7 +14,7 @@ use axum::http::{Request, StatusCode};
 use nous_durable::actor::{Actor, ActorKind};
 use nous_durable::session::{ObserverRegistry, Session};
 use nous_durable::Storage;
-use nous_server::triggers::{FireOutcome, TemplateLookup, TriggerRuntime};
+use nous_triggers::{FireOutcome, TemplateLookup, TriggerRuntime};
 use nous_server::{router, AppState, DurableCommands, ImportedSource};
 use nous_store::{FireState, NewTriggerDefinition as NewTrigger, Store as TriggerStore};
 use serde_json::{json, Value};
@@ -211,7 +211,7 @@ async fn http_handler_and_reader_function_serialize_the_same_bytes() {
     // 包括 scheduler 段（判据 4 比的是整个 body，不是只有 triggers 数组）。
     let store = TriggerStore::open(&fixture.trigger_db).unwrap();
     let definitions = runtime.definitions();
-    let cli_body = nous_server::triggers::observation_report(&store, &definitions, None, 0).unwrap();
+    let cli_body = nous_triggers::observation_report(&store, &definitions, None, 0).unwrap();
     let mut http_fixed = http_body.clone();
     http_fixed["scheduler"]["lastTickAt"] = Value::Null;
     http_fixed["scheduler"]["lagMs"] = json!(0);
@@ -270,7 +270,11 @@ async fn observation_endpoints_pass_bearer_auth_and_show_up_in_routes() {
         .filter_map(|route| route["path"].as_str())
         .collect();
     assert!(paths.contains(&"/v1/triggers"), "routes 缺 GET /v1/triggers：{paths:?}");
-    assert!(paths.contains(&"/v1/triggers/{code}/fires"), "routes 缺 fires 端点：{paths:?}");
+    // 注册表只认 `:code` 写法（`to_registry_path`），插件声明与静态表同一套。
+    assert!(
+        paths.contains(&"/v1/triggers/:code/fires"),
+        "routes 缺 fires 端点：{paths:?}"
+    );
 
     // 带 token：两条都 200（判据 5 的后半；401 分支由 auth_endpoints 的通用判据管）。
     let token = "observation-token-0123456789abcdef";
