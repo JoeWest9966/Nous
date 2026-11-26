@@ -387,3 +387,67 @@ impl nous_combos::Host for AppState {
         Ok(session)
     }
 }
+
+/// `Device` 插件要的十四件事：编目四份、注册表两份、产物身份三份、运行时自述两份。
+///
+/// 插件不认识 `AppState`，只认识 `nous_device::routes::Host`。这里每行都是一次显式的
+/// 「宿主交出自己的什么」，不是给插件开一扇 `&AppState` 的后门 —— 后者等于让插件
+/// 偷偷反依赖 server，`tests/manifest.rs` 的 `cargo tree` 判据会当场红。
+impl nous_device::routes::Host for AppState {
+    fn models(&self) -> nous_device::ModelsResponse {
+        AppState::models(self)
+    }
+
+    fn injected_models(&self) -> bool {
+        AppState::injected_models(self)
+    }
+
+    fn assembled_models(&self) -> Option<nous_device::ModelsResponse> {
+        AppState::assembled_models(self)
+    }
+
+    fn refreshed_models(&self) -> Option<nous_device::ModelsResponse> {
+        AppState::refreshed_models(self)
+    }
+
+    fn set_models(&self, models: nous_device::ModelsResponse) {
+        AppState::set_models(self, models)
+    }
+
+    fn catalog_env(&self) -> nous_device::CatalogEnvironment {
+        AppState::catalog_env(self).clone()
+    }
+
+    /// 元素库约定组的投影：组不存在 / 私库未装配 → `None`，调用方回落到文件来源。
+    fn group_catalog(&self) -> Option<nous_device::ModelsResponse> {
+        crate::models::group_catalog(self)
+    }
+
+    fn manifest(&self) -> Vec<nous_device::routes::ManifestLine> {
+        crate::meta::manifest_lines()
+    }
+
+    fn registered(&self) -> Vec<nous_routes::Declaration> {
+        crate::meta::registered()
+    }
+
+    fn build_id(&self) -> &'static str {
+        crate::version::build_id()
+    }
+
+    fn target_triple(&self) -> &'static str {
+        crate::version::target_triple()
+    }
+
+    fn server_version(&self) -> &'static str {
+        env!("CARGO_PKG_VERSION")
+    }
+
+    fn provider_kind(&self) -> &'static str {
+        AppState::provider_kind(self)
+    }
+
+    fn origin(&self) -> String {
+        AppState::origin(self).to_string()
+    }
+}

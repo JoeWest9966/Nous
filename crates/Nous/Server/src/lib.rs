@@ -27,7 +27,6 @@ pub mod error;
 pub mod meta;
 pub mod models;
 pub mod plugins;
-pub mod plugin_docs;
 pub mod plugin_versions;
 pub mod providers;
 pub mod routes;

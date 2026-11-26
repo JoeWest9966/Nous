@@ -7,14 +7,12 @@
 //!   模型解析共用（一个编目只有一处出处）；
 //! - 宿主能力：`AppState` 实现 `element_models::routes::Host`（见 `plugins.rs`）。
 
-use std::sync::Arc;
-
 use crate::app::AppState;
 use nous_elements::routes::REPO_KEY;
 
 /// 约定组 → `GET /v1/models` 的形状。组不存在 / 私库未装配 → `None`，
 /// 调用方回落到 device 的文件/内联来源（行为与没有这条线时一致）。
-pub fn group_catalog(state: &Arc<AppState>) -> Option<nous_device::ModelsResponse> {
+pub fn group_catalog(state: &AppState) -> Option<nous_device::ModelsResponse> {
     let repo = state.repo(REPO_KEY)?;
     let snapshot = element_models::routes::snapshot(&repo)?;
     let default = snapshot.default.as_ref().map(|model| nous_device::ModelRef {
