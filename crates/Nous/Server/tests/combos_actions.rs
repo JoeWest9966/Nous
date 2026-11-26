@@ -14,7 +14,7 @@ use axum::Router;
 use nous_durable::harness::clock::{Clock, ManualClock};
 use nous_durable::session::{ObserverRegistry, Session};
 use nous_durable::Storage;
-use nous_triggers::{TemplateLookup, TriggerRuntime};
+use trigger_core::{TemplateLookup, TriggerRuntime};
 use nous_server::{router, AppState, DurableCommands, ImportedSource};
 use nous_store::{NewTriggerDefinition as NewTrigger, Store as TriggerStore};
 use serde_json::{json, Value};

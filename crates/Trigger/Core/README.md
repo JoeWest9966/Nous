@@ -1,4 +1,4 @@
-# Nous_Triggers
+# Trigger_Core
 
 触发器插件。一个触发器在**两个地方**活着，这里两边都管：
 

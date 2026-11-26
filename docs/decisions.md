@@ -563,7 +563,7 @@ integration 用 `chrono_millis` 直接取时间。也就意味着 `nous-sessions
 
 - **durable 的库继续叫 `nous.db`**：真机上已经在跑，而且 `deploy.sh` / 备份 manifest / `--check` /
   `--active-tasks` / 升级闸门全都引用这个名字。改名 = 数据迁移 + 备份链断一次，换不到任何好处。
-- **store 的库改叫 `nous-plugins.db`**（原来是 `nous-triggers.db`）：这张库的所有者是
+- **store 的库改叫 `nous-plugins.db`**（原来是 `trigger-core.db`）：这张库的所有者是
   `nous-store`（插件侧），触发只是它**第一个住户**；往后审计、别的插件数据还进这张库。
   **名字跟所有者走，不跟第一个用户走** —— 叫 `triggers` 的话第二个住户落地就得再改一次名，
   而改数据文件名是迁移，不是重命名。
@@ -1487,10 +1487,12 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
    「功能页整块灰掉、理由是未登记」，不是崩 —— 但一样是 bug。
 3. 产物文档名从 `ext.md` 变成 `Nous_Extend.md`（`deploy.sh` 按全名落盘）。
 
-## 2026-11-26 · `Nous_Triggers`：24 条端点搬进新插件，两条宿主能力
+## 2026-11-26 · `Trigger_Core`：24 条端点搬进新插件，两条宿主能力
 
 **搬什么**：`/v1/triggers*`（11）+ `/v1/trigger-projects*`（13），合计 24 条，
-落在新 crate `crates/Nous/Triggers`（包 `nous-triggers`，capability `triggers`）。
+落在新 crate `crates/Nous/Triggers`（包 `trigger-core`，capability `triggers`）。
+（2026-11-26 后续：换供应商 Trigger、改名 `Trigger_Core`、目录迁到 `crates/Trigger/Core`、
+capability 改成 `core` —— 见本文件最后一条。）
 源文件 `server/src/triggers.rs`（950 行）+ `server/src/trigger_projects.rs`（1074 行）
 整份消失，静态表 79 → 55 行。
 
@@ -1537,7 +1539,7 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 2. 静态表只剩 `repo`(30) / `sessions`(17) / `Nous_Device`(8)。`repo` 那 30 条是
    下一个，也是「`nous-repo` 该不该自带 HTTP」这个决定的最后机会 —— 现在它还是
    platform 层、零 axum，选择「宿主注入根路径」的话这条线能保住。
-3. Desk 侧不用动：`Feature` 表里没有「触发器」这一项，`Nous_Triggers` 只在
+3. Desk 侧不用动：`Feature` 表里没有「触发器」这一项，`Trigger_Core` 只在
    `capabilities.modules` 里多一行（改名窗口的问题在 `Nous_Extend` 那次已经踩过）。
 
 ## 2026-11-27 模块全名 `Element_Models` → `Models`

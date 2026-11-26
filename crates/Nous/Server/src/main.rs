@@ -265,9 +265,9 @@ async fn run() -> Result<(), RunError> {
             let plugins_db = plugins_db_path(&db);
             let store = nous_store::Store::open(&plugins_db)
                 .map_err(|error| RunError::Failed(format!("open {plugins_db}: {error}").into()))?;
-            let definitions = nous_triggers::TriggerRuntime::open_definitions_only(&store)?;
+            let definitions = trigger_core::TriggerRuntime::open_definitions_only(&store)?;
             // CLI 里没有调度循环在跑：lastTickAt = null，lag 由纯函数现算（也是 0）。
-            let report = nous_triggers::observation_report(&store, &definitions, None, now_ms())?;
+            let report = trigger_core::observation_report(&store, &definitions, None, now_ms())?;
             println!("{}", serde_json::to_string(&report).map_err(|e| e.to_string())?);
             return Ok(());
         }
@@ -388,7 +388,7 @@ async fn run() -> Result<(), RunError> {
         triggers_root(),
     );
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
-    let lookup: nous_triggers::TemplateLookup = Arc::new(move |name: &str| {
+    let lookup: trigger_core::TemplateLookup = Arc::new(move |name: &str| {
         let readonly = readonly.lock().unwrap_or_else(|p| p.into_inner());
         let address = serde_json::json!({
             "kind": "presets.Session-Template",
@@ -407,7 +407,7 @@ async fn run() -> Result<(), RunError> {
             .flatten()
             .and_then(|doc| doc.value.get("body").and_then(serde_json::Value::as_str).map(str::to_string))
     });
-    let trigger_runtime = nous_triggers::TriggerRuntime::new(
+    let trigger_runtime = trigger_core::TriggerRuntime::new(
         trigger_store,
         commands.session().clone(),
         lookup,
@@ -418,7 +418,7 @@ async fn run() -> Result<(), RunError> {
     // #82：试跑判定复用 #73 的 evaluate —— 时钟由这里注入一次，许可名单看当前触发器定义。
     let clock_allowed = {
         let store = trigger_runtime.store.lock().await;
-        nous_triggers::TriggerRuntime::open_definitions_only(&store)
+        trigger_core::TriggerRuntime::open_definitions_only(&store)
             .map(|definitions| definitions.iter().any(|definition| {
                 definition.spec().on.as_deref().is_some_and(|on| on == "cron" || on == "clock")
                     || definition.spec().schedule.is_some()

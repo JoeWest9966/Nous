@@ -14,7 +14,7 @@ use axum::http::{Request, StatusCode};
 use nous_durable::actor::{Actor, ActorKind};
 use nous_durable::session::{ObserverRegistry, Session};
 use nous_durable::Storage;
-use nous_triggers::{FireOutcome, TemplateLookup, TriggerRuntime};
+use trigger_core::{FireOutcome, TemplateLookup, TriggerRuntime};
 use nous_server::{router, AppState, DurableCommands, ImportedSource};
 use nous_store::{FireState, NewTriggerDefinition as NewTrigger, Store as TriggerStore};
 use serde_json::{json, Value};
@@ -211,7 +211,7 @@ async fn http_handler_and_reader_function_serialize_the_same_bytes() {
     // 包括 scheduler 段（判据 4 比的是整个 body，不是只有 triggers 数组）。
     let store = TriggerStore::open(&fixture.trigger_db).unwrap();
     let definitions = runtime.definitions();
-    let cli_body = nous_triggers::observation_report(&store, &definitions, None, 0).unwrap();
+    let cli_body = trigger_core::observation_report(&store, &definitions, None, 0).unwrap();
     let mut http_fixed = http_body.clone();
     http_fixed["scheduler"]["lastTickAt"] = Value::Null;
     http_fixed["scheduler"]["lagMs"] = json!(0);

@@ -204,12 +204,12 @@
       ]
     },
     {
-      "name": "Nous_Triggers",
+      "name": "Trigger_Core",
       "version": "0.1.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`nous-triggers`",
+      "crate": "`trigger-core`",
       "vendor": "Nous",
       "description": "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行",
       "enabled": true,

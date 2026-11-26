@@ -25,7 +25,7 @@ use crate::projects;
 /// 模块全名（规则 12：`<Vendor>_<Module>`）：`/v1/capabilities` 的 `modules[].name`、
 /// `/v1/_routes` 的 `module` 标签、`GET /v1/plugins/:name/readme` 都按全名说话。
 /// URL 路径 `/v1/triggers*` 是小写世界，**跟全名是两回事**。
-pub const MODULE: &str = "Nous_Triggers";
+pub const MODULE: &str = "Trigger_Core";
 
 /// 私库在宿主仓库表里的名字（`repos::from_env` 的键，默认根 `/opt/Nous-Trigger`）。
 pub const REPO_KEY: &str = "triggers";
@@ -169,7 +169,7 @@ mod tests {
         for route in table() {
             assert_eq!(route.module(), MODULE);
         }
-        assert_eq!(MODULE, "Nous_Triggers");
+        assert_eq!(MODULE, "Trigger_Core");
     }
 
     /// 同 path + 同 method 声明两次会让 axum 在 mount 时 panic（`pitfalls.md`）：

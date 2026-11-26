@@ -5,7 +5,7 @@
 //! 属于宿主装配，不是插件职责 —— 插件拿到的永远是句柄（`Host::repo`）。
 //!
 //! [`repo_error`] 还留在这儿：它只剩 `trigger_projects.rs` 一个调用方，而那个
-//! 文件正在 `feat/triggers-plugin` 里搬到 `nous-triggers`。等那票落地后它连同
+//! 文件正在 `feat/triggers-plugin` 里搬到 `trigger-core`。等那票落地后它连同
 //! 调用点一起收进 `nous_repo::Refusal`，这里就彻底空了。
 
 use std::path::Path;

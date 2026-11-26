@@ -116,8 +116,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // 静态表只减不增。
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
     RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
-    // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Nous_Triggers` 插件
-    // （`nous-triggers` 的 `routes()` 声明），静态表只减不增。
+    // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Trigger_Core` 插件
+    // （`trigger-core` 的 `routes()` 声明），静态表只减不增。
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Nous_Device" },
     // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘。
     // 归 `device`（不是"server"）：`_routes` / `capabilities` 只吐**清单里开着的模块**，
@@ -282,7 +282,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "archive", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-archive`", description: "三条端点自带 handler（`crates/Data/Archive/src/routes.rs`）；供应商 `data`，包名 `data-archive`" },
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-combos`", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘" },
-    ManifestEntry { name: "Nous_Triggers", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-triggers`", description: "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行" },
+    ManifestEntry { name: "Trigger_Core", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`trigger-core`", description: "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行" },
     ManifestEntry { name: "data-manager", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-data-manager`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
     ManifestEntry { name: "Nous_Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "Nous_Prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `skills` / `ext` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点" },

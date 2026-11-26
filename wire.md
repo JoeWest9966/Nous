@@ -77,7 +77,7 @@
 ### 触发器管理面（#80：trigger-catalog）
 
 `PATCH /v1/triggers/{code}` 见上（#73，本票不重做）。#80 补新建 / 整份改定义 / 归档 / 捞回 / 真删 / 类别。
-实现在 `Nous_Triggers` 插件（`crates/Nous/Triggers`，模块全名 `Nous_Triggers`；
+实现在 `Trigger_Core` 插件（`crates/Trigger/Core`，模块全名 `Trigger_Core`；
 搬家票之前写作「`nous-server` 的 `triggers` 面」），定义与账仍只在 `nous-store` 的
 `triggers` / `fires` 两张表；协议形状与状态码一个字没变。不新增数据目录、不另开写通道。
 

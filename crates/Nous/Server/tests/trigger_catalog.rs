@@ -45,8 +45,8 @@ fn fixture(tag: &str) -> Fixture {
     // 管理面不接 Session 也能用：store 从 NOUS_PLUGINS_DB 的邻居读，装配在 main.rs 里做。
     // 测试直接注入 trigger runtime 所需的 store 装配（见 common / with_triggers）。
     let store = TriggerStore::open(&trigger_db).unwrap();
-    let lookup: nous_triggers::TemplateLookup = Arc::new(|_: &str| Some("hello".to_string()));
-    let runtime = nous_triggers::TriggerRuntime::new(
+    let lookup: trigger_core::TemplateLookup = Arc::new(|_: &str| Some("hello".to_string()));
+    let runtime = trigger_core::TriggerRuntime::new(
         store, durable, lookup, None, None, durable_db,
     )
     .unwrap();

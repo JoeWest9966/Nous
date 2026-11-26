@@ -33,7 +33,7 @@ pub struct AppState {
     /// `capabilities.services[engine].base` 的单一来源：环境变量优先，绑定后由 `main` 覆盖。
     origin: String,
     /// #57：点火路径的装配（store + 同一个 Session + 模板读取）。未装配的测试路由回 503。
-    triggers: Option<nous_triggers::TriggerRuntime>,
+    triggers: Option<trigger_core::TriggerRuntime>,
     /// #77：镜像缓存根（`data/upstream/<name>/`）。`None` = 没有 data 根，上游路由如实报错。
     upstream_data: Option<std::path::PathBuf>,
     /// #75：四套私库（presets / skills / prompts / extend）的读写与发布面。
@@ -423,7 +423,7 @@ impl AppState {
     }
 
     /// #57 的点火装配（只有 main 注入一次）。
-    pub fn with_triggers(self: Arc<Self>, triggers: nous_triggers::TriggerRuntime) -> Arc<Self> {
+    pub fn with_triggers(self: Arc<Self>, triggers: trigger_core::TriggerRuntime) -> Arc<Self> {
         Arc::new(Self {
             source: self.source.clone(),
             commands: self.commands.clone(),
@@ -514,7 +514,7 @@ impl AppState {
         })
     }
 
-    pub fn triggers(&self) -> Option<&nous_triggers::TriggerRuntime> {
+    pub fn triggers(&self) -> Option<&trigger_core::TriggerRuntime> {
         self.triggers.as_ref()
     }
 

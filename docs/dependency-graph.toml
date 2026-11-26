@@ -38,7 +38,7 @@ nous-extend = ["nous-durable", "nous-ext-sdk", "nous-repo", "nous-routes"]
 
 # 触发器插件：点火与观测只要 store/durable/sessions/ai/dispatcher；工程面另需
 # 私库（唯一 git 面）与唯一的执行面（publish 跑 cargo），端点走 nous-routes。
-nous-triggers = ["nous-store", "nous-durable", "nous-sessions", "nous-ai", "nous-dispatcher", "nous-repo", "nous-tools", "nous-routes"]
+trigger-core = ["nous-store", "nous-durable", "nous-sessions", "nous-ai", "nous-dispatcher", "nous-repo", "nous-tools", "nous-routes"]
 
 
 # #73 dispatcher 用 durable sleeping 任务落 tick、store 读写账本、chord 处理增量。
@@ -61,7 +61,7 @@ nous-server = [
   # #81 扩展管理面（create/duplicate/install/类别词表/usage）
   "nous-extend",
   # #57/#58/#73/#80 触发器：定义面 + 工程面（24 条 /v1/triggers* 与 /v1/trigger-projects*）
-  "nous-triggers",
+  "trigger-core",
   # #72 prompts 的目录只读投影 + #71/#83 skills（解析层 + 自带 6 条端点）
   "nous-prompts", "nous-skills",
   # #75 五套私库文件面 + #76 variant + #77 upstream
