@@ -1533,7 +1533,9 @@ dependencies = [
 name = "nous-repo"
 version = "0.1.36"
 dependencies = [
+ "axum",
  "nous-env",
+ "nous-routes",
  "serde",
  "serde_json",
  "tempfile",
