@@ -401,6 +401,7 @@ op 就发一帧" → 0 帧负向红。
 | `element-models` | `nous-elements` `nous-runtime` `nous-env` `nous-repo` `nous-routes` | 模型编目插件：读元素库、投影成编目、自带 `GET /v1/models/elements` 与密钥写面 |
 | `data-archive` | `nous-durable` `nous-routes` | #67 会话归档插件：三条命令走 durable 的 session commands（活库写锁 + 补偿方向在那里），端点由 `routes()` 声明 |
 | `nous-elements` | `nous-env` `nous-repo` `nous-routes` | 元素库插件：盘上真相与「写一次提交一次」在 repo，自带 8 条 `/v1/elements*`（读写 / 锁 / 补推） |
+| `nous-combos` | `nous-dispatcher` `nous-durable` `nous-repo` `nous-routes` | #61/#82 组合插件：名册扫盘 + 开关写穿 + 试跑 / launch；判定走 dispatcher 的纯函数，起会话与写血缘走 durable 的命令面，内容版本号复用 repo 的 sha256 |
 | `nous-skills` | `nous-env` `nous-repo` `nous-routes` | 技能插件：`SKILL.md` 解析层 + 自带 6 条 `/v1/skills*`；盘面规矩在 `nous_repo::entries`，与 `prompts` / `ext` 共用同一份 |
 
 **这张表不是许可证**：它只回答「这条边有没有人签字」，不替代判据 2（内核层不许依赖应用层）

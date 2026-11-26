@@ -122,7 +122,7 @@ impl element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（60 条）
+### 4.1 已搬（64 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
@@ -135,23 +135,23 @@ impl element_models::routes::Host for AppState {
 | `presets` + `presets-admin` | `/v1/presets*` 全 32 条（13 + 19） | `refactor(presets-admin)` | **第一次「两个模块共用一个插件的 handler」**：`crates/Nous/Server/src/presets.rs`（1902 行）整份搬成 `crates/Nous/PresetsAdmin/src/routes.rs`。宿主能力只有一个方法 `Host::preset_sources() -> Option<Sources>`（模板私库根 + 插件库 + 三个外部名册根 + 编目来源），`Sources` 由 `main` 装配一次、插件只接 —— 路径解析仍然只有 `env` 插件一处。`ServerError` 换成插件自己的 `Refusal`（六个分支一对一，状态码与文案一字没改）；`server` 侧 `presets::SharedStore` / `PresetStore` / `presets::routes()` 全删，`AppState.presets` 的类型直接换成 `routes::Sources`（不留两套同形结构）。**端点归属照搬家前静态表原样**（`GET order` 在 admin、`PUT order` 在 presets 这种手写漂移不夹带修） | | `feat(elements)` | 第一次搬**已经是独立文件**的模块（`server/src/elements.rs` 377 行）：盘上真相与「写一次提交一次」本来就在 `nous-elements`，所以宿主能力只要 `Host::elements_repo()`（一个仓库句柄），比 `data-manager` 还窄。`RepoError → 状态码` 的翻译搬进插件的 `Refusal::from_repo`（一处判，含 `Validation` 的 `{field, problem}` 与 423）。`server/src/elements.rs` 整份删除；`models.rs` 的 `REPO_KEY` 改读 `nous_elements::routes::REPO_KEY` |
 | `env` | `GET /v1/fs/dirs`（1 条） | `refactor(env)` | **契约 crate 第一次自带端点**：`crates/Nous/Env` 是 `ExecutionEnv` 契约层，加 `axum` / `nous-routes` 是方向性决定（§3.4 的「模块自带 controller」与「契约层不绑传输」正面撞上）。定的口径是 **Magento 2 怎么切就怎么切**：一个模块 = 一个目录，`Api/` 与 `Controller/` 在同一个模块里，没有「只装接口那半」。宿主能力只有 `Host::remote_subdirs()` 一个方法 —— 远端实现 `nous-env-ssh` 的 `requires` 里有 `nous-env`，直接调会成环，所以只能反过来注入（这也本来就是契约层该有的方向） |
 | `skills` | `GET /v1/skills` · `GET /v1/skills/files` · `GET/PUT /v1/skills/file` · `POST /v1/skills/{create,publish}`（6 条） | `feat(skills)` | 第一次「端点住在共用骨架里」的搬家：6 条里 5 条原在 `server/src/resource_admin.rs`（skills / prompts / extensions 三仓共用一副骨架），不能把骨架整体塞给一个插件。**盘面规矩先下沉**到 `nous_repo::entries`（名字 / 路径校验、递归清单、骨架落盘、发布），三个仓共用同一份；然后 `skills` 插件拿走自己那 6 条，`resource_admin.rs` 只剩 prompts / extensions（522 → 309 行）。宿主能力三个方法：`skills_repo` / `skills_root` / `skills_usage`（前两个是同一份私库的两种取法：写面要仓库句柄、只读投影要路径）。`meta::skills()` 与静态表 6 行一并删（143 → 137） |
+| `combos` | `GET /v1/combos/:section` · `PATCH /v1/combos/:section/:name` · `POST /v1/combos/:section/:name/fire` · `POST /v1/presets/Ultimate-Template/launch`（4 条） | `feat(combos)` | **第一次「一个模块一份新 crate」**：搬家前 `server/src/combos.rs`（370 行）+ `combos_actions.rs`（219 行）两个文件，整份搬成 `crates/Nous/Combos/{store,actions}.rs`。宿主能力四件事：两个盘面根（`Host::combo_roots`）、触发器判定视图（`Host::trigger_spec`）、注入时钟（`Host::combo_clock`）、起会话 + 写血缘（`Host::launch_session`）。**判定仍是 dispatcher 的纯函数**（`evaluate` / `reason_text` 直接依赖，不经宿主）；**起会话仍是 durable 的命令面**（`create_conversation` + `record_origin` 在宿主实现里，插件不自己开库）。`AppState.combos` / `combo_action` 的类型直接换成插件类型（`nous_combos::ComboStore` / `nous_combos::Clock`），不留两套同形结构；`meta::ROUTES` 删 4 行 |
 
-### 4.2 待搬（104 条 / 9 个模块）
+### 4.2 待搬（100 条 / 8 个模块）
 
 按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
-（静态表总数：搬家起点 162 行 → 现在 104 行；插件自带的端点 `Route::new` 共 61 条）。
+（静态表总数：搬家起点 162 行 → 现在 100 行；插件自带的端点 `Route::new` 共 65 条）。
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
 | `prompts` | 6 | 私库读写（`nous-repo`） |
-| `combos` | 4 | 组合段读写 + 试跑（依赖 `sessions` 起轮） |
 | `ext` | 15 | 扩展私库 + 运行时（`nous-ext`）+ 管理面 |
 | `triggers` | 24 | 触发器库 + 调度（`nous-dispatcher`） |
 | `sessions` | 17 | 最厚：读投影 + 写命令 + SSE 出口（`events` 尤其要小心） |
 | `repo` | 30 | 最杂：git 面全在这一家（`nous-repo` 已是 platform，宿主只需给根路径） |
 | `device` | 7 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，建议**最后搬**（它们读注册表本身） |
 
-建议顺序：`prompts` → `combos` → `ext` → `triggers` → `repo` → `sessions` → `device`。
+建议顺序：`prompts`（另一票在做）→ `ext` → `triggers` → `repo` → `sessions` → `device`。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
 搬进 `device` 之前得先让「注册表」成为宿主能力（`Host::declarations()`），否则会成环。
@@ -194,6 +194,7 @@ cargo test --workspace                                       # 全量
 | 日期 | 动作 |
 |---|---|
 | 2026-11-24 | 建 `nous-routes`（契约层）+ `server::plugins`（收集/装配/登记）；`device` 交出 `GET /v1/machines`（静态表删 1 行） |
+| 2026-11-26 | **`/v1/combos*` 4 条搬进新 crate `crates/Nous/Combos`**（`server/src/combos.rs` 370 行 + `combos_actions.rs` 219 行整份搬）。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘。**判定仍是 dispatcher 的纯函数**（插件直接依赖 `nous_dispatcher::evaluate`），**起会话仍是 durable 的命令面**（`create_conversation` + `record_origin` 在宿主实现里）。两个坑：①`AppState` 有 15 个 `Arc::new(Self { … })` 构造点，加字段要全补 —— 用括号深度扫的脚本补的时候吃掉了三个 `})`，编译报「unclosed delimiter」，逐个补回；②`capabilities_shapes` 里 `fire` 那条断言写的是静态表的 `{section}`，搬完是注册表的 `:section`，得跟着改 |
 | 2026-11-26 | **`/v1/presets*` 32 条搬进 `Nous_PresetsAdmin`**（一个插件扛两个模块名：13 条归 `presets`、19 条归 `presets-admin`，照搬家前静态表原样）。宿主能力一个方法 `Host::preset_sources() -> Option<Sources>`；`Sources` 从 `server::presets::Sources::from_env()`（插件自己读环境）改成宿主装配一次（`main`），插件零环境读取。`ServerError` → 插件自己的 `Refusal`（六分支一对一）。三个坑：①注册表口径是 `:param`（`nous_routes::to_registry_path` 折的），静态表那半还写着 `{param}` —— 搬过来的声明是 `:param`，快照与 `presets_openapi` 两边都得归一才比得上；②`check-plugins.sh` 的 `requires` 是「对着 `cargo metadata` 算的」，加依赖必须同步清单；③纯改名 / 纯搬家之后 `plugin-versions.py` 的考古结论会跳（`server` 一路 0.2.9 → 0.3.21），别手改文档表，按提示涨 |
 | 2026-11-25 | **目录与 vendor 也改成 PascalCase**（29 个目录 `crates/Nous/PresetsAdmin` / `crates/Data/DataManager` / `crates/Element/Models`，`vendor = "Nous"` / `"Data"` / `"Element"`）。包名、crate 标识、capability、URL 一个字没动。三处推导判据同算法改成 `_pascal`（按 camel hump 断词），`plugin-versions.py` 补「目录改名 = minor」（纯改名提交里 `plugin.toml` 一行没变、`git show` 的 +/- 是空的，靠行判据会落成 patch，16 个模块全落错档）。坑 2：快照里 `modules[].version` 也要跟着插件版本走，`presets-admin` 红了一次 |
 | 2026-11-25 | **规则 12 第二个：`device` → `Nous_Device`**（vendor/目录/包名一字不动，只改全名与版本 0.7.0 → 0.8.0）。同时补齐尾段 **CamelCase → kebab** 推导（`Nous_PresetsAdmin` → 目录 `presets-admin`）。三个判据跟着改：`plugin-versions.rs` 的测试原本按小写名硬凑目录，`Nous_Device` 直接被跳过 → 判据空转（`只比对了 9 个模块`）；修成由全名推目录，并补 `rule12_name_and_dir_derivation` 自检。Desk 侧新增 `module_matches`（`Nous_Device` ↔ `device` 都认），否则改名当天「设备」页会被判成未登记而灰掉 |
