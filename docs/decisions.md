@@ -1608,3 +1608,22 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 `check-plugins.sh` 只在 `_` 存在时比对第一段与 vendor），那 `Models` 这种无 vendor 段的全名
 就会成为「老式小写连字符名」之外的第三种形态，判据得再补一档 —— 那时要么改成
 `Element_Models`（本决定作废），要么把「全名可省略 vendor 段」写进规则 12。
+
+## 2026-11-26 全名 `Library_Extend` → `Extend`
+
+**决定**：`crates/Library/Extend/plugin.toml` 的 `name` 改成 `Extend`，插件版本 `0.9.0` →
+`0.10.0`（规则 8：身份行改了就是 minor）。**目录、包名、vendor、capability 一律不动** ——
+仍是 `crates/Library/Extend`、`library-extend`、`vendor = "Library"`、`capability = "extend"`。
+
+**为什么**：`Library_Extend` 把出品方名字塞进了模块名里，读起来重复；`Extend` 本身就够清楚，
+出品方由 `modules[].vendor` 与目录第一段表达（和 `Models` 同一个形态 —— 单段 PascalCase 全名，
+`vendor` 是 `Element` / `Library`）。规则 12 允许这样：判断「全名第一段 == vendor」只在全名里
+有 `_` 时做，无 `_` 的单段全名由 `modules[].vendor` 说清楚。
+
+**代价**：`/v1/plugins/Library_Extend/readme` 从此 404 `unknown_module`（名字是身份，不给别名），
+产物文档名从 `Library_Extend.md` 变成 `Extend.md`。桌面端零改动：它只透传 `name`，扩展页认的是
+短名 `extend`，`Extend` 的尾段正好是 `extend`（`module_matches` 的 flatten 比对），不用改。
+
+**反悔点**：如果哪天机器判据要求「全名必须带 vendor 段」（即 `Vendor_Module` 是唯一合法形态），
+`Extend` / `Skill` / `Models` 三个单段名要一起补成 `Library_Extend` / `Library_Skill` /
+`Element_Models` —— 那时改的就是规则 12 本身，不是这三个模块。

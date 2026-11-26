@@ -128,8 +128,8 @@
 | `Nous_Device` | Nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 | 是 | #65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写 |
 | `sessions` | Nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地）：最小轮次与取消收敛 + 会话读投影（`source`）/ 写命令（`commands`）/ 请求形状（`records`）/ 事件流（`hub` / `coalesce` / `project` / `observer`）；`/v1/sessions*` 十七条里 十六条自带 handler，`messages` 留在宿主侧（要组装根的 driver / completions 与提示词注入） |
 | `documents` | Nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
-| `Nous_Prompts` | Nous | `nous-prompts` | app | 编译期 | 6 条端点自带 handler（`crates/Nous/Prompts/src/routes.rs`）：`GET /v1/prompts` 只读投影 + `files`/`file`/`create`/`publish` 编辑面；盘面规矩在 `nous-repo`，状态码翻译在 `nous-routes` | 是 | 默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Library_Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点 |
-| `Library_Extend` | Library | `library-extend` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 + 15 条端点自带 handler（`crates/Library/Extend/src/routes.rs`）：清单 / 重载 / 管理面 9 条（create / duplicate / install / uninstall / categories / category / trash）+ 编辑页 4 条（`files` / `file` / `publish`，盘面规矩与 git 提交复用 `nous-repo`） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划 |
+| `Nous_Prompts` | Nous | `nous-prompts` | app | 编译期 | 6 条端点自带 handler（`crates/Nous/Prompts/src/routes.rs`）：`GET /v1/prompts` 只读投影 + `files`/`file`/`create`/`publish` 编辑面；盘面规矩在 `nous-repo`，状态码翻译在 `nous-routes` | 是 | 默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点 |
+| `Extend` | Library | `library-extend` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 + 15 条端点自带 handler（`crates/Library/Extend/src/routes.rs`）：清单 / 重载 / 管理面 9 条（create / duplicate / install / uninstall / categories / category / trash）+ 编辑页 4 条（`files` / `file` / `publish`，盘面规矩与 git 提交复用 `nous-repo`） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划 |
 | `ext-probe` | Nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
 | `ext-sdk` | Nous | `nous-ext-sdk` | platform | 编译期 | 扩展侧 SDK（`exts/*` 用它编） | 否 | 契约层；扩展 crate 唯一的外部依赖 |
 | `extend-trash` | Nous | — | app | 数据目录 | 卸载源码的垃圾站 + `deleted-extensions.json` 删除名单（#84） | 否 | 位于 `data/extend-trash/`，install 的回退来源；名单随私库发布，防 git pull 复活 |
@@ -148,7 +148,7 @@
 | `build-worker` | Nous | — | app | 运行时外挂 | 待定（编译派发） | 否 | 将来 |
 | `presets` | Nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
 | `combos` | Nous | `nous-combos` | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘）；**四条端点自带 handler**（`routes.rs`） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘 |
-| `Skill` | Library | `library-skill` | app | 编译期 | 6 条端点自带 handler（`crates/Library/Skill/src/routes.rs`）：`GET /v1/skills`（只读投影，`?usage=1` 反查谁在用）+ `/v1/skills/{files,file,create,publish}`（编辑页） | 否 | 默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `Library_Extend` 共用同一份；不 spawn git（发布走 `nous-repo`） |
+| `Skill` | Library | `library-skill` | app | 编译期 | 6 条端点自带 handler（`crates/Library/Skill/src/routes.rs`）：`GET /v1/skills`（只读投影，`?usage=1` 反查谁在用）+ `/v1/skills/{files,file,create,publish}`（编辑页） | 否 | 默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `Extend` 共用同一份；不 spawn git（发布走 `nous-repo`） |
 | `prompt-text` | Nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
 | `trigger-spec` | Nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | Nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
@@ -184,7 +184,7 @@
 今天 `crates/*/*` 下 29 个目录（`crates/Nous/` 24 个 + `crates/Library/` 2 个 + `crates/Data/` 2 个 + `crates/Element/` 1 个），
 本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 29 行：
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
-`store` `Library_Extend` `ext-probe` `ext-sdk` `sessions` `server` `fixture` `elements` `env-ssh` `repo`
+`store` `Extend` `ext-probe` `ext-sdk` `sessions` `server` `fixture` `elements` `env-ssh` `repo`
 `routes` `prompts` `presets-admin` `dispatcher` `Nous_Device` `Skill` `documents` `Models`
 `data-manager` `archive`。
 新增模块 → 先加一行；删模块 → 先删一行。
