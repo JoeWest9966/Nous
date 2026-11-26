@@ -33,7 +33,7 @@ use serde_json::{json, Value};
 use nous_store::PresetRevision as Revision;
 
 /// 这个插件在注册表里的模块名（`docs/plugins.md` 的 module 列）。
-pub const MODULE: &str = "Nous_PresetsAdmin";
+pub const MODULE: &str = "presets-admin";
 
 /// 一条端点的拒绝理由：搬家前 `ServerError` 的六个分支，状态码与文案一字没改。
 ///
