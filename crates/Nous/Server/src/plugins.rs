@@ -152,7 +152,7 @@ impl element_models::routes::Secrets for AppState {
     }
 }
 
-/// `data-manager` 插件要的那一件事：两个只读库在哪。
+/// `Data_DataManager` 插件要的那一件事：两个只读库在哪。
 ///
 /// 路径与启动 / `--check` / `--triggers` 共用同一套推导（`main` 装配一次），
 /// 插件拿到的就是那一份 —— 不复算第二次，也就不会读到另一份库。
@@ -162,7 +162,7 @@ impl data_data_manager::routes::Host for AppState {
     }
 }
 
-/// `archive` 插件要的三件事：归档 / 列世代 / 打捞。
+/// `Data_Archive` 插件要的三件事：归档 / 列世代 / 打捞。
 ///
 /// 全部落在同一个 `CommandSource`（同一个 `Session` 写者）上 —— 插件不另开写通道。
 /// 错误语义只在 `commands.rs` 的 `command_error` 里判一次（409 与 400 的分界），

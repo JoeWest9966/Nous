@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// 这个插件在注册表里的模块名（`docs/plugins.md` 的 module 列）。
-pub const MODULE: &str = "archive";
+pub const MODULE: &str = "Data_Archive";
 
 /// 宿主能力：三条归档命令。**一个方法一个能力**，不多给。
 ///
@@ -239,9 +239,9 @@ mod tests {
         assert_eq!(
             declared,
             vec![
-                "POST /v1/sessions/:id/archive [archive]",
-                "GET /v1/archive [archive]",
-                "POST /v1/archive/:id/restore [archive]",
+                "POST /v1/sessions/:id/archive [Data_Archive]",
+                "GET /v1/archive [Data_Archive]",
+                "POST /v1/archive/:id/restore [Data_Archive]",
             ]
         );
     }

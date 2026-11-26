@@ -10,13 +10,13 @@ use std::path::Path;
 fn data_manager_plugin_manifest_module_layer_and_routes_are_registered() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let plugin = std::fs::read_to_string(root.join("../../Data/DataManager/plugin.toml")).unwrap();
-    assert!(plugin.contains("name = \"data-manager\""));
+    assert!(plugin.contains("name = \"Data_DataManager\""));
     assert!(plugin.contains("layer = \"app\""));
     assert!(plugin.contains("crate = \"data-data-manager\""));
 
     let plugins_doc = std::fs::read_to_string(root.join("../../../docs/plugins.md")).unwrap();
     let stats_row = plugins_doc.lines()
-        .find(|line| line.starts_with("| `data-manager` |"))
+        .find(|line| line.starts_with("| `Data_DataManager` |"))
         .expect("docs/plugins.md 缺 data-manager 行");
     assert!(stats_row.contains("`data-data-manager`"), "{stats_row}");
     assert!(stats_row.contains("| app |"), "{stats_row}");
@@ -24,7 +24,7 @@ fn data_manager_plugin_manifest_module_layer_and_routes_are_registered() {
 
     let stats_routes: Vec<_> = nous_server::meta::endpoints()
         .into_iter()
-        .filter(|route| route.module == "data-manager")
+        .filter(|route| route.module == "Data_DataManager")
         .collect();
     assert_eq!(stats_routes.len(), 8);
     for path in [
@@ -39,5 +39,5 @@ fn data_manager_plugin_manifest_module_layer_and_routes_are_registered() {
     ] {
         assert!(stats_routes.iter().any(|r| r.method == "GET" && r.path == path), "缺 {path}");
     }
-    assert!(nous_server::meta::route_enabled("data-manager"));
+    assert!(nous_server::meta::route_enabled("Data_DataManager"));
 }

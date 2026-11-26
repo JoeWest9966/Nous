@@ -1,6 +1,6 @@
-name = "data-manager"
+name = "Data_DataManager"
 vendor = "Data"
-version = "0.4.0"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；端点自带 = minor）
+version = "0.5.0"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；0.5.0：模块全名 data-manager → Data_DataManager）
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "data-data-manager"
 

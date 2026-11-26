@@ -1,4 +1,4 @@
-//! `archive` 应用层模块（#67）：会话归档 —— 世代文件 + 墓碑 + 打捞。
+//! `Data_Archive` 应用层模块（#67）：会话归档 —— 世代文件 + 墓碑 + 打捞。
 //!
 //! 三条端点（[`routes`]）自带 handler（Magento 2 那种模块自带 controller）：
 //! 宿主只注入三条命令（[`routes::Host`]），插件不碰 `Storage`、不开连接、不看时钟。
