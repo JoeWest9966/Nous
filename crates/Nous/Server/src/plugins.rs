@@ -94,7 +94,7 @@ impl nous_prompts::routes::Host for AppState {
     }
 }
 
-/// `Library_Extend` 插件要的四件事：编辑页的私库句柄、管理面的盘面、运行时、以及「谁在用」。
+/// `Extend` 插件要的四件事：编辑页的私库句柄、管理面的盘面、运行时、以及「谁在用」。
 ///
 /// 前三件是同一套扩展系统的三种取法，不是三份状态：`ext_repo` 是 git 面（私库键
 /// `extend`，URL 段却是 `extensions`）、`ext_admin` 是目录动作的盘面、`ext_runtime`

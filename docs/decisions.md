@@ -1651,3 +1651,22 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 4. **`core` 这个尾段偏通用**：Desk 的匹配规则是「全名」或「`_` 之后的尾段」，
    以后真出现 `Foo_Core` 就会撞。撞之前把 Desk 的匹配改成「全名优先、尾段只在唯一时用」——
    现在只有一个 `_Core`，先不动。
+
+## 2026-11-26 全名 `Library_Extend` → `Extend`
+
+**决定**：`crates/Library/Extend/plugin.toml` 的 `name` 改成 `Extend`，插件版本 `0.9.0` →
+`0.10.0`（规则 8：身份行改了就是 minor）。**目录、包名、vendor、capability 一律不动** ——
+仍是 `crates/Library/Extend`、`library-extend`、`vendor = "Library"`、`capability = "extend"`。
+
+**为什么**：`Library_Extend` 把出品方名字塞进了模块名里，读起来重复；`Extend` 本身就够清楚，
+出品方由 `modules[].vendor` 与目录第一段表达（和 `Models` 同一个形态 —— 单段 PascalCase 全名，
+`vendor` 是 `Element` / `Library`）。规则 12 允许这样：判断「全名第一段 == vendor」只在全名里
+有 `_` 时做，无 `_` 的单段全名由 `modules[].vendor` 说清楚。
+
+**代价**：`/v1/plugins/Library_Extend/readme` 从此 404 `unknown_module`（名字是身份，不给别名），
+产物文档名从 `Library_Extend.md` 变成 `Extend.md`。桌面端零改动：它只透传 `name`，扩展页认的是
+短名 `extend`，`Extend` 的尾段正好是 `extend`（`module_matches` 的 flatten 比对），不用改。
+
+**反悔点**：如果哪天机器判据要求「全名必须带 vendor 段」（即 `Vendor_Module` 是唯一合法形态），
+`Extend` / `Skill` / `Models` 三个单段名要一起补成 `Library_Extend` / `Library_Skill` /
+`Element_Models` —— 那时改的就是规则 12 本身，不是这三个模块。
