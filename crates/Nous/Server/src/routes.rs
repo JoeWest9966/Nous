@@ -51,6 +51,9 @@ use crate::source::SessionSource;
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
     let router = Router::new()
+        // 17 条会话端点里只有这一条留在 server：它要宿主组装根（driver / completions）
+        // 与提示词注入（`nous-prompts` / skills 库），都是 app 层的装配物。
+        .route("/v1/sessions/{id}/messages", post(messages))
         .route("/v1/models", get(models))
         .route("/v1/default", put(put_default))
         .route("/v1/catalog/refresh", post(catalog_refresh))
