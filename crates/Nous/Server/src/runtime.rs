@@ -337,8 +337,8 @@ fn elements_runtime_config_at(
         Err(_) => return (None, None),
     };
     let (Ok(groups), Ok(packages)) = (
-        nous_elements::scan(&repo, nous_elements::Kind::Groups),
-        nous_elements::scan(&repo, nous_elements::Kind::Packages),
+        element_core::scan(&repo, element_core::Kind::Groups),
+        element_core::scan(&repo, element_core::Kind::Packages),
     ) else {
         return (None, None);
     };

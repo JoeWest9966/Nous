@@ -1,6 +1,6 @@
 //! 纯函数测试：解析 / 合并 / 投影 / 密钥引用形状。不读盘、不联网。
 
-use nous_elements::ElementItem;
+use element_core::ElementItem;
 use serde_json::{json, Value};
 
 use crate::{
@@ -263,7 +263,7 @@ fn duplicate_reference_is_reported_once() {
 #[test]
 fn broken_reference_type_is_ignored_instead_of_panicking() {
     let snapshot = load(&group(&[], json!({ "packages": ["x", 3, null] })), &[]);
-    // `packages` 的类型闸在 `nous-elements` 里；这里只保证不 panic、诚实空表。
+    // `packages` 的类型闸在 `element-core` 里；这里只保证不 panic、诚实空表。
     assert_eq!(snapshot.state, "missing");
     assert!(snapshot.items.is_empty());
     assert_eq!(snapshot.group.as_deref(), Some(GROUP_ID));
