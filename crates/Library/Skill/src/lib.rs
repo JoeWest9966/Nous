@@ -1,4 +1,4 @@
-//! skills 插件：`SKILL.md` 的盘上真相（#71）+ 6 条 `/v1/skills*` 端点。
+//! Skill 插件：`SKILL.md` 的盘上真相（#71）+ 6 条 `/v1/skills*` 端点。
 //!
 //! 两半：
 //!

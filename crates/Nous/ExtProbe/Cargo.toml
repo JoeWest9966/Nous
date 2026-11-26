@@ -11,7 +11,7 @@ name = "nous-ext-probe"
 path = "src/main.rs"
 
 [dependencies]
-nous-extend = { workspace = true }
+library-extend = { workspace = true }
 nous-ext-sdk = { workspace = true }
 nous-durable = { workspace = true }
 nous-server = { workspace = true }

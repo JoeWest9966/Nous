@@ -1,6 +1,6 @@
 //! 扩展的段进系统提示词（`render_turn` 接进真轮次）的判据。
 //!
-//! 接缝：真 Router（HTTP 建会话 / 起轮 / 读 entries）+ 真 `nous_extend::Runtime`（样例扩展
+//! 接缝：真 Router（HTTP 建会话 / 起轮 / 读 entries）+ 真 `library_extend::Runtime`（样例扩展
 //! `exts-handle` 的真进程）+ 临时私库根。判据打的是字节级事实：扩展渲染出来的那一段
 //! 逐字出现在本轮 `pi.system` 的 `sections.extensions` 里。
 //!
@@ -52,7 +52,7 @@ fn sample_ext_bin() -> PathBuf {
 
 /// 装一个真能跑起来的扩展：源码目录（`nous.json`）+ 产物（二进制 + `.json` 元数据），
 /// 再把 `prompts` 句柄指到一个放着哨兵文件的目录。
-fn start_extension(base: &Path, binary: &Path) -> Arc<nous_extend::Runtime> {
+fn start_extension(base: &Path, binary: &Path) -> Arc<library_extend::Runtime> {
     let root = base.join("exts");
     let artifacts = base.join("artifacts");
     let handle_dir = base.join("handles/prompts");
@@ -93,13 +93,13 @@ fn start_extension(base: &Path, binary: &Path) -> Arc<nous_extend::Runtime> {
     )
     .unwrap();
 
-    let mut config = nous_extend::RuntimeConfig::new(&root, &artifacts);
+    let mut config = library_extend::RuntimeConfig::new(&root, &artifacts);
     // 判据进程不是 root 时 uid 隔离本来就会退化；这里显式关掉，只验「段进提示词」。
     config.isolation.enabled = false;
     config
         .handles
-        .insert("prompts".into(), nous_extend::HandleValue::dir(handle_dir));
-    let runtime = nous_extend::Runtime::new(config);
+        .insert("prompts".into(), library_extend::HandleValue::dir(handle_dir));
+    let runtime = library_extend::Runtime::new(config);
     runtime.start_all();
     assert_eq!(
         runtime.state_of("handle").map(|state| state.as_str()),

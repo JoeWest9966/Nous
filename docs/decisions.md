@@ -1063,7 +1063,7 @@ restore 方向相反：闭包先写回活库，抹墓碑失败时**保留 genera
 
 **决定**：`/v1/{skills,prompts,extensions}/{files,file,create,publish}` 由
 `crates/Nous/Server/src/resource_admin.rs` 做 HTTP ↔ 盘面翻译（三仓共用一副骨架），
-不新建 `nous-skills-admin` crate；文件读写 / etag 撞闸 / 提交 / push
+不新建 `library-skill-admin` crate；文件读写 / etag 撞闸 / 提交 / push
 一律走 `nous_repo::Repo`（`/v1/repos/skills/*` 的同一套）。publish 先问 `pending()` 拿
 dirty 路径再 `commit()`，不自己拼 `git add`。
 
@@ -1073,7 +1073,7 @@ dirty 路径再 `commit()`，不自己拼 `git add`。
 `skills-api.js` 的 `checkName` / `resolveInside`，不发明第二套。
 
 **反悔点**：出现「技能管理要走变体的独立 worktree / 独立分支」或「编辑页要的东西 repo 层
-表达不了（例如目录级原子改名）」时，把写面提成 `nous-skills-admin` crate，并在
+表达不了（例如目录级原子改名）」时，把写面提成 `library-skill-admin` crate，并在
 `docs/plugins.md` 把该行从 `(待建)` 改成真 crate；那时 `skills` 模块只留只读投影。
 
 ## 2026-11-22 · 模板面回到 TS 内核同形，判定归 `nous-presets-admin`
@@ -1346,7 +1346,7 @@ Desk 端有代码按 `{kind}` 字面比字符串，那处要改成认两种写�
 
 ---
 
-## 2026-11-26 技能六端点搬进插件（`nous-skills`）—— 骨架先下沉，再搬端点
+## 2026-11-26 技能六端点搬进插件（`library-skill`）—— 骨架先下沉，再搬端点
 
 **背景**：搬家票第 6 个插件。`skills` 与前面五个都不同：6 条端点里 **5 条不住在自己的文件里**，
 而是和 `prompts` / `extensions` 挤在 `server/src/resource_admin.rs` 那一副**三仓共用骨架**里
@@ -1359,10 +1359,10 @@ Desk 端有代码按 `{kind}` 字面比字符串，那处要改成认两种写�
   那一层），三仓共用同一份；然后 `skills` 插件拿走自己那 6 条，`resource_admin.rs` 只剩
   prompts / extensions（522 → 309 行）。
 - **不把整副骨架塞给一个插件。** 如果为了「搬 skills」把 `Kind::Prompts` / `Kind::Extensions`
-  也搬进 `nous-skills`，那 `skills` 插件就得依赖 `nous-ext`（运行时）—— 一个只读解析插件
+  也搬进 `library-skill`，那 `skills` 插件就得依赖 `nous-ext`（运行时）—— 一个只读解析插件
   被迫背上扩展运行时，依赖图当场破。所以切分线画在「盘面规矩（共用）」与「HTTP 翻译（各仓各的）」之间。
 - **宿主能力三个方法**：`skills_repo()`（写面要仓库句柄：写锁、etag、git 提交都在里面）、
-  `skills_root()`（只读投影要路径：`nous_skills::scan` 只吃 `&Path`）、
+  `skills_root()`（只读投影要路径：`library_skill::scan` 只吃 `&Path`）、
   `skills_usage()`（`?usage=1` 反查归 `SessionSource`，插件不自己开库）。
   前两个是同一份私库的两种取法，不是一个能力拆两半。
 - **`meta::skills()` 整份删除**（投影逻辑搬进插件的 `skills` handler），静态表删 6 行
@@ -1376,7 +1376,7 @@ Desk 端有代码按 `{kind}` 字面比字符串，那处要改成认两种写�
 后面 `prompts`（同样 5 条在骨架里）和 `ext`（4 条）是抄这一票：骨架已经下沉，它们只需
 拿走自己的 HTTP 翻译。
 
-**代价**：`nous-repo` 多了 `entries` 这一层（约 380 行），`nous-skills` 从「零 IO 的只读解析」
+**代价**：`nous-repo` 多了 `entries` 这一层（约 380 行），`library-skill` 从「零 IO 的只读解析」
 变成「app 层的插件」—— 它的 `plugin.toml` `layer` 仍是 `app`（本来也是），但 `requires` 从空
 变成三条。`resource_admin.rs` 里 `Kind::Skills` 那一支整支消失，`MAX_FILES` / `RESERVED` 等
 常量也只剩一份（在 `nous_repo`）。
@@ -1443,7 +1443,7 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
 `GET /v1/plugins/Nous_Prompts/readme` 会回 404 `readme_not_installed`。这是改名的
 可观测代价，记在这里免得当成 bug。
 
-## 2026-11-26 扩展十五端点搬进插件（`Nous_Extend`）+ 改名 `ext` → `Extend`
+## 2026-11-26 扩展十五端点搬进插件（`Library_Extend`）+ 改名 `ext` → `Extend`
 
 **为什么搬到插件里**：`ext` 早就是清单里的模块、crate 也一直在（`nous-ext`），
 只有端点在 `server` 里当转发层 —— 那是「模块存在、端点不归它」的最后几个漏网之一。
@@ -1464,12 +1464,12 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
 会把 500 说成「未装配」，那是一句假话。Trait 方法返回插件的 `HttpRefusal` 是可行的，
 因为 `Host` 由宿主实现，宿主本来就有 `nous-routes`。
 
-**改名（规则 12）：`ext` → `Nous_Extend`，这是真改名，不是「改成全名」**。
+**改名（规则 12）：`ext` → `Library_Extend`，这是真改名，不是「改成全名」**。
 `prompts` 那次只动全名（目录/包名/capability 本来就对）；这次全名、vendor 之外的
 三套写法都要跟着变：
 
-- 目录 `crates/Nous/Ext` → `crates/Nous/Extend`
-- 包名 `nous-ext` → `nous-extend`，crate 标识 `nous_ext` → `nous_extend`
+- 目录 `crates/Nous/Ext` → `crates/Library/Extend`
+- 包名 `nous-ext` → `library-extend`，crate 标识 `nous_ext` → `library_extend`
 - capability `ext` → `extend`（`check-plugins.sh` 要求它 == 目录名的小写机器名）
 - **URL 段 `/v1/extensions*` 和私库键 `extend` 一个字没动** —— 它们是「小写世界」，
   跟全名不是一回事；`decisions.md` 2026-11-19 那条（`ext` 就是 `ext`，不是 `extensions`）
@@ -1478,13 +1478,42 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
 **代价 / 反悔点**：
 
 1. `docs/plugin-versions.md` 的考古会因目录改名重算一次档案（规则 8 把「目录改名」
-   算身份变更 = minor，所以 `ext` 0.6.6 → `Nous_Extend` 0.8.0：改名一个 minor、
+   算身份变更 = minor，所以 `ext` 0.6.6 → `Library_Extend` 0.8.0：改名一个 minor、
    端点数一个 minor）。**别把它当 bug 修回 0.6.x。**
-2. `docs/plugins.md` 的 module 列从 `ext` 变成 `Nous_Extend`，NousDesk 的
+2. `docs/plugins.md` 的 module 列从 `ext` 变成 `Library_Extend`，NousDesk 的
    `capability::module_matches` 认「全名」或「`_` 之后的尾段」—— `Feature::Ext`
-   登记的短名是 `ext`，**对不上 `Nous_Extend` 的尾段 `Extend`**。所以 Desk 侧要同步
+   登记的短名是 `ext`，**对不上 `Library_Extend` 的尾段 `Extend`**。所以 Desk 侧要同步
    把 `Feature::Ext::module_name()` 改成 `extend`（同票，Desk 分支）。不改的表现是
    「功能页整块灰掉、理由是未登记」，不是崩 —— 但一样是 bug。
+3. 产物文档名从 `ext.md` 变成 `Library_Extend.md`（`deploy.sh` 按全名落盘）。
+
+## 2026-11-26：新建 `Library` vendor，迁 `Library_Extend` 与 `Skill`（本票）
+
+选择：把扩展运行时与技能插件从 `Nous` 出品方迁到新 vendor `Library`：
+`Nous_Extend` → `Library_Extend`（目录 `crates/Library/Extend`、包 `library-extend`、
+capability `extend` 不变、版本 0.8.0 → 0.9.0）；`skills` → `Skill`（单段 PascalCase，
+目录 `crates/Library/Skill`、包 `library-skill`、capability `skills` → `skill`、
+版本 0.3.1 → 0.4.0）。`git mv` 保住历史。
+
+为什么：规则 10（vendor 是出品方）与规则 12（三套写法由全名推导）；规则 8 明写
+capability 改名 = minor、身份/目录改名按最大跨度涨一次。单段 PascalCase 是规则 12
+允许的形状（`Models` 是先例），因此同步修 `plugin_versions.rs` 的 `module_name_ok()`
+让它认这一支，否则版本判据会跳过 `Skill` / `Models` 空转。
+
+破坏的是谁（规则 8 要求写明）：`/v1/capabilities` 的 `modules[].name` 与 `vendor`
+分别变成 `Skill` / `Library`、`Library_Extend` / `Library`；`GET /v1/plugins/:name/readme`
+的旧 URL `/v1/plugins/skills/readme` 会 404 `unknown_module`（不做别名，先例见 `Models`）；
+产物文档名变 `Skill.md` / `Library_Extend.md`。**端点路径 `/v1/skills*` / `/v1/extensions*`、
+会话字段 `skills`、私库键、环境变量 `NOUS_SKILLS` / `NOUS_EXTEND`、数据根
+`/opt/Nous-skills` / `/opt/Nous-extend`、`exts/` 外挂目录、`nous-ext-sdk` 全部不动** ——
+它们是数据/URL 世界，不是模块身份；要改得另开契约票并迁移线上数据。
+Desk 侧按 `module_matches` 的尾段匹配：`Skill` 对 `want="skill"` 成立；
+`Library_Extend` 的尾段 `Extend` 与 Desk 的 `Feature::Ext` 短名 `ext` 不匹配，
+Desk 需另票把 `module_name()` 改为 `extend`（与上一决定同口径）。
+
+反悔条件：若客户端不能接受 `/v1/plugins/skills/readme` 404 与 capabilities 名字变化，
+则回退整票（含 vendor 目录），而不是只回退 README 文件名。
+
 3. 产物文档名从 `ext.md` 变成 `Nous_Extend.md`（`deploy.sh` 按全名落盘）。
 
 ## 2026-11-26 · `Nous_Triggers`：24 条端点搬进新插件，两条宿主能力

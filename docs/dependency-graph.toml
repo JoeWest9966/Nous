@@ -27,14 +27,14 @@ nous-elements = ["nous-env", "nous-repo", "nous-routes"]
 
 # 技能插件：解析层只读盘面；端点归本插件后要 axum / nous-routes，
 # 盘面规矩（名字校验、清单、骨架、发布）走 nous-repo::entries，路径解析走 nous-env。
-nous-skills = ["nous-env", "nous-repo", "nous-routes"]
+library-skill = ["nous-env", "nous-repo", "nous-routes"]
 
 # 模板插件：形状与 skills 一样（只读投影 + 编辑面），盘面规矩走 nous-repo::entries。
 nous-prompts = ["nous-env", "nous-repo", "nous-routes"]
 
 # 扩展插件：运行时 + 自带 15 条 /v1/extensions* 端点。编辑页的盘面规矩走
 # nous_repo::entries（不在这里 spawn git），回包壳走 nous-routes；运行时与审计仍只依赖 durable。
-nous-extend = ["nous-durable", "nous-ext-sdk", "nous-repo", "nous-routes"]
+library-extend = ["nous-durable", "nous-ext-sdk", "nous-repo", "nous-routes"]
 
 # 触发器插件：点火与观测只要 store/durable/sessions/ai/dispatcher；工程面另需
 # 私库（唯一 git 面）与唯一的执行面（publish 跑 cargo），端点走 nous-routes。
@@ -59,11 +59,11 @@ nous-server = [
   # #78 远端执行环境
   "nous-env-ssh",
   # #81 扩展管理面（create/duplicate/install/类别词表/usage）
-  "nous-extend",
+  "library-extend",
   # #57/#58/#73/#80 触发器：定义面 + 工程面（24 条 /v1/triggers* 与 /v1/trigger-projects*）
   "nous-triggers",
   # #72 prompts 的目录只读投影 + #71/#83 skills（解析层 + 自带 6 条端点）
-  "nous-prompts", "nous-skills",
+  "nous-prompts", "library-skill",
   # #75 五套私库文件面 + #76 variant + #77 upstream
   "nous-repo",
   # 元素库（组 / 包）的 HTTP 面

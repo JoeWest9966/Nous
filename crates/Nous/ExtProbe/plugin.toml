@@ -1,12 +1,12 @@
 name = "ext-probe"
 vendor = "Nous"
-version = "0.2.1"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；依赖改名 nous-ext → nous-extend = patch）
+version = "0.2.2"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；依赖改名 nous-extend → library-extend = patch）
 layer = "dev"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-ext-probe"
 
 [requires]                 # cargo metadata 里的内部 workspace 依赖
 nous-durable = "^0.1"
-nous-extend = "^0.1"
+library-extend = "^0.1"
 nous-ext-sdk = "^0.1"
 nous-server = "^0.1"
 nous-wire = "^0.1"

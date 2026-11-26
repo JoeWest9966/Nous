@@ -1,6 +1,6 @@
 //! #71：判据在公共接缝 —— `GET /v1/skills`（真 Router，进程内 oneshot）。
 //!
-//! `nous_skills` 的单测证明解析对；这里证明「解析结果真的到了线上端点」，
+//! `library_skill` 的单测证明解析对；这里证明「解析结果真的到了线上端点」，
 //! 免得又出现「接线被 let _x = clone() 骗过去」（docs/pitfalls.md）。
 
 mod common;

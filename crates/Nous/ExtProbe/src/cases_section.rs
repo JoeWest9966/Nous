@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 use std::sync::Arc;
 
-use nous_extend::Runtime;
+use library_extend::Runtime;
 use serde_json::{json, Value};
 
 use crate::sandbox::Sandbox;
@@ -515,9 +515,9 @@ pub fn canary_cross_request() -> i32 {
     let mut handles = BTreeMap::new();
     handles.insert(
         "prompts".to_string(),
-        nous_extend::HandleValue::dir(&round1),
+        library_extend::HandleValue::dir(&round1),
     );
-    let first = nous_extend::handle::deliver(
+    let first = library_extend::handle::deliver(
         &["prompts".to_string()],
         &handles,
         64 * 1024,
@@ -525,9 +525,9 @@ pub fn canary_cross_request() -> i32 {
     .expect("deliver 1");
     handles.insert(
         "prompts".to_string(),
-        nous_extend::HandleValue::dir(&round2),
+        library_extend::HandleValue::dir(&round2),
     );
-    let second = nous_extend::handle::deliver(
+    let second = library_extend::handle::deliver(
         &["prompts".to_string()],
         &handles,
         64 * 1024,

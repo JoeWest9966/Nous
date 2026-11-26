@@ -53,7 +53,9 @@ fn dir_of(module: &str) -> String {
         .collect()
 }
 
-/// 全名形如 `Vendor_Module`（两段首字母大写）或老式小写连字符名。
+/// 全名形如 `Vendor_Module`（两段首字母大写）、单段 PascalCase（`Skill` / `Models`），
+/// 或老式小写连字符名（`data-manager`）。规则 12 允许无 vendor 段的单段全名；
+/// 缺了这一支，`Skill` / `Models` 会被 plugin_dirs() 跳过，版本比对就空转。
 fn module_name_ok(module: &str) -> bool {
     let two_segments = module
         .split_once('_')
@@ -67,11 +69,14 @@ fn module_name_ok(module: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_')
         });
+    let single_pascal = !module.contains('_')
+        && module.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && module.chars().all(|c| c.is_ascii_alphanumeric());
     let legacy = module
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && module.chars().next().is_some_and(|c| c.is_ascii_lowercase());
-    two_segments || legacy
+    two_segments || single_pascal || legacy
 }
 
 /// `docs/plugins.md` 主表里「有 crate 目录」的行：`模块全名 -> crates/<vendor>/<目录>`。
@@ -144,11 +149,14 @@ fn rule12_name_and_dir_derivation() {
     assert_eq!(dir_of("Nous_Device"), "Device");
     assert_eq!(dir_of("Nous_PresetsAdmin"), "PresetsAdmin");
     assert_eq!(dir_of("data-manager"), "DataManager");
+    assert_eq!(dir_of("Skill"), "Skill");
+    assert_eq!(dir_of("Models"), "Models");
     assert!(module_name_ok("Nous_Device"));
     assert!(module_name_ok("data-manager"));
+    assert!(module_name_ok("Skill"), "单段 PascalCase 全名必须进版本比对面");
+    assert!(module_name_ok("Models"), "main 上已有的单段全名不能空转");
     assert!(!module_name_ok("Nous_device"));
     assert!(!module_name_ok("nous-device_Extra"));
-    assert!(!module_name_ok("Device"));
 }
 
 #[tokio::test]

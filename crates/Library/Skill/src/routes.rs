@@ -5,7 +5,7 @@
 //!
 //! 六条端点分两半，接缝也不同：
 //!
-//! - `GET /v1/skills` 是**只读投影**：盘上真相由 `nous_skills::scan` 解析，
+//! - `GET /v1/skills` 是**只读投影**：盘上真相由 `library_skill::scan` 解析，
 //!   这里只把 `PathBuf` 转字符串、`Option` 转 `null`。
 //! - 另外五条是**编辑页的管理面**（`files` / `file` / `create` / `publish`）：
 //!   盘面规矩（名字校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，
@@ -27,9 +27,9 @@ use nous_routes::HttpRefusal;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-/// 模块名（规则 12 的全名是小写 `skills`）：`/v1/capabilities` 的 `modules[].name`、
+/// 模块全名（规则 12：`Skill` 是单段 PascalCase）：`/v1/capabilities` 的 `modules[].name`、
 /// `/v1/_routes` 的 `module` 标签都用它 —— 面板靠这个标签把端点挂到模块名下。
-pub const MODULE: &str = "skills";
+pub const MODULE: &str = "Skill";
 
 /// 私库在宿主仓库表里的键（`repos::from_env` 的名字）。
 pub const REPO_KEY: &str = "skills";
@@ -43,7 +43,7 @@ pub trait Host {
     fn skills_repo(&self) -> Option<Arc<nous_repo::Repo>>;
 
     /// 技能私库的根目录（`NOUS_SKILLS` 解析结果）。只读投影用它 ——
-    /// `nous_skills::scan` 要的是路径，不是仓库句柄。
+    /// `library_skill::scan` 要的是路径，不是仓库句柄。
     fn skills_root(&self) -> PathBuf;
 
     /// `?usage=1`：谁在用这条技能（#85）。会话记录归 durable，插件不自己开库。
@@ -141,7 +141,7 @@ impl UsageQuery {
 
 /// `GET /v1/skills`：目录不存在就是空表，不伪造内容、不 404。
 ///
-/// 盘上真相由 `nous_skills` 解析（`SKILL.md` frontmatter / 附件 / 类别词表）。
+/// 盘上真相由 `library_skill` 解析（`SKILL.md` frontmatter / 附件 / 类别词表）。
 /// 这里只做 wire 投影：目录路径转字符串、`Option` 转 `null`，`tracked` 恒 null
 /// （#71 不碰 git，判定留给别的票）。`repo` 块只给 root + present（#63 形状）。
 async fn skills<H: Host>(State(host): State<H>, Query(query): Query<UsageQuery>) -> EndpointResult {
@@ -331,9 +331,9 @@ mod tests {
     }
 
     #[test]
-    fn module_name_is_the_lowercase_contract_name() {
+    fn module_name_is_the_skill_full_name() {
         for route in routes::<Arc<NullHost>>() {
-            assert_eq!(route.module(), "skills");
+            assert_eq!(route.module(), "Skill");
         }
     }
 

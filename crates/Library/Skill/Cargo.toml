@@ -1,10 +1,10 @@
 [package]
-name = "nous-skills"
+name = "library-skill"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "skills 插件：SKILL.md frontmatter / 附件 / 类别词表的只读解析 + 6 条 /v1/skills* 端点（app 层，#71）"
+description = "Skill 插件：SKILL.md frontmatter / 附件 / 类别词表的只读解析 + 6 条 /v1/skills* 端点（app 层，#71）"
 
 [dependencies]
 axum = { workspace = true }

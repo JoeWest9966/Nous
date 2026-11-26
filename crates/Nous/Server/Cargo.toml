@@ -30,9 +30,9 @@ nous-elements = { workspace = true }
 element-models = { workspace = true }
 nous-presets-admin = { workspace = true }
 nous-prompts = { workspace = true }
-nous-skills = { workspace = true }
+library-skill = { workspace = true }
 nous-env-ssh = { workspace = true }
-nous-extend = { workspace = true }
+library-extend = { workspace = true }
 nous-triggers = { workspace = true }
 nous-sessions = { workspace = true }
 data-data-manager = { workspace = true }

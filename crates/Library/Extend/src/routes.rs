@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 /// 模块全名（规则 12：`<Vendor>_<Module>`）：`/v1/capabilities` 的 `modules[].name`、
 /// `/v1/_routes` 的 `module` 标签、`GET /v1/plugins/:name/readme` 都按全名说话。
 /// URL 路径 `/v1/extensions*` 与私库键 `extend` 是小写世界，**跟全名是两回事**。
-pub const MODULE: &str = "Nous_Extend";
+pub const MODULE: &str = "Library_Extend";
 
 /// 私库在宿主仓库表里的键（`repos::from_env` 的名字）。
 ///

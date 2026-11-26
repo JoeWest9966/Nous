@@ -46,9 +46,9 @@ pub struct AppState {
     /// #62/搬家：data-manager 插件的只读句柄（两个库路径）。
     stats: Option<data_data_manager::routes::Paths>,
     /// #81：扩展运行时。只有一个入口可 spawn 扩展子进程，装配一次后由端点读观测。
-    ext: Option<Arc<nous_extend::Runtime>>,
+    ext: Option<Arc<library_extend::Runtime>>,
     /// #84：扩展源码管理面（私库根 + 垃圾站）。运行时装配时一并注入。
-    ext_admin: Option<nous_extend::AdminStore>,
+    ext_admin: Option<library_extend::AdminStore>,
     /// #61：组合名册的盘面根 + 触发器名册根。未装配的测试路由回 409（不是空 200）。
     combos: Option<nous_combos::ComboStore>,
     /// #82：试跑判定用的注入时钟与「时钟许可」这一外部事实，生产由 `main` 装配一次。
@@ -528,7 +528,7 @@ impl AppState {
     }
 
     /// #81：把扩展运行时接到端点层（生产入口只调一次）。
-    pub fn with_ext(self: Arc<Self>, runtime: Arc<nous_extend::Runtime>) -> Arc<Self> {
+    pub fn with_ext(self: Arc<Self>, runtime: Arc<library_extend::Runtime>) -> Arc<Self> {
         Arc::new(Self {
             source: self.source.clone(),
             commands: self.commands.clone(),
@@ -556,7 +556,7 @@ impl AppState {
         })
     }
 
-    pub fn ext(&self) -> Option<&Arc<nous_extend::Runtime>> {
+    pub fn ext(&self) -> Option<&Arc<library_extend::Runtime>> {
         self.ext.as_ref()
     }
 
@@ -578,8 +578,8 @@ impl AppState {
             presets: self.presets.clone(), stats: self.stats.clone(),
             ext: self.ext.clone(),
             ext_admin: Some({
-                let mut admin = nous_extend::AdminStore::new(root, trash);
-                admin.head_restore = Some(nous_extend::HeadRestore(std::sync::Arc::new(|root: &std::path::Path, name: &str| {
+                let mut admin = library_extend::AdminStore::new(root, trash);
+                admin.head_restore = Some(library_extend::HeadRestore(std::sync::Arc::new(|root: &std::path::Path, name: &str| {
                     nous_repo::materialize_head_dir(root, name).map_err(|e| e.to_string())
                 })));
                 admin
@@ -589,7 +589,7 @@ impl AppState {
         })
     }
 
-    pub fn ext_admin(&self) -> Option<&nous_extend::AdminStore> {
+    pub fn ext_admin(&self) -> Option<&library_extend::AdminStore> {
         self.ext_admin.as_ref()
     }
 

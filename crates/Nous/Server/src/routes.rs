@@ -579,7 +579,7 @@ async fn inject_prompt_section(
         }
     });
     let selected = state.commands().skills(session_id).await.ok().unwrap_or_default();
-    let skills_text = nous_skills::assemble_prompts(&nous_env::SKILLS.resolve(), &selected);
+    let skills_text = library_skill::assemble_prompts(&nous_env::SKILLS.resolve(), &selected);
     let text = match (template_text, skills_text.is_empty()) {
         (Some(head), false) => format!("{head}\n\n{skills_text}"),
         (Some(head), true) => head,

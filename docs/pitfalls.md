@@ -458,7 +458,7 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 才报错；`GET` 那条里 `.put()` 已经把 PUT 用掉了。
 
 **怎么防**：一条路径上每个 method 只声明一次 —— `GET /file` 那条只写 `get(file)`，
-`PUT /file` 另起一条 `put(save)`（`nous-skills` / `nous-prompts` / `nous-extend` 都是这个写法）。
+`PUT /file` 另起一条 `put(save)`（`library-skill` / `nous-prompts` / `library-extend` 都是这个写法）。
 声明条数也因此等于端点数，别为了「看起来聚合」把两个 method 塞进一条。
 
 ## 搬家 + 改名放在一张票里：先跑一遍「只改名」的编译，再搬端点
@@ -474,6 +474,18 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 判据脚本里的路径字面量（`verify.sh` 的 spawn 哨兵、
 `docs/boundary-baseline.txt`、`*_endpoints.rs` 里 `workspace_root().join(...)`）
 改名时最容易漏 —— 它们不在 React/cargo 的视野里，只有 `verify.sh` 会红。
+
+## 单段 PascalCase 全名被版本判据跳过（2026-11-26）
+
+**症状**：`Skill` / `Models` 这类无 `_` 的 PascalCase 全名在 `plugin_versions.rs` 的
+`module_name_ok()` 里既不匹配 `Vendor_Module` 也不是小写连字符名 → `plugin_dirs()`
+跳过它，版本比对空转而测试仍绿。
+
+**根因**：规则 12 允许单段全名，但判据只实现了两段与 legacy 两支；空集不报红。
+
+**怎么防**：判据补 `single_pascal` 一支，并钉正反哨兵：`dir_of("Skill")=="Skill"`、
+`dir_of("Models")=="Models"`、`module_name_ok("Skill")` 为真，同时
+`Nous_device` / `nous-device_Extra` 仍为假。新增全名形态时先补判据再改清单。
 
 ## 2026-11-26 · `docs/plugins.md` 的表格行里不许出现裸 `|`
 
