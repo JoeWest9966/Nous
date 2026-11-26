@@ -663,7 +663,9 @@ async fn forward(
     }
 }
 
-fn parse_session(raw: &str) -> Result<i64> {
+/// 路径里的 `:id` 用字符串接再自己 parse —— 让 axum 的 `Path<i64>` 拒掉会吐纯文本。
+/// `messages` 还留在 `server`，所以它也得是 `pub`。
+pub fn parse_session(raw: &str) -> Result<i64> {
     raw.parse::<i64>()
         .map_err(|_| SessionError::BadRequest(format!("session id is not a number: {raw:?}")))
 }

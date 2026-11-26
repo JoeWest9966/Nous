@@ -41,6 +41,8 @@ use tokio::sync::{broadcast, mpsc};
 use crate::app::AppState;
 use crate::coalesce::{self, Framing};
 use crate::error::{Result, ServerError};
+// `messages` 留在 server，但会话 id 的解析口径归插件（一处判）。
+use nous_sessions::routes::parse_session;
 use nous_device::ModelsResponse;
 use crate::records::CreateSessionRequest;
 use crate::source::SessionSource;
