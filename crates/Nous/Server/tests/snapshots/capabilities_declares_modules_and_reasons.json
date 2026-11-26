@@ -269,7 +269,7 @@
       "required": true,
       "crate": "`nous-device`",
       "vendor": "Nous",
-      "description": "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写",
+      "description": "#65：从 server 提成独立插件；自带 9 条端点（机器 / 模型三件套 / `device` / `_routes` / `capabilities` / `openapi.json` / 插件 README）；自省三件套的**原料归宿主、视图归插件**",
       "enabled": true,
       "endpoints": [
         "GET /v1/machines",
