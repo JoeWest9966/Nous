@@ -13,9 +13,21 @@
 //! - **没有 IO 实现**。本地实现、SSH / 远端实现、测试用的 InMemory 都在这个 trait 之下
 //!   （AGENTS.md §二：`ExecutionEnv` 只有一份）。私库路径的解析同样是纯的：只查进程
 //!   环境并给默认值，不碰盘（[`content`]）。
-//! - **只有一个内部依赖：`nous-chord`**，而且只为 [`Context`]（取消 + 作用域值）。
-//!   `cargo tree -p nous-env` 里出现 `nous-ai` / `nous-durable` / `nous-tools` /
-//!   `reqwest` / `rusqlite` 就是契约图破了。
+//! - **内部依赖只有两个：`nous-chord`**（[`Context`]：取消 + 作用域值）**和
+//!   `nous-routes`**（端点契约：一条声明同时是注册与登记）。`cargo tree -p nous-env`
+//!   里出现 `nous-ai` / `nous-durable` / `nous-tools` / `reqwest` / `rusqlite`
+//!   就是契约图破了。
+//!
+//! ## 它自带一条端点
+//!
+//! `GET /v1/fs/dirs`（#68 本机 / #78 远端）住在 [`routes`] —— Magento 2 那种
+//! 「模块自带 controller」：这条路径的语义（`NOUS_START_DIRS`、`~` 不展开、符号链接
+//! 不算目录、`BrowseError` 的分类）全在本 crate，所以 handler 也在这儿，而不是在
+//! `server` 里再抄一遍路径规则。
+//!
+//! 远端那条分支**不在这里实现**：`nous-env-ssh` 的 `requires` 里就有本 crate，
+//! 直接调会成环，所以它是一条宿主能力 trait（[`routes::Host::remote_subdirs`]），
+//! 由 `server` 实现并注入。
 //! - **没有 JSONL 专用的那四样**：可复用的追加句柄（带回执）、跨进程写者租约、
 //!   目录 fsync、自定义解释器（`ShellOverride`）。
 //!   它们服务的是 rpi-durable 的追加日志，本库写 SQLite。台账各记一行 待提货 并写明
@@ -49,6 +61,7 @@
 pub mod content;
 pub mod context;
 pub mod dirs;
+pub mod routes;
 pub mod error;
 pub mod fs;
 pub mod shell;

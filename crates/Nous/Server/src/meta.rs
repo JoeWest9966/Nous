@@ -119,7 +119,6 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/origins", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/read/:id", module: "sessions" },
     // #68：只读目录浏览（env 插件）。
-    RegisteredRoute { method: "GET", path: "/v1/fs/dirs", module: "env" },
     RegisteredRoute { method: "GET", path: "/v1/repos/:repo/status", module: "repo" },
     RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending", module: "repo" },
     RegisteredRoute { method: "GET", path: "/v1/repos/:repo/pending/diff", module: "repo" },

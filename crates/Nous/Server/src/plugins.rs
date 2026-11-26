@@ -8,6 +8,8 @@
 
 use std::sync::Arc;
 
+use axum::http::StatusCode;
+
 use crate::app::AppState;
 
 /// 所有插件自己的端点。顺序即注册顺序；同一路径注册两次会在 `Router` 那里炸，不静默。
@@ -20,6 +22,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_elements::routes::routes::<Arc<AppState>>());
     all.extend(nous_presets_admin::routes::routes::<Arc<AppState>>());
     all.extend(nous_skills::routes::routes::<Arc<AppState>>());
+    all.extend(nous_env::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -144,5 +147,52 @@ fn refusal(error: crate::ServerError) -> data_archive::routes::Refusal {
 impl nous_presets_admin::routes::Host for AppState {
     fn preset_sources(&self) -> Option<nous_presets_admin::routes::Sources> {
         self.presets().cloned()
+    }
+}
+
+/// `env` 插件要的那一件事：远端目录浏览。
+///
+/// 本地分支不走这里（插件自己读 `NOUS_START_DIRS`、自己判本机名）；只有 `?machine=`
+/// 指向别的机器时才落到这条。远端实现的 `requires` 里有 `nous-env`，所以只能由宿主
+/// 注入 —— 这也是它本来就该有的方向：契约层不知道有几个实现、更不知道远端用什么连。
+///
+/// 状态码的分界（编目里没有 404 / 连不上 502 / 路径相对 400 / 没权限 403）在这里判一次，
+/// 插件只把 [`nous_env::routes::Refusal`] 翻成 HTTP。
+#[async_trait::async_trait]
+impl nous_env::routes::Host for AppState {
+    async fn remote_subdirs(
+        &self,
+        machine: &str,
+        path: &str,
+        include_hidden: bool,
+        limit: usize,
+    ) -> Result<nous_env::BrowseDirs, nous_env::routes::Refusal> {
+        use nous_env::routes::Refusal;
+        use nous_env_ssh::RemoteDirsError;
+        nous_env_ssh::remote_subdirs(machine, path, include_hidden, limit)
+            .await
+            .map_err(|error| match error {
+                RemoteDirsError::MachineNotFound => {
+                    Refusal::new(StatusCode::NOT_FOUND, "机器不在编目里")
+                }
+                RemoteDirsError::Unreachable(message) => {
+                    Refusal::new(StatusCode::BAD_GATEWAY, message)
+                }
+                RemoteDirsError::RelativePath => {
+                    Refusal::new(StatusCode::BAD_REQUEST, "path 必须是绝对路径")
+                }
+                RemoteDirsError::NotFound => {
+                    Refusal::new(StatusCode::NOT_FOUND, "远端目录不存在")
+                }
+                RemoteDirsError::PermissionDenied => {
+                    Refusal::new(StatusCode::FORBIDDEN, "没有权限读这个远端目录")
+                }
+                RemoteDirsError::NotDirectory => {
+                    Refusal::new(StatusCode::BAD_REQUEST, "path 不是目录")
+                }
+                RemoteDirsError::Other => {
+                    Refusal::new(StatusCode::INTERNAL_SERVER_ERROR, "远端目录读不出来")
+                }
+            })
     }
 }

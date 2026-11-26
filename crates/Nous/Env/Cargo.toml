@@ -8,13 +8,20 @@ description = "ExecutionEnv 契约：FileSystem + Shell 两张 trait 面（形�
 readme = "README.md"
 
 # AGENTS.md §二：nous-env → nous-chord，只为 Context（取消与进度用 chord 那一份，
-# 不另造第二套）。除此之外只允许 async-trait / tokio-util；
-# 出现 nous-ai / nous-durable / nous-tools / reqwest / rusqlite 就是契约图破了。
+# 不另造第二套）。端点自带 handler 之后多了 nous-routes（它只认 axum 的 MethodRouter
+# 形状，不依赖任何插件），以及 axum / serde_json 这两个直接依赖。
+# 出现 nous-ai / nous-durable / nous-tools / nous-env-ssh / reqwest / rusqlite
+# 就是契约图破了 —— 尤其 nous-env-ssh：它的 requires 里有本 crate，反向依赖必成环，
+# 所以远端浏览是宿主能力 trait（`routes::Host::remote_subdirs`），由 server 实现。
 [dependencies]
 async-trait = { workspace = true }
+axum = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tokio-util = { workspace = true }
 nous-chord = { workspace = true }
+# 端点契约：一条声明同时是「装进 Router」和「注册表登记」（`routes.rs`）。
+nous-routes = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

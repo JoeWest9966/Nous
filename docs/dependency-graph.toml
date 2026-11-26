@@ -8,7 +8,9 @@
 nous-telemetry = []
 nous-chord = []
 nous-wire = []
-nous-env = ["nous-chord"]
+# 端点自带 handler（GET /v1/fs/dirs）之后多了 nous-routes。远端分支是宿主能力
+# trait —— nous-env-ssh 的 requires 里有本 crate，反向依赖会成环。
+nous-env = ["nous-chord", "nous-routes"]
 nous-ai = ["nous-telemetry", "nous-ai-types"]
 nous-tools = ["nous-ai", "nous-env"]
 nous-runtime = ["nous-ai"]
