@@ -10,6 +10,21 @@
 
 ---
 
+## 2026-11-26 · `messages` 留在宿主侧，不当「一票全搬」的牺牲品
+
+**决定**：`/v1/sessions*` 十七条里十六条搬进 `nous-sessions`，`POST /v1/sessions/{id}/messages`
+留在 `server/src/routes.rs`，归属仍报 `MODULE = "sessions"`（所以 capabilities 上还是 17 条）。
+
+**理由**：这条 handler 要的不是会话语义，是**组装根**——`AssembledRuntime` 的 `driver` /
+`completions`（起一轮、等一轮）与提示词注入（`nous-prompts` / skills 库 / `nous-env` 的两个根）。
+把 `AssembledRuntime` 搬进插件等于让插件认识 `nous-runtime` + `nous-tools` + provider 装配，
+那是「进程怎么组装」而不是「会话是什么」。**搬端点是为了让归属诚实，不是为了把目录搬空** ——
+把组装根硬塞进会话语义里，换来的是 17/17 的整数，代价是一条永远解释不清的依赖边。
+
+**反悔点**：如果 `AssembledRuntime` 被第三个插件需要（目前 `Nous_Extend` 也摸运行时），
+那说明「跑一轮」应该是一层**独立的宿主能力**（`Host::run_turn(...)` 返回一个 future），
+而不是每个插件各自摸 driver。判据：`grep -rn 'AssembledRuntime' crates/Nous/*/src/` 数到 2 就该翻。
+
 ## 2026-11-26 · 插件的错误类型就地定义，不做「公共 `AppError`」
 
 **决定**：`nous-sessions` 自带 `SessionError`（十个变体照抄 `ServerError`），`server` 侧写一层
