@@ -10,6 +10,22 @@
 
 ---
 
+## 2026-11-26 · `Refusal` 的富化格跟语义走，不跟 HTTP 壳走
+
+**决定**：`RepoError::Conflict` 的 `{content, etag}` 两格补进 `nous_repo::Refusal::body()`，
+**不放**在 `nous_routes::HttpRefusal` 里自动推导。
+
+**理由**：`HttpRefusal` 只认识 `(status: u16, body: Value)` 两格，它的契约就是「传输壳，
+不认领域错误类型」—— 让它去推 `content` 就得认出 `RepoError`，那一层立刻多一条 `nous-repo`
+依赖，而成环判定（`env → routes → repo → env`）当初正是为了躲这个才把语义层放进 `nous-repo`。
+富化格是**语义**（「409 时该给客户端看什么」），归拥有 `RepoError` 的那一层。
+
+**反悔点**：如果第二个「非 `RepoError` 来源」的拒绝也需要带富化格（比如 `triggers` 的
+`If-Match` 冲突也要回盘上当前正文），那就说明富化格的形状是跨领域的，该把它提成
+`HttpRefusal::with_field(key, value)` 这种通用构造器 —— 但**仍然不推**，只让插件显式给。
+
+---
+
 ## 2026-11-17 · `message_update.changes[]` 的 8 个变体（上游已把它整条事件流砍掉）
 
 **决定**：保留 `wire.md` 的 `message_update.changes[]` 与 `nous-wire` 的 8 个
