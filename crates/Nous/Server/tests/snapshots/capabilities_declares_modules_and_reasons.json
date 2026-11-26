@@ -195,7 +195,6 @@
       "crate": "`nous-combos`",
       "vendor": "Nous",
       "description": "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘",
-      "versionSource": "plugin",
       "enabled": true,
       "endpoints": [
         "GET /v1/combos/:section",
