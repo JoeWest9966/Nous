@@ -306,7 +306,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     // #68：env 的本地目录浏览已落地，SSH 远端另票。
     ManifestEntry { name: "env", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-env`", description: "契约；实现见 `env-local` / `env-ssh`。`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_PRESETS` / `NOUS_EXTEND` 一处解析，unit 不写；写回私库归 `skills-admin` / `presets-admin`。自带 `GET /v1/fs/dirs`（远端分支是宿主能力 trait：`nous-env-ssh` 的 requires 里有本 crate，反向依赖会成环）" },
     // #75：四套私库共用的 git 发布 / 归档 / pending / diff / history。
-    ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "唯一的 git 进程调用面；四条私库路径解析沿用 `env`" },
+    ManifestEntry { name: "repo", reason: None, layer: Layer::Platform, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-repo`", description: "唯一的 git 进程调用面；六条私库路径解析沿用 `env`" },
     // #60：13 条 presets 端点 + 修订表已落地；形态取 docs/plugins.md 的第一条 presets 行。
     ManifestEntry { name: "presets", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "—", description: "数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`）" },
     // #60：模板管理的判定层（TS 内核 `presets.js` / `presets-api.js` 的归位）。
