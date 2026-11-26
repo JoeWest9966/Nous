@@ -94,7 +94,7 @@
     },
     {
       "name": "presets",
-      "version": "0.1.36",
+      "version": "0.1.37",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -205,7 +205,7 @@
     },
     {
       "name": "triggers",
-      "version": "0.1.36",
+      "version": "0.1.37",
       "kind": "运行时外挂",
       "layer": "app",
       "required": false,
