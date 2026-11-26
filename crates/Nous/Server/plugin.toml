@@ -1,6 +1,6 @@
 name = "server"
 vendor = "Nous"
-version = "0.3.24"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；0.3.24：Nous_Prompts 六端点换归属 + 改名，MANIFEST 里 element-models 的全名改 Models）
+version = "0.3.26"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；Nous_Prompts 六端点换归属 + 改名 + 删静态表 6 行；0.3.26 含 MANIFEST 里 element-models 全名改 Models）
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-server"
 
