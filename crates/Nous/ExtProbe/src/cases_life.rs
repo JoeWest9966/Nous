@@ -205,7 +205,7 @@ pub fn disabled_nameplate_referenced() -> i32 {
         .check_selection(&["skill:tdd".to_string()])
         .expect_err("must fail");
     let text = match &error {
-        nous_extend::ExtError::HardLimit { detail, .. } => detail.trim_start_matches("error=").to_string(),
+        library_extend::ExtError::HardLimit { detail, .. } => detail.trim_start_matches("error=").to_string(),
         other => other.to_string(),
     };
     let prompt = runtime.render_turn(7, 1, "/tmp/work").text;
@@ -293,7 +293,7 @@ pub fn diagnostic_dedup() -> i32 {
     let runtime = sandbox.runtime_with(config);
     let _ = runtime.start_all();
     for _ in 0..10 {
-        runtime.note_failure("skills", "skills", nous_extend::FailureClass::Timeout);
+        runtime.note_failure("skills", "skills", library_extend::FailureClass::Timeout);
     }
     let (memory, log_lines) = {
         let diagnostics = runtime.diagnostics.lock().expect("diag");
@@ -517,7 +517,7 @@ pub fn write_complete() -> i32 {
             sandbox_debounce(&runtime),
         ));
     }
-    let hash = nous_extend::sha256::hex(content.as_bytes());
+    let hash = library_extend::sha256::hex(content.as_bytes());
     kv(&[
         ("reload", runtime.count_reloads("handle").to_string()),
         ("content_hash", hash[..4].to_string()),
@@ -529,7 +529,7 @@ pub fn write_complete() -> i32 {
     }
 }
 
-fn sandbox_debounce(runtime: &Arc<nous_extend::Runtime>) -> u64 {
+fn sandbox_debounce(runtime: &Arc<library_extend::Runtime>) -> u64 {
     runtime.config.limits.reload_debounce_ms
 }
 

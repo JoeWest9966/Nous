@@ -1,6 +1,6 @@
 //! 句柄 / 隔离（EX-26、27、46、47、60、67…72）。
 
-use nous_extend::{handle, HandleValue};
+use library_extend::{handle, HandleValue};
 use nous_ext_sdk::content::Handles;
 
 use crate::sandbox::{chmod_world, Sandbox};
@@ -61,14 +61,14 @@ pub fn fd_no_handle_value(dirty: bool) -> i32 {
     let mut config = sandbox.config();
     config
         .handles
-        .insert("skills".to_string(), nous_extend::HandleValue::dir(&production));
+        .insert("skills".to_string(), library_extend::HandleValue::dir(&production));
     let runtime = sandbox.runtime_with(config);
     let _ = runtime.start_all();
     let mut hits = 0;
     for name in runtime.names() {
         if let Some(pid) = runtime.pid_of(&name) {
-            for fd in nous_extend::spawn::read_fds(pid) {
-                let target = nous_extend::spawn::read_fd_target(pid, fd);
+            for fd in library_extend::spawn::read_fds(pid) {
+                let target = library_extend::spawn::read_fd_target(pid, fd);
                 if target.contains("/opt/Nous-skills") || target.contains("/handles/prompts") {
                     hits += 1;
                 }
@@ -104,7 +104,7 @@ pub fn environ_whitelist(dirty: bool) -> i32 {
     let mut seen = Vec::new();
     for name in runtime.names() {
         if let Some(pid) = runtime.pid_of(&name) {
-            let mut keys = nous_extend::spawn::read_environ_keys(pid);
+            let mut keys = library_extend::spawn::read_environ_keys(pid);
             keys.sort();
             seen = keys.clone();
             if keys != whitelist {
@@ -136,8 +136,8 @@ pub fn fd_no_db(dirty: bool) -> i32 {
     let mut hits = 0;
     for name in runtime.names() {
         if let Some(pid) = runtime.pid_of(&name) {
-            for fd in nous_extend::spawn::read_fds(pid) {
-                if nous_extend::spawn::read_fd_target(pid, fd).contains("agent.sqlite") {
+            for fd in library_extend::spawn::read_fds(pid) {
+                if library_extend::spawn::read_fd_target(pid, fd).contains("agent.sqlite") {
                     hits += 1;
                 }
             }
@@ -318,7 +318,7 @@ pub fn fd_exact_set() -> i32 {
     let runtime = sandbox.runtime();
     let _ = runtime.start_all();
     let pid = runtime.pid_of("handle").expect("pid");
-    let fds = nous_extend::spawn::read_fds(pid);
+    let fds = library_extend::spawn::read_fds(pid);
     kv(&[
         (
             "fds",
@@ -345,7 +345,7 @@ pub fn groups_empty(dirty: bool) -> i32 {
     let mut hits = 0;
     for name in runtime.names() {
         if let Some(pid) = runtime.pid_of(&name) {
-            let groups = nous_extend::spawn::read_groups(pid).unwrap_or_default();
+            let groups = library_extend::spawn::read_groups(pid).unwrap_or_default();
             if !groups.trim().is_empty() {
                 hits += 1;
             }

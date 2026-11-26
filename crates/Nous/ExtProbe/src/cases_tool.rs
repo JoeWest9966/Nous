@@ -3,7 +3,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 
-use nous_extend::{ExtError, Runtime};
+use library_extend::{ExtError, Runtime};
 use serde_json::json;
 
 use crate::sandbox::{chmod_world, Sandbox};
@@ -39,7 +39,7 @@ pub fn tool_stream_seq() -> i32 {
     }
 }
 
-fn cancel_running(runtime: &Arc<Runtime>, args: serde_json::Value) -> nous_extend::ToolOutcome {
+fn cancel_running(runtime: &Arc<Runtime>, args: serde_json::Value) -> library_extend::ToolOutcome {
     let runtime_call = runtime.clone();
     let handle = std::thread::spawn(move || runtime_call.call_tool("tool", "echo", args, 7));
     std::thread::sleep(std::time::Duration::from_millis(120));
@@ -268,7 +268,7 @@ pub fn rss_256mb() -> i32 {
             break;
         }
         if let Some(pid) = runtime.pid_of("evil") {
-            let rss = nous_extend::spawn::read_rss(pid).unwrap_or(0);
+            let rss = library_extend::spawn::read_rss(pid).unwrap_or(0);
             if rss >= 256 * 1024 * 1024 {
                 killed = true;
                 break;

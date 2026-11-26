@@ -1115,6 +1115,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
+name = "library-extend"
+version = "0.1.36"
+dependencies = [
+ "axum",
+ "libc",
+ "nous-durable",
+ "nous-ext-sdk",
+ "nous-repo",
+ "nous-routes",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "library-skill"
+version = "0.1.36"
+dependencies = [
+ "axum",
+ "nous-env",
+ "nous-repo",
+ "nous-routes",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1456,9 +1486,9 @@ version = "0.1.36"
 dependencies = [
  "axum",
  "libc",
+ "library-extend",
  "nous-durable",
  "nous-ext-sdk",
- "nous-extend",
  "nous-server",
  "nous-wire",
  "serde",
@@ -1473,21 +1503,6 @@ version = "0.1.36"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "nous-extend"
-version = "0.1.36"
-dependencies = [
- "axum",
- "libc",
- "nous-durable",
- "nous-ext-sdk",
- "nous-repo",
- "nous-routes",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
@@ -1576,6 +1591,8 @@ dependencies = [
  "element-models",
  "futures",
  "libc",
+ "library-extend",
+ "library-skill",
  "nous-ai",
  "nous-combos",
  "nous-device",
@@ -1584,14 +1601,12 @@ dependencies = [
  "nous-elements",
  "nous-env",
  "nous-env-ssh",
- "nous-extend",
  "nous-presets-admin",
  "nous-prompts",
  "nous-repo",
  "nous-routes",
  "nous-runtime",
  "nous-sessions",
- "nous-skills",
  "nous-store",
  "nous-telemetry",
  "nous-tools",
@@ -1619,21 +1634,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
-]
-
-[[package]]
-name = "nous-skills"
-version = "0.1.36"
-dependencies = [
- "axum",
- "nous-env",
- "nous-repo",
- "nous-routes",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower",
 ]
 
 [[package]]

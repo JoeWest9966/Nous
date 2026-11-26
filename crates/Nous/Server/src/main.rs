@@ -68,16 +68,16 @@ fn assemble_extensions(state: Arc<AppState>) -> Arc<AppState> {
         .filter(|_| root.file_name().is_some_and(|name| name == "exts"))
         .map(|parent| parent.join("artifacts"))
         .unwrap_or_else(|| root.join("artifacts"));
-    let mut config = nous_extend::RuntimeConfig::new(root.clone(), artifacts);
+    let mut config = library_extend::RuntimeConfig::new(root.clone(), artifacts);
     config.handles.insert(
         "skills".to_string(),
-        nous_extend::HandleValue::dir(nous_env::SKILLS.resolve()),
+        library_extend::HandleValue::dir(nous_env::SKILLS.resolve()),
     );
     config.handles.insert(
         "prompts".to_string(),
-        nous_extend::HandleValue::dir(nous_env::PROMPTS.resolve()),
+        library_extend::HandleValue::dir(nous_env::PROMPTS.resolve()),
     );
-    let runtime = nous_extend::Runtime::new(config);
+    let runtime = library_extend::Runtime::new(config);
     // 一个扩展坏了只记诊断, 主进程照常监听 (EX-66).
     runtime.start_all();
     // #84：管理面的垃圾站住在进程 workdir/data 下，不在私库里（不随发布走）。

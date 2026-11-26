@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::sandbox::Sandbox;
 use crate::{kv, manifest, server};
 
-fn audit_runtime(sandbox: &Sandbox) -> Arc<nous_extend::Runtime> {
+fn audit_runtime(sandbox: &Sandbox) -> Arc<library_extend::Runtime> {
     sandbox.add_ext(
         "section",
         manifest("section", "exts-section", "0.1.0", &[("preamble", "preamble")], &["skills", "probe"]),
@@ -31,10 +31,10 @@ pub fn audit_kinds() -> i32 {
     {
         let mut audit = runtime.audit().expect("audit");
         for event in [
-            nous_extend::audit::AuditEvent::Install,
-            nous_extend::audit::AuditEvent::Uninstall,
-            nous_extend::audit::AuditEvent::Disable,
-            nous_extend::audit::AuditEvent::Breaker,
+            library_extend::audit::AuditEvent::Install,
+            library_extend::audit::AuditEvent::Uninstall,
+            library_extend::audit::AuditEvent::Disable,
+            library_extend::audit::AuditEvent::Breaker,
         ] {
             let _ = audit.commit_event(event, "section", "normal", &hash, &[], None);
             kinds.push(event.as_str().to_string());
@@ -59,20 +59,20 @@ pub fn audit_replay_10() -> i32 {
     {
         let mut audit = runtime.audit().expect("audit");
         for event in [
-            nous_extend::audit::AuditEvent::Install,
-            nous_extend::audit::AuditEvent::Uninstall,
-            nous_extend::audit::AuditEvent::Disable,
-            nous_extend::audit::AuditEvent::Breaker,
+            library_extend::audit::AuditEvent::Install,
+            library_extend::audit::AuditEvent::Uninstall,
+            library_extend::audit::AuditEvent::Disable,
+            library_extend::audit::AuditEvent::Breaker,
         ] {
             if let Ok((id, _)) = audit.commit_event(event, "section", "normal", &hash, &[], None) {
-                if event == nous_extend::audit::AuditEvent::Install {
+                if event == library_extend::audit::AuditEvent::Install {
                     install_id = id;
                 }
             }
         }
         for _ in 0..10 {
             let _ = audit.commit_event(
-                nous_extend::audit::AuditEvent::Install,
+                library_extend::audit::AuditEvent::Install,
                 "section",
                 "normal",
                 &hash,
@@ -86,7 +86,7 @@ pub fn audit_replay_10() -> i32 {
         let mut audit = runtime.audit().expect("audit");
         audit
             .commit_event(
-                nous_extend::audit::AuditEvent::Install,
+                library_extend::audit::AuditEvent::Install,
                 "section",
                 "normal",
                 &hash,
@@ -119,7 +119,7 @@ pub fn entries_filter() -> i32 {
         let mut audit = runtime.audit().expect("audit");
         audit
             .commit_event(
-                nous_extend::audit::AuditEvent::Install,
+                library_extend::audit::AuditEvent::Install,
                 "section",
                 "normal",
                 &hash,
@@ -178,7 +178,7 @@ pub fn breaker_push_sse() -> i32 {
     let state_slot: Arc<std::sync::Mutex<Option<Arc<AppState>>>> =
         Arc::new(std::sync::Mutex::new(None));
     let slot = state_slot.clone();
-    let push: nous_extend::PushHook = Arc::new(move |commit: &nous_extend::StateCommit| {
+    let push: library_extend::PushHook = Arc::new(move |commit: &library_extend::StateCommit| {
         let state = slot.lock().expect("slot").clone();
         let Some(state) = state else {
             return;
@@ -197,7 +197,7 @@ pub fn breaker_push_sse() -> i32 {
             nous_wire::RemoteEvent::EntryAppended { entry },
         );
     });
-    let runtime = nous_extend::Runtime::new_with_push(sandbox.config(), Some(push));
+    let runtime = library_extend::Runtime::new_with_push(sandbox.config(), Some(push));
     let _ = runtime.start_all();
 
     let state = AppState::durable(&sandbox.db).expect("app state");

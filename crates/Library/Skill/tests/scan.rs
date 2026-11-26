@@ -1,10 +1,10 @@
-//! #71：`SKILL.md` 的盘上真相。测试打在 `nous_skills` 的公开 API 接缝上。
+//! #71：`SKILL.md` 的盘上真相。测试打在 `library_skill` 的公开 API 接缝上。
 //!
 //! 每个断言的名字就是判据的领域陈述；前缀 `rejects_` 的是负向哨兵的靶子。
 
 use std::path::PathBuf;
 
-use nous_skills::{scan, SkillEntry};
+use library_skill::{scan, SkillEntry};
 
 /// 临时技能根：三个技能 —— 正常 / 缺 description / 没有 SKILL.md。
 struct Repo {

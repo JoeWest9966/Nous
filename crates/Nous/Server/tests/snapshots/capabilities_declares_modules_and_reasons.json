@@ -152,14 +152,14 @@
       ]
     },
     {
-      "name": "skills",
-      "version": "0.3.1",
+      "name": "Skill",
+      "version": "0.4.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`nous-skills`",
-      "vendor": "Nous",
-      "description": "默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `ext` 共用同一份；不 spawn git（发布走 `nous-repo`）",
+      "crate": "`library-skill`",
+      "vendor": "Library",
+      "description": "默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `Library_Extend` 共用同一份；不 spawn git（发布走 `nous-repo`）",
       "enabled": true,
       "endpoints": [
         "GET /v1/skills",
@@ -292,7 +292,7 @@
       "required": true,
       "crate": "`nous-prompts`",
       "vendor": "Nous",
-      "description": "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `skills` / `ext` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点",
+      "description": "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Library_Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点",
       "enabled": true,
       "endpoints": [
         "GET /v1/prompts",
@@ -304,13 +304,13 @@
       ]
     },
     {
-      "name": "Nous_Extend",
-      "version": "0.8.0",
+      "name": "Library_Extend",
+      "version": "0.9.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`nous-extend`",
-      "vendor": "Nous",
+      "crate": "`library-extend`",
+      "vendor": "Library",
       "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划",
       "enabled": true,
       "endpoints": [

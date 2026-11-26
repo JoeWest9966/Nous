@@ -853,7 +853,7 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
   填 `false` 是撒谎。
 - `repo` 块只给 `root` 与 `present`（#63 形状），**没有 git 状态字段**。
 - `categories` 取词表与技能 `category` 的并集去重（`categories.json` 存在就读，不写回）。
-- 判据见 `crates/Nous/Server/tests/skills_endpoints.rs` 与 `crates/Nous/Skills/tests/scan.rs`。
+- 判据见 `crates/Nous/Server/tests/skills_endpoints.rs` 与 `crates/Library/Skill/tests/scan.rs`。
 
 #83：建会话 / `POST /v1/sessions/:id/config` 选的 `skills` 落在会话的 `pi.agent` 文档里，
 起轮时按**选中顺序**读 `<skill>/SKILL.md` 正文（去掉 frontmatter）拼进 `pi.system` 的

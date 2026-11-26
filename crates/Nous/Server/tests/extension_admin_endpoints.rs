@@ -72,7 +72,7 @@ fn sample_ext_bin() -> PathBuf {
 }
 
 /// 造一个能真装载的扩展目录 + 产物元数据，返回可直接 start_all 的运行时。
-fn install_runnable(root: &Path, name: &str, binary: &Path) -> std::sync::Arc<nous_extend::Runtime> {
+fn install_runnable(root: &Path, name: &str, binary: &Path) -> std::sync::Arc<library_extend::Runtime> {
     let exts = root.join(name);
     let artifacts = root.parent().unwrap().join("artifacts");
     std::fs::create_dir_all(&exts).unwrap();
@@ -95,16 +95,16 @@ fn install_runnable(root: &Path, name: &str, binary: &Path) -> std::sync::Arc<no
 
     let prompts = root.parent().unwrap().join("prompts");
     std::fs::create_dir_all(&prompts).unwrap();
-    let mut config = nous_extend::RuntimeConfig::new(root, artifacts);
+    let mut config = library_extend::RuntimeConfig::new(root, artifacts);
     config.isolation.enabled = false;
-    config.handles.insert("prompts".into(), nous_extend::HandleValue::dir(prompts));
-    let runtime = nous_extend::Runtime::new(config);
+    config.handles.insert("prompts".into(), library_extend::HandleValue::dir(prompts));
+    let runtime = library_extend::Runtime::new(config);
     runtime.start_all();
     runtime
 }
 
 /// 只造产物元数据（不建扩展源码目录），供 install 从 HEAD 装回后真装载。
-fn install_runnable_artifacts_only(root: &Path, binary: &Path) -> std::sync::Arc<nous_extend::Runtime> {
+fn install_runnable_artifacts_only(root: &Path, binary: &Path) -> std::sync::Arc<library_extend::Runtime> {
     let artifacts = root.parent().unwrap().join("artifacts");
     std::fs::create_dir_all(&artifacts).unwrap();
     let target = artifacts.join("exts-handle");
@@ -117,10 +117,10 @@ fn install_runnable_artifacts_only(root: &Path, binary: &Path) -> std::sync::Arc
     }).to_string()).unwrap();
     let prompts = root.parent().unwrap().join("prompts");
     std::fs::create_dir_all(&prompts).unwrap();
-    let mut config = nous_extend::RuntimeConfig::new(root, artifacts);
+    let mut config = library_extend::RuntimeConfig::new(root, artifacts);
     config.isolation.enabled = false;
-    config.handles.insert("prompts".into(), nous_extend::HandleValue::dir(prompts));
-    let runtime = nous_extend::Runtime::new(config);
+    config.handles.insert("prompts".into(), library_extend::HandleValue::dir(prompts));
+    let runtime = library_extend::Runtime::new(config);
     runtime.start_all();
     runtime
 }
