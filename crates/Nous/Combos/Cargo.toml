@@ -1,0 +1,20 @@
+[package]
+name = "nous-combos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "combos 插件：终极模板里「触发器 + 会话模板」的名册投影与开关写穿（app 层）"
+
+[dependencies]
+async-trait = { workspace = true }
+axum = { workspace = true }
+nous-dispatcher = { workspace = true }
+nous-durable = { workspace = true }
+nous-repo = { workspace = true }
+nous-routes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

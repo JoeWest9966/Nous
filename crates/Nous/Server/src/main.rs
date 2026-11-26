@@ -94,6 +94,17 @@ fn now_ms() -> i64 {
 }
 
 /// 启动门槛的统一出口：一行 `refuse: <slug>` 到 stderr，退出码走理由表。
+/// 触发器名册根：`NOUS_TRIGGER` 优先，默认 `/opt/Nous-Trigger`（与旧 TS 版一致）。
+///
+/// 搬家前这条在 `server::combos::triggers_root`；`combos` 整份搬进插件之后，
+/// 装配点还在这里（生产只在 `main` 解析一次，插件不读环境）。
+fn triggers_root() -> std::path::PathBuf {
+    std::env::var_os("NOUS_TRIGGER")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("/opt/Nous-Trigger"))
+}
+
+
 /// #50 的 token 门槛、#51 的 faux 门槛、D12 的 cwd 门槛共用这一个函数。
 fn refuse_startup(code: &str, detail: Option<&str>) -> ! {
     match decide_refusal(code) {
@@ -359,7 +370,7 @@ async fn run() -> Result<(), RunError> {
     // #61：combos 复用同一份模板私库根；触发器名册从 NOUS_TRIGGER 读（两个根都只在这里解析一次）。
     let state = state.with_combos_roots(
         nous_env::PRESETS.resolve(),
-        nous_server::combos::triggers_root(),
+        triggers_root(),
     );
     let readonly = Arc::new(std::sync::Mutex::new(nous_durable::Storage::open_read_only(&db)?));
     let lookup: nous_server::triggers::TemplateLookup = Arc::new(move |name: &str| {

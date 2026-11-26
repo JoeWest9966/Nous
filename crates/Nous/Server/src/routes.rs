@@ -57,10 +57,6 @@ fn now_ms() -> i64 {
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
     let router = Router::new()
-        .route("/v1/combos/{section}", get(crate::combos::list))
-        .route("/v1/combos/{section}/{name}", axum::routing::patch(crate::combos::patch))
-        .route("/v1/combos/{section}/{name}/fire", post(crate::combos_actions::fire))
-        .route("/v1/presets/Ultimate-Template/launch", post(crate::combos_actions::launch_handler))
         .route("/v1/sessions", get(sessions).post(create_session))
         .route("/v1/sessions/{id}/entries", get(entries))
         .route("/v1/sessions/{id}/messages", post(messages))

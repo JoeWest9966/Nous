@@ -61,6 +61,8 @@ nous-server = [
   "nous-presets-admin",
   # #73 60s 节拍与 evaluate 在 app 装配处启动
   "nous-dispatcher",
+  # #61/#82 组合四条端点（名册 / 写穿 / 试跑 / launch）
+  "nous-combos",
 ]
 
 # #56 Nous 自己的库，没有内部依赖（尤其没有 nous-durable）—— 多一条边就是判据 1 破。
@@ -74,6 +76,11 @@ nous-presets-admin = ["nous-device", "nous-env", "nous-prompts", "nous-repo", "n
 
 # 端点契约层：只认 axum 的 MethodRouter 形状，不依赖任何插件（否则会和 server 成环）。
 nous-routes = []
+
+# #61/#82 组合插件：名册扫盘 + 开关写穿 + 试跑 / launch。
+# 判定走 dispatcher 的纯函数（evaluate / reason_text），起会话与写血缘走 durable 的命令面，
+# 内容版本号复用 repo 的 sha256（不另造第二套），端点由 nous-routes 声明。
+nous-combos = ["nous-dispatcher", "nous-durable", "nous-repo", "nous-routes"]
 
 # 编目插件的依赖：元素库原语、运行时配置形状、宿主能力的类型（repo），以及端点契约层。
 element-models = ["nous-elements", "nous-runtime", "nous-env", "nous-repo", "nous-routes"]

@@ -23,6 +23,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_presets_admin::routes::routes::<Arc<AppState>>());
     all.extend(nous_skills::routes::routes::<Arc<AppState>>());
     all.extend(nous_env::routes::routes::<Arc<AppState>>());
+    all.extend(nous_combos::routes::<Arc<AppState>>());
     all
 }
 
@@ -194,5 +195,84 @@ impl nous_env::routes::Host for AppState {
                     Refusal::new(StatusCode::INTERNAL_SERVER_ERROR, "远端目录读不出来")
                 }
             })
+    }
+}
+
+/// `combos` 插件要的四件事：两个盘面根、触发器判定视图、注入时钟、起会话 + 写血缘。
+///
+/// 起会话那条命令落在 `nous_durable::session::commands`（活库写锁与补偿方向都在那里），
+/// 插件不自己开库、不自己读时钟。血缘记录 `record_origin` 与搬家前同一条路径。
+#[async_trait::async_trait]
+impl nous_combos::Host for AppState {
+    fn combo_roots(&self) -> Option<nous_combos::ComboStore> {
+        self.combos().cloned()
+    }
+
+    fn trigger_spec(&self, code: &str) -> Result<nous_combos::SpecView, nous_combos::Refusal> {
+        let runtime = self.triggers().ok_or_else(|| {
+            nous_combos::Refusal::service_unavailable("triggers not configured")
+        })?;
+        let definitions = runtime.definitions();
+        let trigger = definitions
+            .iter()
+            .find(|definition| definition.code() == code)
+            .ok_or_else(|| {
+                nous_combos::Refusal::not_found(format!("组合钉的触发器 `{code}` 不在册"))
+            })?;
+        let spec = trigger.spec();
+        Ok(nous_combos::SpecView {
+            enabled: trigger.enabled(),
+            schedule: spec.schedule.clone(),
+            on: spec.on.clone(),
+        })
+    }
+
+    fn combo_clock(&self) -> Result<(i64, bool), nous_combos::Refusal> {
+        let action = self.combo_action().ok_or_else(|| {
+            nous_combos::Refusal::service_unavailable("combo action clock not configured")
+        })?;
+        Ok((action.clock.now_ms() as i64, action.clock_allowed))
+    }
+
+    async fn launch_session(
+        &self,
+        ultimate: &str,
+        trigger: &str,
+        session_template: &str,
+        forced: bool,
+        at: i64,
+    ) -> Result<i64, nous_combos::Refusal> {
+        use nous_durable::session::commands::{record_origin, OriginRecord};
+        let durable = self.durable_session().ok_or_else(|| {
+            nous_combos::Refusal::conflict("combos actions need a durable session")
+        })?;
+        let created = durable
+            .create_conversation(serde_json::json!({
+                "name": format!("▶ {ultimate}"),
+                "template": session_template,
+            }))
+            .await
+            .map_err(|error| {
+                nous_combos::Refusal::internal(format!("create_conversation: {error}"))
+            })?;
+        let session = created
+            .get("id")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| {
+                nous_combos::Refusal::internal("create_conversation 没回 id")
+            })?;
+        record_origin(
+            &durable,
+            OriginRecord {
+                id: session,
+                ultimate: ultimate.to_string(),
+                trigger: trigger.to_string(),
+                at,
+                forced,
+            },
+        )
+        .await
+        .map_err(|error| nous_combos::Refusal::internal(format!("record_origin: {error}")))?;
+        Ok(session)
     }
 }
