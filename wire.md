@@ -1102,6 +1102,35 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
   `extensions` 这个键 = 引擎给默认（全开），跟原来那条可能不一样。要补上得先让会话对象带上它。
 
 
+## 模块依赖图（`GET /v1/modules/graph`，模块 `AboutME_ModuleRelationshipNetwork`）
+
+插件页的「依赖 / 被依赖」用它。**一次给全**，不按模块分页：30 来个模块、几十条边，
+逐个查会多 30 次往返，还会拿到「查了 A 之后 B 变了」的半个视图。
+
+```json
+{ "generatedFor": "0.1.41",
+  "nodes": ["Device", "sessions", "…"],
+  "edges": [ { "from": "Device", "to": "routes", "via": "nous-routes" } ],
+  "unmapped": ["nous-fixture"] }
+```
+
+- **`nodes` 是模块全名**，与 `/v1/capabilities` 的 `modules[].name` 同一套字面量（规则 12）：
+  客户端拿它跟自己的能力表对名字，不用另建映射。**客户端不许自己再算一遍图** —— 反向索引
+  （「被依赖」）在客户端做是允许的，但边的**真相**只有这一份。
+- **边是 crate 边**：A 的 `plugin.toml [requires]` 里有 B 的包名 → `A → B`，`via` 是被用到的
+  包名。这份原料由 `scripts/check-plugins.sh` 与 `cargo metadata` 双向逐条比对，不是猜的。
+- **没有语义边**：「A 干活得靠 B」在内核里没有机器可读来源（`Library_Extend` 自己调标准库拿
+  临时目录，`[requires]` 里就没有 `nous-env`）。客户端**不要**把「某个端点出现在 A 的 handler 里」
+  当依赖补上 —— 缺的就显示缺，别编。
+- **`unmapped`** 是「被依赖、但没有对应模块」的包名（夹具 / 只给测试用的 crate）。它不参与
+  `nodes`，但**必须显示或至少不要假装不存在**：丢一条边又不说话，图会在没人察觉的地方不完整。
+- **`generatedFor`** 是生成这张图的发行版号（workspace 版本），不是本插件的版本。
+  客户端拿它与 `/v1/capabilities` 的 `server.version` 比：不一致只是「图比引擎旧」，降级显示，
+  别当错误 —— 两条发布线本来就会错开。
+- 图是**编译期内嵌**的（`build.rs` 把清单抄成静态表）：启动零 IO，也不存在「跑着的引擎 vs 盘上
+  清单」两份真相。**反悔点**：如果以后要在不改二进制的情况下看到图的变化，就得改成读盘 + mtime
+  缓存（照 `GET /v1/plugins/{name}/readme` 那套），那时 `generatedFor` 会失去意义。
+
 ## 引擎改了会怎么坏（按我们依赖的字段）
 
 | 引擎改动 | 我们会怎样 |
@@ -1128,6 +1157,8 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 | `combos[].enabled` 改成客户端自己算 | 开关状态跟引擎分叉，Desk 灰掉的页会误亮 |
 | `combos` 的 `problem` 不再是人话 / 恒空 | 引用失效的组合看着像能用，点了才报错 |
 | `PATCH /v1/combos` 丢了 `If-Match` 或 `requestId` | 并发覆盖 / 重放翻两次开关，version 与盘面分叉 |
+| `/v1/modules/graph` 没了 / `edges` 改名 | 插件详情的「依赖 / 被依赖」整块空掉（我们显示「引擎未提供」，不猜） |
+| 边的方向反过来（`to` 变 `from`） | 依赖与被依赖两栏互换，看着像每个插件都在依赖自己的下游 |
 
 所以：启动时打 `GET /v1/device` 记引擎版本，About 里显示，出问题先对版本。
 

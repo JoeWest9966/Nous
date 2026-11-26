@@ -29,6 +29,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_repo::routes::routes::<Arc<AppState>>());
     all.extend(nous_sessions::routes::routes::<Arc<AppState>>());
     all.extend(nous_triggers::routes::routes::<Arc<AppState>>());
+    all.extend(aboutme_module_relationship_network::routes::routes::<Arc<AppState>>());
     all
 }
 
