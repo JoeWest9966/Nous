@@ -1,6 +1,6 @@
 name = "presets-admin"
 vendor = "Nous"
-version = "0.2.0"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+version = "0.3.4"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
 layer = "app"
 crate = "nous-presets-admin"
 
