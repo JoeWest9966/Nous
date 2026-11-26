@@ -1,8 +1,9 @@
-//! 资源仓管理面：`/v1/{prompts,extensions}/{files,file,create,publish}`。
+//! 资源仓管理面：`/v1/extensions/{files,file,publish}`。
 //!
-//! **技能的六条已经搬进 `nous-skills` 插件**（`crates/Nous/Skills/src/routes.rs`），
-//! 盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）下沉到 `nous_repo::entries`；
-//! 这里只剩模板与扩展两仓，用的是同一份下沉后的实现。
+//! **技能的六条已经搬进 `nous-skills` 插件，模板的六条搬进 `nous-prompts` 插件**
+//! （`crates/Nous/{Skills,Prompts}/src/routes.rs`），盘面规矩（名字 / 路径校验、递归清单、
+//! 骨架落盘、发布）下沉到 `nous_repo::entries`，`RepoError → 状态码` 的翻译下沉到
+//! `nous_routes::Refusal`；这里只剩扩展一仓，用的是同一份下沉后的实现。
 //!
 //! 只做 HTTP ↔ 盘面翻译：文件读写 / etag 撞闸 / git 提交 / push 都在 `nous_repo`
 //! （platform 层），这里不直接 spawn `git`，也不另建一套锁。
@@ -25,34 +26,30 @@ use crate::error::{Result, ServerError};
 // 盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）住在 `nous_repo::entries`，
 // 技能插件与这里共用同一份。这个模块只留 HTTP 翻译，不再有第二套常量。
 
-/// 还留在这里的两个资源仓。`repo` 是 `AppState` 里的私库键（`repos::from_env` 的名字），
+/// 还留在这里的资源仓。`repo` 是 `AppState` 里的私库键（`repos::from_env` 的名字），
 /// `segment` 是 URL 里那一段 —— 扩展的私库键是 `extend`，URL 却是 `extensions`。
 ///
-/// 技能那一支已经搬走（`nous-skills` 插件），所以这里不再有 `Skills`。
+/// 技能那一支搬去了 `nous-skills`，模板那一支搬去了 `nous-prompts`；这里只剩扩展。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    Prompts,
     Extensions,
 }
 
 impl Kind {
     pub fn segment(self) -> &'static str {
         match self {
-            Self::Prompts => "prompts",
             Self::Extensions => "extensions",
         }
     }
 
     fn repo_key(self) -> &'static str {
         match self {
-            Self::Prompts => "prompts",
             Self::Extensions => "extend",
         }
     }
 
     fn label(self) -> &'static str {
         match self {
-            Self::Prompts => "模板",
             Self::Extensions => "扩展",
         }
     }
@@ -60,33 +57,15 @@ impl Kind {
     /// 发布时的默认文案（与旧面板 `prompts-api.js` 一致）。
     fn default_message(self) -> &'static str {
         match self {
-            Self::Prompts => "prompt: 更新模板仓库",
             Self::Extensions => "extend: 更新扩展仓库",
         }
     }
 }
 
 pub fn attach(router: Router<Arc<AppState>>) -> Router<Arc<AppState>> {
-    // 技能的六条已搬进 `nous-skills` 插件（`nous_skills::routes::routes()`），
-    // 这里只剩模板与扩展两仓。
+    // 技能的六条已搬进 `nous-skills` 插件，模板的六条已搬进 `nous-prompts` 插件
+    // （含 `GET /v1/prompts` 那条只读投影）。这里只剩扩展一仓。
     router
-        .route(
-            "/v1/prompts/files",
-            axum::routing::get(|s, q| files(Kind::Prompts, s, q)),
-        )
-        .route(
-            "/v1/prompts/file",
-            axum::routing::get(|s, q| file(Kind::Prompts, s, q))
-                .put(|s, b| save(Kind::Prompts, s, b)),
-        )
-        .route(
-            "/v1/prompts/create",
-            axum::routing::post(|s, b| create(Kind::Prompts, s, b)),
-        )
-        .route(
-            "/v1/prompts/publish",
-            axum::routing::post(|s, b| publish(Kind::Prompts, s, b)),
-        )
         .route(
             "/v1/extensions/files",
             axum::routing::get(|s, q| files(Kind::Extensions, s, q)),
@@ -124,29 +103,13 @@ pub struct SaveBody {
     pub base: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateBody {
-    pub name: String,
-    /// 技能用它（落 `SKILL.md` 的 frontmatter）。
-    #[serde(default)]
-    pub description: String,
-    /// 提示词用它（落 `nous.json`）。
-    #[serde(default)]
-    pub summary: String,
-    /// 提示词可给正文；不给就落一个 `# <name>` 标题。
-    #[serde(default)]
-    pub body: String,
-    #[serde(default)]
-    pub category: Vec<String>,
-}
-
 #[derive(Debug, Deserialize, Default)]
 pub struct PublishBody {
     #[serde(default)]
     pub message: Option<String>,
 }
 
-/// 资源私库没装配（`NOUS_SKILLS` / `NOUS_PROMPTS` / `NOUS_EXTEND` 指到的目录不存在）
+/// 资源私库没装配（`NOUS_EXTEND` 指到的目录不存在）
 /// 时诚实地 409，不退回空 200：编辑器和「没有文件」是两件事。
 fn repo(state: &AppState, kind: Kind) -> Result<Arc<Repo>> {
     state.repo(kind.repo_key()).ok_or_else(|| {
@@ -154,7 +117,6 @@ fn repo(state: &AppState, kind: Kind) -> Result<Arc<Repo>> {
             "{}私库未装配（{} 指向的目录不存在？）",
             kind.label(),
             match kind {
-                Kind::Prompts => "NOUS_PROMPTS",
                 Kind::Extensions => "NOUS_EXTEND",
             }
         ))
@@ -234,41 +196,6 @@ async fn save(
     )
     .map_err(repo_error)?;
     Ok(Json(json!({ "name": name, "path": path, "etag": etag, "created": created })))
-}
-
-/// `POST /v1/prompts/create`：落骨架两个文件，**不提交**。
-/// 扩展不走这里（`ext_admin` 有带骨架与运行时的 create）。
-async fn create(
-    kind: Kind,
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<CreateBody>,
-) -> Result<(StatusCode, Json<Value>)> {
-    debug_assert_ne!(kind, Kind::Extensions, "扩展的 create 在 ext_admin");
-    let repo = repo(&state, kind)?;
-    let name = check_name(&body.name)?;
-
-    let skeleton = match kind {
-        Kind::Prompts => {
-            let summary = body.summary.trim();
-            if summary.is_empty() {
-                return Err(ServerError::BadRequest(
-                    "summary 不能空 —— 人靠这一行决定选不选它".into(),
-                ));
-            }
-            nous_repo::Skeleton::prompt(&name, summary, &body.body)
-                .with_category(body.category)
-        }
-        Kind::Extensions => {
-            return Err(ServerError::BadRequest(
-                "扩展的 create 走 /v1/extensions/create（带骨架与运行时）".into(),
-            ))
-        }
-    };
-    nous_repo::create_entry(&repo, &name, &skeleton).map_err(repo_error)?;
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({ "name": name, "path": name, "files": 2 })),
-    ))
 }
 
 /// `POST /v1/{kind}/publish`：把私库里 dirty 的路径提交（并尝试 push）。

@@ -51,7 +51,7 @@
     },
     {
       "name": "repo",
-      "version": "0.5.14",
+      "version": "0.6.0",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
@@ -153,7 +153,7 @@
     },
     {
       "name": "skills",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -285,22 +285,22 @@
       ]
     },
     {
-      "name": "prompts",
-      "version": "0.2.2",
+      "name": "Nous_Prompts",
+      "version": "0.4.0",
       "kind": "编译期",
       "layer": "app",
       "required": true,
       "crate": "`nous-prompts`",
       "vendor": "Nous",
-      "description": "今天 `prompts/index.js`",
+      "description": "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `skills` / `ext` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点",
       "enabled": true,
       "endpoints": [
+        "GET /v1/prompts",
         "GET /v1/prompts/files",
         "GET /v1/prompts/file",
         "PUT /v1/prompts/file",
         "POST /v1/prompts/create",
-        "POST /v1/prompts/publish",
-        "GET /v1/prompts"
+        "POST /v1/prompts/publish"
       ]
     },
     {
@@ -348,7 +348,7 @@
     },
     {
       "name": "elements",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "kind": "编译期",
       "layer": "app",
       "required": false,

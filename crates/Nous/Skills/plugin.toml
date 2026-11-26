@@ -1,6 +1,6 @@
 name = "skills"
 vendor = "Nous"
-version = "0.3.0"  # 6 条端点归本插件 = minor（规则 8）
+version = "0.3.1"  # 本地 Refusal 换成 nous_routes 的共享实现（规则 8）
 layer = "app"
 crate = "nous-skills"
 

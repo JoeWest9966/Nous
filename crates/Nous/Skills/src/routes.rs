@@ -22,6 +22,8 @@ use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post, put};
 use axum::Json;
+use nous_repo::Refusal;
+use nous_routes::HttpRefusal;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -61,90 +63,29 @@ impl<T: Host + ?Sized> Host for Arc<T> {
     }
 }
 
-/// 一条端点的拒绝理由：状态码 + `{"error": …}`。
-///
-/// 状态码的分界由 [`Refusal::from_repo`] 一处判（`RepoError` 的种类就那么多），
-/// handler 只负责把领域错误交给它，不各自再算一遍。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Refusal {
-    pub status: StatusCode,
-    pub message: String,
-    /// 内容闸未过时带上的两格（`RepoError::Validation`）：`{field, problem}`。
-    pub validation: Option<(String, String)>,
+
+
+type EndpointResult = std::result::Result<Json<Value>, HttpRefusal>;
+
+/// `RepoError` → HTTP 回包：先由 `nous_repo::Refusal` 判语义，再逐字搬两格。
+fn http(error: nous_repo::RepoError) -> HttpRefusal {
+    let refusal = Refusal::from_repo(error);
+    HttpRefusal::new(refusal.status, refusal.body())
 }
 
-impl Refusal {
-    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self { status, message: message.into(), validation: None }
-    }
-
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::BAD_REQUEST, message)
-    }
-
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::NOT_FOUND, message)
-    }
-
-    pub fn conflict(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::CONFLICT, message)
-    }
-
-    pub fn internal(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
-    }
-
-    /// `RepoError` → 拒绝理由。**搬家前后逐字一致**（含 409 那句「先重新打开这个文件」）：
-    ///
-    /// - `BadRequest` / `InvalidPath` / `Validation` → 400（后者多带 `{field, problem}`）
-    /// - `NotFound` → 404
-    /// - `Conflict` → 409（`{error}` 只留一句人话，Desk 原样显示它）
-    /// - `Busy` → 409；`Locked` → 423
-    /// - `Io` / `LockPoisoned` → 500
-    pub fn from_repo(error: nous_repo::RepoError) -> Self {
-        use nous_repo::RepoError;
-        match error {
-            RepoError::BadRequest(m) | RepoError::InvalidPath(m) => Self::bad_request(m),
-            RepoError::Validation { field, problem } => Self {
-                status: StatusCode::BAD_REQUEST,
-                message: "内容闸未过".to_string(),
-                validation: Some((field, problem)),
-            },
-            RepoError::NotFound(m) => Self::not_found(m),
-            RepoError::Conflict { message, .. } => {
-                Self::conflict(format!("{message} —— 先重新打开这个文件，再存一次"))
-            }
-            RepoError::Busy(m) => Self::conflict(m),
-            RepoError::Locked(m) => Self::new(StatusCode::LOCKED, m),
-            RepoError::Io(m) => Self::internal(m),
-            RepoError::LockPoisoned => Self::internal("私库写锁中毒"),
-        }
-    }
-
-    /// 状态码 + 回包这一对。分支只有一处，测试与 `IntoResponse` 共用。
-    fn split(self) -> (StatusCode, Value) {
-        let mut body = json!({ "error": self.message });
-        if let Some((field, problem)) = self.validation {
-            body["field"] = json!(field);
-            body["problem"] = json!(problem);
-        }
-        (self.status, body)
-    }
+fn http_conflict(message: impl Into<String>) -> HttpRefusal {
+    HttpRefusal::conflict(message)
 }
 
-impl axum::response::IntoResponse for Refusal {
-    fn into_response(self) -> axum::response::Response {
-        let (status, body) = self.split();
-        (status, Json(body)).into_response()
-    }
+fn http_bad_request(message: impl Into<String>) -> HttpRefusal {
+    HttpRefusal::bad_request(message)
 }
 
-type EndpointResult = std::result::Result<Json<Value>, Refusal>;
 
 /// 私库没装配时那句熟话（三个仓共用同一个形状，只换标签）。
-fn repo<H: Host>(host: &H) -> std::result::Result<Arc<nous_repo::Repo>, Refusal> {
+fn repo<H: Host>(host: &H) -> std::result::Result<Arc<nous_repo::Repo>, HttpRefusal> {
     host.skills_repo().ok_or_else(|| {
-        Refusal::conflict("技能私库未装配（NOUS_SKILLS 指向的目录不存在？）")
+        http_conflict("技能私库未装配（NOUS_SKILLS 指向的目录不存在？）")
     })
 }
 
@@ -207,7 +148,7 @@ async fn skills<H: Host>(State(host): State<H>, Query(query): Query<UsageQuery>)
     if query.requested() {
         return Ok(Json(
             host.skills_usage()
-                .ok_or_else(|| Refusal::conflict("会话库未装配，查不了谁在用"))?,
+                .ok_or_else(|| http_conflict("会话库未装配，查不了谁在用"))?,
         ));
     }
     let root = host.skills_root();
@@ -261,28 +202,28 @@ async fn skills<H: Host>(State(host): State<H>, Query(query): Query<UsageQuery>)
 /// `GET /v1/skills/files?name=`：递归清单，正文与附件一起给（不按扩展名筛）。
 async fn files<H: Host>(State(host): State<H>, Query(query): Query<NameQuery>) -> EndpointResult {
     let repo = repo(&host)?;
-    let name = nous_repo::check_name(&query.name).map_err(Refusal::from_repo)?;
-    let list = nous_repo::list_entry_files(&repo, &name).map_err(Refusal::from_repo)?;
+    let name = nous_repo::check_name(&query.name).map_err(http)?;
+    let list = nous_repo::list_entry_files(&repo, &name).map_err(http)?;
     Ok(Json(json!({ "name": name, "files": list })))
 }
 
 /// `GET /v1/skills/file?name=&path=`：正文 + `etag`（写回时当 `base`）。
 async fn file<H: Host>(State(host): State<H>, Query(query): Query<FileQuery>) -> EndpointResult {
     let repo = repo(&host)?;
-    let name = nous_repo::check_name(&query.name).map_err(Refusal::from_repo)?;
-    let path = nous_repo::check_path(&query.path).map_err(Refusal::from_repo)?;
-    nous_repo::require_entry(&repo, &name, "技能").map_err(Refusal::from_repo)?;
+    let name = nous_repo::check_name(&query.name).map_err(http)?;
+    let path = nous_repo::check_path(&query.path).map_err(http)?;
+    nous_repo::require_entry(&repo, &name, "技能").map_err(http)?;
     let (text, etag) = nous_repo::read_text(&repo, &format!("{name}/{path}"))
-        .map_err(Refusal::from_repo)?;
+        .map_err(http)?;
     Ok(Json(json!({ "name": name, "path": path, "text": text, "etag": etag })))
 }
 
 /// `PUT /v1/skills/file`：只落盘、不提交。`base` 不符时 `nous_repo` 回 409。
 async fn save<H: Host>(State(host): State<H>, Json(body): Json<SaveBody>) -> EndpointResult {
     let repo = repo(&host)?;
-    let name = nous_repo::check_name(&body.name).map_err(Refusal::from_repo)?;
-    let path = nous_repo::check_path(&body.path).map_err(Refusal::from_repo)?;
-    nous_repo::require_entry(&repo, &name, "技能").map_err(Refusal::from_repo)?;
+    let name = nous_repo::check_name(&body.name).map_err(http)?;
+    let path = nous_repo::check_path(&body.path).map_err(http)?;
+    nous_repo::require_entry(&repo, &name, "技能").map_err(http)?;
     let created = body.base.is_none();
     let etag = nous_repo::write_text(
         &repo,
@@ -290,7 +231,7 @@ async fn save<H: Host>(State(host): State<H>, Json(body): Json<SaveBody>) -> End
         &body.text,
         body.base.as_deref(),
     )
-    .map_err(Refusal::from_repo)?;
+    .map_err(http)?;
     Ok(Json(json!({ "name": name, "path": path, "etag": etag, "created": created })))
 }
 
@@ -298,20 +239,20 @@ async fn save<H: Host>(State(host): State<H>, Json(body): Json<SaveBody>) -> End
 async fn create<H: Host>(
     State(host): State<H>,
     Json(body): Json<CreateBody>,
-) -> std::result::Result<(StatusCode, Json<Value>), Refusal> {
+) -> std::result::Result<(StatusCode, Json<Value>), HttpRefusal> {
     let repo = repo(&host)?;
-    let name = nous_repo::check_name(&body.name).map_err(Refusal::from_repo)?;
+    let name = nous_repo::check_name(&body.name).map_err(http)?;
     let description = body.description.trim();
     if description.is_empty() {
-        return Err(Refusal::bad_request(
+        return Err(http_bad_request(
             "description 不能空 —— 模型靠它判断该不该用这条技能",
         ));
     }
     if description.contains(['\n', '\r']) {
-        return Err(Refusal::bad_request("description 只能是一行"));
+        return Err(http_bad_request("description 只能是一行"));
     }
     let skeleton = nous_repo::Skeleton::skill(&name, description).with_category(body.category);
-    nous_repo::create_entry(&repo, &name, &skeleton).map_err(Refusal::from_repo)?;
+    nous_repo::create_entry(&repo, &name, &skeleton).map_err(http)?;
     Ok((
         StatusCode::CREATED,
         Json(json!({ "name": name, "path": name, "files": 2 })),
@@ -331,7 +272,7 @@ async fn publish<H: Host>(
         .map(str::trim)
         .filter(|text| !text.is_empty())
         .unwrap_or("skill: 更新技能仓库");
-    let published = nous_repo::publish_entry(&repo, message).map_err(Refusal::from_repo)?;
+    let published = nous_repo::publish_entry(&repo, message).map_err(http)?;
     Ok(Json(serde_json::to_value(published).unwrap_or(Value::Null)))
 }
 
@@ -394,53 +335,6 @@ mod tests {
         for route in routes::<Arc<NullHost>>() {
             assert_eq!(route.module(), "skills");
         }
-    }
-
-    /// `RepoError` → 状态码全表：搬家前后逐字一致，这条钉住它。
-    #[test]
-    fn the_status_code_follows_the_repo_error_kind() {
-        use nous_repo::RepoError;
-        let cases = [
-            (RepoError::BadRequest("x".into()), StatusCode::BAD_REQUEST),
-            (RepoError::InvalidPath("x".into()), StatusCode::BAD_REQUEST),
-            (RepoError::NotFound("x".into()), StatusCode::NOT_FOUND),
-            (RepoError::Busy("x".into()), StatusCode::CONFLICT),
-            (RepoError::Locked("x".into()), StatusCode::LOCKED),
-            (RepoError::Io("x".into()), StatusCode::INTERNAL_SERVER_ERROR),
-            (RepoError::LockPoisoned, StatusCode::INTERNAL_SERVER_ERROR),
-            (
-                RepoError::Conflict { message: "x".into(), current: None, etag: None },
-                StatusCode::CONFLICT,
-            ),
-        ];
-        for (error, want) in cases {
-            assert_eq!(Refusal::from_repo(error).status, want);
-        }
-    }
-
-    /// 409 那句人话原样保留（Desk 直接显示它）。
-    #[test]
-    fn the_conflict_sentence_is_kept_verbatim() {
-        let refusal = Refusal::from_repo(nous_repo::RepoError::Conflict {
-            message: "文件已经变了".into(),
-            current: None,
-            etag: None,
-        });
-        assert_eq!(refusal.message, "文件已经变了 —— 先重新打开这个文件，再存一次");
-    }
-
-    /// `Validation` 多带两格：`{field, problem}`。
-    #[test]
-    fn validation_carries_field_and_problem() {
-        let refusal = Refusal::from_repo(nous_repo::RepoError::Validation {
-            field: "name".into(),
-            problem: "太长".into(),
-        });
-        assert_eq!(refusal.status, StatusCode::BAD_REQUEST);
-        assert_eq!(
-            refusal.validation,
-            Some(("name".to_string(), "太长".to_string()))
-        );
     }
 
     /// 未装配 = 409 且是那句熟话（不是空 200，也不是 404）。

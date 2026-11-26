@@ -1,6 +1,6 @@
 name = "elements"
 vendor = "Nous"
-version = "0.3.0"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；8 条端点归本插件 = minor）
+version = "0.3.1"  # 本地 Refusal 换成 nous_routes 的共享实现（规则 8）
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-elements"
 

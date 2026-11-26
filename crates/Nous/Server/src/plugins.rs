@@ -24,6 +24,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_skills::routes::routes::<Arc<AppState>>());
     all.extend(nous_env::routes::routes::<Arc<AppState>>());
     all.extend(nous_combos::routes::<Arc<AppState>>());
+    all.extend(nous_prompts::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -72,6 +73,20 @@ impl nous_skills::routes::Host for AppState {
 
     fn skills_usage(&self) -> Option<serde_json::Value> {
         self.source().usage("skills").ok()
+    }
+}
+
+/// `prompts` 插件要的两件事：模板私库句柄、它的根目录。
+///
+/// 与 `skills` 同一个形状 —— 管理面要 [`nous_repo::Repo`]（写锁与 git 提交在里面），
+/// 只读投影要路径（`nous_prompts::catalog_value` 只吃路径）。
+impl nous_prompts::routes::Host for AppState {
+    fn prompts_repo(&self) -> Option<Arc<nous_repo::Repo>> {
+        self.repo(nous_prompts::routes::REPO_KEY)
+    }
+
+    fn prompts_root(&self) -> std::path::PathBuf {
+        nous_env::PROMPTS.resolve()
     }
 }
 

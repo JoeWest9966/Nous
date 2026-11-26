@@ -1326,3 +1326,59 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
 里加 `if kind == Skills`。另外：`nous_repo::entries` 现在同时服务「HTTP 端点」和「插件」，
 如果哪天它开始需要知道 HTTP 状态码，那就说明它越界了（它只回 `RepoError`，状态码翻译在
 各插件/`resource_admin` 的 `from_repo` / `repo_error`）。
+
+---
+
+## 2026-11-26 模板六端点搬进插件（`Nous_Prompts`）—— 第三次抄 `Refusal`，就该提上来了
+
+**背景**：`skills` 那票把盘面规矩下沉到 `nous_repo::entries`，`resource_admin.rs` 从三仓
+（skills / prompts / extensions）缩到两仓。这票搬走 `prompts`，那个文件只剩扩展一支。
+
+**决定**：
+
+- **照抄 `skills` 的接缝，一个字不改**：`Host::prompts_repo()`（写面要仓库句柄）+
+  `Host::prompts_root()`（只读投影要路径 —— `nous_prompts::catalog_value` 只吃 `&Path`）。
+  没有第三个方法：模板没有 `?usage=1` 那种反查。
+- **`GET /v1/prompts` 跟着端点走**：它原来住在 `meta::prompts()`（静态元数据），现在由插件
+  自己投影。`root` / `present` / `missing` 三格是 `#63` 的形状，`catalog_value` 的键原样透传。
+- **`RepoError → 状态码` 提到 `nous-repo`**（`Refusal::from_repo`），不是提到
+  `nous-routes`。`decisions.md` 在 `elements` 那票写的反悔点说「提上去」，但**放哪一层
+  是这次才定的**：先试了 `nous-routes`，编译直接报环 ——
+  `nous-env → nous-routes`（`env` 插件自带 `GET /v1/fs/dirs`，上一票刚加的边）
+  而 `nous-repo → nous-env`，于是 `env → routes → repo → env` 成环。
+  正解是**放到拥有 `RepoError` 的那一层**：`nous_repo::Refusal` 翻译自己家的错误，
+  依赖方向永远对，不可能再成环。
+- **`nous-routes` 保持零 `nous-*` 依赖**，只出 HTTP 回包壳 `HttpRefusal`（状态码数值 +
+  JSON 体，不认领域错误类型）。插件做一次 `Refusal → HttpRefusal` 的搬运（`fn http(...)`，
+  一个 crate 四行）。这样 `nous-env` 那条边可以继续存在，两边都不动。
+- **`resource_admin.rs` 的 `create` handler 整块删除**：它只为 prompts 存在（扩展的 create
+  在 `ext_admin`，带骨架与运行时）。`Kind` 枚举只剩 `Extensions` 一支，`CreateBody` 一并消失。
+- **`wire.md` 一个字没动**：6 条路径与全部回包形状逐字保留，NousDesk 零改动。
+
+**为什么**：这票本身没什么新东西 —— 它的价值是**验证「第三次就该抽象」这条判断**。
+前两票各抄一份 `Refusal` 是对的（两份 = 还没定型），第三份出现时提上来也是对的（三份 =
+形状稳了）。提前抽会造出一个只有一份实现的公共函数；拖到第四份就是四份拷贝要一起改。
+
+**代价**：`Refusal` 与 `HttpRefusal` 分了两层 —— 一个语义、一个回包，插件里多一个四行的
+`fn http(...)`。这是环逼出来的：`nous-routes` 必须保持零 `nous-*` 依赖（`nous-env` 依赖它），
+而状态码语义必须住在拥有 `RepoError` 的地方。分成两层反而更干净：`nous-repo` 不需要
+认识 axum，`nous-routes` 不需要认识 `RepoError`。
+
+**反悔点**：如果哪天有插件只想要 `HttpRefusal` 的结构体、不想要 `nous-repo`（例如纯内存
+端点），它直接用 `nous_routes::HttpRefusal` 就行，不必摸 `nous_repo::Refusal` —— 两层的
+拆分正好让这件事免费。另外：`Refusal.status` 是 `u16` 而不是 `StatusCode`，是为了让
+`nous-repo` 不依赖 axum；如果哪天 `nous-repo` 需要 HTTP 类型（不太可能），再换。
+另外：`resource_admin.rs` 只剩扩展一仓了，`ext` 搬走时这个文件应当**整份删除**，
+`Kind` 枚举随之消失 —— 如果那时有人选择「留着给未来的仓用」，那就是第四份拷贝的开始。
+
+**同票顺带改名**：模块全名 `prompts` → `Nous_Prompts`（规则 12「老模块的小写连字符全名…
+逐个改成全名」）。只有三处跟着变 —— `plugin.toml` 的 `name`、`MODULE` 常量
+（`/v1/_routes` 的 `module` 标签、`capabilities.modules[].name`、
+`GET /v1/plugins/:name/readme` 都按全名说话）、`meta::MANIFEST` 的那一行。
+**目录 / 包名 / capability / URL 一个字没动**：`crates/Nous/Prompts`、`nous-prompts`、
+`prompts`、`/v1/prompts*` 都是小写世界，跟全名是两回事（规则 12 的三套写法）。
+
+代价：`docs/plugins/` 下的产物文档文件名跟着从 `prompts.md` 变成 `Nous_Prompts.md`
+（`deploy.sh` 按全名落盘），**旧产物里那份 `prompts.md` 要重新同步一次**，否则
+`GET /v1/plugins/Nous_Prompts/readme` 会回 404 `readme_not_installed`。这是改名的
+可观测代价，记在这里免得当成 bug。

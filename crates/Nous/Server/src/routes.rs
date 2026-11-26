@@ -75,7 +75,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/config", post(config))
         .route("/v1/sessions/{id}/purge", post(purge))
         .route("/v1/selection", get(selection).post(write_selection))
-        .route("/v1/prompts", get(prompts))
         .route("/v1/extensions", get(extensions))
         .route("/v1/extensions/reload", post(reload_extensions))
         .route("/v1/extensions/create", post(crate::ext_admin::create))
@@ -324,10 +323,6 @@ async fn purge(
     })))
 }
 
-/// `GET /v1/prompts`：A 阶段空表。
-async fn prompts() -> Json<Value> {
-    Json(crate::meta::prompts())
-}
 
 /// `GET /v1/extensions`：ext 冻结，空清单。`?usage=1` 时回答「谁在用」（#85）。
 async fn extensions(

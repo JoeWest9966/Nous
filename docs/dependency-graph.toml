@@ -11,6 +11,10 @@ nous-wire = []
 # 端点自带 handler（GET /v1/fs/dirs）之后多了 nous-routes。远端分支是宿主能力
 # trait —— nous-env-ssh 的 requires 里有本 crate，反向依赖会成环。
 nous-env = ["nous-chord", "nous-routes"]
+
+# 私库层：`Refusal`（`RepoError → 状态码` 的唯一翻译）也在这里 —— 它拥有 `RepoError`，
+# 翻译自己家的错误，依赖方向永远是对的。放 `nous-routes` 会成环（`env → routes → repo → env`）。
+nous-repo = ["nous-env"]
 nous-ai = ["nous-telemetry", "nous-ai-types"]
 nous-tools = ["nous-ai", "nous-env"]
 nous-runtime = ["nous-ai"]
@@ -23,6 +27,10 @@ nous-elements = ["nous-env", "nous-repo", "nous-routes"]
 # 技能插件：解析层只读盘面；端点归本插件后要 axum / nous-routes，
 # 盘面规矩（名字校验、清单、骨架、发布）走 nous-repo::entries，路径解析走 nous-env。
 nous-skills = ["nous-env", "nous-repo", "nous-routes"]
+
+# 模板插件：形状与 skills 一样（只读投影 + 编辑面），盘面规矩走 nous-repo::entries。
+nous-prompts = ["nous-env", "nous-repo", "nous-routes"]
+
 
 # #73 dispatcher 用 durable sleeping 任务落 tick、store 读写账本、chord 处理增量。
 nous-dispatcher = ["nous-chord", "nous-durable", "nous-store"]

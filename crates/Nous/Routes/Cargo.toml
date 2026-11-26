@@ -8,6 +8,7 @@ description = "插件自带端点的契约：一条声明同时产出 Router 装
 
 [dependencies]
 axum = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

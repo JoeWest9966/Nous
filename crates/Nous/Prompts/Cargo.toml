@@ -7,8 +7,14 @@ license.workspace = true
 description = "提示词目录只读扫描与纯 render()（#72）"
 
 [dependencies]
+axum = { workspace = true }
+nous-env = { workspace = true }
+nous-repo = { workspace = true }
+nous-routes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
