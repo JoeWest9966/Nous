@@ -206,7 +206,7 @@ async fn capabilities_enable_presets_without_a_reason() {
     assert!(
         module["endpoints"]
             .as_array()
-            .is_some_and(|list| list.iter().any(|e| e.as_str() == Some("GET /v1/presets/{section}"))),
+            .is_some_and(|list| list.iter().any(|e| e.as_str() == Some("GET /v1/presets/:section"))),
         "presets 的端点必须从注册表声明出来：{module}"
     );
     let admin = body["modules"]
