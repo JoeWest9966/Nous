@@ -2009,7 +2009,10 @@ where
         };
     }
 
-    // 段面与名册归 `presets`；写面 / 校验 / 文件 / 发布归 `presets-admin`（`docs/plugins.md`）。
+    // 归属照搬家前 `meta::ROUTES` 的静态表**原样**（一处没改）：读面多在 `presets`、
+    // 写面在 `presets-admin`。同一路径的两个方法分属两个模块（`GET order` 在 admin、
+    // `PUT order` 在 presets；`GET categories` 在 presets、`POST categories` 在 admin）
+    // 是搬家前就有的手写漂移，收敛它是**另一票的口径变更**，这里不夹带。
     const P: &str = "presets";
     const A: &str = MODULE;
     vec![
@@ -2017,8 +2020,8 @@ where
         route!("GET", "/v1/presets/model", P, || get(model::<H>)),
         route!("GET", "/v1/presets/{section}", P, || get(roster::<H>)),
         route!("GET", "/v1/presets/{section}/order", A, || get(get_order::<H>)),
-        route!("PUT", "/v1/presets/{section}/order", A, || put(put_order::<H>)),
-        route!("GET", "/v1/presets/{section}/categories", A, || get(categories::<H>)),
+        route!("PUT", "/v1/presets/{section}/order", P, || put(put_order::<H>)),
+        route!("GET", "/v1/presets/{section}/categories", P, || get(categories::<H>)),
         route!("POST", "/v1/presets/{section}/categories", A, || post(mutate_categories::<H>)),
         route!("POST", "/v1/presets/{section}/category", A, || post(set_category::<H>)),
         route!("POST", "/v1/presets/{section}/create", A, || post(create_preset::<H>)),
