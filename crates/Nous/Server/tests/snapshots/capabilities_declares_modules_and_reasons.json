@@ -37,7 +37,7 @@
     },
     {
       "name": "env",
-      "version": "0.3.1",
+      "version": "0.3.3",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
@@ -172,7 +172,7 @@
     },
     {
       "name": "archive",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -188,7 +188,7 @@
     },
     {
       "name": "combos",
-      "version": "0.2.3",
+      "version": "0.2.7",
       "kind": "编译期",
       "layer": "app",
       "required": false,
