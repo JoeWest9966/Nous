@@ -27,7 +27,7 @@ use serde_json::{json, Value};
 use crate::{GroupBy, UsageWindow};
 
 /// 这个插件在注册表里的模块名（`docs/plugins.md` 的 module 列）。
-pub const MODULE: &str = "data-manager";
+pub const MODULE: &str = "Data_DataManager";
 
 /// 宿主能力：两个只读库在哪。`None` = 没装配（端点回 409，不假装空数据）。
 ///
@@ -255,14 +255,14 @@ mod tests {
         assert_eq!(
             declared,
             vec![
-                "GET /v1/stats/usage [data-manager]",
-                "GET /v1/stats/tasks [data-manager]",
-                "GET /v1/stats/db [data-manager]",
-                "GET /v1/stats/overview [data-manager]",
-                "GET /v1/stats/conversations [data-manager]",
-                "GET /v1/stats/conversation/:id [data-manager]",
-                "GET /v1/stats/cost [data-manager]",
-                "GET /v1/stats/health [data-manager]",
+                "GET /v1/stats/usage [Data_DataManager]",
+                "GET /v1/stats/tasks [Data_DataManager]",
+                "GET /v1/stats/db [Data_DataManager]",
+                "GET /v1/stats/overview [Data_DataManager]",
+                "GET /v1/stats/conversations [Data_DataManager]",
+                "GET /v1/stats/conversation/:id [Data_DataManager]",
+                "GET /v1/stats/cost [Data_DataManager]",
+                "GET /v1/stats/health [Data_DataManager]",
             ]
         );
     }
