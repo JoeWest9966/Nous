@@ -53,12 +53,12 @@ pub const MODULE: &str = "combos";
 type EndpointResult = std::result::Result<Json<Value>, HttpRefusal>;
 
 /// 412：盘面版本号对不上（公共壳没有现成构造子，`new` + JSON 体）。
-pub(crate) fn fn_precondition(message: impl Into<String>) -> HttpRefusal {
+pub(crate) fn precondition_refusal(message: impl Into<String>) -> HttpRefusal {
     HttpRefusal::new(412, json!({ "error": message.into() }))
 }
 
 /// 503：宿主没装配（触发器运行时 / 注入时钟），端点直说，不假装判定过。
-pub(crate) fn fn_service_unavailable(message: impl Into<String>) -> HttpRefusal {
+pub(crate) fn service_unavailable_refusal(message: impl Into<String>) -> HttpRefusal {
     HttpRefusal::new(503, json!({ "error": message.into() }))
 }
 

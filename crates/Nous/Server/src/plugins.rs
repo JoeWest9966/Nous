@@ -187,7 +187,7 @@ impl nous_env::routes::Host for AppState {
         limit: usize,
     ) -> Result<nous_env::BrowseDirs, nous_routes::HttpRefusal> {
         use nous_env_ssh::RemoteDirsError;
-        let refused = |status: u16, message: String| {
+        let refused = |status: u16, message: &str| {
             nous_routes::HttpRefusal::new(status, serde_json::json!({ "error": message }))
         };
         nous_env_ssh::remote_subdirs(machine, path, include_hidden, limit)
@@ -218,7 +218,7 @@ impl nous_combos::Host for AppState {
 
     fn trigger_spec(&self, code: &str) -> Result<nous_combos::SpecView, nous_routes::HttpRefusal> {
         let runtime = self.triggers().ok_or_else(|| {
-            nous_combos::fn_service_unavailable("triggers not configured")
+            nous_combos::service_unavailable_refusal("triggers not configured")
         })?;
         let definitions = runtime.definitions();
         let trigger = definitions
@@ -237,7 +237,7 @@ impl nous_combos::Host for AppState {
 
     fn combo_clock(&self) -> Result<(i64, bool), nous_routes::HttpRefusal> {
         let action = self.combo_action().ok_or_else(|| {
-            nous_combos::fn_service_unavailable("combo action clock not configured")
+            nous_combos::service_unavailable_refusal("combo action clock not configured")
         })?;
         Ok((action.clock.now_ms() as i64, action.clock_allowed))
     }

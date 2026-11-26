@@ -20,6 +20,8 @@ use serde_json::{json, Value};
 
 use nous_routes::HttpRefusal;
 
+use crate::precondition_refusal;
+
 /// 组合只活在终极模板那一段。`Session-Template` 的条目是「开一条会话用什么」，
 /// 没有触发器可言 —— 以前两段都扫，结果会话模板全带「这条没钉触发器」的假 `problem`。
 /// 段白名单只有这一个值，别的段一律 400（不静默返回空：客户端会以为「这一段没组合」）。
@@ -243,7 +245,7 @@ impl ComboStore {
         }
         let file = self.one(section, name)?;
         if file.version() != if_match {
-            return Err(fn_precondition(format!("版本不匹配：期望 {if_match}，盘上是 {}", file.version())));
+            return Err(precondition_refusal(format!("版本不匹配：期望 {if_match}，盘上是 {}", file.version())));
         }
         let mut body = file.body.clone();
         // `spec` 是引擎的扩展位：旧条目（0.1.7 之前写下的）没有这个键。

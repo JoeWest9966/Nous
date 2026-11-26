@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::store::{view, ComboFile, ComboStore};
-use crate::{store_of, Host, SpecView};
+use crate::{store_of, service_unavailable_refusal, Host, SpecView};
 use nous_routes::HttpRefusal;
 
 type EndpointResult = std::result::Result<Json<Value>, HttpRefusal>;
