@@ -332,13 +332,13 @@
     },
     {
       "name": "Models",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "kind": "编译期",
       "layer": "app",
       "required": false,
       "crate": "`element-models`",
       "vendor": "Element",
-      "description": "盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟）",
+      "description": "盘上真相在 `element-core`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟）",
       "enabled": true,
       "endpoints": [
         "GET /v1/models/elements",
@@ -346,14 +346,14 @@
       ]
     },
     {
-      "name": "elements",
-      "version": "0.3.1",
+      "name": "Element_Core",
+      "version": "0.4.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`nous-elements`",
-      "vendor": "Nous",
-      "description": "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Nous/Elements/src/routes.rs`）",
+      "crate": "`element-core`",
+      "vendor": "Element",
+      "description": "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Element/Core/src/routes.rs`）",
       "enabled": true,
       "endpoints": [
         "GET /v1/elements",

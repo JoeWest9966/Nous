@@ -1,11 +1,11 @@
 name = "Models"
 vendor = "Element"
-version = "0.3.0"
+version = "0.3.1"  # 依赖包名 nous-elements → element-core（Element_Core 改名）
 layer = "app"
 crate = "element-models"
 
 [requires]
-nous-elements = "^0.1"
+element-core = "^0.1"
 nous-env = "^0.1"
 nous-repo = "^0.1"
 nous-routes = "^0.1"

@@ -1,6 +1,6 @@
 name = "server"
 vendor = "Nous"
-version = "0.3.29"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；Nous_Extend 十五端点 + Nous_Prompts 六端点 + repo 三十端点 + 触发器二十四端点各换归属；0.3.29 含 MANIFEST 里 element-models 全名改 Models）
+version = "0.3.30"  # Element_Core 模块改名（manifest 里那行的 name 变了，规则 8）
 layer = "app"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-server"
 
@@ -15,7 +15,7 @@ nous-triggers = "^0.1"
 nous-device = "^0.1"
 nous-env = "^0.1"
 nous-repo = "^0.1"
-nous-elements = "^0.1"
+element-core = "^0.1"
 nous-presets-admin = "^0.1"
 nous-prompts = "^0.1"
 nous-env-ssh = "^0.1"

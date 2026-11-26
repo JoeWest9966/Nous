@@ -1564,3 +1564,23 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 `check-plugins.sh` 只在 `_` 存在时比对第一段与 vendor），那 `Models` 这种无 vendor 段的全名
 就会成为「老式小写连字符名」之外的第三种形态，判据得再补一档 —— 那时要么改成
 `Element_Models`（本决定作废），要么把「全名可省略 vendor 段」写进规则 12。
+
+## 模块全名 elements → Element_Core（规则 12 逐个改成全名）
+
+**什么时候**：2026-11，跟着 Nous_Prompts / Nous_Device 之后轮到元素库。
+**什么**：全名选出 `Element_Core`（跟 `Models` 同一家 —— 那个模块原叫 `Element_Models`，
+先被另一票只改全名改成 `Models`，目录 `crates/Element/Models` 与包名 `element-models` 没动），
+所以规则 12 由全名推出的是一整套：vendor `Nous` → **`Element`**、目录 `crates/Nous/Elements` →
+**`crates/Element/Core`**、包名 `nous-elements` → **`element-core`**、capability
+`elements` → **`core`**（都是 check-plugins.sh 推出来判的，不另存第二份）。只有
+三处是手改的身份：`plugin.toml` 的 `name`、`routes.rs` 的 `MODULE` 常量、`meta.rs`
+的 manifest 行。REPO_KEY `elements`、URL `/v1/elements*`、`NOUS_ELEMENTS`
+数据根、私库键 `REPO_KINDS` 一个字没动（规则 12 的三套写法：全名 / 包名 / URL
+各归各；URL 与私库键是小写世界）。包名联动改了：workspace `Cargo.toml`、`server`
+与 `element-models` 的依赖 + `plugin.toml [requires]`、全部 `use nous_elements`。
+**与 `Models` 那一票的区别**：那票只动全名（目录/包名/capability/组 id 全不动），这票动的是
+**整套**（vendor 段变了，目录跟着换）。判据是 `check-plugins.sh` 由全名推的那一列，不靠人记住。
+**代价**：同 Nous_Prompts 那票 —— 产物文档名变 `Element_Core.md`，旧产物要重新
+同步一次 docs，否则 `GET /v1/plugins/Element_Core/readme` 回 404 `readme_not_installed`。
+`models.rs` 的 `catalog.source = "elements"` 与 `REPO_KINDS` 里的 `elements` 是
+私库键，不是模块名，不改。

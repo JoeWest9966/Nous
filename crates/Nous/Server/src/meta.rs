@@ -288,8 +288,8 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "Nous_Prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `skills` / `ext` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点" },
     ManifestEntry { name: "Nous_Extend", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-extend`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划" },
     // 元素库：旧面板 `k3skws` 块的 Rust 落点；盘上真相 = 第五套私库。
-    ManifestEntry { name: "Models", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`element-models`", description: "盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟）" },
-    ManifestEntry { name: "elements", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-elements`", description: "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Nous/Elements/src/routes.rs`）" },
+    ManifestEntry { name: "Models", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`element-models`", description: "盘上真相在 `element-core`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟）" },
+    ManifestEntry { name: "Element_Core", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`element-core`", description: "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Element/Core/src/routes.rs`）" },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

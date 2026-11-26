@@ -23,7 +23,7 @@ nous-durable = ["nous-chord", "nous-ai", "nous-wire", "nous-telemetry", "nous-en
 
 # 元素库只碰私库原语（写一次提交一次的原子事务在 repo 里），不自己 spawn git；
 # 端点也归本插件，所以还要 axum / nous-routes 和一条路径解析（nous-env）。
-nous-elements = ["nous-env", "nous-repo", "nous-routes"]
+element-core = ["nous-env", "nous-repo", "nous-routes"]
 
 # 技能插件：解析层只读盘面；端点归本插件后要 axum / nous-routes，
 # 盘面规矩（名字校验、清单、骨架、发布）走 nous-repo::entries，路径解析走 nous-env。
@@ -67,7 +67,7 @@ nous-server = [
   # #75 五套私库文件面 + #76 variant + #77 upstream
   "nous-repo",
   # 元素库（组 / 包）的 HTTP 面
-  "nous-elements",
+  "element-core",
   # #62 只读观测聚合
   "data-data-manager",
   # #67 会话归档三端点（世代文件 + 墓碑 + 打捞）
@@ -102,7 +102,7 @@ nous-routes = []
 nous-combos = ["nous-dispatcher", "nous-durable", "nous-repo", "nous-routes"]
 
 # 编目插件的依赖：元素库原语、运行时配置形状、宿主能力的类型（repo），以及端点契约层。
-element-models = ["nous-elements", "nous-runtime", "nous-env", "nous-repo", "nous-routes"]
+element-models = ["element-core", "nous-runtime", "nous-env", "nous-repo", "nous-routes"]
 
 # #67 归档插件：三条命令走 durable 的 session commands（活库写锁与补偿方向都在那里），
 # 端点契约由 nous-routes 声明。不依赖 server（否则成环）。

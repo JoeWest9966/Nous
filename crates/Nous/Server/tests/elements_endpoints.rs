@@ -292,11 +292,11 @@ async fn capabilities_declare_the_elements_module_with_its_endpoints() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|module| module["name"] == "elements")
+        .find(|module| module["name"] == "Element_Core")
         .expect("capabilities 里必须有 elements");
     assert_eq!(module["enabled"], true);
     assert_eq!(module["layer"], "app");
-    assert_eq!(module["crate"], "`nous-elements`");
+    assert_eq!(module["crate"], "`element-core`");
     // 搬家后这 8 条由插件自己的 `routes()` 交上来，注册表写法是 `:kind` / `:id`
     // （`nous-routes::to_registry_path` 折的）；静态表里那批才是 `{kind}`。
     // 逐条比对整张表，不只抽两条 —— 漏一条、多一条都要红。

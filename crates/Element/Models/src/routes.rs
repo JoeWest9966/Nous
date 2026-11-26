@@ -75,9 +75,9 @@ where
 
 /// 元素库 → 约定组投影。私库扫不动 / 组不存在都回 `None`。
 pub fn snapshot(repo: &nous_repo::Repo) -> Option<Snapshot> {
-    let groups = nous_elements::scan(repo, nous_elements::Kind::Groups).ok()?;
+    let groups = element_core::scan(repo, element_core::Kind::Groups).ok()?;
     let group = crate::find_group(&groups.items)?;
-    let packages = nous_elements::scan(repo, nous_elements::Kind::Packages).ok()?;
+    let packages = element_core::scan(repo, element_core::Kind::Packages).ok()?;
     Some(crate::load(group, &packages.items))
 }
 
@@ -85,9 +85,9 @@ pub fn snapshot(repo: &nous_repo::Repo) -> Option<Snapshot> {
 ///
 /// 纯函数：只读仓库，不联网、不看时钟。扫不动就 `Err`（宿主的问题，不是「还没有」）。
 pub fn projection(repo: &nous_repo::Repo) -> Result<Value, String> {
-    let groups = nous_elements::scan(repo, nous_elements::Kind::Groups)
+    let groups = element_core::scan(repo, element_core::Kind::Groups)
         .map_err(|error| format!("扫元素库失败：{error}"))?;
-    let packages = nous_elements::scan(repo, nous_elements::Kind::Packages)
+    let packages = element_core::scan(repo, element_core::Kind::Packages)
         .map_err(|error| format!("扫元素库失败：{error}"))?;
 
     let repo_block = json!({ "root": repo.root().to_string_lossy(), "present": true });
@@ -217,9 +217,9 @@ where
         }
     };
 
-    let groups = nous_elements::scan(&repo, nous_elements::Kind::Groups)
+    let groups = element_core::scan(&repo, element_core::Kind::Groups)
         .map_err(|error| refuse(StatusCode::INTERNAL_SERVER_ERROR, format!("扫元素库失败：{error}")))?;
-    let packages = nous_elements::scan(&repo, nous_elements::Kind::Packages)
+    let packages = element_core::scan(&repo, element_core::Kind::Packages)
         .map_err(|error| refuse(StatusCode::INTERNAL_SERVER_ERROR, format!("扫元素库失败：{error}")))?;
     let Some(group) = crate::find_group(&groups.items) else {
         return Err(refuse(

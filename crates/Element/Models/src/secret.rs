@@ -15,7 +15,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use nous_elements::ElementItem;
+use element_core::ElementItem;
 
 use crate::{parse_key_ref, KeyRef};
 use crate::GROUP_ID;
