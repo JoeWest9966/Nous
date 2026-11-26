@@ -37,6 +37,7 @@ pub mod store;
 /// 试跑判定的装配：注入时钟 + 「这条规则能不能由时钟点火」这一外部事实。
 ///
 /// 时钟不在这里读：生产注入系统时钟、测试注入假时钟（`#82` 的既有口径）。
+#[derive(Clone)]
 pub struct Clock {
     pub clock: Arc<dyn nous_durable::harness::clock::Clock>,
     pub clock_allowed: bool,

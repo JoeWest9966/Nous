@@ -82,6 +82,8 @@ impl AppState {
             stats: None,
             ext: None,
             ext_admin: None,
+            combos: None,
+            combo_action: None,
         })
     }
 
@@ -155,6 +157,8 @@ impl AppState {
             stats: None,
             ext: None,
             ext_admin: None,
+            combos: None,
+            combo_action: None,
         });
         commands.attach(SessionObserver::new(state.clone()));
         Ok(state)
