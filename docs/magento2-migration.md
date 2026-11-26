@@ -122,7 +122,7 @@ impl element_models::routes::Host for AppState {
 
 ## 4 · 进度
 
-### 4.1 已搬（153 条）
+### 4.1 已搬（161 条）
 
 | 模块 | 端点 | 提交 | 备注 |
 |---|---|---|---|
@@ -143,19 +143,23 @@ impl element_models::routes::Host for AppState {
 
 | `sessions` | `/v1/sessions*` 17 条里的 **16 条** | `refactor(sessions)` | 三段走完：①`source` / `commands` / `records` 三层语义下沉；②`hub` / `coalesce` / `project` / `observer` 事件流机制下沉；③16 条 handler 搬进 `crates/Nous/Sessions/src/routes.rs`。**`POST /v1/sessions/{id}/messages` 留在 `server`** —— 它要的是宿主组装根（`AssembledRuntime` 的 driver / completions）与提示词注入（`nous-prompts` / skills 库），都是 app 层的装配物，不是会话语义；它注册时仍报 `MODULE = "sessions"`，所以 capabilities 上 sessions 还是 17 条。`SessionError` 十个变体成了会话三层的共用错误（`server` 侧一层 `From` 接住过渡期调用点），并实现了 `IntoResponse` （axum handler 的返回类型要求）。`routes.rs` 1108 → 200 行（只剩 8 条 `Nous_Device`）。静态表 25 → 9 行 |
 
-### 4.2 待搬（9 条 / 1 个模块）
+### 4.2 待搬（0 条）
 
-按「搬起来最省事 → 最费事」排的，数字是该模块在静态表里还剩几条
-（静态表总数：搬家起点 162 行 → 现在 **9 行**（8 条 `Nous_Device` + 1 条 `messages`）；插件自带的端点 `Route::new` 共 **125 条**）。
+**搬完了。** 静态表 `meta::ROUTES` 只剩 **1 行**：
 
-| 模块 | 存量 | 需要哪些宿主能力（预估） |
-|---|---|---|
-| `Nous_Device` | 8 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，**最后搬**（它们读注册表本身） |
+| 端点 | 为什么还在宿主侧 |
+|---|---|
+| `POST /v1/sessions/:id/messages` | 它要的是**组装根**（`AssembledRuntime` 的 `driver` / `completions`）与提示词注入（`nous-prompts` / skills 库 / `nous-env` 两个根）。把 `AssembledRuntime` 搬进插件等于让插件认识 `nous-runtime` + `nous-tools` + provider 装配 —— 那是「进程怎么组装」，不是「会话是什么」。归属仍报 `sessions`，capabilities 上 sessions 还是 17 条 |
 
-建议顺序：只剩 `Nous_Device` 一家（读注册表本身，**最后搬**）。
+（静态表总数：搬家起点 162 行 → 现在 **1 行**；全仓 165 条端点里 **164 条**由插件自带（15 个模块），剩 1 条在静态表。）
 
-`_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
-搬进 `device` 之前得先让「注册表」成为宿主能力（`Host::declarations()`），否则会成环。
+### 4.3 搬完之后回头看
+
+三件事只有搬完才看得清，记在这里当判据的收益：
+
+1. **`meta.rs` 从 383 行降到 ~290 行，而且只剩数据**：`ROUTES`（1 行）、`MANIFEST`（15 行）、`selection()` / `presets_root()`。视图（JSON 键名、`enabled` / `reason` 判定、OpenAPI 折叠）全在 `crates/Nous/Device/src/routes.rs`，能单测（5 条纯函数测试）。
+2. **`server/src/routes.rs` 从 1108 行降到 356 行**，只剩 `messages` 和它的两个辅助（`inject_prompt_section` / `inject_extension_section`）—— 那是同一个理由的另外两条。
+3. **`plugin_docs.rs`（125 行）整份删除**，搬成 `crates/Nous/Device/src/readme.rs`：读盘 + mtime 缓存 + 白名单，白名单改从 `Host::manifest()` 拿。
 
 ## 5 · 判据（每搬一个都跑这几条）
 
