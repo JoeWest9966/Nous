@@ -7,13 +7,13 @@
   "modules": [
     {
       "name": "sessions",
-      "version": "0.6.7",
+      "version": "0.7.0",
       "kind": "编译期",
       "layer": "app",
       "required": true,
       "crate": "`nous-sessions`",
       "vendor": "Nous",
-      "description": "**pi 本体**（#44 落地），承载最小轮次与取消收敛",
+      "description": "**pi 本体**（#44 落地）：最小轮次与取消收敛 + 会话读投影（`source`）/ 写命令（`commands`）/ `POST /v1/sessions` 的形状（`records`）三层。这三层先于端点搬进来 —— 它们本来就是会话的语义",
       "enabled": true,
       "endpoints": [
         "GET /v1/sessions",
