@@ -51,13 +51,13 @@
     },
     {
       "name": "repo",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "kind": "编译期",
       "layer": "platform",
       "required": true,
       "crate": "`nous-repo`",
       "vendor": "Nous",
-      "description": "唯一的 git 进程调用面；四条私库路径解析沿用 `env`",
+      "description": "唯一的 git 进程调用面；六条私库路径解析沿用 `env`",
       "enabled": true,
       "endpoints": [
         "GET /v1/repos/:repo/status",
