@@ -20,7 +20,7 @@ use nous_durable::session::commands::{
     archive_conversation, list_archives, restore_conversation, ArchiveResult, RestoreResult,
 };
 use nous_durable::storage::archive::Generation;
-use nous_durable::session::{CommitObserver, ObserverRegistry, Session, SessionError};
+use nous_durable::session::{CommitObserver, ObserverRegistry, Session};
 use nous_durable::Storage;
 use serde_json::{json, Value};
 
