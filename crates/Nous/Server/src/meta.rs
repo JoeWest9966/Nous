@@ -67,10 +67,6 @@ pub fn presets_root() -> std::path::PathBuf {
 }
 
 /// `GET /v1/extensions`：#81 真清单投影。没装配运行时就诚实回空数组。
-pub fn extensions(items: Option<&[Value]>) -> Value {
-    json!({ "items": items.unwrap_or(&[]) })
-}
-
 /// `GET /v1/triggers` 的投影（真行由路由从 store 读；无装配时回空表）。
 pub fn triggers(items: Vec<Value>) -> Value {
     json!({ "triggers": items, "root": Value::Null })
@@ -150,24 +146,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "Nous_Device" },
-    // `skills` 的 6 条已搬进插件（`nous-skills` 的 `routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/extensions/files", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions/file", module: "ext" },
-    RegisteredRoute { method: "PUT", path: "/v1/extensions/file", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/publish", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
-    // #81：热重载按盘上现状重装（不是原地假装修）。
-    RegisteredRoute { method: "POST", path: "/v1/extensions/reload", module: "ext" },
-    // #84：扩展人手动作（文件发布仍走 /v1/repos/extend/*）。
-    RegisteredRoute { method: "POST", path: "/v1/extensions/create", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/duplicate", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/install", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/uninstall", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions/categories", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/categories", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions/trash", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/trash/purge", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/category", module: "ext" },
+    // `extensions` 的 15 条已搬进 `Nous_Extend` 插件（`nous-extend` 的 `routes()` 声明），
+    // 静态表只减不增。
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
     RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
@@ -369,7 +349,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "data-manager", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-data-manager`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
     ManifestEntry { name: "Nous_Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "Nous_Prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `skills` / `ext` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点" },
-    ManifestEntry { name: "ext", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-ext`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划" },
+    ManifestEntry { name: "Nous_Extend", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-extend`", description: "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划" },
     // 元素库：旧面板 `k3skws` 块的 Rust 落点；盘上真相 = 第五套私库。
     ManifestEntry { name: "Element_Models", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`element-models`", description: "盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟）" },
     ManifestEntry { name: "elements", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-elements`", description: "元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Nous/Elements/src/routes.rs`）" },

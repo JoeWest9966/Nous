@@ -431,3 +431,30 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 **怎么防**：远程跑判据时显式绕过 wrapper —— `PATH=/workspace/cargo/bin:$PATH` +
 `CARGO_TARGET_DIR=<本工作树专用>`，别依赖 `/usr/local/bin/cargo`。共享一个 target 目录
 还会让两个工作树的 `build.rs` 生成物互相顶掉（`plugin_versions.rs` 就是其中之一）。
+
+## axum 同一 path + 同一 method 声明两次 = 启动期 panic（不是「后者覆盖」）
+
+**症状**：`Route::new("GET", "/v1/x/file", .. || get(a).put(b))` 再补一条
+`Route::new("PUT", "/v1/x/file", .. || put(b))` —— 编译过、单元测试过，
+真起 `nous-app` 时 axum 在 `route()` 里 panic（`Overlapping method route`）。
+
+**根因**：`Router::route()` 对已存在的 path 会**合并** `MethodRouter`，合并到同一个 method
+才报错；`GET` 那条里 `.put()` 已经把 PUT 用掉了。
+
+**怎么防**：一条路径上每个 method 只声明一次 —— `GET /file` 那条只写 `get(file)`，
+`PUT /file` 另起一条 `put(save)`（`nous-skills` / `nous-prompts` / `nous-extend` 都是这个写法）。
+声明条数也因此等于端点数，别为了「看起来聚合」把两个 method 塞进一条。
+
+## 搬家 + 改名放在一张票里：先跑一遍「只改名」的编译，再搬端点
+
+**症状**：一次改完目录名 + 包名 + 15 条端点，编译错误混在一起分不清是改名漏了
+（`nous_ext::` 没换）还是端点搬错。
+
+**根因**：改名是**全局机械替换**（crate 标识、Cargo 依赖、`plugin.toml`、判据脚本里的
+路径字面量），搬家是**语义改动**；两者失败的信号长得一样。
+
+**怎么防**：先把改名做完、单独过一次 `cargo check --workspace --all-targets`（绿了再搬），
+要不要拆成两个提交随意 —— 关键是「改名没漏」这个信号别被搬家的错误淹掉。
+判据脚本里的路径字面量（`verify.sh` 的 spawn 哨兵、
+`docs/boundary-baseline.txt`、`*_endpoints.rs` 里 `workspace_root().join(...)`）
+改名时最容易漏 —— 它们不在 React/cargo 的视野里，只有 `verify.sh` 会红。

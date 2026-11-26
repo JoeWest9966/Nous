@@ -7,9 +7,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use nous_ext::audit::Provenance;
-use nous_ext::manifest::ArtifactMeta;
-use nous_ext::{HandleValue, Isolation, Limits, Runtime, RuntimeConfig};
+use nous_extend::audit::Provenance;
+use nous_extend::manifest::ArtifactMeta;
+use nous_extend::{HandleValue, Isolation, Limits, Runtime, RuntimeConfig};
 use nous_ext_sdk::manifest::Manifest;
 use serde_json::{json, Value};
 
@@ -33,7 +33,7 @@ impl Sandbox {
         let root = std::env::temp_dir().join(format!(
             "nous-ext-probe-{case}-{}-{}",
             std::process::id(),
-            nous_ext::runtime::now_ms()
+            nous_extend::runtime::now_ms()
         ));
         let _ = std::fs::remove_dir_all(&root);
         let exts = root.join("exts");
@@ -118,7 +118,7 @@ impl Sandbox {
         let _ = std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755));
         let bytes = std::fs::read(&target).expect("read artifact");
         let meta = ArtifactMeta {
-            hash: nous_ext::sha256::hex(&bytes),
+            hash: nous_extend::sha256::hex(&bytes),
             built_from: git_short(),
             build_machine: hostname(),
             protocol: 3,

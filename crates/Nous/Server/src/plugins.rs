@@ -25,6 +25,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_env::routes::routes::<Arc<AppState>>());
     all.extend(nous_combos::routes::<Arc<AppState>>());
     all.extend(nous_prompts::routes::routes::<Arc<AppState>>());
+    all.extend(nous_extend::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -87,6 +88,40 @@ impl nous_prompts::routes::Host for AppState {
 
     fn prompts_root(&self) -> std::path::PathBuf {
         nous_env::PROMPTS.resolve()
+    }
+}
+
+/// `Nous_Extend` 插件要的四件事：编辑页的私库句柄、管理面的盘面、运行时、以及「谁在用」。
+///
+/// 前三件是同一套扩展系统的三种取法，不是三份状态：`ext_repo` 是 git 面（私库键
+/// `extend`，URL 段却是 `extensions`）、`ext_admin` 是目录动作的盘面、`ext_runtime`
+/// 是进程监管。它们都由 `AppState` 装配一次注入，插件不自己造第二份。
+impl nous_extend::routes::Host for AppState {
+    fn ext_repo(&self) -> Option<Arc<nous_repo::Repo>> {
+        self.repo(nous_extend::routes::REPO_KEY)
+    }
+
+    fn ext_admin(&self) -> Option<&nous_extend::AdminStore> {
+        self.ext_admin()
+    }
+
+    fn ext_runtime(&self) -> Option<&Arc<nous_extend::Runtime>> {
+        self.ext()
+    }
+
+    /// 反查走 `SessionSource::usage`（会话记录归 `nous-durable`）。
+    /// 这里返回 `Result` 而不是 `Option`：搬前是 `?` 直传状态码，折成 `None`
+    /// 会把 500 变成「未装配」，那是一句假话。
+    fn ext_usage(&self) -> std::result::Result<
+        serde_json::Value,
+        nous_routes::HttpRefusal,
+    > {
+        self.source().usage("extensions").map_err(|error| {
+            nous_routes::HttpRefusal::new(
+                error.status().as_u16(),
+                serde_json::json!({ "error": error.message() }),
+            )
+        })
     }
 }
 

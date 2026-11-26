@@ -32,7 +32,7 @@ nous-presets-admin = { workspace = true }
 nous-prompts = { workspace = true }
 nous-skills = { workspace = true }
 nous-env-ssh = { workspace = true }
-nous-ext = { workspace = true }
+nous-extend = { workspace = true }
 nous-sessions = { workspace = true }
 data-data-manager = { workspace = true }
 data-archive = { workspace = true }
