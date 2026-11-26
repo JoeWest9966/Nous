@@ -508,7 +508,7 @@ async fn capabilities_declares_modules_and_reasons() {
         "skills",
         "Nous_Prompts",
         "Nous_Device",
-        "ext",
+        "Nous_Extend",
     ] {
         if name == "extensions" {
             continue; // 旧名不许出现；下面的断言单独钉死
@@ -551,17 +551,24 @@ async fn capabilities_declares_modules_and_reasons() {
             );
         }
     }
-    assert!(by_name.get("extensions").is_none(), "模块名是 ext，不是 extensions");
+    assert!(
+        !by_name.contains_key("extensions") && !by_name.contains_key("ext"),
+        "模块全名是 Nous_Extend（规则 12），URL 段才是 extensions"
+    );
     assert_eq!(by_name["sessions"]["enabled"], json!(true));
     // #60：presets 不再是 not_implemented，Desk「模板」页的 gate 才能打开。
     assert_eq!(by_name["presets"]["enabled"], json!(true));
     assert!(by_name["presets"].get("reason").is_none(), "enabled:true 不该带 reason");
-    // #81：扩展运行时解冻，声明必须带上真注册的两条端点。
-    assert_eq!(by_name["ext"]["enabled"], json!(true));
-    let ext_endpoints = by_name["ext"]["endpoints"].as_array().expect("ext 解冻后有 endpoints");
+    // #81：扩展运行时解冻；15 条端点已归 `Nous_Extend` 插件自带（搬家票）。
+    assert_eq!(by_name["Nous_Extend"]["enabled"], json!(true));
+    let ext_endpoints = by_name["Nous_Extend"]["endpoints"]
+        .as_array()
+        .expect("Nous_Extend 解冻后有 endpoints");
+    assert_eq!(ext_endpoints.len(), 15, "扩展 15 条端点（编辑 4 + 管理 9 + 清单/重载 2）");
     assert!(ext_endpoints.iter().any(|e| e == "GET /v1/extensions"));
     assert!(ext_endpoints.iter().any(|e| e == "POST /v1/extensions/reload"));
-    assert!(by_name["ext"].get("reason").is_none(), "enabled:true 不带 reason");
+    assert!(ext_endpoints.iter().any(|e| e == "PUT /v1/extensions/file"));
+    assert!(by_name["Nous_Extend"].get("reason").is_none(), "enabled:true 不带 reason");
     // #61：combos 也不再是 not_implemented，Desk「终极模板」页的 gate 才能打开。
     assert_eq!(by_name["combos"]["enabled"], json!(true));
     assert!(by_name["combos"].get("reason").is_none(), "enabled:true 不该带 reason");

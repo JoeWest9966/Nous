@@ -8,6 +8,8 @@ crate = "nous-extend"
 [requires]                 # cargo metadata 里的内部 workspace 依赖
 nous-durable = "^0.1"
 nous-ext-sdk = "^0.1"
+nous-repo = "^0.1"
+nous-routes = "^0.1"
 
 [provides]
 capability = "extend"

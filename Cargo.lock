@@ -1479,9 +1479,12 @@ dependencies = [
 name = "nous-extend"
 version = "0.1.34"
 dependencies = [
+ "axum",
  "libc",
  "nous-durable",
  "nous-ext-sdk",
+ "nous-repo",
+ "nous-routes",
  "serde",
  "serde_json",
  "tempfile",

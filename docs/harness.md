@@ -405,6 +405,7 @@ op 就发一帧" → 0 帧负向红。
 | `nous-skills` | `nous-env` `nous-repo` `nous-routes` | 技能插件：`SKILL.md` 解析层 + 自带 6 条 `/v1/skills*`；盘面规矩在 `nous_repo::entries`，与 `prompts` / `ext` 共用同一份 |
 | `nous-repo` | `nous-env` | 私库层：四套私库的文件读写与 git 发布。`Refusal`（`RepoError → 状态码` 的唯一翻译）也在这里 —— 它拥有 `RepoError`，翻译自己家的错误方向永远是对的 |
 | `nous-prompts` | `nous-env` `nous-repo` `nous-routes` | 模板插件：`PROMPT.md` + `nous.json` + `settings.json` 只读扫描与纯 `render()`，自带 6 条 `/v1/prompts*`（含 `GET /v1/prompts` 只读投影） |
+| `nous-extend` | `nous-durable` `nous-ext-sdk` `nous-repo` `nous-routes` | 扩展插件：一个扩展一个进程 + 帧协议 + 熔断 + 热重载，自带 15 条 `/v1/extensions*`（管理面 9 条 + 编辑页 4 条走 `nous_repo::entries`）；git 只在 `nous-repo` 里 spawn |
 
 **这张表不是许可证**：它只回答「这条边有没有人签字」，不替代判据 2（内核层不许依赖应用层）
 或判据 §1.1（`nous-app` 的 normal 依赖里不许有 `rusqlite` / `nous-chord`）。扩边只在实现真的

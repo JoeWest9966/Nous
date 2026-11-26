@@ -304,31 +304,31 @@
       ]
     },
     {
-      "name": "ext",
-      "version": "0.6.6",
+      "name": "Nous_Extend",
+      "version": "0.8.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
-      "crate": "`nous-ext`",
+      "crate": "`nous-extend`",
       "vendor": "Nous",
-      "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；`ext-host` 行是它后续的重划",
+      "description": "已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划",
       "enabled": true,
       "endpoints": [
+        "GET /v1/extensions",
+        "POST /v1/extensions/reload",
         "GET /v1/extensions/files",
         "GET /v1/extensions/file",
         "PUT /v1/extensions/file",
         "POST /v1/extensions/publish",
-        "GET /v1/extensions",
-        "POST /v1/extensions/reload",
         "POST /v1/extensions/create",
         "POST /v1/extensions/duplicate",
         "POST /v1/extensions/install",
         "POST /v1/extensions/uninstall",
         "GET /v1/extensions/categories",
         "POST /v1/extensions/categories",
+        "POST /v1/extensions/category",
         "GET /v1/extensions/trash",
-        "POST /v1/extensions/trash/purge",
-        "POST /v1/extensions/category"
+        "POST /v1/extensions/trash/purge"
       ]
     },
     {

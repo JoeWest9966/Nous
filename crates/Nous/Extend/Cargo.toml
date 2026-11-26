@@ -9,6 +9,12 @@ description = "扩展监管：一个扩展一个进程、帧通道、隔离、�
 [dependencies]
 nous-ext-sdk = { workspace = true }
 nous-durable = { workspace = true }
+# 自带 15 条 `/v1/extensions*` 端点（搬家票）：axum 挂路由，
+# nous-repo 是唯一的 git 调用面（编辑页的写锁 / etag / 提交都在里面），
+# nous-routes 只提供 Route 声明与 HTTP 回包壳。
+nous-repo = { workspace = true }
+nous-routes = { workspace = true }
+axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 libc = "0.2"

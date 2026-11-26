@@ -24,6 +24,7 @@ pub mod handle;
 pub mod install;
 pub mod manifest;
 pub mod nameplate;
+pub mod routes;
 pub mod runtime;
 pub mod sha256;
 pub mod spawn;

@@ -67,10 +67,6 @@ pub fn presets_root() -> std::path::PathBuf {
 }
 
 /// `GET /v1/extensions`：#81 真清单投影。没装配运行时就诚实回空数组。
-pub fn extensions(items: Option<&[Value]>) -> Value {
-    json!({ "items": items.unwrap_or(&[]) })
-}
-
 /// `GET /v1/triggers` 的投影（真行由路由从 store 读；无装配时回空表）。
 pub fn triggers(items: Vec<Value>) -> Value {
     json!({ "triggers": items, "root": Value::Null })
@@ -150,24 +146,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     RegisteredRoute { method: "GET", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "POST", path: "/v1/selection", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/device", module: "Nous_Device" },
-    // `skills` 的 6 条已搬进插件（`nous-skills` 的 `routes()` 声明），静态表只减不增。
-    RegisteredRoute { method: "GET", path: "/v1/extensions/files", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions/file", module: "ext" },
-    RegisteredRoute { method: "PUT", path: "/v1/extensions/file", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/publish", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions", module: "ext" },
-    // #81：热重载按盘上现状重装（不是原地假装修）。
-    RegisteredRoute { method: "POST", path: "/v1/extensions/reload", module: "ext" },
-    // #84：扩展人手动作（文件发布仍走 /v1/repos/extend/*）。
-    RegisteredRoute { method: "POST", path: "/v1/extensions/create", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/duplicate", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/install", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/uninstall", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions/categories", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/categories", module: "ext" },
-    RegisteredRoute { method: "GET", path: "/v1/extensions/trash", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/trash/purge", module: "ext" },
-    RegisteredRoute { method: "POST", path: "/v1/extensions/category", module: "ext" },
+    // `extensions` 的 15 条已搬进 `Nous_Extend` 插件（`nous-extend` 的 `routes()` 声明），
+    // 静态表只减不增。
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
     RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
     // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。

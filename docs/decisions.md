@@ -1382,3 +1382,47 @@ frontmatter 校验），那说明切分线画错了 —— 应当把那条分支
 （`deploy.sh` 按全名落盘），**旧产物里那份 `prompts.md` 要重新同步一次**，否则
 `GET /v1/plugins/Nous_Prompts/readme` 会回 404 `readme_not_installed`。这是改名的
 可观测代价，记在这里免得当成 bug。
+
+## 2026-11-26 扩展十五端点搬进插件（`Nous_Extend`）+ 改名 `ext` → `Extend`
+
+**为什么搬到插件里**：`ext` 早就是清单里的模块、crate 也一直在（`nous-ext`），
+只有端点在 `server` 里当转发层 —— 那是「模块存在、端点不归它」的最后几个漏网之一。
+搬完 `server/src/resource_admin.rs`（三仓共用骨架的最后一支）与 `ext_admin.rs`
+**两个文件整份消失**，扩展系统的「运行时 + HTTP 面」终于是同一个 crate。
+
+**接缝为什么比前几票厚（4 条宿主能力，不是 2 条）**：
+
+| 端点组 | 条数 | 要什么 | 为什么不能合并成一条能力 |
+|---|---|---|---|
+| 编辑页 `files`/`file`/`publish` | 4 | `nous_repo::Repo`（键 `extend`） | 写锁 / etag / git 提交都在 `nous-repo` 里，插件不许自己 spawn git |
+| 管理面 `create`/`duplicate`/`install`/`uninstall`/`categories`/`category`/`trash` | 9 | `AdminStore` 盘面 + `Runtime` | 目录动作在盘面、进程动作在运行时，**本来就是两件事**（`install` 两条都要） |
+| 清单 / 重载 | 2 | `Runtime` | 只读投影 + 按盘上现状重装 |
+| `?usage=1` | — | `Result<Value, HttpRefusal>` | 见下 |
+
+**`ext_usage` 返回 `Result` 而不是像 `skills_usage` 那样 `Option`**：搬前是
+`state.source().usage("extensions")?` —— 直传状态码（反查失败是 500）。折成 `None`
+会把 500 说成「未装配」，那是一句假话。Trait 方法返回插件的 `HttpRefusal` 是可行的，
+因为 `Host` 由宿主实现，宿主本来就有 `nous-routes`。
+
+**改名（规则 12）：`ext` → `Nous_Extend`，这是真改名，不是「改成全名」**。
+`prompts` 那次只动全名（目录/包名/capability 本来就对）；这次全名、vendor 之外的
+三套写法都要跟着变：
+
+- 目录 `crates/Nous/Ext` → `crates/Nous/Extend`
+- 包名 `nous-ext` → `nous-extend`，crate 标识 `nous_ext` → `nous_extend`
+- capability `ext` → `extend`（`check-plugins.sh` 要求它 == 目录名的小写机器名）
+- **URL 段 `/v1/extensions*` 和私库键 `extend` 一个字没动** —— 它们是「小写世界」，
+  跟全名不是一回事；`decisions.md` 2026-11-19 那条（`ext` 就是 `ext`，不是 `extensions`）
+  说的是清单/协议两处的命名分歧，改名不推翻它。
+
+**代价 / 反悔点**：
+
+1. `docs/plugin-versions.md` 的考古会因目录改名重算一次档案（规则 8 把「目录改名」
+   算身份变更 = minor，所以 `ext` 0.6.6 → `Nous_Extend` 0.8.0：改名一个 minor、
+   端点数一个 minor）。**别把它当 bug 修回 0.6.x。**
+2. `docs/plugins.md` 的 module 列从 `ext` 变成 `Nous_Extend`，NousDesk 的
+   `capability::module_matches` 认「全名」或「`_` 之后的尾段」—— `Feature::Ext`
+   登记的短名是 `ext`，**对不上 `Nous_Extend` 的尾段 `Extend`**。所以 Desk 侧要同步
+   把 `Feature::Ext::module_name()` 改成 `extend`（同票，Desk 分支）。不改的表现是
+   「功能页整块灰掉、理由是未登记」，不是崩 —— 但一样是 bug。
+3. 产物文档名从 `ext.md` 变成 `Nous_Extend.md`（`deploy.sh` 按全名落盘）。
