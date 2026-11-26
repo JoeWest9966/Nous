@@ -118,12 +118,7 @@ impl nous_extend::routes::Host for AppState {
         serde_json::Value,
         nous_routes::HttpRefusal,
     > {
-        self.source().usage("extensions").map_err(|error| {
-            nous_routes::HttpRefusal::new(
-                error.status().as_u16(),
-                serde_json::json!({ "error": error.message() }),
-            )
-        })
+        self.source().usage("extensions").map_err(refusal)
     }
 }
 
