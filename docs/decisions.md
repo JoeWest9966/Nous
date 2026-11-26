@@ -10,6 +10,21 @@
 
 ---
 
+## 2026-11-26 · 插件的错误类型就地定义，不做「公共 `AppError`」
+
+**决定**：`nous-sessions` 自带 `SessionError`（十个变体照抄 `ServerError`），`server` 侧写一层
+`From<SessionError> for ServerError` 接住过渡期的老调用点。
+
+**理由**：`SessionSource` / `CommandSource` / handler 三层必须共用同一种错误，而这三层都要搬进插件。
+「共用」有两个方向：要么把 `ServerError` 公共化（`nous-routes` 或新 crate），要么让拥有三层的
+那个 crate 自己定义。前者会让每个插件都有第二个「我该用哪个错误」的问题，而且 `ServerError`
+带着 `Validation{field, problem}` / `PreconditionFailed` / `Locked` 这些**私库与元素库**才有的语义 ——
+会话用不上，却要被迫认识。后者多一层 `From`，但每个插件只认识自己的那十个变体。
+
+**反悔点**：如果第三个插件的错误类型与 `ServerError` 逐字一致（十个变体一个不多一个不少），
+那就是三份重复，该提成 `nous_routes` 里的共用枚举（`HttpRefusal` 加上 `Conversion` 就行）。
+判据：`grep -c 'pub enum .*Error' crates/Nous/*/src/error.rs` 数到 3 就该翻。
+
 ## 2026-11-26 · `Refusal` 的富化格跟语义走，不跟 HTTP 壳走
 
 **决定**：`RepoError::Conflict` 的 `{content, etag}` 两格补进 `nous_repo::Refusal::body()`，
