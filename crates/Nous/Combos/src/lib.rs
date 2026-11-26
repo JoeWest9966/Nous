@@ -50,6 +50,68 @@ pub use store::{ComboStore, SECTIONS};
 /// 这个插件在注册表里的模块名（`docs/plugins.md` 的 module 列）。
 pub const MODULE: &str = "combos";
 
+
+/// 一条触发器的判定视图（`nous_dispatcher::SpecView` 的取法在插件里，不在宿主）。
+pub use nous_dispatcher::SpecView;
+
+/// 宿主能力：组合要的三件事。**一个方法一件事**，不多给。
+#[async_trait]
+pub trait Host: Send + Sync {
+    /// 两个盘面根：模板私库（组合段所在）与触发器名册。未装配回 `None`。
+    ///
+    /// `None` 时四条端点都回 409「combos not configured」——「还没有」，不是「没这个端点」。
+    fn combo_roots(&self) -> Option<ComboStore>;
+
+    /// 触发器定义快照里的一条判定视图。组合钉的 `trigger` 名就是触发器 `code`。
+    ///
+    /// 不在册 → 404（「组合钉的触发器不在了」）；触发器运行时未装配 → 503。
+    fn trigger_spec(&self, code: &str) -> Result<SpecView, HttpRefusal>;
+
+    /// 试跑判定用的时钟（epoch 毫秒）与「这条规则能不能由时钟点火」。
+    ///
+    /// 未装配 → 503，不假装判定过。
+    fn combo_clock(&self) -> Result<(i64, bool), HttpRefusal>;
+
+    /// 起一条会话并写血缘。`forced=false` = 经过了触发器，`true` = 手点 launch。
+    async fn launch_session(
+        &self,
+        ultimate: &str,
+        trigger: &str,
+        session_template: &str,
+        forced: bool,
+        at: i64,
+    ) -> Result<i64, HttpRefusal>;
+}
+
+/// `Arc<T>` 也是宿主：路由装进 `Router<Arc<AppState>>` 时不用再写一层转发。
+#[async_trait]
+impl<T: Host + ?Sized> Host for Arc<T> {
+    fn combo_roots(&self) -> Option<ComboStore> {
+        (**self).combo_roots()
+    }
+
+    fn trigger_spec(&self, code: &str) -> Result<SpecView, HttpRefusal> {
+        (**self).trigger_spec(code)
+    }
+
+    fn combo_clock(&self) -> Result<(i64, bool), HttpRefusal> {
+        (**self).combo_clock()
+    }
+
+    async fn launch_session(
+        &self,
+        ultimate: &str,
+        trigger: &str,
+        session_template: &str,
+        forced: bool,
+        at: i64,
+    ) -> Result<i64, HttpRefusal> {
+        (**self)
+            .launch_session(ultimate, trigger, session_template, forced, at)
+            .await
+    }
+}
+
 type EndpointResult = std::result::Result<Json<Value>, HttpRefusal>;
 
 /// 412：盘面版本号对不上（公共壳没有现成构造子，`new` + JSON 体）。
@@ -61,6 +123,7 @@ pub(crate) fn precondition_refusal(message: impl Into<String>) -> HttpRefusal {
 pub(crate) fn service_unavailable_refusal(message: impl Into<String>) -> HttpRefusal {
     HttpRefusal::new(503, json!({ "error": message.into() }))
 }
+
 
 /// 本插件的端点表。
 pub fn routes<H>() -> Vec<nous_routes::Route<H>>
