@@ -190,4 +190,7 @@ pub(crate) fn store_of<H: Host + ?Sized>(host: &H) -> Result<ComboStore, Refusal
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     // 复用 `nous_repo` 的 sha256（git 面里已经有一份，不另造第二套）。
     nous_repo::sha256(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
