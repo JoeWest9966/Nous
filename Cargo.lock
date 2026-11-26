@@ -1628,9 +1628,12 @@ name = "nous-sessions"
 version = "0.1.39"
 dependencies = [
  "async-trait",
+ "axum",
+ "futures",
  "nous-ai",
  "nous-device",
  "nous-durable",
+ "nous-routes",
  "nous-runtime",
  "nous-tools",
  "nous-wire",

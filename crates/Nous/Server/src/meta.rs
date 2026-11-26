@@ -89,6 +89,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // #68：只读目录浏览（env 插件）。
     // #76：变体（skills / extend）。
     // #77：上游追踪（sources + 10 条 upstream 动作）挂在 skills 私库上。
+    // sessions 的 17 条里 16 条已归插件；**这一条留在 server**（要宿主组装根与提示词注入）。
+    RegisteredRoute { method: "POST", path: "/v1/sessions/:id/messages", module: "sessions" },
     RegisteredRoute { method: "GET", path: "/v1/models", module: "Nous_Device" },
     RegisteredRoute { method: "PUT", path: "/v1/default", module: "Nous_Device" },
     RegisteredRoute { method: "POST", path: "/v1/catalog/refresh", module: "Nous_Device" },
