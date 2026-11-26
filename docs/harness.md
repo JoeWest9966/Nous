@@ -389,7 +389,7 @@ op 就发一帧" → 0 帧负向红。
 | 包 | 允许的 `nous-*` 直接依赖 | 出处 |
 |---|---|---|
 | `nous-telemetry` `nous-chord` `nous-wire` `nous-store` | 无 | 契约 / 语义 / 第二个库，零内部依赖（#56） |
-| `nous-env` | `nous-chord` | 路径与 shell 契约 |
+| `nous-env` | `nous-chord` `nous-routes` | 路径与 shell 契约 + 自带 `GET /v1/fs/dirs`（远端分支是宿主能力 trait：`nous-env-ssh` 的 requires 里有它，反向依赖成环） |
 | `nous-ai` | `nous-telemetry` `nous-ai-types` | provider trait 与纯类型 |
 | `nous-tools` | `nous-ai` `nous-env` | 第一方工具 |
 | `nous-runtime` | `nous-ai` | 执行绑定 |
