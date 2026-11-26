@@ -1,6 +1,6 @@
 name = "ext-probe"
 vendor = "Nous"
-version = "0.2.1"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；依赖改名 nous-ext → library-extend = patch）
+version = "0.2.2"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8；依赖改名 nous-extend → library-extend = patch）
 layer = "dev"          # 必须 == docs/plugins.md 的 layer 列
 crate = "nous-ext-probe"
 
