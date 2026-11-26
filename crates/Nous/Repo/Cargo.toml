@@ -4,12 +4,16 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "#75：四套私库的文件读写与 git 发布（platform 层，唯一 git 进程面）"
+description = "#75：私库的文件读写、git 发布与 /v1/repos/* 三十条端点（platform 层，唯一 git 进程面）"
 
 [dependencies]
 nous-env = { workspace = true }
+nous-routes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# 端点住在本 crate（Magento 2「模块自带 controller」）：`/v1/repos/*` 的 30 条。
+axum = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

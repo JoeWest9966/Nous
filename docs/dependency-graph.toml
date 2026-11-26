@@ -14,7 +14,8 @@ nous-env = ["nous-chord", "nous-routes"]
 
 # 私库层：`Refusal`（`RepoError → 状态码` 的唯一翻译）也在这里 —— 它拥有 `RepoError`，
 # 翻译自己家的错误，依赖方向永远是对的。放 `nous-routes` 会成环（`env → routes → repo → env`）。
-nous-repo = ["nous-env"]
+# 端点住在本 crate（`/v1/repos/*` 三十条）：路径解析走 nous-env，声明走 nous-routes。
+nous-repo = ["nous-env", "nous-routes"]
 nous-ai = ["nous-telemetry", "nous-ai-types"]
 nous-tools = ["nous-ai", "nous-env"]
 nous-runtime = ["nous-ai"]

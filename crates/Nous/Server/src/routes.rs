@@ -93,12 +93,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/_routes", get(routes_view));
     // 资源仓管理面（技能 / 提示词 / 扩展的编辑页）：文件读写 + 新建 + 发布，翻译层在独立模块。
     // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `element-models`）。
-    // #75：repo 路由挂在带 state 的 Router 上。
-    let router = crate::repos::attach(router);
     // #95：触发器工程面（n8qkkj 的宿主，路径与 `/v1/triggers` 定义面分开）。
     let router = router.merge(crate::trigger_projects::attach(Router::new()));
-    // #77：上游追踪挂在 skills 私库上；handler 在独立模块，共用这里的错误/选仓逻辑。
-    let router = crate::upstream::attach(router);
     // 插件自己的端点：`nous-routes` 的声明就是注册，注册表读的也是同一份。
     // `/v1/presets*` 的 32 条也走这条（#60 搬进 `Nous_PresetsAdmin`）：插件自带 handler，
     // 宿主只实现它的 `Host`（`plugins.rs`），未装配时插件自己回 409。

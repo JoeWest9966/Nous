@@ -26,6 +26,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(nous_combos::routes::<Arc<AppState>>());
     all.extend(nous_prompts::routes::routes::<Arc<AppState>>());
     all.extend(nous_extend::routes::routes::<Arc<AppState>>());
+    all.extend(nous_repo::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -213,6 +214,24 @@ impl nous_presets_admin::routes::Host for AppState {
 /// 状态码的分界（编目里没有 404 / 连不上 502 / 路径相对 400 / 没权限 403）在这里判一次，
 /// 装进公共壳 [`nous_routes::HttpRefusal`]。
 #[async_trait::async_trait]
+impl nous_repo::routes::Host for AppState {
+    fn repo(&self, kind: &str) -> Option<Arc<nous_repo::Repo>> {
+        AppState::repo(self, kind)
+    }
+
+    fn variant_table(&self, kind: &str) -> Option<std::path::PathBuf> {
+        AppState::variant_table(self, kind)
+    }
+
+    fn upstream_data(&self) -> Option<std::path::PathBuf> {
+        AppState::upstream_data(self)
+    }
+
+    fn source_usage(&self, field: &str) -> Result<serde_json::Value, nous_routes::HttpRefusal> {
+        self.source().usage(field).map_err(refusal)
+    }
+}
+
 impl nous_env::routes::Host for AppState {
     async fn remote_subdirs(
         &self,
