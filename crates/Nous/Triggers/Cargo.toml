@@ -1,0 +1,29 @@
+[package]
+name = "nous-triggers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "触发器：定义面（点火六步 / 观测读口 / 调度健康）+ 工程面（盘上的 cargo 项目与发布）（应用层）"
+
+[dependencies]
+# 定义与账本在 store；会话写入只走 durable 的 commands（不开第二条写通道）。
+nous-store = { workspace = true }
+nous-durable = { workspace = true }
+# faux 轮次驱动器（点火成功时顺手跑一轮 assistant）。
+nous-sessions = { workspace = true }
+nous-ai = { workspace = true }
+# 调度健康的真相：durable 里的 tick 记录。
+nous-dispatcher = { workspace = true }
+# 工程面：私库（唯一 git 进程面）+ 唯一的执行面（publish 要跑 cargo）。
+nous-repo = { workspace = true }
+nous-tools = { workspace = true }
+# 端点：Route 声明 + HTTP 回包壳。
+nous-routes = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

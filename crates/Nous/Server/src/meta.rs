@@ -67,10 +67,6 @@ pub fn presets_root() -> std::path::PathBuf {
 }
 
 /// `GET /v1/extensions`：#81 真清单投影。没装配运行时就诚实回空数组。
-/// `GET /v1/triggers` 的投影（真行由路由从 store 读；无装配时回空表）。
-pub fn triggers(items: Vec<Value>) -> Value {
-    json!({ "triggers": items, "root": Value::Null })
-}
 
 // ── 端点注册表：唯一真相（#47 拷问结果 §2/§4/§8 + #48 的 _routes）──────
 //
@@ -120,37 +116,8 @@ pub const ROUTES: &[RegisteredRoute] = &[
     // 静态表只减不增。
     // #85：统一搜索投影（sessions 正文 + documents），服务端一次扫描。
     RegisteredRoute { method: "GET", path: "/v1/search", module: "sessions" },
-    // #57：triggers 已落地，清单打开（GET 列表 + POST 点火）。
-    RegisteredRoute { method: "GET", path: "/v1/triggers", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/triggers", module: "triggers" },
-    // #80：trigger-catalog 管理面（新建 / 整份改 / 归档 / 捞回 / 真删 / 词表）。
-    RegisteredRoute { method: "GET", path: "/v1/triggers/categories", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/triggers/category", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/archive", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/restore", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/purge", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/triggers/{code}/fire", module: "triggers" },
-    // #58：观测读口 —— 每个触发器自己的账，可读（时间倒序）。
-    RegisteredRoute { method: "GET", path: "/v1/triggers/{code}/fires", module: "triggers" },
-    // #73：PATCH /v1/triggers/{code} —— 改 schedule/params/enabled，code 不可变。
-    RegisteredRoute { method: "PATCH", path: "/v1/triggers/{code}", module: "triggers" },
-    // #80：PUT /v1/triggers/{code} —— 整份改定义（schedule/on/params/session/enabled）。
-    RegisteredRoute { method: "PUT", path: "/v1/triggers/{code}", module: "triggers" },
-    // #95：触发器工程面（n8qkkj 的宿主）—— 盘上一个触发器一个 cargo 项目，
-    // 与上面「定义 + 调度 + 点火账」不是同一层。文件读写 / git / 归档在 nous_repo。
-    RegisteredRoute { method: "GET", path: "/v1/trigger-projects", module: "triggers" },
-    RegisteredRoute { method: "GET", path: "/v1/trigger-projects/files", module: "triggers" },
-    RegisteredRoute { method: "GET", path: "/v1/trigger-projects/file", module: "triggers" },
-    RegisteredRoute { method: "PUT", path: "/v1/trigger-projects/file", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/create", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/publish", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/archive", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/restore", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/purge", module: "triggers" },
-    RegisteredRoute { method: "GET", path: "/v1/trigger-projects/categories", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/categories", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/category", module: "triggers" },
-    RegisteredRoute { method: "POST", path: "/v1/trigger-projects/sync", module: "triggers" },
+    // 触发器的 24 条（定义面 11 + 工程面 13）已搬进 `Nous_Triggers` 插件
+    // （`nous-triggers` 的 `routes()` 声明），静态表只减不增。
     RegisteredRoute { method: "GET", path: "/v1/capabilities", module: "Nous_Device" },
     // 插件人话 README：正文随产物发布到 docs/plugins/，端点只读盘。
     // 归 `device`（不是"server"）：`_routes` / `capabilities` 只吐**清单里开着的模块**，
@@ -315,7 +282,7 @@ pub const MANIFEST: &[ManifestEntry] = &[
     ManifestEntry { name: "archive", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-archive`", description: "三条端点自带 handler（`crates/Data/Archive/src/routes.rs`）；供应商 `data`，包名 `data-archive`" },
     // #61：两条 combos 端点已落地；六列逐格取 docs/plugins.md 的 combos 行。
     ManifestEntry { name: "combos", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-combos`", description: "数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘" },
-    ManifestEntry { name: "triggers", reason: None, layer: Layer::App, kind: ModuleKind::External, required: false, crate_name: "—", description: "#57/#58 落地；调度节拍归 `dispatcher`" },
+    ManifestEntry { name: "Nous_Triggers", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`nous-triggers`", description: "#57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行" },
     ManifestEntry { name: "data-manager", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: false, crate_name: "`data-data-manager`", description: "归口监控六屏；与 `--check` 共读口，tasks 现算" },
     ManifestEntry { name: "Nous_Device", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-device`", description: "#65：从 server 提成独立插件；`/v1/models` 文件+内联来源，`PUT /v1/default` 原子写" },
     ManifestEntry { name: "Nous_Prompts", reason: None, layer: Layer::App, kind: ModuleKind::Compiled, required: true, crate_name: "`nous-prompts`", description: "默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `skills` / `ext` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点" },

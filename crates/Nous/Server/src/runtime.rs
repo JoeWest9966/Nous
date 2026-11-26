@@ -19,7 +19,10 @@ use crate::error::Result;
 use nous_device::{ModelItem, ModelRef, ModelsResponse};
 
 /// #51 钉死的假回复。测试与生产共用同一个常量，避免两边各写一份然后漂移。
-pub const FAUX_MODEL_ID: &str = "echo";
+///
+/// 模型 id 的**定义**搬到了 `nous-ai`（`FauxProvider` 在那里，点火路径也要用同一个
+/// id）；这里只转出去，让既有调用点一个字都不用改。
+pub use nous_ai::FAUX_MODEL_ID;
 pub const FAUX_REPLY: &str = "provider=faux model=echo（假回复，别当真）";
 
 /// `NOUS_PROVIDER` 的取值。除 `faux` 外一律走真装配。

@@ -4,12 +4,14 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "最小轮次（pi 本体）：一轮 = 流 → 工具 → 唯一写者 {result, mutations} → 一条提交"
+description = "最小轮次（pi 本体）+ 会话的读投影 / 写命令 / /v1/sessions* 端点：一轮 = 流 → 工具 → 唯一写者 {result, mutations} → 一条提交"
 
 [dependencies]
 nous-durable = { workspace = true }
 nous-wire = { workspace = true }
 nous-ai = { workspace = true }
+# `set_model_levels` 与 `CreateSessionRequest.model` 的形状（编目是 platform 层）。
+nous-device = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

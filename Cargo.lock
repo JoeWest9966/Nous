@@ -1597,6 +1597,7 @@ dependencies = [
  "nous-store",
  "nous-telemetry",
  "nous-tools",
+ "nous-triggers",
  "nous-wire",
  "rusqlite",
  "serde",
@@ -1688,6 +1689,25 @@ dependencies = [
  "tracing",
  "unicode-normalization",
  "uuid",
+]
+
+[[package]]
+name = "nous-triggers"
+version = "0.1.35"
+dependencies = [
+ "axum",
+ "nous-ai",
+ "nous-dispatcher",
+ "nous-durable",
+ "nous-repo",
+ "nous-routes",
+ "nous-sessions",
+ "nous-store",
+ "nous-tools",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

@@ -75,4 +75,5 @@ nous-fixture = { path = "crates/Nous/Fixture", version = "0.1.0" }
 data-data-manager = { path = "crates/Data/DataManager", version = "0.1.0" }
 data-archive = { path = "crates/Data/Archive", version = "0.1.0" }
 nous-store = { path = "crates/Nous/Store", version = "0.1.0" }
+nous-triggers = { path = "crates/Nous/Triggers", version = "0.1.0" }
 nous-dispatcher = { path = "crates/Nous/Dispatcher", version = "0.1.0" }

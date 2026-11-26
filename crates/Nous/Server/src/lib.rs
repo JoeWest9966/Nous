@@ -17,15 +17,17 @@
 #![forbid(unsafe_code)]
 
 pub mod app;
+
+// 会话的读投影 / 写命令 / 请求形状已经住进 `nous-sessions`（端点也要住那里）。
+// 这里重导出保持 `crate::commands::…` 的老写法有效，等 17 条端点搬完就只剩插件路径。
+pub use nous_sessions::{commands, records, source};
 pub mod auth;
 pub mod clock;
 pub mod coalesce;
-pub mod commands;
 pub mod error;
 pub mod hub;
 pub mod meta;
 pub mod models;
-pub mod records;
 pub mod observer;
 pub mod plugins;
 pub mod plugin_docs;
@@ -35,9 +37,6 @@ pub mod providers;
 pub mod routes;
 pub mod repos;
 pub mod runtime;
-pub mod source;
-pub mod trigger_projects;
-pub mod triggers;
 
 pub use app::AppState;
 pub use coalesce::{Framing, FRAME_INTERVAL};

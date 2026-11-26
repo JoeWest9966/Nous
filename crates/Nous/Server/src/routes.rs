@@ -45,14 +45,6 @@ use nous_device::ModelsResponse;
 use crate::records::CreateSessionRequest;
 use crate::source::SessionSource;
 
-/// epoch 毫秒（fire 与观测的时钟入口；store 层零时钟，时间都由这里传入）。
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or_default()
-}
-
 /// 装配路由。`state` 里的 `source` 决定数据从哪来，`commands` 决定写往哪去，
 /// `hub` 决定事件往哪扇。
 pub fn router(state: Arc<AppState>) -> Router {
@@ -76,15 +68,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/sessions/{id}/purge", post(purge))
         .route("/v1/selection", get(selection).post(write_selection))
         .route("/v1/search", get(search))
-        .route("/v1/triggers", get(triggers).post(crate::triggers::create_trigger))
-        .route("/v1/triggers/categories", get(crate::triggers::categories))
-        .route("/v1/triggers/category", axum::routing::post(crate::triggers::set_category))
-        .route("/v1/triggers/{code}/fire", post(fire_trigger))
-        .route("/v1/triggers/{code}/fires", get(trigger_fires))
-        .route("/v1/triggers/{code}/archive", axum::routing::post(crate::triggers::archive_trigger))
-        .route("/v1/triggers/{code}/restore", axum::routing::post(crate::triggers::restore_trigger))
-        .route("/v1/triggers/{code}/purge", axum::routing::post(crate::triggers::purge_trigger))
-        .route("/v1/triggers/{code}", axum::routing::patch(crate::triggers::patch_trigger).put(crate::triggers::put_trigger))
         .route("/v1/capabilities", get(capabilities))
         // 插件人话 README：随产物发布到 `<产物目录>/docs/plugins/`，运行时读盘（不进二进制）。
         .route("/v1/plugins/{name}/readme", get(crate::plugin_docs::readme))
@@ -93,8 +76,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/_routes", get(routes_view));
     // 资源仓管理面（技能 / 提示词 / 扩展的编辑页）：文件读写 + 新建 + 发布，翻译层在独立模块。
     // 模型入口：元素库里的约定组 → 编目投影（纯解析在 `element-models`）。
-    // #95：触发器工程面（n8qkkj 的宿主，路径与 `/v1/triggers` 定义面分开）。
-    let router = router.merge(crate::trigger_projects::attach(Router::new()));
     // 插件自己的端点：`nous-routes` 的声明就是注册，注册表读的也是同一份。
     // `/v1/presets*` 的 32 条也走这条（#60 搬进 `Nous_PresetsAdmin`）：插件自带 handler，
     // 宿主只实现它的 `Host`（`plugins.rs`），未装配时插件自己回 409。
@@ -341,80 +322,6 @@ async fn search(
         .map(|item| serde_json::to_value(item).expect("SearchItem is serializable"))
         .collect();
     Ok(Json(json!({ "items": items, "total": total, "truncated": truncated })))
-}
-
-/// `GET /v1/triggers`：观测清单 + 调度健康（#58）。装配了 store 就读真行；
-/// 空库仍回 `{triggers:[],root:null}`（#49 空表契约保留）。
-///
-/// body 与 CLI `nous-app --triggers` **同一个函数、同一份序列化**（#58 判据 4）。
-async fn triggers(State(state): State<Arc<AppState>>) -> Result<Json<Value>> {
-    let Some(runtime) = state.triggers() else {
-        // 没装配不等于没形状：scheduler 一样在场，只是诚实回空（#58 的顶层带调度健康）。
-        let mut report = crate::meta::triggers(Vec::new());
-        report["scheduler"] = json!({
-            "lastTickAt": Value::Null,
-            "lagMs": 0,
-            "tickMs": nous_store::SCHEDULER_TICK_MS,
-        });
-        return Ok(Json(report));
-    };
-    let store = runtime.store.lock().await;
-    // #73 / wire.md：心跳只读 durable 的 tick 记录。内存里有什么都不算，
-    // 没库、没行就是 null（CLI 更是直接传 None，不走内存兜底）。
-    let last_tick = runtime.load_last_tick_at();
-    let report = crate::triggers::observation_report(
-        &store,
-        &runtime.definitions(),
-        last_tick,
-        now_ms(),
-    )?;
-    Ok(Json(report))
-}
-
-/// `GET /v1/triggers/:code/fires`：这个触发器最近的账，时间倒序（#58）。
-/// 不存在的触发器 → 404 + `{error}`（不许空 200），判据 6。
-async fn trigger_fires(
-    State(state): State<Arc<AppState>>,
-    Path(code): Path<String>,
-    Query(limit): Query<FiresQuery>,
-) -> Result<Json<Value>> {
-    let runtime = match state.triggers() {
-        Some(runtime) => runtime,
-        None => return Err(ServerError::Conflict("triggers not configured".to_string())),
-    };
-    let store = runtime.store.lock().await;
-    let history = crate::triggers::fire_history(&store, &runtime.definitions(), &code, limit.limit())?;
-    Ok(Json(history))
-}
-
-/// `?limit=` 的查询参数：默认 50（票面值），上限 1000（`ENTRIES_MAX_LIMIT` 同一档）。
-#[derive(Debug, Deserialize)]
-struct FiresQuery {
-    limit: Option<i64>,
-}
-
-impl FiresQuery {
-    fn limit(&self) -> i64 {
-        self.limit.unwrap_or(DEFAULT_FIRE_HISTORY_LIMIT).clamp(1, ENTRIES_MAX_LIMIT as i64)
-    }
-}
-
-/// `?limit=` 的默认值与上限（票面 50；上限与 entries 同一档：`ENTRIES_MAX_LIMIT`）。
-const DEFAULT_FIRE_HISTORY_LIMIT: i64 = 50;
-
-/// `POST /v1/triggers/:code/fire`：手动点火。actor 从 token 派生（#50），现为 system。
-async fn fire_trigger(
-    State(state): State<Arc<AppState>>,
-    Path(code): Path<String>,
-) -> std::result::Result<Json<Value>, ServerError> {
-    let runtime = match state.triggers() {
-        Some(runtime) => runtime,
-        None => return Err(ServerError::Conflict("triggers not configured".to_string())),
-    };
-    let actor = nous_durable::actor::Actor::system("local");
-    let now_ms = now_ms();
-    let outcome = runtime.fire(&code, &actor, now_ms).await?;
-    Ok(Json(serde_json::to_value(&outcome).unwrap_or(Value::Null)))
 }
 
 /// `GET /v1/capabilities`：desk 按 modules 显示/隐藏功能面。

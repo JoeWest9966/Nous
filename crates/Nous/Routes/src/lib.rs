@@ -171,6 +171,21 @@ impl HttpRefusal {
     }
 }
 
+/// `Display` 打印回包里的那句人话（`{"error": …}`），CLI 侧直接 `?` 出去。
+///
+/// 没有实现的话，把端点共用函数（比如触发器观测读口）搬到插件之后，CLI 那一侧
+/// 就得为「同一份 JSON」再包一层 —— 那正是搬运票要消灭的东西。
+impl std::fmt::Display for HttpRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.body.get("error").and_then(serde_json::Value::as_str) {
+            Some(message) => f.write_str(message),
+            None => write!(f, "HTTP {}（回包没有 error 字段）", self.status),
+        }
+    }
+}
+
+impl std::error::Error for HttpRefusal {}
+
 impl axum::response::IntoResponse for HttpRefusal {
     fn into_response(self) -> axum::response::Response {
         let status = axum::http::StatusCode::from_u16(self.status)
