@@ -150,9 +150,9 @@ impl element_models::routes::Host for AppState {
 
 | 模块 | 存量 | 需要哪些宿主能力（预估） |
 |---|---|---|
-| `Nous_Device` | 8 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，**最后搬**（它们读注册表本身） |
+| `Device` | 8 | 剩下的编目/默认模型/`_routes`/`openapi` 等自省端点，**最后搬**（它们读注册表本身） |
 
-建议顺序：只剩 `Nous_Device` 一家（读注册表本身，**最后搬**）。
+建议顺序：只剩 `Device` 一家（读注册表本身，**最后搬**）。
 
 `_routes` / `capabilities` / `openapi` 三条**不要急着搬**：它们要读整张注册表，
 搬进 `device` 之前得先让「注册表」成为宿主能力（`Host::declarations()`），否则会成环。
