@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::Refusal;
+use nous_routes::HttpRefusal;
 
 /// 组合只活在终极模板那一段。`Session-Template` 的条目是「开一条会话用什么」，
 /// 没有触发器可言 —— 以前两段都扫，结果会话模板全带「这条没钉触发器」的假 `problem`。
@@ -104,16 +104,16 @@ impl ComboStore {
         &self.triggers
     }
 
-    fn section_path(&self, section: &str) -> Result<PathBuf, Refusal> {
+    fn section_path(&self, section: &str) -> Result<PathBuf, HttpRefusal> {
         if !SECTIONS.contains(&section) {
-            return Err(Refusal::bad_request(format!(
+            return Err(HttpRefusal::bad_request(format!(
                 "不认识的 section: {section}（只有 {}）", SECTIONS.join(", ")
             )));
         }
         Ok(self.root.join(section))
     }
 
-    fn file_path(&self, section: &str, name: &str) -> Result<PathBuf, Refusal> {
+    fn file_path(&self, section: &str, name: &str) -> Result<PathBuf, HttpRefusal> {
         if name.is_empty()
             || Path::new(name).file_name().and_then(|n| n.to_str()) != Some(name)
             || name == "."
@@ -121,12 +121,12 @@ impl ComboStore {
             || name.contains('/')
             || name.contains('\\')
         {
-            return Err(Refusal::bad_request(format!("非法的 name: {name:?}")));
+            return Err(HttpRefusal::bad_request(format!("非法的 name: {name:?}")));
         }
         let section_path = self.section_path(section)?;
         let dir = section_path.join(name);
         let real_root = fs::canonicalize(&self.root)
-            .map_err(|error| Refusal::internal(format!("realpath 数据根失败: {error}")))?;
+            .map_err(|error| HttpRefusal::internal(format!("realpath 数据根失败: {error}")))?;
         // 词法检查只挡 `../`；目录是仓内指向仓外的符号链接时只有 realpath 挡得住。
         // 写法照 crates/Nous/Repo/src/files.rs::safe_path：解析最长已存在的祖先，
         // 不存在的尾段逐段追加，逐段验符号链接。
@@ -135,38 +135,38 @@ impl ComboStore {
         while !ancestor.exists() {
             if let Some(part) = ancestor.file_name() { tail.push(part.to_os_string()); }
             if !ancestor.pop() || ancestor == Path::new("/") {
-                return Err(Refusal::bad_request(format!("路径逃出私库根: {section}/{name}")));
+                return Err(HttpRefusal::bad_request(format!("路径逃出私库根: {section}/{name}")));
             }
         }
         let mut resolved = fs::canonicalize(&ancestor)
-            .map_err(|error| Refusal::internal(format!("realpath 失败: {error}")))?;
+            .map_err(|error| HttpRefusal::internal(format!("realpath 失败: {error}")))?;
         if !resolved.starts_with(&real_root) {
-            return Err(Refusal::bad_request(format!("路径逃出私库根: {section}/{name}")));
+            return Err(HttpRefusal::bad_request(format!("路径逃出私库根: {section}/{name}")));
         }
         for part in tail.into_iter().rev() {
             resolved.push(part);
             if resolved.is_symlink() {
                 resolved = fs::canonicalize(&resolved)
-                    .map_err(|error| Refusal::internal(format!("realpath 失败: {error}")))?;
+                    .map_err(|error| HttpRefusal::internal(format!("realpath 失败: {error}")))?;
                 if !resolved.starts_with(&real_root) {
-                    return Err(Refusal::bad_request(format!("路径逃出私库根: {section}/{name}")));
+                    return Err(HttpRefusal::bad_request(format!("路径逃出私库根: {section}/{name}")));
                 }
             }
         }
         Ok(dir.join("preset.json"))
     }
 
-    fn scan(&self, section: &str) -> Result<Vec<ComboFile>, Refusal> {
+    fn scan(&self, section: &str) -> Result<Vec<ComboFile>, HttpRefusal> {
         let dir = self.section_path(section)?;
         self.scan_dir(&dir, section)
     }
 
     /// 扫一个目录（不管它是不是组合段）：`Session-Template` 作为**引用目标**也要扫。
-    fn scan_dir(&self, dir: &Path, label: &str) -> Result<Vec<ComboFile>, Refusal> {
+    fn scan_dir(&self, dir: &Path, label: &str) -> Result<Vec<ComboFile>, HttpRefusal> {
         let entries = match fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-            Err(error) => return Err(Refusal::internal(format!("扫 {label} 失败: {error}"))),
+            Err(error) => return Err(HttpRefusal::internal(format!("扫 {label} 失败: {error}"))),
         };
         let mut out = Vec::new();
         for entry in entries.flatten() {
@@ -188,12 +188,12 @@ impl ComboStore {
         Ok(out)
     }
 
-    pub(crate) fn one(&self, section: &str, name: &str) -> Result<ComboFile, Refusal> {
+    pub(crate) fn one(&self, section: &str, name: &str) -> Result<ComboFile, HttpRefusal> {
         let path = self.file_path(section, name)?;
         let bytes = fs::read(&path)
-            .map_err(|_| Refusal::not_found(format!("组合不存在: {section}/{name}")))?;
+            .map_err(|_| HttpRefusal::not_found(format!("组合不存在: {section}/{name}")))?;
         let body = serde_json::from_slice(&bytes)
-            .map_err(|error| Refusal::bad_request(format!("preset.json 坏了: {error}")))?;
+            .map_err(|error| HttpRefusal::bad_request(format!("preset.json 坏了: {error}")))?;
         Ok(ComboFile { name: name.to_string(), bytes, body })
     }
 
@@ -215,7 +215,7 @@ impl ComboStore {
     ///
     /// **不经过 `section_path`**：`Session-Template` 不是组合段，但它是组合的引用目标，
     /// 这里只需要把那一堆目录名字扫出来。
-    pub(crate) fn session_names(&self) -> Result<BTreeSet<String>, Refusal> {
+    pub(crate) fn session_names(&self) -> Result<BTreeSet<String>, HttpRefusal> {
         let dir = self.root.join("Session-Template");
         Ok(self
             .scan_dir(&dir, "Session-Template")?
@@ -224,7 +224,7 @@ impl ComboStore {
             .collect())
     }
 
-    pub(crate) fn roster(&self, section: &str) -> Result<Value, Refusal> {
+    pub(crate) fn roster(&self, section: &str) -> Result<Value, HttpRefusal> {
         let triggers = self.trigger_names();
         let sessions = self.session_names()?;
         let items = self.scan(section)?
@@ -235,7 +235,7 @@ impl ComboStore {
     }
 
     /// 写穿 `spec.enabled` 一位；只动这一条组合的这一位。
-    pub(crate) fn patch(&self, section: &str, name: &str, enabled: bool, if_match: &str, request_id: &str) -> Result<Value, Refusal> {
+    pub(crate) fn patch(&self, section: &str, name: &str, enabled: bool, if_match: &str, request_id: &str) -> Result<Value, HttpRefusal> {
         // 幂等优先于版本号：客户端拿第一次的 If-Match 重放同一 requestId 时，
         // 盘面已经变了也不能再回 412 —— 那等于让幂等锚失效（坑 99）。
         if let Some(previous) = self.receipt(section, name, request_id)? {
@@ -243,27 +243,24 @@ impl ComboStore {
         }
         let file = self.one(section, name)?;
         if file.version() != if_match {
-            return Err(Refusal::new(
-                axum::http::StatusCode::PRECONDITION_FAILED,
-                format!("版本不匹配：期望 {if_match}，盘上是 {}", file.version()),
-            ));
+            return Err(fn_precondition(format!("版本不匹配：期望 {if_match}，盘上是 {}", file.version())));
         }
         let mut body = file.body.clone();
         // `spec` 是引擎的扩展位：旧条目（0.1.7 之前写下的）没有这个键。
         // 缺了就补一个空对象再写 —— 不要回 400 把人挡在门外（那 5 条老模板就这样）。
         let object = body.as_object_mut().ok_or_else(|| {
-            Refusal::bad_request("preset.json 必须是 JSON 对象".to_string())
+            HttpRefusal::bad_request("preset.json 必须是 JSON 对象".to_string())
         })?;
         let spec = object
             .entry("spec".to_string())
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or_else(|| {
-                Refusal::bad_request("preset.json 的 spec 不是对象".to_string())
+                HttpRefusal::bad_request("preset.json 的 spec 不是对象".to_string())
             })?;
         spec.insert("enabled".to_string(), json!(enabled));
         let bytes = serde_json::to_vec_pretty(&body)
-            .map_err(|error| Refusal::internal(format!("序列化 preset.json: {error}")))?;
+            .map_err(|error| HttpRefusal::internal(format!("序列化 preset.json: {error}")))?;
         let written = ComboFile { name: name.to_string(), bytes: bytes.clone(), body };
         let triggers = self.trigger_names();
         let sessions = self.session_names()?;
@@ -273,16 +270,16 @@ impl ComboStore {
         // （删掉刚写的回执），重放必回到「变更未发生」的原点，不会拿到半截回执。
         self.remember(section, name, request_id, &receipt)?;
         let path = self.file_path(section, name)?;
-        let dir = path.parent().ok_or_else(|| Refusal::internal("没有父目录"))?;
+        let dir = path.parent().ok_or_else(|| HttpRefusal::internal("没有父目录"))?;
         let temp = dir.join(".preset.json.tmp");
-        let write_result = (|| -> Result<(), Refusal> {
+        let write_result = (|| -> Result<(), HttpRefusal> {
             if std::env::var("NOUS_TEST_COMBOS_WRITE_FAIL").as_deref() == Ok("1") {
-                return Err(Refusal::internal("injected preset write failure"));
+                return Err(HttpRefusal::internal("injected preset write failure"));
             }
             fs::write(&temp, &bytes)
-                .map_err(|error| Refusal::internal(format!("写临时文件失败: {error}")))?;
+                .map_err(|error| HttpRefusal::internal(format!("写临时文件失败: {error}")))?;
             fs::rename(&temp, &path)
-                .map_err(|error| Refusal::internal(format!("原子替换失败: {error}")))?;
+                .map_err(|error| HttpRefusal::internal(format!("原子替换失败: {error}")))?;
             Ok(())
         })();
         if let Err(error) = write_result {
@@ -294,11 +291,11 @@ impl ComboStore {
     }
 
     /// #82：动作（fire / launch）的幂等回执，与 PATCH 共用同一份盘面目录。
-    pub(crate) fn action_receipt(&self, name: &str, request_id: &str) -> Result<Option<Value>, Refusal> {
+    pub(crate) fn action_receipt(&self, name: &str, request_id: &str) -> Result<Option<Value>, HttpRefusal> {
         self.receipt("Ultimate-Template", name, request_id)
     }
 
-    pub(crate) fn remember_action(&self, name: &str, request_id: &str, receipt: &Value) -> Result<(), Refusal> {
+    pub(crate) fn remember_action(&self, name: &str, request_id: &str, receipt: &Value) -> Result<(), HttpRefusal> {
         self.remember("Ultimate-Template", name, request_id, receipt)
     }
 
@@ -306,24 +303,24 @@ impl ComboStore {
         self.root.join(RECEIPTS_DIR).join(section).join(name)
     }
 
-    fn receipt(&self, section: &str, name: &str, request_id: &str) -> Result<Option<Value>, Refusal> {
+    fn receipt(&self, section: &str, name: &str, request_id: &str) -> Result<Option<Value>, HttpRefusal> {
         let path = self.receipt_dir(section, name).join(format!("{request_id}.json"));
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(Refusal::internal(format!("读回执失败: {error}"))),
+            Err(error) => return Err(HttpRefusal::internal(format!("读回执失败: {error}"))),
         };
         let value = serde_json::from_slice(&bytes)
-            .map_err(|error| Refusal::internal(format!("回执坏了: {error}")))?;
+            .map_err(|error| HttpRefusal::internal(format!("回执坏了: {error}")))?;
         Ok(Some(value))
     }
 
-    fn remember(&self, section: &str, name: &str, request_id: &str, receipt: &Value) -> Result<(), Refusal> {
+    fn remember(&self, section: &str, name: &str, request_id: &str, receipt: &Value) -> Result<(), HttpRefusal> {
         let dir = self.receipt_dir(section, name);
         fs::create_dir_all(&dir)
-            .map_err(|error| Refusal::internal(format!("建回执目录失败: {error}")))?;
+            .map_err(|error| HttpRefusal::internal(format!("建回执目录失败: {error}")))?;
         fs::write(dir.join(format!("{request_id}.json")), serde_json::to_vec(receipt).unwrap())
-            .map_err(|error| Refusal::internal(format!("记回执失败: {error}")))?;
+            .map_err(|error| HttpRefusal::internal(format!("记回执失败: {error}")))?;
         Ok(())
     }
 }

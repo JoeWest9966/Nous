@@ -125,7 +125,7 @@ impl data_archive::routes::Host for AppState {
         &self,
         session: i64,
         at: i64,
-    ) -> Result<nous_durable::session::commands::ArchiveResult, data_archive::routes::Refusal> {
+    ) -> Result<nous_durable::session::commands::ArchiveResult, nous_routes::HttpRefusal> {
         self.commands()
             .archive(session, at, None)
             .await
@@ -134,7 +134,7 @@ impl data_archive::routes::Host for AppState {
 
     async fn archive_generations(
         &self,
-    ) -> Result<Vec<nous_durable::storage::archive::Generation>, data_archive::routes::Refusal> {
+    ) -> Result<Vec<nous_durable::storage::archive::Generation>, nous_routes::HttpRefusal> {
         self.commands().archives().await.map_err(refusal)
     }
 
@@ -143,7 +143,7 @@ impl data_archive::routes::Host for AppState {
         session: i64,
         gen: String,
         at: i64,
-    ) -> Result<nous_durable::session::commands::RestoreResult, data_archive::routes::Refusal> {
+    ) -> Result<nous_durable::session::commands::RestoreResult, nous_routes::HttpRefusal> {
         self.commands()
             .restore(session, gen, at)
             .await
@@ -151,9 +151,12 @@ impl data_archive::routes::Host for AppState {
     }
 }
 
-/// `ServerError` → 插件侧的拒绝理由：状态码与文案逐字搬过去（不在这里换口径）。
-fn refusal(error: crate::ServerError) -> data_archive::routes::Refusal {
-    data_archive::routes::Refusal::new(error.status(), error.message())
+/// `ServerError` → 公共壳 [`nous_routes::HttpRefusal`]：状态码与文案逐字搬过去（不在这里换口径）。
+fn refusal(error: crate::ServerError) -> nous_routes::HttpRefusal {
+    nous_routes::HttpRefusal::new(
+        error.status().as_u16(),
+        serde_json::json!({ "error": error.message() }),
+    )
 }
 
 /// `Nous_PresetsAdmin` 要的那一件事：模板私库根 + 插件库 + 外部名册根。
@@ -173,7 +176,7 @@ impl nous_presets_admin::routes::Host for AppState {
 /// 注入 —— 这也是它本来就该有的方向：契约层不知道有几个实现、更不知道远端用什么连。
 ///
 /// 状态码的分界（编目里没有 404 / 连不上 502 / 路径相对 400 / 没权限 403）在这里判一次，
-/// 插件只把 [`nous_env::routes::Refusal`] 翻成 HTTP。
+/// 装进公共壳 [`nous_routes::HttpRefusal`]。
 #[async_trait::async_trait]
 impl nous_env::routes::Host for AppState {
     async fn remote_subdirs(
@@ -182,33 +185,23 @@ impl nous_env::routes::Host for AppState {
         path: &str,
         include_hidden: bool,
         limit: usize,
-    ) -> Result<nous_env::BrowseDirs, nous_env::routes::Refusal> {
-        use nous_env::routes::Refusal;
+    ) -> Result<nous_env::BrowseDirs, nous_routes::HttpRefusal> {
         use nous_env_ssh::RemoteDirsError;
+        let refused = |status: u16, message: String| {
+            nous_routes::HttpRefusal::new(status, serde_json::json!({ "error": message }))
+        };
         nous_env_ssh::remote_subdirs(machine, path, include_hidden, limit)
             .await
             .map_err(|error| match error {
-                RemoteDirsError::MachineNotFound => {
-                    Refusal::new(StatusCode::NOT_FOUND, "机器不在编目里")
-                }
-                RemoteDirsError::Unreachable(message) => {
-                    Refusal::new(StatusCode::BAD_GATEWAY, message)
-                }
-                RemoteDirsError::RelativePath => {
-                    Refusal::new(StatusCode::BAD_REQUEST, "path 必须是绝对路径")
-                }
-                RemoteDirsError::NotFound => {
-                    Refusal::new(StatusCode::NOT_FOUND, "远端目录不存在")
-                }
+                RemoteDirsError::MachineNotFound => refused(404, "机器不在编目里".into()),
+                RemoteDirsError::Unreachable(message) => refused(502, message),
+                RemoteDirsError::RelativePath => refused(400, "path 必须是绝对路径".into()),
+                RemoteDirsError::NotFound => refused(404, "远端目录不存在".into()),
                 RemoteDirsError::PermissionDenied => {
-                    Refusal::new(StatusCode::FORBIDDEN, "没有权限读这个远端目录")
+                    refused(403, "没有权限读这个远端目录".into())
                 }
-                RemoteDirsError::NotDirectory => {
-                    Refusal::new(StatusCode::BAD_REQUEST, "path 不是目录")
-                }
-                RemoteDirsError::Other => {
-                    Refusal::new(StatusCode::INTERNAL_SERVER_ERROR, "远端目录读不出来")
-                }
+                RemoteDirsError::NotDirectory => refused(400, "path 不是目录".into()),
+                RemoteDirsError::Other => refused(500, "远端目录读不出来".into()),
             })
     }
 }
@@ -223,16 +216,16 @@ impl nous_combos::Host for AppState {
         self.combos().cloned()
     }
 
-    fn trigger_spec(&self, code: &str) -> Result<nous_combos::SpecView, nous_combos::Refusal> {
+    fn trigger_spec(&self, code: &str) -> Result<nous_combos::SpecView, nous_routes::HttpRefusal> {
         let runtime = self.triggers().ok_or_else(|| {
-            nous_combos::Refusal::service_unavailable("triggers not configured")
+            nous_combos::fn_service_unavailable("triggers not configured")
         })?;
         let definitions = runtime.definitions();
         let trigger = definitions
             .iter()
             .find(|definition| definition.code() == code)
             .ok_or_else(|| {
-                nous_combos::Refusal::not_found(format!("组合钉的触发器 `{code}` 不在册"))
+                nous_routes::HttpRefusal::not_found(format!("组合钉的触发器 `{code}` 不在册"))
             })?;
         let spec = trigger.spec();
         Ok(nous_combos::SpecView {
@@ -242,9 +235,9 @@ impl nous_combos::Host for AppState {
         })
     }
 
-    fn combo_clock(&self) -> Result<(i64, bool), nous_combos::Refusal> {
+    fn combo_clock(&self) -> Result<(i64, bool), nous_routes::HttpRefusal> {
         let action = self.combo_action().ok_or_else(|| {
-            nous_combos::Refusal::service_unavailable("combo action clock not configured")
+            nous_combos::fn_service_unavailable("combo action clock not configured")
         })?;
         Ok((action.clock.now_ms() as i64, action.clock_allowed))
     }
@@ -256,10 +249,10 @@ impl nous_combos::Host for AppState {
         session_template: &str,
         forced: bool,
         at: i64,
-    ) -> Result<i64, nous_combos::Refusal> {
+    ) -> Result<i64, nous_routes::HttpRefusal> {
         use nous_durable::session::commands::{record_origin, OriginRecord};
         let durable = self.durable_session().ok_or_else(|| {
-            nous_combos::Refusal::conflict("combos actions need a durable session")
+            nous_routes::HttpRefusal::conflict("combos actions need a durable session")
         })?;
         let created = durable
             .create_conversation(serde_json::json!({
@@ -268,13 +261,13 @@ impl nous_combos::Host for AppState {
             }))
             .await
             .map_err(|error| {
-                nous_combos::Refusal::internal(format!("create_conversation: {error}"))
+                nous_routes::HttpRefusal::internal(format!("create_conversation: {error}"))
             })?;
         let session = created
             .get("id")
             .and_then(serde_json::Value::as_i64)
             .ok_or_else(|| {
-                nous_combos::Refusal::internal("create_conversation 没回 id")
+                nous_routes::HttpRefusal::internal("create_conversation 没回 id")
             })?;
         record_origin(
             &durable,
@@ -287,7 +280,7 @@ impl nous_combos::Host for AppState {
             },
         )
         .await
-        .map_err(|error| nous_combos::Refusal::internal(format!("record_origin: {error}")))?;
+        .map_err(|error| nous_routes::HttpRefusal::internal(format!("record_origin: {error}")))?;
         Ok(session)
     }
 }

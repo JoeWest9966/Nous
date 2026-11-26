@@ -37,10 +37,10 @@ pub const MODULE: &str = "archive";
 #[async_trait]
 pub trait Host: Send + Sync {
     /// `POST /v1/sessions/{id}/archive`：闭包复印进 gen 文件 + 写墓碑。
-    async fn archive_session(&self, session: i64, at: i64) -> Result<ArchiveResult, Refusal>;
+    async fn archive_session(&self, session: i64, at: i64) -> Result<ArchiveResult, nous_routes::HttpRefusal>;
 
     /// `GET /v1/archive`：世代列表 + 墓碑 + live。
-    async fn archive_generations(&self) -> Result<Vec<Generation>, Refusal>;
+    async fn archive_generations(&self) -> Result<Vec<Generation>, nous_routes::HttpRefusal>;
 
     /// `POST /v1/archive/{id}/restore`：从 gen 文件打捞回活库并抹墓碑。
     async fn restore_session(
@@ -48,17 +48,17 @@ pub trait Host: Send + Sync {
         session: i64,
         gen: String,
         at: i64,
-    ) -> Result<RestoreResult, Refusal>;
+    ) -> Result<RestoreResult, nous_routes::HttpRefusal>;
 }
 
 /// `Arc<T>` 也是宿主：路由装进 `Router<Arc<AppState>>` 时不用再写一层转发。
 #[async_trait]
 impl<T: Host + ?Sized> Host for Arc<T> {
-    async fn archive_session(&self, session: i64, at: i64) -> Result<ArchiveResult, Refusal> {
+    async fn archive_session(&self, session: i64, at: i64) -> Result<ArchiveResult, nous_routes::HttpRefusal> {
         (**self).archive_session(session, at).await
     }
 
-    async fn archive_generations(&self) -> Result<Vec<Generation>, Refusal> {
+    async fn archive_generations(&self) -> Result<Vec<Generation>, nous_routes::HttpRefusal> {
         (**self).archive_generations().await
     }
 
@@ -67,62 +67,18 @@ impl<T: Host + ?Sized> Host for Arc<T> {
         session: i64,
         gen: String,
         at: i64,
-    ) -> Result<RestoreResult, Refusal> {
+    ) -> Result<RestoreResult, nous_routes::HttpRefusal> {
         (**self).restore_session(session, gen, at).await
     }
 }
 
-/// 一条端点的拒绝理由：状态码 + `{"error": …}`。
-///
-/// 只带「已经决定好的状态码」：409 与 400 的分界由宿主（它认识命令层）判，
-/// 插件不重算第二遍语义。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Refusal {
-    pub status: StatusCode,
-    pub message: String,
-}
-
-impl Refusal {
-    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self { status, message: message.into() }
-    }
-
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::BAD_REQUEST, message)
-    }
-
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::NOT_FOUND, message)
-    }
-
-    pub fn conflict(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::CONFLICT, message)
-    }
-
-    pub fn internal(message: impl Into<String>) -> Self {
-        Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
-    }
-
-    /// 状态码 + `{"error": …}` 这一对。分支只有一处，测试与 `IntoResponse` 共用。
-    fn split(self) -> (StatusCode, Value) {
-        (self.status, json!({ "error": self.message }))
-    }
-}
-
-impl axum::response::IntoResponse for Refusal {
-    fn into_response(self) -> axum::response::Response {
-        let (status, body) = self.split();
-        (status, Json(body)).into_response()
-    }
-}
-
-type EndpointResult = std::result::Result<Json<Value>, Refusal>;
+type EndpointResult = std::result::Result<Json<Value>, nous_routes::HttpRefusal>;
 
 /// 路径里的 id 用字符串接再自己 parse —— 让 axum 的 `Path<i64>` 拒掉会吐一段纯文本，
 /// 破坏 `{error}` 的形状。文案与搬家前逐字一致。
-fn parse_session(raw: &str) -> std::result::Result<i64, Refusal> {
+fn parse_session(raw: &str) -> std::result::Result<i64, nous_routes::HttpRefusal> {
     raw.parse::<i64>()
-        .map_err(|_| Refusal::bad_request(format!("session id is not a number: {raw:?}")))
+        .map_err(|_| nous_routes::HttpRefusal::bad_request(format!("session id is not a number: {raw:?}")))
 }
 
 /// epoch 毫秒。时间由端点注入，命令层零时钟。
@@ -203,10 +159,10 @@ async fn restore<H: Host + Clone + Send + Sync + 'static>(
 ) -> EndpointResult {
     let id = parse_session(&id)?;
     let body: RestoreBody = if body.is_empty() {
-        return Err(Refusal::bad_request("gen is required"));
+        return Err(nous_routes::HttpRefusal::bad_request("gen is required"));
     } else {
         serde_json::from_slice(&body)
-            .map_err(|error| Refusal::bad_request(format!("restore body: {error}")))?
+            .map_err(|error| nous_routes::HttpRefusal::bad_request(format!("restore body: {error}")))?
     };
     let result = host.restore_session(id, body.gen, now_ms()).await?;
     Ok(Json(json!({
@@ -241,7 +197,7 @@ mod tests {
     #[derive(Clone)]
     struct FakeHost {
         generations: Vec<Generation>,
-        refuse_archive: Option<Refusal>,
+        refuse_archive: Option<nous_routes::HttpRefusal>,
     }
 
     impl FakeHost {
@@ -252,14 +208,14 @@ mod tests {
 
     #[async_trait]
     impl Host for FakeHost {
-        async fn archive_session(&self, session: i64, _at: i64) -> Result<ArchiveResult, Refusal> {
+        async fn archive_session(&self, session: i64, _at: i64) -> Result<ArchiveResult, nous_routes::HttpRefusal> {
             if let Some(refusal) = self.refuse_archive.clone() {
                 return Err(refusal);
             }
             Ok(ArchiveResult { gen: "20261125".to_string(), ids: vec![session], rows: 3 })
         }
 
-        async fn archive_generations(&self) -> Result<Vec<Generation>, Refusal> {
+        async fn archive_generations(&self) -> Result<Vec<Generation>, nous_routes::HttpRefusal> {
             Ok(self.generations.clone())
         }
 
@@ -268,7 +224,7 @@ mod tests {
             session: i64,
             gen: String,
             _at: i64,
-        ) -> Result<RestoreResult, Refusal> {
+        ) -> Result<RestoreResult, nous_routes::HttpRefusal> {
             Ok(RestoreResult { restored: vec![session], gen, rows: 5 })
         }
     }
@@ -302,7 +258,7 @@ mod tests {
     #[tokio::test]
     async fn a_host_refusal_keeps_its_own_status() {
         let host = FakeHost {
-            refuse_archive: Some(Refusal::conflict("session 1 忙，不能归档")),
+            refuse_archive: Some(nous_routes::HttpRefusal::conflict("session 1 忙，不能归档")),
             ..FakeHost::empty()
         };
         let refusal = archive(State(host), Path("1".to_string())).await.unwrap_err();

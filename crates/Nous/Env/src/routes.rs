@@ -27,6 +27,8 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use nous_routes::HttpRefusal;
+
 use crate::dirs::{is_local_machine, list_subdirs, BrowseDirs, BrowseError};
 
 /// 这个插件在注册表里的模块名（`docs/plugins.md` 的 module 列）。
@@ -47,7 +49,7 @@ pub trait Host: Send + Sync {
         path: &str,
         include_hidden: bool,
         limit: usize,
-    ) -> Result<BrowseDirs, Refusal>;
+    ) -> Result<BrowseDirs, HttpRefusal>;
 }
 
 /// `Arc<T>` 也是宿主：路由装进 `Router<Arc<AppState>>` 时不用再写一层转发。
@@ -59,45 +61,14 @@ impl<T: Host + ?Sized> Host for Arc<T> {
         path: &str,
         include_hidden: bool,
         limit: usize,
-    ) -> Result<BrowseDirs, Refusal> {
+    ) -> Result<BrowseDirs, HttpRefusal> {
         (**self)
             .remote_subdirs(machine, path, include_hidden, limit)
             .await
     }
 }
 
-/// 一条端点的拒绝理由：状态码 + `{"error": …}`。
-///
-/// 只带「已经决定好的状态码」：远端那条分支的 404 / 502 / 403 分界由宿主判（它认识
-/// 机器编目与 ssh 层），插件不重算第二遍语义。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Refusal {
-    pub status: StatusCode,
-    pub message: String,
-}
-
-impl Refusal {
-    pub fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self {
-            status,
-            message: message.into(),
-        }
-    }
-
-    /// 状态码 + `{"error": …}` 这一对。分支只有一处，测试与 `IntoResponse` 共用。
-    fn split(self) -> (StatusCode, Value) {
-        (self.status, json!({ "error": self.message }))
-    }
-}
-
-impl axum::response::IntoResponse for Refusal {
-    fn into_response(self) -> axum::response::Response {
-        let (status, body) = self.split();
-        (status, Json(body)).into_response()
-    }
-}
-
-impl From<BrowseError> for Refusal {
+impl From<BrowseError> for HttpRefusal {
     /// 本地分支的五种失败。文案与搬家前 `server::routes::fs_dirs_error` 逐字一致。
     fn from(error: BrowseError) -> Self {
         match error {
@@ -114,7 +85,7 @@ impl From<BrowseError> for Refusal {
     }
 }
 
-type EndpointResult = std::result::Result<Json<Value>, Refusal>;
+type EndpointResult = std::result::Result<Json<Value>, HttpRefusal>;
 
 /// 本插件的端点表。
 pub fn routes<H>() -> Vec<nous_routes::Route<H>>

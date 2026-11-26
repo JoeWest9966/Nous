@@ -15,9 +15,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::store::{view, ComboFile, ComboStore};
-use crate::{store_of, Host, Refusal, SpecView};
+use crate::{store_of, Host, SpecView};
+use nous_routes::HttpRefusal;
 
-type EndpointResult = std::result::Result<Json<Value>, Refusal>;
+type EndpointResult = std::result::Result<Json<Value>, HttpRefusal>;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,7 +50,7 @@ where
 {
     let store = store_of(&host)?;
     let body: PatchBody = serde_json::from_slice(&body)
-        .map_err(|error| Refusal::bad_request(format!("patch body: {error}")))?;
+        .map_err(|error| HttpRefusal::bad_request(format!("patch body: {error}")))?;
     let if_match = headers
         .get(axum::http::header::IF_MATCH)
         .and_then(|value| value.to_str().ok())
@@ -59,7 +60,7 @@ where
         .request_id
         .as_deref()
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| Refusal::bad_request("requestId is required"))?
+        .ok_or_else(|| HttpRefusal::bad_request("requestId is required"))?
         .to_string();
     Ok(Json(store.patch(&section, &name, body.enabled, &if_match, &request_id)?))
 }
@@ -74,27 +75,27 @@ struct ActionBody {
 }
 
 impl ActionBody {
-    fn request_id(&self) -> Result<&str, Refusal> {
+    fn request_id(&self) -> Result<&str, HttpRefusal> {
         self.request_id
             .as_deref()
             .filter(|id| !id.is_empty())
-            .ok_or_else(|| Refusal::bad_request("requestId is required"))
+            .ok_or_else(|| HttpRefusal::bad_request("requestId is required"))
     }
 }
 
 /// 一条终极模板的动作前检查：从盘重扫（不读进程内名单），确认引用都在。
-fn ultimate(store: &ComboStore, name: &str) -> Result<ComboFile, Refusal> {
+fn ultimate(store: &ComboStore, name: &str) -> Result<ComboFile, HttpRefusal> {
     let file = store.one("Ultimate-Template", name)?;
     let view = view(&file, &store.trigger_names(), &store.session_names()?);
     if !view["enabled"].as_bool().unwrap_or(false) {
-        return Err(Refusal::conflict(format!(
+        return Err(HttpRefusal::conflict(format!(
             "组合 `{name}` 现在不能用：{}",
             view["problem"].as_str().unwrap_or("引用不全")
         )));
     }
     let spec = file.body.get("spec").cloned().unwrap_or(Value::Null);
     if spec.get("trigger").and_then(Value::as_str).unwrap_or("").is_empty() {
-        return Err(Refusal::bad_request(format!("组合 `{name}` 没钉触发器")));
+        return Err(HttpRefusal::bad_request(format!("组合 `{name}` 没钉触发器")));
     }
     Ok(file)
 }
@@ -110,7 +111,7 @@ async fn launch<H>(
     fired: bool,
     reason: &str,
     now_ms: i64,
-) -> Result<Value, Refusal>
+) -> Result<Value, HttpRefusal>
 where
     H: Host + Send + Sync,
 {
@@ -148,12 +149,12 @@ where
     H: Host + Clone + Send + Sync + 'static,
 {
     if section != "Ultimate-Template" {
-        return Err(Refusal::bad_request(format!(
+        return Err(HttpRefusal::bad_request(format!(
             "试跑只在 Ultimate-Template 段：{section}"
         )));
     }
     let body: ActionBody = serde_json::from_slice(&body)
-        .map_err(|error| Refusal::bad_request(format!("fire body: {error}")))?;
+        .map_err(|error| HttpRefusal::bad_request(format!("fire body: {error}")))?;
     let request_id = body.request_id()?.to_string();
     let store = store_of(&host)?;
     if let Some(previous) = store.action_receipt(&name, &request_id)? {
@@ -196,12 +197,12 @@ where
     H: Host + Clone + Send + Sync + 'static,
 {
     let body: ActionBody = serde_json::from_slice(&body)
-        .map_err(|error| Refusal::bad_request(format!("launch body: {error}")))?;
+        .map_err(|error| HttpRefusal::bad_request(format!("launch body: {error}")))?;
     let name = body
         .name
         .as_deref()
         .filter(|name| !name.is_empty())
-        .ok_or_else(|| Refusal::bad_request("name is required"))?
+        .ok_or_else(|| HttpRefusal::bad_request("name is required"))?
         .to_string();
     let request_id = body.request_id()?.to_string();
     let store = store_of(&host)?;
