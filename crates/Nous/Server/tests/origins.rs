@@ -12,7 +12,7 @@ use axum::http::{Request, StatusCode};
 use nous_durable::actor::Actor;
 use nous_durable::session::{ObserverRegistry, Session};
 use nous_durable::Storage;
-use nous_triggers::{TemplateLookup, TriggerRuntime};
+use trigger_core::{TemplateLookup, TriggerRuntime};
 use nous_server::{router, AppState, DurableCommands, ImportedSource};
 use nous_store::{NewTriggerDefinition as NewTrigger, Store as TriggerStore};
 use serde_json::{json, Value};
@@ -66,7 +66,7 @@ async fn fired_sessions_have_a_persisted_origin_and_manual_sessions_have_none() 
     let runtime = TriggerRuntime::new(store, durable.clone(), lookup, None, None, durable_db.clone()).unwrap();
     runtime.reload_definitions().await;
     let fired = runtime.fire("nightly_digest", &Actor::system("local"), 7_000).await.unwrap();
-    let nous_triggers::FireOutcome::Fired { session, .. } = fired else { panic!("点火成功：{fired:?}") };
+    let trigger_core::FireOutcome::Fired { session, .. } = fired else { panic!("点火成功：{fired:?}") };
 
     // 手动建的会话没有 origins 条目（forced:true 只在手动 launch 时写，本票不写）。
     let manual = state.commands().create(serde_json::from_value(json!({"name": "manual"})).unwrap()).await.unwrap().id;

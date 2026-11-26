@@ -66,8 +66,10 @@
 
     所以「换出品方」不是改一行文档：目录挪到 `crates/<新 vendor>/`、包名跟着换前缀、
     `docs/dependency-graph.toml` 与 `docs/harness.md` §7 的边名一起改（这些是票面要写清的）。
-    现状：28 个模块 vendor 全是 `nous`、包名全 `nous-<module>` —— 这条规则不是新增负担，
-    是把既有事实写死，让下一次「data 这个出品方」有据可依。
+    现状四家：`Nous`（多数）、`Data`（`data-manager` / `archive`）、`Element`（`Models`）、
+    `Trigger`（`Trigger_Core`）。后三家是「同一台装里另一个出品方」的真用例 ——
+    `Trigger_Core` 就是照这条整份换供应商的（目录、包名、全名、capability 一起动，
+    URL 与私库键一个字没动），详见 `docs/decisions.md` 2026-11-26 那条。
     判据：`scripts/check-plugins.sh` 逐条比对（目录 / 清单行 / `plugin.toml` / 包名四处同源）。
 
 11. **端点只有一个真相：插件的 `routes()`。** `plugin.toml` **没有** `endpoints` 字段
@@ -139,7 +141,7 @@
 | `audit` | Nous | (待建) `nous-audit` | app | 编译期 | 事件追加与投影 | 否 | 今天 `activity.js`（55 行） |
 | `dispatcher` | Nous | `nous-dispatcher` | app | 编译期 | 注入 Clock + durable `sleeping` 任务的 60s 节拍、纯判定 `evaluate`、忙则跳过、失败隔离（trigger → 会话） | 否 | #73 落地；内核算核心三件之一，见下注 |
 | `exts/` | Nous | — | app | 运行时外挂 | 帧协议（stdio） | 否 | 目录 `exts/<名>/`，可热加载 |
-| `Nous_Triggers` | Nous | `nous-triggers` | app | 编译期 | **定义面** 11 条自带 handler（`crates/Nous/Triggers/src/catalog.rs`）：`GET /v1/triggers`（观测 + 调度健康，CLI `--triggers` 同一读口）、`POST /v1/triggers`、`PATCH / PUT /v1/triggers/{code}`、`POST /v1/triggers/{code}/{archive,restore,purge,fire}`、`GET /v1/triggers/{code}/fires`、`GET /v1/triggers/categories`、`POST /v1/triggers/category`；**工程面** 13 条（`src/projects.rs`）：`/v1/trigger-projects*` 的清单 / 文件面 / 新建 / 发布（cargo check → build → index.json → 提交）/ 归档三代 / 类别词表 / sync | 否 | #57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行 |
+| `Trigger_Core` | Trigger | `trigger-core` | app | 编译期 | **定义面** 11 条自带 handler（`crates/Trigger/Core/src/catalog.rs`）：`GET /v1/triggers`（观测 + 调度健康，CLI `--triggers` 同一读口）、`POST /v1/triggers`、`PATCH / PUT /v1/triggers/{code}`、`POST /v1/triggers/{code}/{archive,restore,purge,fire}`、`GET /v1/triggers/{code}/fires`、`GET /v1/triggers/categories`、`POST /v1/triggers/category`；**工程面** 13 条（`src/projects.rs`）：`/v1/trigger-projects*` 的清单 / 文件面 / 新建 / 发布（cargo check → build → index.json → 提交）/ 归档三代 / 类别词表 / sync | 否 | #57/#58/#73/#80 落地；插件出生即全名（规则 12）；旧的 `triggers` / `trigger-catalog` 两行并入本行 |
 | `elements` | Nous | `nous-elements` | app | 编译期 | `GET /v1/elements`（两段全量 + 引用解析）+ `GET/PUT/DELETE /v1/elements/{kind}/{id}`（单条读写 / 删）+ `POST /v1/elements/{kind}`（新建）+ `POST /v1/elements/{kind}/{id}/lock`（上锁 / 解锁）+ `POST /v1/elements/push`（手动补推）；写一次提交一次，同一个 `requestId` 重放不二次提交 | 否 | 元素库（组 / 包）：数据根 `NOUS_ELEMENTS=/opt/Nous-Elements`，一份 JSON 一个元素；8 条端点自带 handler（`crates/Nous/Elements/src/routes.rs`） |
 | `Models` | Element | `element-models` | app | 编译期 | 元素库「模型入口组」→ 编目投影：组（`element-models`）+ 供应商包（`kind:"provider"`，`models[]`）+ 覆盖包（`kind:"model"`，按 `(provider, modelId)` 逐键合并）；`GET /v1/models/elements`（投影 + 诊断，缺包 / 悬空覆盖 / 明文密钥都如实报）；密钥只解析成形状（`env` / `cmd` / `secret` / `plaintext` / `missing`），值不进响应 | 否 | 盘上真相在 `nous-elements`；解析 / 合并 / 投影是纯函数（不读盘、不联网、不看时钟） |
 | `routes` | Nous | `nous-routes` | platform | 编译期 | 插件自带端点的契约：`Route`（一条声明同时产出「装进 Router」与「注册表登记」）/ `Declaration`（`:id` 形式的注册表视图） | 否 | 端点归属的落点：`server` 只做「收集 → 装配 → 分发」，插件交出自己的 `routes()`；`plugin.toml` 不再有 `endpoints` 字段（规则 11：端点只由 `routes()` 声明，三处读口都从它生成） |

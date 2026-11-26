@@ -34,7 +34,7 @@ pub use error::AiError;
 
 /// faux provider 的模型 id（`Api::Faux` 那一路回复里带的就是它）。
 ///
-/// 放在这里而不是 `server`：点火路径（`nous-triggers`）与 faux 轮次装配
+/// 放在这里而不是 `server`：点火路径（`trigger-core`）与 faux 轮次装配
 /// （`server`）都要用同一个 id，两边各写一份字符串迟早会漂移 —— 而
 /// `FauxProvider` 自己就在本 crate 里，「假 provider 叫什么」本来就归它答。
 pub const FAUX_MODEL_ID: &str = "echo";

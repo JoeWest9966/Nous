@@ -100,7 +100,7 @@ fires.mark_done(...)?;
 ## 6 判据（将来落到哪）
 
 - `cargo test -p nous-store`：唯一键去重、`reclaim` 只捞该捞的、`code` 不可变 + 墓碑。
-- `cargo test -p nous-triggers`：`fires_allowed_by` 拒绝未授权 actor（负向哨兵：把列表判断去掉 → 红）。
+- `cargo test -p trigger-core`：`fires_allowed_by` 拒绝未授权 actor（负向哨兵：把列表判断去掉 → 红）。
 - `scripts/verify.sh`：Nous 侧库里 grep 不到 durable 的表名（域分离，双向）。
 - **人工哨兵**：真扩展点火一次，看 `fires` 多一行 + 会话里多一轮（自动化点不了"真扩展"）。
 

@@ -28,7 +28,7 @@ pub fn routes() -> Vec<nous_routes::Route<Arc<AppState>>> {
     all.extend(library_extend::routes::routes::<Arc<AppState>>());
     all.extend(nous_repo::routes::routes::<Arc<AppState>>());
     all.extend(nous_sessions::routes::routes::<Arc<AppState>>());
-    all.extend(nous_triggers::routes::routes::<Arc<AppState>>());
+    all.extend(trigger_core::routes::routes::<Arc<AppState>>());
     all
 }
 
@@ -128,13 +128,13 @@ impl library_extend::routes::Host for AppState {
 /// 一个是**库里的行**（点火运行时：账本 + 同一个 durable 会话），一个是**盘上的目录**
 /// （`triggers` 私库的写锁与 git）。凑成一条「触发器宿主」大对象看着更整齐，但那等于说
 /// 「能点火的人自然也拿到了 git 写锁」—— 假的。两条就两条。
-impl nous_triggers::routes::Host for AppState {
-    fn triggers_runtime(&self) -> Option<&nous_triggers::TriggerRuntime> {
+impl trigger_core::routes::Host for AppState {
+    fn triggers_runtime(&self) -> Option<&trigger_core::TriggerRuntime> {
         self.triggers()
     }
 
     fn triggers_repo(&self) -> Option<Arc<nous_repo::Repo>> {
-        self.repo(nous_triggers::routes::REPO_KEY)
+        self.repo(trigger_core::routes::REPO_KEY)
     }
 }
 

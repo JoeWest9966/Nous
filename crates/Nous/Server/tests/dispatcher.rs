@@ -15,7 +15,7 @@ use nous_durable::actor::{Actor, ActorKind};
 use nous_durable::harness::clock::{Clock, ManualClock};
 use nous_durable::session::{ObserverRegistry, Session};
 use nous_durable::Storage;
-use nous_triggers::{FireOutcome, TemplateLookup, TriggerRuntime};
+use trigger_core::{FireOutcome, TemplateLookup, TriggerRuntime};
 use nous_server::{router, AppState, DurableCommands, ImportedSource, SessionSource};
 use nous_store::{FireState, NewTriggerDefinition as NewTrigger, Store as TriggerStore};
 use serde_json::{json, Value};
@@ -197,11 +197,11 @@ async fn one_tick_records_heartbeat_and_fires_exactly_one_turn() {
 
     // 心跳从库读（runtime 的 load_last_tick_at 走 durable 的 sleeping tick 行）。
     let store = TriggerStore::open(&fixture.trigger_db).unwrap();
-    let definitions = nous_triggers::TriggerRuntime::open_definitions_only(&store).unwrap();
+    let definitions = trigger_core::TriggerRuntime::open_definitions_only(&store).unwrap();
     let last_tick = fixture.runtime.load_last_tick_at();
     let due = last_tick.expect("sleeping tick 行里有 wakeAt");
     assert!(due >= now_ms as i64, "tick 不早于注入 Clock 的时刻");
-    let report = nous_triggers::observation_report(
+    let report = trigger_core::observation_report(
         &store,
         &definitions,
         last_tick,

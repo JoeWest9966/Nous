@@ -503,7 +503,7 @@ async fn capabilities_declares_modules_and_reasons() {
         "presets-admin",
         "archive",
         "combos",
-        "Nous_Triggers",
+        "Trigger_Core",
         "extensions",
         "Skill",
         "Nous_Prompts",
