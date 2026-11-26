@@ -276,10 +276,10 @@ pub async fn put_default<H: Host>(
 /// 响应形状 `{default, items, fetchedAt, error?}`：token 只经内存请求头，不进响应/日志。
 pub async fn catalog_refresh<H: Host>(State(host): State<H>) -> Result<Json<Value>, Refused> {
     let env = host.catalog_env();
-    match refresh_remote_catalog(env).await {
+    match refresh_remote_catalog(&env).await {
         Ok(models) => {
             host.set_models(models.clone());
-            let mut body = serde_json::to_value(&models).map_err(Refused::internal)?;
+            let mut body = serde_json::to_value(&models).map_err(|error| Refused::internal(error.to_string()))?;
             body["fetchedAt"] = models
                 .catalog
                 .fetched_at
@@ -296,7 +296,7 @@ pub async fn catalog_refresh<H: Host>(State(host): State<H>) -> Result<Json<Valu
             old.catalog.error = Some(error);
             host.set_models(old.clone());
             let top_error = old.catalog.error.clone().unwrap_or_default();
-            let mut body = serde_json::to_value(&old).map_err(Refused::internal)?;
+            let mut body = serde_json::to_value(&old).map_err(|error| Refused::internal(error.to_string()))?;
             body["fetchedAt"] = old
                 .catalog
                 .fetched_at
