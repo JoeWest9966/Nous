@@ -8,7 +8,9 @@ mod common;
 use common::{live_record, FakeSource};
 use nous_durable::session::publish::{CommitChange, CommitPublication, DocumentCommitChange};
 use nous_durable::types::{EntryRecord, SubmissionRecord};
-use nous_server::{, AppState};
+use nous_server::AppState;
+// 投影层已下沉进 `nous-sessions`（会话事件流的语义归它）。
+use nous_sessions::project;
 use nous_wire::RemoteEvent;
 use serde_json::{json, Value};
 
