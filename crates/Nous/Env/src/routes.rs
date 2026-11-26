@@ -71,16 +71,15 @@ impl<T: Host + ?Sized> Host for Arc<T> {
 impl From<BrowseError> for HttpRefusal {
     /// 本地分支的五种失败。文案与搬家前 `server::routes::fs_dirs_error` 逐字一致。
     fn from(error: BrowseError) -> Self {
+        let refused = |status: u16, message: &str| {
+            Self::new(status, serde_json::json!({ "error": message }))
+        };
         match error {
-            BrowseError::RelativePath => Self::new(StatusCode::BAD_REQUEST, "path 必须是绝对路径"),
-            BrowseError::NotFound => Self::new(StatusCode::NOT_FOUND, "目录不存在"),
-            BrowseError::PermissionDenied => {
-                Self::new(StatusCode::FORBIDDEN, "没有权限读这个目录")
-            }
-            BrowseError::NotDirectory => Self::new(StatusCode::BAD_REQUEST, "path 不是目录"),
-            BrowseError::Other => {
-                Self::new(StatusCode::INTERNAL_SERVER_ERROR, "目录读不出来")
-            }
+            BrowseError::RelativePath => refused(400, "path 必须是绝对路径"),
+            BrowseError::NotFound => refused(404, "目录不存在"),
+            BrowseError::PermissionDenied => refused(403, "没有权限读这个目录"),
+            BrowseError::NotDirectory => refused(400, "path 不是目录"),
+            BrowseError::Other => refused(500, "目录读不出来"),
         }
     }
 }
