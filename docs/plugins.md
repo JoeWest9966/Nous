@@ -66,8 +66,10 @@
 
     所以「换出品方」不是改一行文档：目录挪到 `crates/<新 vendor>/`、包名跟着换前缀、
     `docs/dependency-graph.toml` 与 `docs/harness.md` §7 的边名一起改（这些是票面要写清的）。
-    现状：28 个模块 vendor 全是 `nous`、包名全 `nous-<module>` —— 这条规则不是新增负担，
-    是把既有事实写死，让下一次「data 这个出品方」有据可依。
+    现状四家：`Nous`（多数）、`Data`（`data-manager` / `archive`）、`Element`（`Models`）、
+    `Trigger`（`Trigger_Core`）。后三家是「同一台装里另一个出品方」的真用例 ——
+    `Trigger_Core` 就是照这条整份换供应商的（目录、包名、全名、capability 一起动，
+    URL 与私库键一个字没动），详见 `docs/decisions.md` 2026-11-26 那条。
     判据：`scripts/check-plugins.sh` 逐条比对（目录 / 清单行 / `plugin.toml` / 包名四处同源）。
 
 11. **端点只有一个真相：插件的 `routes()`。** `plugin.toml` **没有** `endpoints` 字段

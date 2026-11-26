@@ -1566,3 +1566,44 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 `check-plugins.sh` 只在 `_` 存在时比对第一段与 vendor），那 `Models` 这种无 vendor 段的全名
 就会成为「老式小写连字符名」之外的第三种形态，判据得再补一档 —— 那时要么改成
 `Element_Models`（本决定作废），要么把「全名可省略 vendor 段」写进规则 12。
+
+## 2026-11-26 · 换供应商：`Nous_Triggers` → `Trigger_Core`
+
+**做了什么**：触发器插件整份换出品方。按 `docs/plugins.md` 规则 10/12，**三套写法一起动**：
+
+| 东西 | 之前 | 之后 |
+|---|---|---|
+| 目录 | `crates/Nous/Triggers` | `crates/Trigger/Core` |
+| 包名（Cargo） | `nous-triggers` | `trigger-core` |
+| crate 标识 | `nous_triggers` | `trigger_core` |
+| 全名（清单 / `_routes` / readme） | `Nous_Triggers` | `Trigger_Core` |
+| `vendor` 列 | `Nous` | `Trigger` |
+| capability | `triggers` | `core` |
+| **URL 段** | `/v1/triggers*`、`/v1/trigger-projects*` | **一个字没动** |
+| **私库键** | `triggers`（`NOUS_TRIGGERS` 的根） | **一个字没动** |
+
+**为什么 capability 跟着变成 `core`**：`check-plugins.sh` 要求 capability == 目录名的
+小写机器名（`Core` → `core`）。这条不是装饰 —— capability 是「模块在 cargo 世界里叫什么」，
+和 URL（协议世界）、私库键（数据世界）本来就是三套写法。前两次搬家已经在
+`Nous_Extend` 上踩过同一条线（私库键 `extend` ≠ URL 段 `extensions`）。
+
+**为什么这是「真换供应商」，不是改个名字**：`Nous` 现在是多数派，但规则 10 明写
+「同一个装里可以有多家 vendor 并列」。触发器这一块有它自己的出品方语义（用户自己写
+`/opt/Nous-Trigger` 里的 cargo 项目、自己发版），归到 `Trigger` 比塞在 `Nous` 底下更诚实。
+代价是它得单独记账：`docs/plugin-versions.md` 的考古因为目录挪动会重算一次档案（0.1.0 → 0.2.0，
+身份变更 = minor，规则 8），**别当 bug 修回去**。
+
+**代价 / 反悔点**：
+
+1. **版本 0.1.0 → 0.2.0**（身份变更 minor）。考古只看得见「目录挪了 + 全名变了」这一件，
+   看不见「换了出品方」——两者在这张表上是同一个 minor，不再多加一档。
+2. **桌面端要跟一条**：`Feature::Triggers` 的 `module_name` 从 `triggers` 改成 `core`
+   （引擎 `capabilities` 报的全名尾段是 `Core`），并留 `triggers` 别名 —— 引擎与桌面两条
+   发布线，谁先升级都不许把「触发器」整块灰掉（与 `Nous_Extend` 那次同形）。
+   不改的表现是「功能页整块灰、理由未登记」，不是崩。
+3. **产物文档改名**：`deploy.sh` 按 `plugin.toml` 的 `name` 落盘，部署后
+   `docs/plugins/` 里是 `Trigger_Core.md`；旧 `Nous_Triggers.md` 会 404 `readme_not_installed`
+   直到跑一次 `deploy.sh --docs-only`。
+4. **`core` 这个尾段偏通用**：Desk 的匹配规则是「全名」或「`_` 之后的尾段」，
+   以后真出现 `Foo_Core` 就会撞。撞之前把 Desk 的匹配改成「全名优先、尾段只在唯一时用」——
+   现在只有一个 `_Core`，先不动。
