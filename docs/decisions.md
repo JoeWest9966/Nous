@@ -1742,3 +1742,58 @@ vendor（`Data`）都已经是规则 12 的形状 —— 差的只有全名本�
 重复比「首段缺失」更糟，就退回 `Models` 判例（模块段自足时不带 vendor 段），但那时必须把
 「vendor 段可省略」写进规则 12，并让 `check-plugins.sh` 的 `None` 分支从「存量豁免」升级成
 「合法形态」——不能靠豁免条款长期遮着。
+## 2026-11-26 · 模块关系网：**构建期抄清单 + 只表达 crate 边**
+
+**决定**：新增插件 `AboutME_ModuleRelationshipNetwork`（vendor `AboutME`，目录
+`crates/AboutME/ModuleRelationshipNetwork`，包 `aboutme-module-relationship-network`），
+一条端点 `GET /v1/modules/graph` —— 把各插件 `plugin.toml [requires]` 投影成模块级依赖图。
+
+三条具体选择：
+
+1. **原料是 `plugin.toml [requires]`，不是运行时探测。** 那份字段由 `scripts/check-plugins.sh`
+   与 `cargo metadata` **双向逐条比对**（少写 / 多写都红），所以它已经是「插件真依赖了谁」的
+   可信抄本。运行时扫源码 / 动态挂载探测会给出不确定的结果，还在 `j1900` 上白烧启动时间。
+2. **生成放在 `build.rs`（`include!`），不放仓库里的 JSON。** 与 `crates/Nous/Server/build.rs`
+   （#93 的 `PLUGIN_VERSIONS`）同一套模式：编译期抄一次，图与产物同一份，启动零 IO；也不像
+   `build.rs` 里跑 `cargo metadata` 那样递归调 cargo（增量构建会锁）。进仓的 JSON 需要一条 CI
+   生成校验才不漂，那是多一个机制，收益只是「不重编译也能看到图变化」—— 现在不需要。
+3. **只表达 crate 边，语义依赖不进图。** 「`Extend` 干活得靠 `env` 给路径」这类判断
+   内核里一个字段都没有（`Extend` 自己调标准库拿 `temp_dir`，`[requires]` 里没有 `nous-env`）。
+   本插件不替任何人编：缺的就不在图上，被依赖却没有对应模块的包名进 `unmapped`（不静默丢弃）。
+
+**为什么不挂在 `Device` 上**：`Device` 管的是「模型 / 机器编目 + 自省视图」，依赖图是另一件事；
+塞进去会让插件版本、README、归属声明都开始回答两个问题。
+
+**命名**：全名 `AboutME_ModuleRelationshipNetwork` —— `check-plugins.sh` 的 `NAME_OK` 只允许
+**一个**下划线（`Vendor_Module`），所以 `Module_Relationship_Network` 那种多段下划线写法过不了
+判据；`Module` 作为模块段的第一个词保留，不是被删掉的。
+
+**反悔点**：① 如果图的边开始被用来做**功能判定**（比如「依赖没启用就灰入口」），那它就不能是
+只读投影，得先在内核里给语义依赖一个手写字段并对它做判据 —— 那时这条「只表达 crate 边」作废。
+② 如果要求「不重编译就更新图」，改成读盘 + mtime 缓存（照 `GET /v1/plugins/{name}/readme`），
+`generatedFor` 随之失去意义。③ 如果模块数涨到几百、图超过 1MB，一次给全会变成启动负担，
+那时改分页 / 按模块取（客户端已经在按模块渲染）。
+
+## 2026-11-27 · #90 收尾：documents crate 与 `spec-documents.md` 一并删除
+
+**背景**：2026-11-21 的 #90（JoeWest9966 拍板）只把 `documents` 从发行面摘掉（`MANIFEST` /
+`ROUTES` / `capabilities` 不声明、`nous-server` 不再依赖），crate 按「保留在 workspace 但不再是
+产品面」留在盘上。结果是库里躺着一具**孤岛**：17 条 `RouteInfo` 模板、`DocumentWriter` /
+`DocumentReader` 两个 trait、`service.rs` 的泛型服务，**零 handler、零依赖、零注册**，而
+`docs/spec-documents.md` 顶部还写着「#48 已落地」。文档与实情相反，比没有文档更坏。
+
+**决定**：把 `crates/Nous/Documents` 整个目录、`docs/spec-documents.md`、workspace `Cargo.toml`
+里的 `nous-documents` 依赖、`docs/plugins.md` 的 `documents` 行与目录计数一并删除。
+`documents_off.rs` **保留**，改写成回归守卫：将来谁把 `/v1/documents/*` 加回来，它立刻红。
+
+**为什么**：内容真相只有四个 git 私库（#90 已定），`documents` 若活成产品面就会有第二条修订链
+（`document_revisions` vs `presets_revisions`）和两个写通道。删干净让「盘是唯一真相」在代码结构
+上也成立，不再靠一行 `frozen` 备注遮着。
+
+**不动的东西**：`nous-durable` 的 `documents` 表与 `scan_documents` / `write_document` 是**数据库
+存储层**，被 sessions 与 `Data_DataManager` 的统计用着，和这个应用层端点模块同名不同物，一个字
+没动。`docs/decisions.md` 里 2026-11-20/21 的 #86/#90 历史叙述也原样保留。
+
+**反悔点**：与 #90 的同一个反悔点（没有 git 私库却要编辑内容 / 引擎必须持有半成品草稿 / 私库被
+外部改坏需要第二副本）。真到那天，重开 documents 要**先把 crate 从 git 历史里捞回来**，并先改
+`wire.md`、回答「两个写者谁签字」——不能悄悄把 `documents_off.rs` 删了当没事。

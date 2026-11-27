@@ -38,6 +38,9 @@
 
 ### 形状草案（未定稿）
 
+> 下面那段 `documents` 的例子只是**当时的草案**：`crates/Nous/Documents` 已于 2026-11-27
+> 整体删除（#90 收尾，见 `decisions.md`），不要照这个路径去找 crate。
+
 ```toml
 # crates/Nous/Documents/plugin.toml
 name   = "documents"

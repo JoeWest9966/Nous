@@ -43,6 +43,7 @@ nous-tools = { workspace = true }
 nous-ai = { workspace = true }
 nous-store = { workspace = true }
 nous-dispatcher = { workspace = true }
+aboutme-module-relationship-network = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }
 nous-wire = { workspace = true }

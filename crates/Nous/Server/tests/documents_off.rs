@@ -1,7 +1,7 @@
-//! #90：documents 从发行面下线。
+//! #90：documents 从发行面下线；2026-11-27 收尾把 crate 与 `spec-documents.md` 整体删除。
 //!
-//! 保留在 workspace 里的 `nous-documents` crate 不再是产品面：`MANIFEST` / `ROUTES` /
-//! `capabilities` 都不许声明它，真 Router 上 12 条文档端点一律 404。
+//! 本测试仍留作**回归守卫**：`MANIFEST` / `ROUTES` / `capabilities` 都不许再声明 documents，
+//! 真 Router 上 `/v1/documents/*` 一律 404 —— 将来谁把一条端点加回来，这几条立刻红。
 
 mod common;
 
