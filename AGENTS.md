@@ -45,6 +45,7 @@ env -u CARGO_TARGET_DIR ./scripts/verify.sh     # 唯一的"做完了"定义（�
 ./scripts/layer-paths.sh kernel                 # 取某一层的模块路径
 env -u CARGO_TARGET_DIR ./scripts/deploy.sh     # 编 musl → 送 j1900 → 装 unit → 重启
 NOUS_APP_BIN=/path/nous-app ./scripts/deploy.sh # 用现成静态产物（编译在别处做），跳过编译
+./scripts/publish-ci.sh                        # 把编好的产物按提交号挂到滚动预发布 ci（取货用）
 ssh j1900 '…' scripts/deploy-check.sh --wait=20 # 部署后的真行为判据（在 j1900 上跑）
 ```
 
@@ -97,6 +98,11 @@ Environment=NOUS_DB=/var/lib/nous/nous.db
 
 - **退出码 78 = 拒绝启动**（库比代码新 / 没 token / workdir 不可写），配 `RestartPreventExitStatus=78`
   让它停在 failed，而不是每 3 秒拉一次。崩溃仍是 2。
+- **产物从哪来**（2026-11-27 起，`docs/decisions.md` 同一条）：推 main 时 CI 自动编一份按
+  提交号命名（`nous-app-<sha8>-x86_64-unknown-linux-musl`）挂到滚动预发布 `ci`（最近 5 份）；
+  急着要就在开发机上编完跑 `./scripts/publish-ci.sh`，**同名覆盖**。两条路产出同一份，
+  所以"取货"永远是 `gh release download ci -p 'nous-app-<sha8>*'`。`ci` 里的是**某个提交**，
+  不是版本；版本只有 `v*` 的 Release 算。
 - **只出 musl 静态产物**；j1900 **只跑产物**，不 clone、不编译、不装 `sqlite3` CLI
   （运维走二进制自己的 `--backup` / `--check` / `--active-tasks` / `--triggers`）。
 - 数据全在 `/var/lib/nous/`（`nous.db`、`nous-plugins.db`、`backups/`）。那是**线上会话记录**，
@@ -116,6 +122,9 @@ Environment=NOUS_DB=/var/lib/nous/nous.db
   （`docs/plugins.md` 规则 8；改插件的票按跨度要求各自涨）。
 
 ## 红线
+
+- **开发机/部署机的地址不进文档、不进脚本。** 那台机器常换：地址由用户每次会话给，
+  脚本只认环境变量或参数。照文档复制一个 IP 就跑不起来 —— 那种文档是负债。
 
 - **密钥只在内存**：不落盘、不进日志、不进会话记录、不进库。
 - `fixtures/agent.sqlite` 只读；`/var/lib/nous/` 只经 CLI 动。
