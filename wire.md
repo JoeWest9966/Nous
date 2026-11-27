@@ -1131,6 +1131,53 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
   清单」两份真相。**反悔点**：如果以后要在不改二进制的情况下看到图的变化，就得改成读盘 + mtime
   缓存（照 `GET /v1/plugins/{name}/readme` 那套），那时 `generatedFor` 会失去意义。
 
+## 模块版本对照（`GET /v1/modules/updates`，模块 `AboutME_ModuleRelationshipNetwork`）
+
+插件页要显示「这个模块落后没有」。端点给两列版本，**不做比较**：哪个版本「更新」是展示层
+自己的判定（预发布 / build metadata / 非 semver 字符串都得处理），内核只提供事实。
+
+- `current` 是**这个产物里装的**版本：构建期把各 `plugin.toml` 的 `version` 抄成静态表内嵌
+  （同一个 `build.rs` 也产 `/v1/modules/graph` 那份清单），不是「盘上此刻有什么」。
+- `latest` 是**仓库 `main` 上的版本**（`plugin-versions.json`，生成物），不是 GitHub release tag。
+  一个已合入 `main`、还没发版的模块会被报成「有新版」—— 这是刻意的：问的是「仓库里的最新」。
+
+```json
+{ "available": true,
+  "checkedAt": 1764661200000,
+  "source": "https://raw.githubusercontent.com/JoeWest9966/Nous/main/plugin-versions.json",
+  "stale": false,
+  "server": { "current": "0.1.41", "latest": "0.1.41" },
+  "modules": [
+    { "name": "Device", "current": "0.11.0", "currentSource": "module", "latest": "0.11.0" },
+    { "name": "Nous_Prompts", "current": null, "currentSource": "release", "latest": "0.4.0" }
+  ],
+  "missing": ["Nous_Prompts"],
+  "onlyInManifest": [],
+  "error": null }
+```
+
+- **`current: null` + `currentSource: "release"`**：这个模块的 `plugin.toml` 没写版本（或不是合法
+  `X.Y.Z`），所以**没有可比的自报版本**。客户端不许拿 `caps.server.version` 顶上再比 —— 那会把
+  「某个模块落后」说成「引擎落后」。这种情况下只显示 `latest`，不出「可更新」。
+- **`missing`**：`current` 有、`latest` 没有的模块（清单里没有它）。**不许把 `latest: null` 当「最新」**。
+- **`onlyInManifest`**：仓库 `main` 上有、这个产物里没有的模块 —— 引擎比仓库旧。它比「某模块落后」
+  更严重，客户端要单独说一句，别混在 `missing` 里。
+- **`available: false`**：一次都没拉到过上游（没网 / 上游 404 / 清单解析不了）。这**不等于**
+  「全都是最新」，客户端必须显示「检查不可用」。此时 `checkedAt` 是 `null`、所有 `latest` 是 `null`。
+- **`stale: true`**：有旧数据，这次（`?refresh=1` 或 TTL 过了）没拉到新的。数据照给、`error` 说明原因。
+- **永不 5xx**：这类失败一律 200（见上三个字段）。5xx 会被客户端当成「端点坏了」而整块消失。
+- **上游一定是一次请求**：`plugin-versions.json` 是生成物（`python3 scripts/plugin-versions.py
+  --write-json`，`verify.sh` 0e 段校验不漂）。per-module 打 GitHub API 是 30 多次请求、未认证限流
+  60 次/小时 —— 一次页面就把预算打满，不做。
+- 缓存 6 小时（内存 + `NOUS_DATA/updates/plugin-versions.json`，没配 `NOUS_DATA` 只进内存），
+  带 `ETag`（304 不重新解析），`?refresh=1` 穿透。超时 **3 秒**（它是挂在设置页上的交互，
+  不能让一次外网往返把页面拖住）。
+- 配置：`NOUS_UPDATES_SOURCE`（换成内网镜像 / 自建清单 / 假源）、`NOUS_UPDATES_TOKEN`
+  （私有仓或限流时用，没配就匿名请求）。两者都不进任何回包。
+
+**反悔点**：如果要把「最新」改成「最新 release tag」，只换上游源与解析层，回包形状不变；
+语义变了要改这一节（现在明确写的是 **`main` 上的版本**）。
+
 ## 引擎改了会怎么坏（按我们依赖的字段）
 
 | 引擎改动 | 我们会怎样 |
@@ -1158,6 +1205,9 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
 | `combos` 的 `problem` 不再是人话 / 恒空 | 引用失效的组合看着像能用，点了才报错 |
 | `PATCH /v1/combos` 丢了 `If-Match` 或 `requestId` | 并发覆盖 / 重放翻两次开关，version 与盘面分叉 |
 | `/v1/modules/graph` 没了 / `edges` 改名 | 插件详情的「依赖 / 被依赖」整块空掉（我们显示「引擎未提供」，不猜） |
+| `/v1/modules/updates` 没了（老引擎 404） | 插件页的版本徽标整块不出现（页面与今天一模一样） |
+| `modules[].latest` 换成 `outdated` 之类的状态位 | 客户端不读状态位，徽标全灭 —— 版本对照要的是两列事实，不是结论 |
+| `currentSource` 被去掉 / 恒为 `module` | 没有自报版本的模块会被拿来跟清单比，标出**假**的「可更新」 |
 | 边的方向反过来（`to` 变 `from`） | 依赖与被依赖两栏互换，看着像每个插件都在依赖自己的下游 |
 
 所以：启动时打 `GET /v1/device` 记引擎版本，About 里显示，出问题先对版本。

@@ -26,11 +26,18 @@ fn endpoint_is_declared_under_this_module() {
             .collect();
     assert_eq!(
         declared,
-        vec![(
-            "GET".to_string(),
-            "GET /v1/modules/graph".to_string(),
-            "AboutME_ModuleRelationshipNetwork",
-        )]
+        vec![
+            (
+                "GET".to_string(),
+                "GET /v1/modules/graph".to_string(),
+                "AboutME_ModuleRelationshipNetwork",
+            ),
+            (
+                "GET".to_string(),
+                "GET /v1/modules/updates".to_string(),
+                "AboutME_ModuleRelationshipNetwork",
+            ),
+        ]
     );
 }
 
@@ -73,7 +80,7 @@ async fn graph_endpoint_returns_the_whole_graph() {
         assert!(nodes.contains(&edge["to"].as_str().unwrap()));
     }
 
-    // 未知路径不该被这条路吞掉（Router 只有这一条）。
+    // 未知路径不该被这条路吞掉。
     let missing = app()
         .oneshot(
             Request::builder()

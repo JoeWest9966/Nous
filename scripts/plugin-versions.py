@@ -33,6 +33,8 @@
   python3 scripts/plugin-versions.py --doc-check  # 文档里的表 == 现算的考古结论
   python3 scripts/plugin-versions.py --write-doc  # 重写文档里的表（一次性）
   python3 scripts/plugin-versions.py --json       # 机器可读（含每个提交的分档与理由）
+  python3 scripts/plugin-versions.py --write-json # 写 plugin-versions.json（引擎 /v1/modules/updates 的上游）
+  python3 scripts/plugin-versions.py --json-check # 盘上的版本 == plugin-versions.json（不许漂）
 """
 import json
 import os
@@ -267,6 +269,9 @@ def manifest_version(rel):
 
 
 DOC = os.path.join(ROOT, 'docs/plugin-versions.md')
+# 引擎 `GET /v1/modules/updates` 的上游清单（生成物）。**不属于考古面**：它记的是
+# 「此刻盘上各模块的版本」，每次涨版都要跟着变，所以由 `--write-json` 重写、`--json-check` 校验。
+MANIFEST = os.path.join(ROOT, 'plugin-versions.json')
 DOC_ROW = re.compile(
     r'^\| `(?P<module>[A-Za-z0-9_-]+)` \| (?P<total>\d+) \| (?P<minor>\d+) \| '
     r'(?P<patch>\d+) \| (?P<version>[\d.]+) \| (?P<manifest>[\d.]+) \| '
@@ -358,6 +363,54 @@ def write_doc(rows):
     open(DOC, 'w', encoding='utf-8').write(updated)
 
 
+def versions_manifest():
+    """`plugin-versions.json` 的内容：发行版号 + 每个模块**清单里自报的**版本。
+
+    版本不是合法 `X.Y.Z` 时给空串：引擎会把它译成 `current: null`（「没有可比的自报版本」），
+    绝不拿发行版号顶上 —— 那会把「某模块落后」说成「引擎落后」。
+    """
+    with open(os.path.join(ROOT, 'Cargo.toml'), 'rb') as handle:
+        release = tomllib.load(handle)['workspace']['package']['version']
+    modules = []
+    for module, rel in plugin_dirs().items():
+        version = manifest_version(rel)
+        modules.append({
+            'name': module,
+            'version': version if semver(version) else '',
+        })
+    return {
+        'release': release,
+        'modules': sorted(modules, key=lambda item: item['name']),
+    }
+
+
+def write_manifest():
+    body = json.dumps(versions_manifest(), ensure_ascii=False, indent=1) + '\n'
+    with open(MANIFEST, 'w', encoding='utf-8') as handle:
+        handle.write(body)
+    return len(versions_manifest()['modules'])
+
+
+def check_manifest():
+    """盘上的 `plugin.toml` 与 `plugin-versions.json` 必须逐条相等（生成物不许漂）。"""
+    want = versions_manifest()
+    try:
+        with open(MANIFEST, encoding='utf-8') as handle:
+            got = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        return [f'plugin-versions.json 读不出来：{error}（跑 --write-json）']
+    bad = []
+    if got.get('release') != want['release']:
+        bad.append(f"release: 文件 {got.get('release')!r} ≠ 盘上 {want['release']!r}")
+    got_modules = {item.get('name'): item.get('version') for item in got.get('modules') or []}
+    want_modules = {item['name']: item['version'] for item in want['modules']}
+    for name in sorted(set(got_modules) | set(want_modules)):
+        if got_modules.get(name, '<缺>') != want_modules.get(name, '<缺>'):
+            bad.append(f'{name}: 文件 {got_modules.get(name, "<缺>")!r} ≠ 盘上 '
+                       f'{want_modules.get(name, "<缺>")!r}')
+    return bad
+
+
 def main():
     global COMMITS
     COMMITS = parse_log()
@@ -366,6 +419,18 @@ def main():
     if '--json' in sys.argv:
         print(json.dumps(rows, ensure_ascii=False, indent=1))
         return 0
+
+    if '--write-json' in sys.argv:
+        count = write_manifest()
+        print(f'wrote {os.path.relpath(MANIFEST, ROOT)}（{count} 个模块）')
+        return 0
+
+    if '--json-check' in sys.argv:
+        bad = check_manifest()
+        for item in bad:
+            print(f'✗ {item}')
+        print(f'checked={len(plugin_dirs())} mismatched={len(bad)}')
+        return 1 if bad else 0
 
     if '--write-doc' in sys.argv:
         write_doc(rows)

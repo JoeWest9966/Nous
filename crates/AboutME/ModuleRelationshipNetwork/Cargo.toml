@@ -4,13 +4,18 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "模块关系网插件：把各插件 plugin.toml 的 requires 投影成模块级依赖图（app 层）"
+description = "模块关系网插件：把各插件 plugin.toml 的 requires 投影成模块级依赖图、把版本号对照仓库最新（app 层）"
 
 [dependencies]
 axum = { workspace = true }
 nous-routes = { workspace = true }
+# `GET /v1/modules/updates` 要一次外网往返（3s 超时、6h 缓存）。app 层允许 IO；
+# 这里只用 reqwest 的 rustls 客户端，不碰 tokio 的 net/time 特性。
+reqwest = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5", features = ["util"] }

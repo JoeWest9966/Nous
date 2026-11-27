@@ -1,0 +1,129 @@
+{
+ "release": "0.1.41",
+ "modules": [
+  {
+   "name": "AboutME_ModuleRelationshipNetwork",
+   "version": "0.2.0"
+  },
+  {
+   "name": "Device",
+   "version": "0.11.0"
+  },
+  {
+   "name": "Extend",
+   "version": "0.10.0"
+  },
+  {
+   "name": "Models",
+   "version": "0.3.0"
+  },
+  {
+   "name": "Nous_Prompts",
+   "version": "0.4.0"
+  },
+  {
+   "name": "Skill",
+   "version": "0.4.0"
+  },
+  {
+   "name": "Trigger_Core",
+   "version": "0.2.0"
+  },
+  {
+   "name": "ai",
+   "version": "0.2.2"
+  },
+  {
+   "name": "ai-types",
+   "version": "0.2.0"
+  },
+  {
+   "name": "archive",
+   "version": "0.2.1"
+  },
+  {
+   "name": "chord",
+   "version": "0.2.0"
+  },
+  {
+   "name": "combos",
+   "version": "0.2.7"
+  },
+  {
+   "name": "data-manager",
+   "version": "0.4.0"
+  },
+  {
+   "name": "dispatcher",
+   "version": "0.2.0"
+  },
+  {
+   "name": "durable",
+   "version": "0.2.0"
+  },
+  {
+   "name": "elements",
+   "version": "0.3.1"
+  },
+  {
+   "name": "env",
+   "version": "0.3.3"
+  },
+  {
+   "name": "env-ssh",
+   "version": "0.2.0"
+  },
+  {
+   "name": "ext-probe",
+   "version": "0.2.2"
+  },
+  {
+   "name": "ext-sdk",
+   "version": "0.2.0"
+  },
+  {
+   "name": "fixture",
+   "version": "0.2.0"
+  },
+  {
+   "name": "presets-admin",
+   "version": "0.3.4"
+  },
+  {
+   "name": "repo",
+   "version": "0.7.0"
+  },
+  {
+   "name": "routes",
+   "version": "0.3.0"
+  },
+  {
+   "name": "runtime",
+   "version": "0.2.0"
+  },
+  {
+   "name": "server",
+   "version": "0.4.0"
+  },
+  {
+   "name": "sessions",
+   "version": "0.8.0"
+  },
+  {
+   "name": "store",
+   "version": "0.2.0"
+  },
+  {
+   "name": "telemetry",
+   "version": "0.2.0"
+  },
+  {
+   "name": "tools",
+   "version": "0.2.0"
+  },
+  {
+   "name": "wire",
+   "version": "0.2.0"
+  }
+ ]
+}
