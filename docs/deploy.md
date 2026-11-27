@@ -220,8 +220,23 @@ Desk 写（运行期）。**后读的优先**，所以 Desk 改过的变量以 `
 - 这次踩到并修掉：`/tmp/nous-docs` 残留时 rsync 会把 `docs/` 多嵌一层，部署在
   「落产物」cp 失败（见 `pitfalls.md` 同日那条）。
 
-**取现成产物（2026-11-27 起）**：不想在本机冷编译，可以直接拿 CI 出的成品 ——
-`gh release view ci` 里是按提交号命名的 `nous-app-<sha8>-x86_64-unknown-linux-musl`
-（推 main 就有，只留最近 5 份；`v*` 的 Release 是正式版本、永久保留）。取下来后
-`NOUS_APP_BIN=./nous-app-<sha8>-... scripts/deploy.sh` 照样部署（脚本仍自校验
-「ELF + 静态链接」）。注意：`ci` 里的东西是「某个提交」，没有版本号语义，别拿它当发版记录。
+**取现成产物（2026-11-27 起）**：不想在本机冷编译，直接拿 `ci` 里的成品 ——
+
+```sh
+gh release view ci                       # 看有哪些提交的产物（最近 5 份）
+gh release download ci -p 'nous-app-<sha8>*'
+NOUS_APP_BIN=./nous-app-<sha8>-x86_64-unknown-linux-musl scripts/deploy.sh
+```
+
+`ci` 里有两个来源，**名字和校验码是同一套，后到的覆盖先到的**：
+
+| 来源 | 什么时候有 | 一句话 |
+|---|---|---|
+| CI 自动（`.github/workflows/package.yml`） | 每次推 main，15–25 分钟 | 任何提交迟早都有货，不用等 |
+| 开发机快通道（`scripts/publish-ci.sh`） | 你编完就跑，2 分钟 | 急着要某一份时用 |
+
+`deploy.sh` 仍会自己校验「ELF + 静态链接」，所以 `ci` 里的东西坏了照样装不上。
+**`ci` 里的是「某个提交」，没有版本号语义** —— 别拿它当发版记录，发版只有 `v*` 的 Release。
+
+快通道的守卫（`publish-ci.sh` 会挡）：不是 64 位 ELF、`ldd` 有动态依赖、工作树脏 → 拒发
+（工作树脏时产物对应不了任何提交，真发要加 `--dirty`，名字带 `-dirty`）。

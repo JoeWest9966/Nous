@@ -101,7 +101,7 @@ jobs:
           # 只留最近 5 份（每份 2 个文件 → 12 行以后的删掉）。按上传时间排，不按 sha。
           gh release view ci --json assets \
             -q '.assets[] | "\(.createdAt)\t\(.name)"' \
-            | sort -r | tail -n +12 | cut -f2 \
+            | sort -r | tail -n +11 | cut -f2 \
             | while read -r old; do
                 [ -n "$old" ] && gh release delete-asset ci "$old" -y
               done
