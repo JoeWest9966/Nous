@@ -45,11 +45,40 @@ env -u CARGO_TARGET_DIR ./scripts/verify.sh     # 唯一的"做完了"定义（�
 ./scripts/layer-paths.sh kernel                 # 取某一层的模块路径
 env -u CARGO_TARGET_DIR ./scripts/deploy.sh     # 编 musl → 送 j1900 → 装 unit → 重启
 NOUS_APP_BIN=/path/nous-app ./scripts/deploy.sh # 用现成静态产物（编译在别处做），跳过编译
-./scripts/publish-ci.sh                        # 把编好的产物按提交号挂到滚动预发布 ci（取货用）
 ssh j1900 '…' scripts/deploy-check.sh --wait=20 # 部署后的真行为判据（在 j1900 上跑）
 ```
 
 `env -u CARGO_TARGET_DIR` 不是装饰：这台机器的全局值指向仓外，不摘掉产物就落在别处。
+
+## 编译机（cargo check / test / clippy / 构建 一律在那台跑）
+
+**本机只负责对话与验收**，资源少；Rust 编译一律丢给专用开发机（32 核 / 64G / Debian 13）。
+
+- **ssh 目标每次都从用户当轮的提示里取**（形如 `…@cnb.space`），**机器号会变**：不写死、
+  不缓存到任何文件、不猜上一轮的地址。提示里没给 = 先问，别在本机跑编译。
+- **盘要挑工作区**：那台机器根分区 256G、工作区 512G（挂 `/workspace`）。仓、`target`、日志、
+  bundle 全放 `/workspace/<名字>`，别往 `/root` / `/tmp` 落大文件。
+- **工具链与缓存**：`export PATH=/workspace/cargo/bin:$PATH RUSTUP_HOME=/workspace/rustup
+  CARGO_HOME=/workspace/cargo CARGO_TARGET_DIR=/workspace/target-nous`（首次可能要先
+  `rustup component add clippy`）。
+- **怎么送代码**（那台机器没凭据、也不 pull 我们的工作树）：
+
+  ```bash
+  git bundle create /tmp/nous-$主题.bundle $分支 origin/main main   # 带上被引用的 ref，否则 clone 全空
+  scp /tmp/nous-$主题.bundle <开发机>:/workspace/
+  ssh <开发机> 'cd /workspace && rm -rf nous-$主题 && git clone -q nous-$主题.bundle nous-$主题 \
+    && cd nous-$主题 && git checkout -q $分支'
+  ```
+
+  只跑文档/py 判据（`check-plugins.sh`、`plugin-versions.py`）不必送——那些不需要编译器。
+- **跑长任务别占着终端**：`nohup cargo test --workspace > /workspace/x.log 2>&1 &`，然后
+  分段 `tail` 轮询；一次 `ssh` 挂着等十几分钟会被中途掐断。
+- **结果要回来**：`test result: FAILED` / `^error` 的行数、`mismatched=` 的条数，抄进汇报；
+  没跑通的别写成「绿」。
+- **清理**：本机 `/opt/*/target` 只是缓存（可重建），别留在本机；那台机器的
+  `/workspace/target-*` 也一样，告一段落就删。
+- **看得见的东西还是在本机验**：`cargo run` / 截图 / 中文输入法 / 剪贴板 / 窗口装饰 —— 本机
+  有 Wayland 桌面，那台没有。编译在远端，验收在本机。
 
 ## 硬形状（动代码之前先认这几条）
 
@@ -98,11 +127,6 @@ Environment=NOUS_DB=/var/lib/nous/nous.db
 
 - **退出码 78 = 拒绝启动**（库比代码新 / 没 token / workdir 不可写），配 `RestartPreventExitStatus=78`
   让它停在 failed，而不是每 3 秒拉一次。崩溃仍是 2。
-- **产物从哪来**（2026-11-27 起，`docs/decisions.md` 同一条）：推 main 时 CI 自动编一份按
-  提交号命名（`nous-app-<sha8>-x86_64-unknown-linux-musl`）挂到滚动预发布 `ci`（最近 5 份）；
-  急着要就在开发机上编完跑 `./scripts/publish-ci.sh`，**同名覆盖**。两条路产出同一份，
-  所以"取货"永远是 `gh release download ci -p 'nous-app-<sha8>*'`。`ci` 里的是**某个提交**，
-  不是版本；版本只有 `v*` 的 Release 算。
 - **只出 musl 静态产物**；j1900 **只跑产物**，不 clone、不编译、不装 `sqlite3` CLI
   （运维走二进制自己的 `--backup` / `--check` / `--active-tasks` / `--triggers`）。
 - 数据全在 `/var/lib/nous/`（`nous.db`、`nous-plugins.db`、`backups/`）。那是**线上会话记录**，
@@ -123,14 +147,12 @@ Environment=NOUS_DB=/var/lib/nous/nous.db
 
 ## 红线
 
-- **开发机/部署机的地址不进文档、不进脚本。** 那台机器常换：地址由用户每次会话给，
-  脚本只认环境变量或参数。照文档复制一个 IP 就跑不起来 —— 那种文档是负债。
-
 - **密钥只在内存**：不落盘、不进日志、不进会话记录、不进库。
 - `fixtures/agent.sqlite` 只读；`/var/lib/nous/` 只经 CLI 动。
 - 不为过判据开第二条写通道；协议加字段先改 `wire.md` 与类型，再让客户端跟。
 - **编译丢给专用开发机，本机只跑产物**：`ssh <开发机>` 上 `CARGO_TARGET_DIR` 指到工作区盘
   （512G），别让它落根分区（256G，容易满）；产物拿回来用 `NOUS_APP_BIN=… scripts/deploy.sh` 部署。
+  详见「编译机」一节。
 - 只做 Linux（开发机是 Debian 13 + Wayland）。Windows 的源码与打包配置原地冻结：不改、不删、不出包。
 - 踩一个坑就往 `docs/pitfalls.md` 追加一条（症状 / 根因 / 解，三行以内）；选了什么、为什么、
   什么时候该反悔，写进 `docs/decisions.md`。两份都是追加式：冲突时**两边都留**，不许整份取一边。
