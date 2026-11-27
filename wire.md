@@ -1142,19 +1142,27 @@ worktree + 分支：主干（main/master/HEAD）永远不许变。
   一个已合入 `main`、还没发版的模块会被报成「有新版」—— 这是刻意的：问的是「仓库里的最新」。
 
 ```json
-{ "available": true,
-  "checkedAt": 1764661200000,
-  "source": "https://raw.githubusercontent.com/JoeWest9966/Nous/main/plugin-versions.json",
+{ "available": false,
   "stale": false,
-  "server": { "current": "0.1.41", "latest": "0.1.41" },
-  "modules": [
-    { "name": "Device", "current": "0.11.0", "currentSource": "module", "latest": "0.11.0" },
-    { "name": "Nous_Prompts", "current": null, "currentSource": "release", "latest": "0.4.0" }
-  ],
-  "missing": ["Nous_Prompts"],
-  "onlyInManifest": [],
-  "error": null }
+  "modules": [ … ],
+  "missing": [ … ],
+  "error": "…" }
 ```
+
+回包的字段（**不抄成一份清单**，说语义就够；形状以客户端类型定义为准）：
+
+| 字段 | 含义 |
+|---|---|
+| `available` | 有一次成功的上游数据可用。`false` = 从没拉到过，**不是「全都是最新」** |
+| `checkedAt` | 这份数据的拉取时刻（epoch 毫秒）；`available:false` 时是 `null` |
+| `source` | 这次用的是哪个上游（默认仓库 `main` 上的生成物，可被 `NOUS_UPDATES_SOURCE` 覆盖） |
+| `stale` | 有旧数据、但这次没拉到新的（超时 / 5xx / 解析失败）；`error` 同时给出原因 |
+| `server` | `current` = 发行版号，`latest` = 上游清单记的发行版号 |
+| `modules[]` | 每个模块的 `name` / `current` / `currentSource` / `latest`；按 `name` 有序 |
+| `modules[].currentSource` | `module` = 清单自报的版本；`release` = 没有自报版本（`current` 是 `null`） |
+| `missing` | `current` 有、`latest` 没有的模块（上游清单里没有它），**不许当「最新」** |
+| `onlyInManifest` | 上游有、这个产物里没有的模块（引擎比仓库旧），比「某模块落后」更严重 |
+| `error` | 这一次失败的原因（一句人话）；成功时是 `null` |
 
 - **`current: null` + `currentSource: "release"`**：这个模块的 `plugin.toml` 没写版本（或不是合法
   `X.Y.Z`），所以**没有可比的自报版本**。客户端不许拿 `caps.server.version` 顶上再比 —— 那会把

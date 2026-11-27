@@ -287,7 +287,9 @@ fn compose(cached: Option<&Cached>, error: Option<String>, stale: bool, config: 
     for (name, version) in PLUGIN_VERSIONS {
         let own = (!version.is_empty()).then_some(*version);
         let latest = manifest.and_then(|manifest| manifest.version_of(name));
-        if latest.is_none() && !version.is_empty() {
+        // 上游整份都没拿到时 `missing` 必须空：「清单里没有它」只有在**有清单**时才有意义，
+        // 否则一次没网就会把 31 个模块全说成「不在清单里」（真机验出来的）。
+        if manifest.is_some() && latest.is_none() && !version.is_empty() {
             missing.push(name);
         }
         modules.push(json!({
@@ -488,6 +490,12 @@ mod tests {
         for item in body["modules"].as_array().unwrap() {
             assert_eq!(item["latest"], Value::Null, "没有上游就没有 latest");
         }
+        assert_eq!(
+            body["missing"],
+            json!([]),
+            "上游整份没拿到时不许把每个模块都说成「清单里没有」"
+        );
+        assert_eq!(body["onlyInManifest"], json!([]));
     }
 
     /// 有缓存但这次失败：`stale:true`，数据照给（旧总比没有强，但必须标出来）。

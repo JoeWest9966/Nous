@@ -6,8 +6,20 @@
    "version": "0.2.0"
   },
   {
+   "name": "Data_Archive",
+   "version": "0.3.0"
+  },
+  {
+   "name": "Data_DataManager",
+   "version": "0.5.0"
+  },
+  {
    "name": "Device",
    "version": "0.11.0"
+  },
+  {
+   "name": "Element_Core",
+   "version": "0.4.0"
   },
   {
    "name": "Extend",
@@ -15,7 +27,7 @@
   },
   {
    "name": "Models",
-   "version": "0.3.0"
+   "version": "0.3.1"
   },
   {
    "name": "Nous_Prompts",
@@ -38,10 +50,6 @@
    "version": "0.2.0"
   },
   {
-   "name": "archive",
-   "version": "0.2.1"
-  },
-  {
    "name": "chord",
    "version": "0.2.0"
   },
@@ -50,20 +58,12 @@
    "version": "0.2.7"
   },
   {
-   "name": "data-manager",
-   "version": "0.4.0"
-  },
-  {
    "name": "dispatcher",
    "version": "0.2.0"
   },
   {
    "name": "durable",
    "version": "0.2.0"
-  },
-  {
-   "name": "elements",
-   "version": "0.3.1"
   },
   {
    "name": "env",
@@ -103,7 +103,7 @@
   },
   {
    "name": "server",
-   "version": "0.4.0"
+   "version": "0.5.0"
   },
   {
    "name": "sessions",
