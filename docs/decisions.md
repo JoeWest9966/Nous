@@ -1727,3 +1727,27 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 ② 如果要求「不重编译就更新图」，改成读盘 + mtime 缓存（照 `GET /v1/plugins/{name}/readme`），
 `generatedFor` 随之失去意义。③ 如果模块数涨到几百、图超过 1MB，一次给全会变成启动负担，
 那时改分页 / 按模块取（客户端已经在按模块渲染）。
+
+## 2026-11-27 · #90 收尾：documents crate 与 `spec-documents.md` 一并删除
+
+**背景**：2026-11-21 的 #90（JoeWest9966 拍板）只把 `documents` 从发行面摘掉（`MANIFEST` /
+`ROUTES` / `capabilities` 不声明、`nous-server` 不再依赖），crate 按「保留在 workspace 但不再是
+产品面」留在盘上。结果是库里躺着一具**孤岛**：17 条 `RouteInfo` 模板、`DocumentWriter` /
+`DocumentReader` 两个 trait、`service.rs` 的泛型服务，**零 handler、零依赖、零注册**，而
+`docs/spec-documents.md` 顶部还写着「#48 已落地」。文档与实情相反，比没有文档更坏。
+
+**决定**：把 `crates/Nous/Documents` 整个目录、`docs/spec-documents.md`、workspace `Cargo.toml`
+里的 `nous-documents` 依赖、`docs/plugins.md` 的 `documents` 行与目录计数一并删除。
+`documents_off.rs` **保留**，改写成回归守卫：将来谁把 `/v1/documents/*` 加回来，它立刻红。
+
+**为什么**：内容真相只有四个 git 私库（#90 已定），`documents` 若活成产品面就会有第二条修订链
+（`document_revisions` vs `presets_revisions`）和两个写通道。删干净让「盘是唯一真相」在代码结构
+上也成立，不再靠一行 `frozen` 备注遮着。
+
+**不动的东西**：`nous-durable` 的 `documents` 表与 `scan_documents` / `write_document` 是**数据库
+存储层**，被 sessions 与 `Data_DataManager` 的统计用着，和这个应用层端点模块同名不同物，一个字
+没动。`docs/decisions.md` 里 2026-11-20/21 的 #86/#90 历史叙述也原样保留。
+
+**反悔点**：与 #90 的同一个反悔点（没有 git 私库却要编辑内容 / 引擎必须持有半成品草稿 / 私库被
+外部改坏需要第二副本）。真到那天，重开 documents 要**先把 crate 从 git 历史里捞回来**，并先改
+`wire.md`、回答「两个写者谁签字」——不能悄悄把 `documents_off.rs` 删了当没事。

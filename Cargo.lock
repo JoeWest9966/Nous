@@ -1425,17 +1425,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nous-documents"
-version = "0.1.41"
-dependencies = [
- "async-trait",
- "nous-durable",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "nous-durable"
 version = "0.1.41"
 dependencies = [
