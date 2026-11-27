@@ -236,6 +236,10 @@ NOUS_APP_BIN=./nous-app-<sha8>-x86_64-unknown-linux-musl scripts/deploy.sh
 | 开发机快通道（`scripts/publish-ci.sh`） | 你编完就跑，2 分钟 | 急着要某一份时用 |
 
 `deploy.sh` 仍会自己校验「ELF + 静态链接」，所以 `ci` 里的东西坏了照样装不上。
+
+**已验证（2026-11-27，main 合并后第一次真跑）**：`package` 工作流 3 分 56 秒跑通，
+`gh release view ci` 里有 `nous-app-70bf6e91-x86_64-unknown-linux-musl`（26.8 MB）+ `.sha256` ——
+冷构建在 4 核 runner 上是**分钟级**（258 个 crate），不是之前估的十几分钟。
 **`ci` 里的是「某个提交」，没有版本号语义** —— 别拿它当发版记录，发版只有 `v*` 的 Release。
 
 快通道的守卫（`publish-ci.sh` 会挡）：不是 64 位 ELF、`ldd` 有动态依赖、工作树脏 → 拒发
