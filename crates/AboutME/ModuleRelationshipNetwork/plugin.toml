@@ -1,0 +1,11 @@
+name = "AboutME_ModuleRelationshipNetwork"
+vendor = "AboutME"
+version = "0.1.0"  # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+layer = "app"          # 必须 == docs/plugins.md 的 layer 列
+crate = "aboutme-module-relationship-network"
+
+[requires]                 # cargo metadata 里的内部 workspace 依赖（= 这张图的原料）
+nous-routes = "^0.1"
+
+[provides]
+capability = "module-relationship-network"

@@ -58,7 +58,6 @@ nous-prompts = { path = "crates/Nous/Prompts", version = "0.1.0" }
 nous-presets-admin = { path = "crates/Nous/PresetsAdmin", version = "0.1.0" }
 nous-env-ssh = { path = "crates/Nous/EnvSsh", version = "0.1.0" }
 nous-durable = { path = "crates/Nous/Durable", version = "0.1.0" }
-nous-documents = { path = "crates/Nous/Documents", version = "0.1.0" }
 nous-ai-types = { path = "crates/Nous/AiTypes", version = "0.1.0" }
 nous-ai = { path = "crates/Nous/Ai", version = "0.1.0" }
 nous-tools = { path = "crates/Nous/Tools", version = "0.1.0" }
@@ -77,3 +76,4 @@ data-archive = { path = "crates/Data/Archive", version = "0.1.0" }
 nous-store = { path = "crates/Nous/Store", version = "0.1.0" }
 trigger-core = { path = "crates/Trigger/Core", version = "0.1.0" }
 nous-dispatcher = { path = "crates/Nous/Dispatcher", version = "0.1.0" }
+aboutme-module-relationship-network = { path = "crates/AboutME/ModuleRelationshipNetwork", version = "0.1.0" }

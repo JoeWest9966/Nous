@@ -64,6 +64,7 @@
 
 | module | 提交数 | minor 档 | patch 档 | 推出 | 现填 | 起点提交 |
 |---|---|---|---|---|---|---|
+| `AboutME_ModuleRelationshipNetwork` | 1 | 0 | 0 | 0.1.0 | 0.1.0 | `34bc3c22` 2026-11-26 |
 | `Data_Archive` | 4 | 2 | 1 | 0.3.0 | 0.3.0 | `61b78ec1` 2026-11-25 |
 | `Data_DataManager` | 15 | 2 | 12 | 0.3.0 | 0.5.0 | `7ebfe9a3` 2026-11-20 |
 | `Device` | 26 | 5 | 20 | 0.6.0 | 0.11.0 | `a1a1d508` 2026-11-20 |
@@ -78,7 +79,6 @@
 | `chord` | 21 | 1 | 19 | 0.2.0 | 0.2.0 | `d49c111b` 2026-11-16 |
 | `combos` | 9 | 1 | 7 | 0.2.7 | 0.2.7 | `9e109e3a` 2026-11-25 |
 | `dispatcher` | 7 | 1 | 5 | 0.2.0 | 0.2.0 | `6abbf38a` 2026-11-21 |
-| `documents` | 11 | 1 | 9 | 0.2.0 | 0.4.2 | `9002c5a5` 2026-11-18 |
 | `durable` | 72 | 1 | 70 | 0.2.0 | 0.2.0 | `4b7edc13` 2026-11-16 |
 | `env` | 14 | 2 | 11 | 0.3.3 | 0.3.3 | `46e196c2` 2026-11-16 |
 | `env-ssh` | 8 | 1 | 6 | 0.2.0 | 0.2.0 | `5d2eb78f` 2026-11-20 |
@@ -89,17 +89,17 @@
 | `repo` | 39 | 2 | 36 | 0.3.1 | 0.7.0 | `c49abb76` 2026-11-20 |
 | `routes` | 9 | 1 | 7 | 0.2.2 | 0.3.0 | `cfd815c8` 2026-11-24 |
 | `runtime` | 6 | 1 | 4 | 0.2.0 | 0.2.0 | `9ab7ab9e` 2026-11-17 |
-| `server` | 276 | 1 | 274 | 0.2.74 | 0.3.32 | `dea670b0` 2026-11-17 |
+| `server` | 278 | 1 | 276 | 0.2.76 | 0.5.0 | `dea670b0` 2026-11-17 |
 | `sessions` | 21 | 5 | 15 | 0.6.0 | 0.8.0 | `f7e1ed54` 2026-11-18 |
 | `store` | 14 | 1 | 12 | 0.2.0 | 0.2.0 | `249d729f` 2026-11-18 |
 | `telemetry` | 5 | 1 | 3 | 0.2.0 | 0.2.0 | `203d5d99` 2026-11-16 |
 | `tools` | 10 | 1 | 8 | 0.2.0 | 0.2.0 | `f3c5b4db` 2026-11-17 |
 | `wire` | 5 | 1 | 3 | 0.2.0 | 0.2.0 | `c754e96b` 2026-11-16 |
 
-**为什么是 28 行而票面说「14 个插件」**：`plugin.toml` 有 28 份（`docs/plugins.md` 里
-`crate` 列不是 `(待建)` / `—` 的行），其中 14 个进发行面（`MANIFEST`），另外 14 个是
+**为什么是 27 行而票面说「14 个插件」**：`plugin.toml` 有 27 份（`docs/plugins.md` 里
+`crate` 列不是 `(待建)` / `—` 的行），其中 14 个进发行面（`MANIFEST`），另外 13 个是
 kernel / platform / dev 层的 crate。规则 8 管的是**所有** `plugin.toml`，`check-plugins.sh`
-也逐个查，所以 28 份一起推 —— 只推 14 个会让另外 14 个继续冒充发行版号。
+也逐个查，所以 27 份一起推 —— 只推 14 个会让另外 13 个继续冒充发行版号。
 
 ## 每个 minor 档的来处（可逐条复核）
 
@@ -108,7 +108,6 @@ kernel / platform / dev 层的 crate。规则 8 管的是**所有** `plugin.toml
 | module | 升档的提交 |
 |---|---|
 | `device` | `9bef3cca` PUT /v1/default · `b969f4fc` POST /v1/catalog/refresh · `7ebfe9a3` capabilities 的归属 · `a096b7fb` 生成式 OpenAPI · `cfd815c8` GET /v1/machines · `5650ba41` readme 端点从 server 归到 device |
-| `documents` | `0841e2ae` 盘面树端点族 · `f46dea65` 归档 tree.json 导入 · `705d1490` 从发行面下线（删端点） |
 | `elements` | `51949cc8` 锁（locked 进 JSON + 端点判据） |
 | `env` | `385129a7` GET /v1/fs/dirs |
 | `Extend` | `58bd05b3` 端点族名改硬 · `a8736d61` 解冻（reload） · `250f7507` 管理面 7 条 · `1985977f` 编辑骨架 4 条 · `61259789` 垃圾站 2 条 · 本次改名 159fc902（vendor / 目录 / 包名） |
@@ -130,11 +129,13 @@ kernel / platform / dev 层的 crate。规则 8 管的是**所有** `plugin.toml
 
 ## `0.x` 的破坏性变更破了谁（规则 8 要求写清）
 
-这 28 条版本线里，**唯一的破坏性变更是 `documents` 的 `#90`**（`705d1490`：documents 从
-`MANIFEST` / `ROUTES` / `capabilities` / 依赖里整体下线，17 行端点声明删掉）。破的是：
+这 27 条版本线里，历史上唯一的破坏性变更是 `documents` 的 `#90`（`705d1490`：从
+`MANIFEST` / `ROUTES` / `capabilities` / 依赖里整体下线，17 行端点声明删掉）；2026-11-27
+把它的 crate 与 `spec-documents.md` 也整体删除，`documents` 因此不再占本表一行。
+它当时破的是：
 
 - **NousDesk**：`/v1/documents/*` 一族在客户端已无调用点（`wire.md` 记着「本服务不注册任何
-  `/v1/documents/*`」），但客户端「关于 → 插件」列表会**少一行** `documents`。
+  `/v1/documents/*`」），「关于 → 插件」列表少一行 `documents`。
 - **旧面板的调用方**：已随 2026-11-18 下线，无活体。
 
 `device` / `sessions` / `ext` 那些 minor 都是**加法**（新增端点、端点换归属），不破谁。

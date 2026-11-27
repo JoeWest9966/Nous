@@ -107,3 +107,7 @@ element-models = ["element-core", "nous-runtime", "nous-env", "nous-repo", "nous
 # #67 归档插件：三条命令走 durable 的 session commands（活库写锁与补偿方向都在那里），
 # 端点契约由 nous-routes 声明。不依赖 server（否则成环）。
 data-archive = ["nous-durable", "nous-routes"]
+
+# 模块关系网插件：只读投影 `plugin.toml [requires]`（构建期抄成静态表），加一条端点。
+# 图里不许出现 `server` / 任何插件 —— 它读的是清单文件，不是运行中的模块；多一条边就成环。
+aboutme-module-relationship-network = ["nous-routes"]

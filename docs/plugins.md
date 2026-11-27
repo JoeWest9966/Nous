@@ -129,7 +129,6 @@
 | `store` | Nous | `nous-store` | platform | 编译期 | `open` / `backup_to` / `schema_version`，`triggers` / `fires` / `reclaim` | 否 | Nous 自己的库 `nous.db`（第二个数据面入口）：独立迁移链，**不依赖 `nous-durable`**（#56） |
 | `Device` | Nous | `nous-device` | app | 编译期 | 机器编目 / 模型编目 / 默认模型 / 自省 | 是 | #65：从 server 提成独立插件；自带 9 条端点（机器 / 模型三件套 / `device` / `_routes` / `capabilities` / `openapi.json` / 插件 README）；自省三件套的**原料归宿主、视图归插件** |
 | `sessions` | Nous | `nous-sessions` | app | 编译期 | 起轮次 / 取消 / 终态五值 | 是 | **pi 本体**（#44 落地）：最小轮次与取消收敛 + 会话读投影（`source`）/ 写命令（`commands`）/ 请求形状（`records`）/ 事件流（`hub` / `coalesce` / `project` / `observer`）；`/v1/sessions*` 十七条里 十六条自带 handler，`messages` 留在宿主侧（要组装根的 driver / completions 与提示词注入） |
-| `documents` | Nous | `nous-documents` | app | 编译期 | —（frozen：不注册端点） | 否 | #90：v1 下线，内容真相只有四个私库；保留行记历史 |
 | `Nous_Prompts` | Nous | `nous-prompts` | app | 编译期 | 6 条端点自带 handler（`crates/Nous/Prompts/src/routes.rs`）：`GET /v1/prompts` 只读投影 + `files`/`file`/`create`/`publish` 编辑面；盘面规矩在 `nous-repo`，状态码翻译在 `nous-routes` | 是 | 默认根 `NOUS_PROMPTS=/opt/Nous-prompts`（#72，路径解析归 `env`）；`PROMPT.md` + `nous.json` + `settings.json` 的只读扫描与纯 `render()` 仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `Skill` / `Extend` 共用同一份；`RepoError → 状态码` 的翻译在 `nous_repo::Refusal`（HTTP 回包壳在 `nous_routes::HttpRefusal`）；自带 6 条 `/v1/prompts*` 端点 |
 | `Extend` | Library | `library-extend` | app | 编译期 | 扩展装载 / 帧协议 / 进程监管 / 熔断 / 热加载 / 热重载 / 真清单 + 15 条端点自带 handler（`crates/Library/Extend/src/routes.rs`）：清单 / 重载 / 管理面 9 条（create / duplicate / install / uninstall / categories / category / trash）+ 编辑页 4 条（`files` / `file` / `publish`，盘面规矩与 git 提交复用 `nous-repo`） | 否 | 已落地（#17–#37，#81 解冻：真清单 / 熔断 / 热重载，#84 补管理面）；自带 15 条 `/v1/extensions*` 端点（扩展管理面 + 编辑页 4 条走 `nous_repo::entries`）；`ext-host` 行是它后续的重划 |
 | `ext-probe` | Nous | `nous-ext-probe` | dev | 编译期 | 起一个扩展、逐帧验协议 | 否 | 探针 binary（`dev`：不进 systemd、不进发布包） |
@@ -151,6 +150,7 @@
 | `presets` | Nous | — | app | 编译期 | 模板 / 终极模板名册 + `/v1/presets`（#60：端点面 + 修订表；判定归 `presets-admin`） | 否 | 数据根 `NOUS_PRESETS=/opt/Nous-Template`（#63；段清单读 `<root>/sections.json`，路径解析归 `env`） |
 | `combos` | Nous | `nous-combos` | app | 编译期 | `GET /v1/combos/:section` + `PATCH /v1/combos/:section/:name`（#61：名册扫 `NOUS_PRESETS` 目录，enabled 由引擎算，写穿 `spec.enabled`，If-Match + requestId 幂等） + `POST /v1/combos/:section/:name/fire` + `POST /v1/presets/Ultimate-Template/launch`（#82：试跑复用 #73 的 evaluate，写 #74 血缘）；**四条端点自带 handler**（`routes.rs`） | 否 | 数据根 `NOUS_PRESETS`（与 `presets` 同根）；触发器存在性从 `NOUS_TRIGGER` 目录读。宿主能力四件事：两个盘面根 / 触发器判定视图 / 注入时钟 / 起会话 + 写血缘 |
 | `Skill` | Library | `library-skill` | app | 编译期 | 6 条端点自带 handler（`crates/Library/Skill/src/routes.rs`）：`GET /v1/skills`（只读投影，`?usage=1` 反查谁在用）+ `/v1/skills/{files,file,create,publish}`（编辑页） | 否 | 默认根 `NOUS_SKILLS=/opt/Nous-skills`（#63，路径解析归 `env`）；`SKILL.md` frontmatter / 附件 / 类别词表解析仍在 `lib.rs`；盘面规矩（名字 / 路径校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，与 `prompts` / `Extend` 共用同一份；不 spawn git（发布走 `nous-repo`） |
+| `AboutME_ModuleRelationshipNetwork` | AboutME | `aboutme-module-relationship-network` | app | 编译期 | 1 条端点自带 handler（`crates/AboutME/ModuleRelationshipNetwork/src/routes.rs`）：`GET /v1/modules/graph`（整张依赖图一次给全） | 否 | 原料是各插件 `plugin.toml` 的 `[requires]`（`scripts/check-plugins.sh` 与 `cargo metadata` 双向逐条比对），构建期由 `build.rs` 抄成静态表内嵌 —— 图与产物同一份、启动零 IO；只表达 crate 边：「A 干活得靠 B」这种语义依赖内核里没有机器可读来源，缺的就不在图上，被依赖却没有对应模块的包名进 `unmapped`（不静默丢弃） |
 | `prompt-text` | Nous | — | app | 声明式 | `*.md` 正文 | 是 | 数据 |
 | `trigger-spec` | Nous | — | app | 声明式 | `nous.json` 参数声明 + `index.json` | 否 | 数据 |
 | `skills-admin` | Nous | (待建) `nous-skills-admin` | app | 声明式 + 管理 API | skill 仓库管理（装/卸/variant） | 否 | 今天 `skills-api.js` 1,604 + `skills-variants.js` 371 |
@@ -183,12 +183,12 @@
 
 ## 注：与 `ls -d crates/*/*/` 的一一对应
 
-今天 `crates/*/*` 下 29 个目录（`crates/Nous/` 24 个 + `crates/Library/` 2 个 + `crates/Data/` 2 个 + `crates/Element/` 1 个），
-本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 29 行：
+今天 `crates/*/*` 下 31 个目录（`crates/Nous/` 24 个 + `crates/Library/` 2 个 + `crates/Data/` 2 个 + `crates/Element/` 1 个 + `crates/Trigger/` 1 个 + `crates/AboutME/` 1 个），
+本表里 `crate` 列不是 `(待建)`、也不是 `—` 的正好 31 行：
 `wire` `chord` `durable` `env` `ai` `ai-types` `tools` `runtime` `telemetry`
 `store` `Extend` `ext-probe` `ext-sdk` `sessions` `server` `fixture` `Element_Core` `env-ssh` `repo`
-`routes` `prompts` `presets-admin` `dispatcher` `Device` `Skill` `documents` `Models`
-`Data_DataManager` `Data_Archive`。
+`routes` `Nous_Prompts` `presets-admin` `dispatcher` `Device` `Skill` `Models` `combos`
+`Data_DataManager` `Data_Archive` `Trigger_Core` `AboutME_ModuleRelationshipNetwork`。
 新增模块 → 先加一行；删模块 → 先删一行。
 
 （`ai` 今天住着 `nous-ai` 一个包：目录不叫 `ai-providers`，是因为 spec 判据 6b 用
