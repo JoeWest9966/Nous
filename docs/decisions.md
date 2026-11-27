@@ -1751,3 +1751,25 @@ handler 拿到手只读——`store.lock()` / `definitions()` / `fire()`，没�
 **反悔点**：与 #90 的同一个反悔点（没有 git 私库却要编辑内容 / 引擎必须持有半成品草稿 / 私库被
 外部改坏需要第二副本）。真到那天，重开 documents 要**先把 crate 从 git 历史里捞回来**，并先改
 `wire.md`、回答「两个写者谁签字」——不能悄悄把 `documents_off.rs` 删了当没事。
+
+**CI 按提交出包：推 main 就挂一份带 sha 的成品到滚动预发布 `ci`**（2026-11-27）
+
+**决定**：`.github/workflows/package.yml` 在**每次推 main** 时编一份 musl 静态 `nous-app`，
+命名 `nous-app-<sha8>-x86_64-unknown-linux-musl`（带 `.sha256`），上传到**一个**滚动预发布
+`ci`，只留最近 5 份；打 `v*` tag 时另发永久 Release。**正式版本号不变**（`v*` 仍是唯一
+发版口径），`ci` 里的是「某个提交的产物」，不是版本。
+
+**为什么**：能部署的最小单位是整仓链接出的那一个 `nous-app`，所以「改一个插件」也要重新
+链接；平时改插件不涨版本、也不该为拿一个二进制给整个内核打 tag。上一版只有 `verify.yml`
+（跑测试）、一个 release 都没有，部署只能现场 `cargo build`，换台机器就是 6–15 分钟冷编译
+外加环境差异。实测参考：改一个插件增量 release 链接 ≈30 秒，冷编译分钟级。
+
+**为什么不「每个 sha 一个 Release」**：几百个 release 之后 `gh release list` 就没法看了，
+而且每个都带 tag。滚动一个 pre-release + 文件名带 sha，既能按 sha 取货，也不污染 tag 空间。
+
+**为什么不把产物进仓**：静态二进制几十兆，进 git 会让 clone 永久变重，历史也无法清理。
+
+**反悔点**：① 如果 `ci` 那个 tag 碍事（`git describe` 变脏），把上传目标换成 `gh api` 直传
+release assets 之外的存储，资产名规则不动；② 如果 5 份不够回滚（要按周一那版复现 bug），
+把保留数改大或改成按天保留；③ 如果 CI 4 核编 musl 太慢（>20 分钟），退回「asus 本地编 +
+`deploy.sh` 上传」，本工作流删掉即可，`deploy.sh` 一行不用改。

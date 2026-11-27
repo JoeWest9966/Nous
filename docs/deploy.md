@@ -219,3 +219,9 @@ Desk 写（运行期）。**后读的优先**，所以 Desk 改过的变量以 `
   `sessions README 可读（bytes=325）`。
 - 这次踩到并修掉：`/tmp/nous-docs` 残留时 rsync 会把 `docs/` 多嵌一层，部署在
   「落产物」cp 失败（见 `pitfalls.md` 同日那条）。
+
+**取现成产物（2026-11-27 起）**：不想在本机冷编译，可以直接拿 CI 出的成品 ——
+`gh release view ci` 里是按提交号命名的 `nous-app-<sha8>-x86_64-unknown-linux-musl`
+（推 main 就有，只留最近 5 份；`v*` 的 Release 是正式版本、永久保留）。取下来后
+`NOUS_APP_BIN=./nous-app-<sha8>-... scripts/deploy.sh` 照样部署（脚本仍自校验
+「ELF + 静态链接」）。注意：`ci` 里的东西是「某个提交」，没有版本号语义，别拿它当发版记录。

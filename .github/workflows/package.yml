@@ -1,0 +1,119 @@
+name: package
+
+# 出「能直接部署的 nous-app」。两条线互不干扰：
+#
+# - **推 main**：编一份、命名带提交号（`nous-app-<sha8>-x86_64-unknown-linux-musl`），
+#   挂到滚动预发布 `ci` 上，只留最近 5 份。改一个插件合进 main 就能直接取货部署，
+#   不必为了拿一个二进制给整个内核打 tag（`decisions.md` 2026-11-27）。
+# - **打 tag `v*`**：正式发版，产物永久留在那个 tag 的 Release 上。
+#
+# 产物形状跟 `scripts/deploy.sh` 认的一致：musl 静态 ELF，`NOUS_APP_BIN=<这个文件>
+# scripts/deploy.sh` 就能装（脚本仍会自己校验「ELF + 静态链接」）。
+# 这里**不跑测试** —— 测试在 `verify.yml`，两件事分开，别让出包被一个无关的 flaky 卡住。
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      rolling:
+        description: "强制上传到滚动预发布 ci（在分支上验工作流用）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# 同一个 ref 上的出包不互相打断；main 上连续推两次，先来的那份照样传完（它是某个提交的
+# 唯一产物，取消了就没人能按那个 sha 取货了）。
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 跟 `docs/deploy.md` 里 asus 需要的两样一致：musl 的 std + musl-gcc。
+      # 其余是 openssl-free 的：这个仓用 rustls + ring + bundled sqlite（见 Cargo.lock）。
+      - name: 装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools pkg-config file
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: 缓存 cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          key: musl
+
+      - name: 编译 musl 静态产物
+        run: cargo build --release --target x86_64-unknown-linux-musl -p nous-server --bin nous-app
+
+      # 与 deploy.sh 的守卫同义：不是静态 ELF 就当场红，别等装到 j1900 上才发现。
+      - name: 校验是静态 ELF
+        run: |
+          BIN=target/x86_64-unknown-linux-musl/release/nous-app
+          file "$BIN" | tee /tmp/file.txt
+          grep -q 'ELF 64-bit' /tmp/file.txt
+          if ldd "$BIN" 2>&1 | grep -q '=>'; then
+            echo "不是静态链接，部署端会拒绝" >&2
+            exit 1
+          fi
+
+      - name: 命名 + 校验码 + 版本自证
+        id: assets
+        run: |
+          SHA=$(git rev-parse --short=8 HEAD)
+          NAME="nous-app-$SHA-x86_64-unknown-linux-musl"
+          install -m755 target/x86_64-unknown-linux-musl/release/nous-app "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+          ./"$NAME" --version | tee /tmp/version.txt
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: 上传到滚动预发布 ci（推 main）
+        if: github.ref == 'refs/heads/main' || inputs.rolling
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.assets.outputs.name }}
+          SHA: ${{ steps.assets.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! gh release view ci >/dev/null 2>&1; then
+            gh release create ci \
+              --prerelease \
+              --target main \
+              --title "CI 构建" \
+              --notes "每次推 main 覆盖上传的产物，文件名带提交号（\`git rev-parse --short=8\`）。只留最近 5 份；正式版本在 \`v*\` 的 Release 里。"
+          fi
+          gh release upload ci "$NAME" "$NAME.sha256" --clobber
+
+          # 只留最近 5 份（每份 2 个文件 → 12 行以后的删掉）。按上传时间排，不按 sha。
+          gh release view ci --json assets \
+            -q '.assets[] | "\(.createdAt)\t\(.name)"' \
+            | sort -r | tail -n +12 | cut -f2 \
+            | while read -r old; do
+                [ -n "$old" ] && gh release delete-asset ci "$old" -y
+              done
+
+      - name: 发正式 Release（打 tag）
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: ${{ steps.assets.outputs.name }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "musl 静态产物。部署：\`NOUS_APP_BIN=$NAME scripts/deploy.sh\`，再 \`scripts/deploy-check.sh --wait=300\` 验收。" \
+            "$NAME" "$NAME.sha256"
