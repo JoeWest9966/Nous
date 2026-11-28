@@ -544,3 +544,89 @@ async fn publish_reports_the_failing_stage() {
     let head_files = git(&root, &["show", "--pretty=format:", "--name-only", "HEAD"]);
     assert!(!head_files.contains("broken-build"), "失败不许提交：{head_files}");
 }
+
+// ── 排序（/v1/trigger-projects/order）──────────────────────────────────
+
+fn names_of(body: &Value) -> Vec<String> {
+    body["triggers"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| item["name"].as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn order_round_trips_and_reorders_the_list() {
+    let (_tmp, root) = fixture();
+    for name in ["alpha", "beta", "gamma"] {
+        project(&root, name);
+    }
+    let app = app_with(&root);
+
+    // 没排过：按名字。
+    let (status, body) = call(&app, "GET", "/v1/trigger-projects/order", None).await;
+    assert_eq!(status, StatusCode::OK, "GET order：{body}");
+    assert_eq!(body["order"], json!(["alpha", "beta", "gamma"]));
+
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/v1/trigger-projects/order",
+        Some(json!({ "order": ["gamma", "alpha", "beta"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "PUT order：{body}");
+    assert_eq!(body["order"], json!(["gamma", "alpha", "beta"]));
+
+    // 落盘进工作树，但**不提交** —— 和 category 一样等「提交并推送」。
+    assert!(root.join("order.json").is_file(), "order.json 没落盘");
+    let porcelain = git(&root, &["status", "--porcelain"]);
+    assert!(porcelain.contains("order.json"), "PUT 不许自己提交：{porcelain}");
+    let committed = git(&root, &["show", "--pretty=format:", "--name-only", "HEAD"]);
+    assert!(!committed.contains("order.json"), "order.json 不该已进 HEAD：{committed}");
+
+    // 列表顺序跟着走 —— 不然拖完松手会弹回原来的位置。
+    let (_, body) = call(&app, "GET", "/v1/trigger-projects", None).await;
+    assert_eq!(names_of(&body), vec!["gamma", "alpha", "beta"], "{body}");
+}
+
+#[tokio::test]
+async fn order_drops_unknown_names_and_appends_missing_ones() {
+    let (_tmp, root) = fixture();
+    for name in ["alpha", "beta", "gamma"] {
+        project(&root, name);
+    }
+    let app = app_with(&root);
+
+    let (status, body) = call(
+        &app,
+        "PUT",
+        "/v1/trigger-projects/order",
+        Some(json!({ "order": ["gamma", "ghost"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "PUT order：{body}");
+    assert_eq!(
+        body["order"],
+        json!(["gamma", "alpha", "beta"]),
+        "不存在的名字丢掉、漏掉的按名字补在后面：{body}"
+    );
+}
+
+#[tokio::test]
+async fn broken_order_file_falls_back_to_names() {
+    let (_tmp, root) = fixture();
+    for name in ["alpha", "beta"] {
+        project(&root, name);
+    }
+    std::fs::write(root.join("order.json"), "{ 这不是 json\n").unwrap();
+    let app = app_with(&root);
+
+    let (status, body) = call(&app, "GET", "/v1/trigger-projects", None).await;
+    assert_eq!(status, StatusCode::OK, "排序表坏了也要 200：{body}");
+    assert_eq!(names_of(&body), vec!["alpha", "beta"]);
+}

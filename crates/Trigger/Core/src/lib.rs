@@ -8,8 +8,8 @@
 //!
 //! - [`runtime`]：点火与观测的领域层。不认 axum，只认 [`nous_routes::HttpRefusal`]。
 //! - [`catalog`]：`/v1/triggers*` 11 个 handler（库面）。
-//! - [`projects`]：`/v1/trigger-projects*` 13 个 handler（盘面）。
-//! - [`routes`]：24 条声明 + 两条宿主能力。
+//! - [`projects`]：`/v1/trigger-projects*` 15 个 handler（盘面）。
+//! - [`routes`]：26 条声明 + 两条宿主能力。
 //!
 //! 为什么库面和盘面不能在同一个文件里、也不能合成一条宿主能力：它们操作的是**两种
 //! 不同的东西** —— 一行定义和一棵源码目录。合成一个「触发器宿主」大对象，等于说

@@ -142,6 +142,8 @@
 | `GET /v1/trigger-projects/categories` | 词表：`{categories: [...]}`（`categories.json`，两种历史写法都认）。 |
 | `POST /v1/trigger-projects/categories` | body `{op: add|rename|remove, name, to?}`；改词表并重写各 `nous.json`，**不提交**。 |
 | `POST /v1/trigger-projects/category` | body `{name, category[]}`；给一条挂类别，回 `{catalog, categories}`。 |
+| `GET /v1/trigger-projects/order` | 生效顺序：`{order: [name...]}`。表里认得且盘上还在的按表排，其余按名字补在后面；`order.json` 坏了当没排过，不 500。 |
+| `PUT /v1/trigger-projects/order` | body `{order[]}`；整段写 `<root>/order.json`（`{"v":1,"order":[...]}`）。不认的名字丢掉、漏掉的按名字补在后面，**不提交**（等 sync/publish）。语义照 `/v1/presets/:section/order`。 |
 | `POST /v1/trigger-projects/sync` | 只提交词表 / 清单（`categories.json`、`index.json`、各 `nous.json`），不碰 `.rs`。 |
 
 - **保存 ≠ 发布**：`PUT file` 只落盘；`POST publish` 才
