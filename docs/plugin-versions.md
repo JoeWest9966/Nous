@@ -64,7 +64,7 @@
 
 | module | 提交数 | minor 档 | patch 档 | 推出 | 现填 | 起点提交 |
 |---|---|---|---|---|---|---|
-| `AboutME_ModuleRelationshipNetwork` | 5 | 0 | 4 | 0.1.4 | 0.2.0 | `34bc3c22` 2026-11-26 |
+| `AboutME_ModuleRelationshipNetwork` | 7 | 0 | 6 | 0.1.6 | 0.2.0 | `34bc3c22` 2026-11-26 |
 | `Data_Archive` | 4 | 2 | 1 | 0.3.0 | 0.3.0 | `61b78ec1` 2026-11-25 |
 | `Data_DataManager` | 15 | 2 | 12 | 0.3.0 | 0.5.0 | `7ebfe9a3` 2026-11-20 |
 | `Device` | 26 | 5 | 20 | 0.6.0 | 0.11.0 | `a1a1d508` 2026-11-20 |
