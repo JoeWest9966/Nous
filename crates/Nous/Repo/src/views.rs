@@ -16,6 +16,9 @@ pub struct RepoStatus {
     pub behind: usize,
     pub dirty: bool,
     pub locked: bool,
+    /// `origin` 的 URL；没配远端给 `None`（本地单用户也是合法用法）。
+    /// 与 `PresetsAdmin::repo_view` 同口径 —— 客户端靠它决定「在浏览器打开」这个按钮画不画。
+    pub remote: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,9 +67,11 @@ pub fn status(root: &Path) -> Result<RepoStatus> {
     let behind = git::git_ok(root, &["rev-list", "--count", "HEAD..@{upstream}"])
         .ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
     let dirty = git::git_ok(root, &["status", "--porcelain"]).map(|s| !s.trim().is_empty()).unwrap_or(false);
+    // 读不到 remote 不是错误：没配 origin 和「git 命令炸了」在这里都是「没有远端」。
+    let remote = remote_url(root).ok().flatten();
     Ok(RepoStatus {
         root: root.to_string_lossy().into_owned(),
-        head, branch, ahead, behind, dirty, locked: false,
+        head, branch, ahead, behind, dirty, locked: false, remote,
     })
 }
 

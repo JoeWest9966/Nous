@@ -911,7 +911,9 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
 在 `nous-repo` 的公共 API，HTTP 只暴露发布与读视图。字段形状以
 `crates/Nous/Server/tests/repos_endpoints.rs` 为准（本文件只索引端点与约束）。
 
-- `GET /v1/repos/:repo/status` → `{root, head, branch, ahead, behind, dirty, locked}`。
+- `GET /v1/repos/:repo/status` → `{root, head, branch, ahead, behind, dirty, locked, remote}`。
+  `remote` 是 `origin` 的 URL，没配远端给 `null`（与 `PresetsAdmin` 的 `repo_view` 同口径）；
+  客户端靠它决定「在浏览器打开」画不画 —— 别拿 `root` 去猜远端。
 - `GET /v1/repos/:repo/pending` → `{units:[{name, state, aheadCommits, paths[]}]}`，按目录单元分组。
 - `GET /v1/repos/:repo/pending/diff?path=` / `history/diff?name=&hash=&path=` → `{before, after}`（全文，不是 git patch）。
 - `GET /v1/repos/:repo/pending/commit?hash=` → `{hash, message, files[]}`。
