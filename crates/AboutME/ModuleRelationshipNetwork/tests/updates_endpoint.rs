@@ -244,7 +244,7 @@ async fn upstream_error_is_200_and_unavailable() {
     assert_eq!(body["checkedAt"], Value::Null);
     assert!(
         body["error"].as_str().unwrap().contains("500"),
-        "错误文本要点出上游状态：{}",
+        "错误文本要点出上游状态（不带 URL、不带 reqwest 原文）：{}",
         body["error"]
     );
     for item in body["modules"].as_array().unwrap() {

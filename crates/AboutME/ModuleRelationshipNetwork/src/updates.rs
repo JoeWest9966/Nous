@@ -247,16 +247,27 @@ async fn fetch(
     if let Some(token) = config.token.as_deref() {
         request = request.bearer_auth(token);
     }
-    let response = request
-        .send()
-        .await
-        .map_err(|error| format!("拉 {} 失败：{error}", config.source))?;
+    // 错误文案只给人看「为什么没拿到」：地址在 `source` 字段里已经有了，不要把 URL
+    // 与 reqwest 的英文原文塞进界面（真机上那一行会折成两行还读不懂）。
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            "连不上上游：超时".to_string()
+        } else if error.is_connect() {
+            "连不上上游：连接被拒或域名解析不了".to_string()
+        } else {
+            "连不上上游".to_string()
+        }
+    })?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_MODIFIED {
         return Ok(Fetched::NotModified);
     }
     if !status.is_success() {
-        return Err(format!("{} 回了 HTTP {}", config.source, status.as_u16()));
+        return Err(match status.as_u16() {
+            404 => "上游没有这份清单（HTTP 404）".to_string(),
+            401 | 403 => format!("上游拒绝了这次请求（HTTP {}）", status.as_u16()),
+            code => format!("上游回了 HTTP {code}"),
+        });
     }
     let etag = response
         .headers()
@@ -266,9 +277,9 @@ async fn fetch(
     let text = response
         .text()
         .await
-        .map_err(|error| format!("读 {} 失败：{error}", config.source))?;
+        .map_err(|_| "上游的清单没读完（连接断了）".to_string())?;
     let manifest: Manifest = serde_json::from_str(&text)
-        .map_err(|error| format!("{} 不是预期的清单形状：{error}", config.source))?;
+        .map_err(|_| "上游回的不是清单形状（JSON 解析不了）".to_string())?;
     Ok(Fetched::Body(manifest, etag))
 }
 
