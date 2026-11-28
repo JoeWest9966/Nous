@@ -435,3 +435,86 @@ async fn prompt_publish_writes_the_right_default_message() {
     let message = git(&root, &["log", "-1", "--pretty=%s"]);
     assert_eq!(message, "prompt: 更新模板仓库");
 }
+
+#[tokio::test]
+async fn duplicate_skill_copies_tree_and_rewrites_names() {
+    let (_tmp, root) = fixture("skills");
+    let app = app_with("skills", &root);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/skills/duplicate",
+        Some(json!({ "name": "demo", "to": "demo-copy" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["name"], json!("demo"));
+    assert_eq!(body["to"], json!("demo-copy"));
+    // 子目录与附件一起拷过去（不是只拷顶层文件）。
+    assert_eq!(
+        std::fs::read_to_string(root.join("demo-copy/references/a.md")).unwrap(),
+        "参考\n"
+    );
+    // 点开头的目录不拷。
+    assert!(!root.join("demo-copy/.cache").exists(), "点开头目录不跟");
+    // SKILL.md frontmatter 的 name 改成新名字（否则列表里还叫 demo）。
+    let skill = std::fs::read_to_string(root.join("demo-copy/SKILL.md")).unwrap();
+    assert!(skill.contains("name: demo-copy"), "frontmatter 名字要改：{skill}");
+    assert!(!skill.contains("name: demo\n"), "不许留旧名字：{skill}");
+    // nous.json 的 name。
+    let manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("demo-copy/nous.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["name"], json!("demo-copy"));
+
+    // 源不存在 → 404；目标已存在 → 409。
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/skills/duplicate",
+        Some(json!({ "name": "nope", "to": "x" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/skills/duplicate",
+        Some(json!({ "name": "demo", "to": "demo-copy" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+}
+
+#[tokio::test]
+async fn duplicate_prompt_copies_tree_and_rewrites_manifest() {
+    let (_tmp, root) = fixture("prompts");
+    let app = app_with("prompts", &root);
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/prompts/duplicate",
+        Some(json!({ "name": "demo", "to": "demo-copy" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(
+        std::fs::read_to_string(root.join("demo-copy/PROMPT.md")).unwrap(),
+        "# 演示\n\n正文\n"
+    );
+    let manifest: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("demo-copy/nous.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["name"], json!("demo-copy"));
+    // 名字不合法 → 400。
+    let (status, body) = call(
+        &app,
+        "POST",
+        "/v1/prompts/duplicate",
+        Some(json!({ "name": "demo", "to": "Bad/Name" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}

@@ -402,9 +402,9 @@ op 就发一帧" → 0 帧负向红。
 | `data-archive` | `nous-durable` `nous-routes` | #67 会话归档插件：三条命令走 durable 的 session commands（活库写锁 + 补偿方向在那里），端点由 `routes()` 声明 |
 | `element-core` | `nous-env` `nous-repo` `nous-routes` | 元素库插件：盘上真相与「写一次提交一次」在 repo，自带 8 条 `/v1/elements*`（读写 / 锁 / 补推） |
 | `nous-combos` | `nous-dispatcher` `nous-durable` `nous-repo` `nous-routes` | #61/#82 组合插件：名册扫盘 + 开关写穿 + 试跑 / launch；判定走 dispatcher 的纯函数，起会话与写血缘走 durable 的命令面，内容版本号复用 repo 的 sha256 |
-| `library-skill` | `nous-env` `nous-repo` `nous-routes` | 技能插件：`SKILL.md` 解析层 + 自带 6 条 `/v1/skills*`；盘面规矩在 `nous_repo::entries`，与 `prompts` / `extend` 共用同一份 |
+| `library-skill` | `nous-env` `nous-repo` `nous-routes` | 技能插件：`SKILL.md` 解析层 + 自带 7 条 `/v1/skills*`；盘面规矩在 `nous_repo::entries`，与 `prompts` / `extend` 共用同一份 |
 | `nous-repo` | `nous-env` `nous-routes` | 私库层：六套私库的文件读写、git 发布，以及 `/v1/repos/*` 三十条端点（自带 handler + `Host` trait）。`Refusal`（`RepoError → 状态码` 的唯一翻译）也在这里 —— 它拥有 `RepoError`，翻译自己家的错误方向永远是对的 |
-| `nous-prompts` | `nous-env` `nous-repo` `nous-routes` | 模板插件：`PROMPT.md` + `nous.json` + `settings.json` 只读扫描与纯 `render()`，自带 6 条 `/v1/prompts*`（含 `GET /v1/prompts` 只读投影） |
+| `nous-prompts` | `nous-env` `nous-repo` `nous-routes` | 模板插件：`PROMPT.md` + `nous.json` + `settings.json` 只读扫描与纯 `render()`，自带 7 条 `/v1/prompts*`（含 `GET /v1/prompts` 只读投影） |
 | `nous-extend` | `nous-durable` `nous-ext-sdk` `nous-repo` `nous-routes` | 扩展插件：一个扩展一个进程 + 帧协议 + 熔断 + 热重载，自带 15 条 `/v1/extensions*`（管理面 9 条 + 编辑页 4 条走 `nous_repo::entries`）；git 只在 `nous-repo` 里 spawn |
 | `trigger-core` | `nous-store` `nous-durable` `nous-sessions` `nous-ai` `nous-dispatcher` `nous-repo` `nous-tools` `nous-routes` | 触发器插件：定义面（点火六步 + 观测读口 + 调度健康，11 条）+ 工程面（盘上的 cargo 项目与发布 + 排序，15 条）；git 只在 `nous-repo`、起进程只走 `nous-tools` |
 | `aboutme-module-relationship-network` | `nous-routes` | 模块关系网插件：`plugin.toml [requires]` / `version` 的只读投影（构建期静态表）+ `GET /v1/modules/graph` + `GET /v1/modules/updates`。不依赖任何插件，否则图会污染自己 |

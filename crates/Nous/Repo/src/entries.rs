@@ -296,6 +296,134 @@ pub fn publish_entry(repo: &Repo, message: &str) -> Result<Published> {
     Err(RepoError::BadRequest("没有待发布的改动".into()))
 }
 
+/// 复制一条目的回执：`{name, to, files}`，与扩展的 `duplicate` 同形。
+#[derive(Debug, Clone, Serialize)]
+pub struct Duplicate {
+    /// 源条目名。
+    pub name: String,
+    /// 新条目名。
+    pub to: String,
+    /// 拷过去的相对路径（递归、跳过点开头与 `node_modules`），已排序。
+    pub files: Vec<String>,
+}
+
+/// `POST /v1/{kind}/duplicate`：整目录复制一条目（`from` → `to`），改名字，**不提交**。
+///
+/// 与 `create` 的区别只有一个：源不是空骨架，而是另一条已有目录（含子目录 / 附件）。
+/// `primary` 是「主文件里也写着条目名」的那个文件名（技能是 `SKILL.md` 的
+/// frontmatter `name:`；模板的 `PROMPT.md` 没有内嵌名字，传 `None`）。
+/// 先拷进点开头的暂存目录再 `rename`，半截副本不许落到条目根里（同 [`create_entry`]）。
+pub fn duplicate_entry(
+    repo: &Repo,
+    from: &str,
+    to: &str,
+    primary: Option<&str>,
+) -> Result<Duplicate> {
+    let from = check_name(from)?;
+    let to = check_name(to)?;
+    let source = repo.root().join(&from);
+    if !source.is_dir() {
+        return Err(RepoError::NotFound(format!("仓库里没有这个条目：{from}")));
+    }
+    let landing = repo.root().join(&to);
+    if landing.exists() {
+        return Err(RepoError::Conflict {
+            message: format!("{to}/ 已经在了 —— 换个名字，或者直接去改它"),
+            current: None,
+            etag: None,
+        });
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let staging = repo.root().join(format!(".dup-{to}-{stamp}"));
+    let mut files: Vec<String> = Vec::new();
+    let landed = (|| -> Result<()> {
+        copy_tree(&source, &staging, "", &mut files)?;
+        rewrite_manifest_name(&staging, &to)?;
+        if let Some(primary) = primary {
+            rewrite_frontmatter_name(&staging.join(primary), &to)?;
+        }
+        std::fs::rename(&staging, &landing).map_err(|e| RepoError::Io(e.to_string()))
+    })();
+    if landed.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    landed?;
+    files.sort();
+    Ok(Duplicate { name: from, to, files })
+}
+
+/// 递归拷目录；跳过点开头项与 `node_modules`；符号链接不跟（面板是编辑器，
+/// 不是任意路径的读口）。`files` 收被拷的相对路径。
+fn copy_tree(from: &Path, to: &Path, rel: &str, files: &mut Vec<String>) -> Result<()> {
+    std::fs::create_dir_all(to).map_err(|e| RepoError::Io(e.to_string()))?;
+    let mut entries: Vec<_> = std::fs::read_dir(from)
+        .map_err(|e| RepoError::Io(e.to_string()))?
+        .flatten()
+        .collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == "node_modules" {
+            continue;
+        }
+        let kind = entry.file_type().map_err(|e| RepoError::Io(e.to_string()))?;
+        let child = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
+        let src = entry.path();
+        let dst = to.join(&name);
+        if kind.is_dir() {
+            copy_tree(&src, &dst, &child, files)?;
+        } else if kind.is_file() {
+            std::fs::copy(&src, &dst).map_err(|e| RepoError::Io(e.to_string()))?;
+            files.push(child);
+        }
+    }
+    Ok(())
+}
+
+/// 把 `nous.json` 的 `name` 改成新名字；其它字段（summary / category / 未知键）原样保留。
+fn rewrite_manifest_name(dir: &Path, to: &str) -> Result<()> {
+    let manifest = dir.join("nous.json");
+    let Ok(bytes) = std::fs::read(&manifest) else {
+        return Ok(());
+    };
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| RepoError::Io(format!("解析 nous.json：{e}")))?;
+    value["name"] = json!(to);
+    let text = serde_json::to_string_pretty(&value)
+        .map(|text| text + "\n")
+        .unwrap_or_else(|_| "{}\n".to_string());
+    std::fs::write(&manifest, text).map_err(|e| RepoError::Io(e.to_string()))
+}
+
+/// 把主文件 frontmatter 里已有的 `name:` 改成新名字（没有 `name:` 行就不动 ——
+/// 技能扫描时 `name` 缺席会回退到目录名，而目录名已经是新名字）。
+fn rewrite_frontmatter_name(file: &Path, to: &str) -> Result<()> {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return Ok(());
+    };
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    if lines.first().map(|line| line.trim()) != Some("---") {
+        return Ok(());
+    }
+    let Some(close) = lines.iter().skip(1).position(|line| line.trim() == "---") else {
+        return Ok(());
+    };
+    let close = close + 1;
+    for line in lines.iter_mut().take(close).skip(1) {
+        if line.trim_start().starts_with("name:") {
+            *line = format!("name: {to}");
+        }
+    }
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(file, out).map_err(|e| RepoError::Io(e.to_string()))
+}
+
 /// 读一个文本文件：二进制 / 非 UTF-8 直接 400（面板不编辑二进制）。
 pub fn read_text(repo: &Repo, path: &str) -> Result<(String, String)> {
     let read = repo.read_file(path)?;

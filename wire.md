@@ -779,6 +779,7 @@ Desk 的三个编辑页（技能 / 提示词 / 扩展）共用这一副骨架：
 | `PUT /v1/{kind}/file` | body `{name, path, text, base?}`。`base` 给上就是 If-Match：与磁盘现状不符回 409（不静默覆盖）；省掉 = 新建/硬写。回 `{name, path, etag, created}`。 |
 | `POST /v1/prompts/create` | body `{name, summary, category?, body?}`。落 `<name>/PROMPT.md`（不给正文就写 `# <name>`）+ `<name>/nous.json`（`summary` 在这里）。201 回 `{name, path, files}`；重名 409，`summary` 空 400。 |
 | `POST /v1/skills/create` | body `{name, description, category?}`。落 `<name>/SKILL.md`（frontmatter 带 `name`/`description`）+ `<name>/nous.json`（`summary` 是空串）。201 回 `{name, path, files}`；重名 409，`description` 空 400。 |
+| `POST /v1/{kind}/duplicate` | body `{name, to}`（`{kind}` 目前是 `skills` / `prompts`）。整目录复制一条（含子目录 / 附件，跳过点开头与 `node_modules`），把 `nous.json` 的 `name`（技能另改 `SKILL.md` frontmatter 的 `name:`）改成 `to`，**不提交**。201 回 `{name, to, files}`；源不存在 404，目标已存在 409，名字不合法 400。 |
 | `POST /v1/{kind}/publish` | body `{message?}`（可省）。把私库里 dirty 的路径交给 `nous_repo::commit`（内容闸 + pathspec 防搭车 + push 都在那层）。回 `{commit, pushed, refs}`；只有「已提交没推」时只 push（`commit:null`）；没有改动回 400。默认文案随仓：`skill: 更新技能仓库` / `prompt: 更新模板仓库` / `extend: 更新扩展仓库`。 |
 
 - `{kind}` 三值：`skills`（私库 `NOUS_SKILLS`）/ `prompts`（`NOUS_PROMPTS`）/

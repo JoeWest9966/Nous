@@ -1863,3 +1863,27 @@ release 要十几分钟；开发机 32 核同一件事是分钟级。所以 CI �
 `NOUS_UPDATES_TOKEN`，形状仍不变；③ 如果模块数涨到几百，`modules` 一次给全仍远小于 1MB，
 不必分页；④ 如果哪天要在客户端做「一键升级」，那是另一条链（需要写盘 / 重启），
 本端点不承担。
+
+## 2026-11-28 · 资源条目「复制」：`POST /v1/{skills,prompts}/duplicate` 整目录复制
+
+**选了什么**：给 `Skill` / `Nous_Prompts` 各加一条 `POST /v1/{skills,prompts}/duplicate`，
+body `{name, to}` → 201 `{name, to, files}`；整目录复制（含子目录 / 附件），跳过点开头与
+`node_modules`，把 `nous.json` 的 `name`（技能另改 `SKILL.md` frontmatter 的 `name:`）改成 `to`，
+**不 commit**（落盘归它，提交归 publish）。共用实现落在 `nous_repo::duplicate_entry`。
+
+**为什么另开一条端点，而不是让客户端「读原文 + `create`」**：`create` 只收骨架字段
+（技能 `description` / 提示词单 `body`），带 `references/` 子目录和二进制附件的技能根本拷不全，
+拼出来就是一条缺附件的残废技能；`PUT /file` 只收文本，也补不了。整目录复制必须在盘面层做。
+扩展早有 `POST /v1/extensions/duplicate`（`ext_admin`），这次把技能 / 提示词补齐，三种仓同一个动词
+同一个回包形状，客户端一个 `resource_op(kind, "duplicate", {name,to})` 全吃。
+
+**为什么 `to` 必填、客户端给默认值**：与扩展的 duplicate 一致（`to` 必填、重名 409 原话照登）；
+「复制成 `<名字>-copy`」是客户端决定，内核不替它猜名字。
+
+**版本**：规则 8「端点契约新增 = minor」，`Skill` / `Nous_Prompts` 0.4.0 → 0.5.0。
+`plugin-versions.py` 的考古按 `meta::ROUTES` 判端点增删，**抓不到插件 `routes()` 里新增的端点**，
+所以这两条是**手改 minor**（不是脚本推出来的）—— 这也是为什么要写进这里。
+
+**反悔点**：① 若以后要「复制时改一下 description / summary」，给 duplicate 加可选覆盖字段，
+或客户端复制完再 `PUT /file`，别把 duplicate 做成半个 create；② 若扩展也想改成「不动 `file`/`entry`
+句柄」的纯拷贝，把 `unbind` 从默认 true 调到统一口径时，三仓一起看，别只改一边。

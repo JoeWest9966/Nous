@@ -1,6 +1,6 @@
 {
  "release": "0.1.43",
- "generatedAt": "2026-11-28T09:45:06Z",
+ "generatedAt": "2026-11-28T10:33:58Z",
  "modules": [
   {
    "name": "AboutME_ModuleRelationshipNetwork",
@@ -40,12 +40,12 @@
   {
    "name": "Nous_Prompts",
    "crate": "nous-prompts",
-   "version": "0.4.0"
+   "version": "0.5.0"
   },
   {
    "name": "Skill",
    "crate": "library-skill",
-   "version": "0.4.0"
+   "version": "0.5.0"
   },
   {
    "name": "Trigger_Core",
