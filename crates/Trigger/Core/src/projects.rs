@@ -7,7 +7,7 @@
 //! 起进程**不在这里**：走 `nous_tools::os_env::run_capture_async`（spec 第 1 章
 //! 判据 6 / 12 守的唯一执行面）。宿主要给的只有一件事：`triggers` 那个私库的句柄。
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -141,10 +141,22 @@ fn list_value(repo: &Repo) -> Result<Value> {
             triggers.push(item);
         }
     }
+    // 顺序以 `order.json` 为准（拖拽排序写进去的），没进表的按名字补在后面 ——
+    // `GET order` 用的是同一个函数，客户端保存完看到的顺序就是下次读到的顺序。
+    let rank: BTreeMap<String, usize> = effective_order(repo.root())
+        .into_iter()
+        .enumerate()
+        .map(|(at, name)| (name, at))
+        .collect();
     triggers.sort_by(|a, b| {
-        a.get("name")
-            .and_then(Value::as_str)
-            .cmp(&b.get("name").and_then(Value::as_str))
+        let key = |value: &Value| {
+            value
+                .get("name")
+                .and_then(Value::as_str)
+                .and_then(|name| rank.get(name).copied())
+                .unwrap_or(usize::MAX)
+        };
+        key(a).cmp(&key(b))
     });
     let categories = vocab_with_usage(repo.root());
     Ok(json!({
@@ -985,6 +997,112 @@ pub async fn set_category<H: Host>(
     vocab.dedup();
     write_vocab(repo.root(), &vocab)?;
     Ok(Json(catalog_value(&repo)?))
+}
+
+// ── 排序 ─────────────────────────────────────────────────────────────────
+
+/// 排序表在 `<root>/order.json`（`{"v":1,"order":[...]}`），和仓里其它东西一起提交。
+/// 形状照 `/v1/presets/:section/order` —— 同一个「整段顺序」的语义，客户端不用学两套。
+fn order_path(root: &Path) -> PathBuf {
+    root.join("order.json")
+}
+
+/// 表坏了当没排过：排序是装饰，不该让整页 500。
+fn read_order(root: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(order_path(root)) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&text) else {
+        return Vec::new();
+    };
+    value
+        .get("order")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 盘上活着的触发器名（`.archive` 这类隐藏目录不算）。
+fn live_names(root: &Path) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with('.') {
+                names.push(name);
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
+/// 生效顺序：表里认得、且盘上还在的，按表排；其余按名字补在后面（新建的落尾）。
+fn effective_order(root: &Path) -> Vec<String> {
+    let names = live_names(root);
+    let mut ordered: Vec<String> = Vec::new();
+    for name in read_order(root) {
+        if names.contains(&name) && !ordered.contains(&name) {
+            ordered.push(name);
+        }
+    }
+    for name in names {
+        if !ordered.contains(&name) {
+            ordered.push(name);
+        }
+    }
+    ordered
+}
+
+fn write_order(root: &Path, order: &[String]) -> Result<()> {
+    let text = serde_json::to_string_pretty(&json!({ "v": 1, "order": order }))
+        .map_err(|e| internal(format!("排序表序列化失败：{e}")))?;
+    std::fs::write(order_path(root), text + "\n")
+        .map_err(|e| internal(format!("写 order.json 失败：{e}")))
+}
+
+/// `GET /v1/trigger-projects/order`：生效顺序（含补齐），不是裸的 `order.json`。
+pub async fn get_order<H: Host>(State(host): State<H>) -> Result<Json<Value>> {
+    let repo = repo(&host)?;
+    Ok(Json(json!({ "order": effective_order(repo.root()) })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OrderBody {
+    order: Vec<String>,
+}
+
+/// `PUT /v1/trigger-projects/order`：整段顺序。不认的名字丢掉、漏掉的名字补在后面 ——
+/// 和 presets 的 `put_order` 一个语义，客户端不用负责把表补全。不提交（等 sync/publish）。
+pub async fn put_order<H: Host>(
+    State(host): State<H>,
+    Json(body): Json<OrderBody>,
+) -> Result<Json<Value>> {
+    let repo = repo(&host)?;
+    let root = repo.root();
+    let existing = effective_order(root);
+    let mut ordered: Vec<String> = Vec::new();
+    for name in body.order {
+        if existing.contains(&name) && !ordered.contains(&name) {
+            ordered.push(name);
+        }
+    }
+    for name in existing {
+        if !ordered.contains(&name) {
+            ordered.push(name);
+        }
+    }
+    write_order(root, &ordered)?;
+    Ok(Json(json!({ "order": ordered })))
 }
 
 fn catalog_value(repo: &Repo) -> Result<Value> {
