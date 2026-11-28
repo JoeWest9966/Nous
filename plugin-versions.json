@@ -1,128 +1,160 @@
 {
  "release": "0.1.41",
+ "generatedAt": "2026-11-28T07:48:04Z",
  "modules": [
   {
    "name": "AboutME_ModuleRelationshipNetwork",
+   "crate": "aboutme-module-relationship-network",
    "version": "0.2.0"
   },
   {
    "name": "Data_Archive",
+   "crate": "data-archive",
    "version": "0.3.0"
   },
   {
    "name": "Data_DataManager",
+   "crate": "data-data-manager",
    "version": "0.5.0"
   },
   {
    "name": "Device",
+   "crate": "nous-device",
    "version": "0.11.0"
   },
   {
    "name": "Element_Core",
+   "crate": "element-core",
    "version": "0.4.0"
   },
   {
    "name": "Extend",
+   "crate": "library-extend",
    "version": "0.10.0"
   },
   {
    "name": "Models",
+   "crate": "element-models",
    "version": "0.3.1"
   },
   {
    "name": "Nous_Prompts",
+   "crate": "nous-prompts",
    "version": "0.4.0"
   },
   {
    "name": "Skill",
+   "crate": "library-skill",
    "version": "0.4.0"
   },
   {
    "name": "Trigger_Core",
-   "version": "0.2.0"
+   "crate": "trigger-core",
+   "version": "0.3.0"
   },
   {
    "name": "ai",
+   "crate": "nous-ai",
    "version": "0.2.2"
   },
   {
    "name": "ai-types",
+   "crate": "nous-ai-types",
    "version": "0.2.0"
   },
   {
    "name": "chord",
+   "crate": "nous-chord",
    "version": "0.2.0"
   },
   {
    "name": "combos",
+   "crate": "nous-combos",
    "version": "0.2.7"
   },
   {
    "name": "dispatcher",
+   "crate": "nous-dispatcher",
    "version": "0.2.0"
   },
   {
    "name": "durable",
+   "crate": "nous-durable",
    "version": "0.2.0"
   },
   {
    "name": "env",
+   "crate": "nous-env",
    "version": "0.3.3"
   },
   {
    "name": "env-ssh",
+   "crate": "nous-env-ssh",
    "version": "0.2.0"
   },
   {
    "name": "ext-probe",
+   "crate": "nous-ext-probe",
    "version": "0.2.2"
   },
   {
    "name": "ext-sdk",
+   "crate": "nous-ext-sdk",
    "version": "0.2.0"
   },
   {
    "name": "fixture",
+   "crate": "nous-fixture",
    "version": "0.2.0"
   },
   {
    "name": "presets-admin",
+   "crate": "nous-presets-admin",
    "version": "0.3.4"
   },
   {
    "name": "repo",
+   "crate": "nous-repo",
    "version": "0.7.0"
   },
   {
    "name": "routes",
+   "crate": "nous-routes",
    "version": "0.3.0"
   },
   {
    "name": "runtime",
+   "crate": "nous-runtime",
    "version": "0.2.0"
   },
   {
    "name": "server",
+   "crate": "nous-server",
    "version": "0.5.0"
   },
   {
    "name": "sessions",
+   "crate": "nous-sessions",
    "version": "0.8.0"
   },
   {
    "name": "store",
+   "crate": "nous-store",
    "version": "0.2.0"
   },
   {
    "name": "telemetry",
+   "crate": "nous-telemetry",
    "version": "0.2.0"
   },
   {
    "name": "tools",
+   "crate": "nous-tools",
    "version": "0.2.0"
   },
   {
    "name": "wire",
+   "crate": "nous-wire",
    "version": "0.2.0"
   }
  ]

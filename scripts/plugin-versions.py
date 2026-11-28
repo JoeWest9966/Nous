@@ -42,6 +42,7 @@ import re
 import subprocess
 import sys
 import tomllib
+from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -268,6 +269,11 @@ def manifest_version(rel):
         return tomllib.load(handle).get('version')
 
 
+def manifest_crate(rel):
+    with open(os.path.join(ROOT, rel, 'plugin.toml'), 'rb') as handle:
+        return tomllib.load(handle).get('crate', '')
+
+
 DOC = os.path.join(ROOT, 'docs/plugin-versions.md')
 # 引擎 `GET /v1/modules/updates` 的上游清单（生成物）。**不属于考古面**：它记的是
 # 「此刻盘上各模块的版本」，每次涨版都要跟着变，所以由 `--write-json` 重写、`--json-check` 校验。
@@ -364,10 +370,13 @@ def write_doc(rows):
 
 
 def versions_manifest():
-    """`plugin-versions.json` 的内容：发行版号 + 每个模块**清单里自报的**版本。
+    """`plugin-versions.json` 的内容：发行版号 + 生成时刻 + 每个模块的 `crate` / 自报版本。
 
     版本不是合法 `X.Y.Z` 时给空串：引擎会把它译成 `current: null`（「没有可比的自报版本」），
     绝不拿发行版号顶上 —— 那会把「某模块落后」说成「引擎落后」。
+
+    `generatedAt` 只是记录生成时刻；`--json-check` **不校它**（每次生成都会变），
+    其余字段逐条相等。
     """
     with open(os.path.join(ROOT, 'Cargo.toml'), 'rb') as handle:
         release = tomllib.load(handle)['workspace']['package']['version']
@@ -376,10 +385,12 @@ def versions_manifest():
         version = manifest_version(rel)
         modules.append({
             'name': module,
+            'crate': manifest_crate(rel),
             'version': version if semver(version) else '',
         })
     return {
         'release': release,
+        'generatedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'modules': sorted(modules, key=lambda item: item['name']),
     }
 
@@ -402,8 +413,10 @@ def check_manifest():
     bad = []
     if got.get('release') != want['release']:
         bad.append(f"release: 文件 {got.get('release')!r} ≠ 盘上 {want['release']!r}")
-    got_modules = {item.get('name'): item.get('version') for item in got.get('modules') or []}
-    want_modules = {item['name']: item['version'] for item in want['modules']}
+    got_modules = {item.get('name'): (item.get('crate'), item.get('version'))
+                   for item in got.get('modules') or []}
+    want_modules = {item['name']: (item['crate'], item['version'])
+                    for item in want['modules']}
     for name in sorted(set(got_modules) | set(want_modules)):
         if got_modules.get(name, '<缺>') != want_modules.get(name, '<缺>'):
             bad.append(f'{name}: 文件 {got_modules.get(name, "<缺>")!r} ≠ 盘上 '

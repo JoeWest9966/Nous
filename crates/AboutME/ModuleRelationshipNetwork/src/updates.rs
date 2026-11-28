@@ -146,12 +146,9 @@ fn client() -> &'static reqwest::Client {
     })
 }
 
-/// `?refresh=1` / `true` / `yes` 都算；别的都不算（不猜）。
+/// `?refresh=1` 算；别的都不算（不猜）。
 pub fn wants_refresh(raw: Option<&str>) -> bool {
-    matches!(
-        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
-        Some("1") | Some("true") | Some("yes")
-    )
+    matches!(raw.map(str::trim), Some("1"))
 }
 
 fn now_ms() -> i64 {
@@ -577,8 +574,9 @@ mod tests {
     #[test]
     fn refresh_flag_is_explicit() {
         assert!(wants_refresh(Some("1")));
-        assert!(wants_refresh(Some(" TRUE ")));
-        assert!(wants_refresh(Some("yes")));
+        assert!(wants_refresh(Some(" 1 ")));
+        assert!(!wants_refresh(Some("true")));
+        assert!(!wants_refresh(Some("yes")));
         assert!(!wants_refresh(Some("0")));
         assert!(!wants_refresh(Some("no")));
         assert!(!wants_refresh(None));
@@ -649,6 +647,4 @@ mod tests {
         assert_eq!(full.version_of("Device"), Some("0.11.0"));
         assert_eq!(full.version_of("Skill"), None);
     }
-
-    fn _unused() {}
 }

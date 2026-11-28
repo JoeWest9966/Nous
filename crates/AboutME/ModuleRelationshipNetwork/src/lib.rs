@@ -214,16 +214,54 @@ mod tests {
             .expect("自己在表里");
         let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin.toml");
         let text = std::fs::read_to_string(manifest).expect("读 plugin.toml");
-        let declared = text
-            .lines()
-            .find_map(|line| {
-                let line = line.split('#').next().unwrap_or("").trim();
-                let rest = line.strip_prefix("version")?.trim_start();
-                Some(rest.strip_prefix('=')?.trim().trim_matches('"').to_string())
-            })
-            .expect("plugin.toml 里没有 version");
+        let declared = field(&text, "version").expect("plugin.toml 里没有 version");
         assert_eq!(*version, declared, "build.rs 抄错了版本");
         assert_ne!(*version, RELEASE, "插件版本必须独立于发行版号（规则 8）");
+    }
+
+    fn field(text: &str, key: &str) -> Option<String> {
+        text.lines().find_map(|line| {
+            let line = line.split('#').next().unwrap_or("").trim();
+            let rest = line.strip_prefix(key)?.trim_start();
+            let value = rest.strip_prefix('=')?.trim().trim_matches('"');
+            (!value.is_empty()).then(|| value.to_string())
+        })
+    }
+
+    /// 每个模块的 `current` 都来自它自己的 `plugin.toml`，不是发行版号。
+    /// 逐份清单现读一遍：`build.rs` 漏扫一个字段，这里就会指名。
+    #[test]
+    fn every_version_comes_from_its_own_manifest() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../crates");
+        let mut checked = 0;
+        for vendor in std::fs::read_dir(&root).expect("读 crates/") {
+            let vendor = vendor.expect("vendor 目录").path();
+            if !vendor.is_dir() {
+                continue;
+            }
+            for module in std::fs::read_dir(&vendor).expect("读 vendor 目录") {
+                let module = module.expect("module 目录").path();
+                let manifest = module.join("plugin.toml");
+                if !manifest.is_file() {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&manifest)
+                    .unwrap_or_else(|error| panic!("读 {}：{error}", manifest.display()));
+                let name = field(&text, "name").expect("plugin.toml 里没有 name");
+                let declared = field(&text, "version").expect("plugin.toml 里没有 version");
+                let (_, actual) = PLUGIN_VERSIONS
+                    .iter()
+                    .find(|(module, _)| *module == name)
+                    .unwrap_or_else(|| panic!("{name} 不在 PLUGIN_VERSIONS 里"));
+                assert_eq!(
+                    *actual, declared,
+                    "{name} 的版本被 build.rs 抄错了（{}）",
+                    manifest.display()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 20, "只读到 {checked} 份 plugin.toml，扫描坏了");
     }
 
     /// `generatedFor` 是**发行版号**（workspace 的 `version`）——Desk 靠它判「图是哪个版本生的」。

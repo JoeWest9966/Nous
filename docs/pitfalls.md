@@ -499,6 +499,8 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 **怎么防**：端点列表里要写两个方法就写「`PATCH / PUT`」，不要用竖线；加完行先数
 `awk 'NR==行号' | grep -o '|' | wc -l` 应该是 9 个。
 
+## 2026-11-26 · 改模块全名 = 五处联动
+
 **症状**：只把 `plugin.toml` 的 `name` 从 `Element_Models` 改成 `Models`（目录、包名、capability、
 组 id 一个字没动），`scripts/plugin-versions.py --doc-check` 立刻红两条，`capabilities_shapes`
 的字段快照也跟着漂。
@@ -511,6 +513,8 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 **怎么防**：改全名前先按这五处列清单（`plugin.toml` / `MODULE` / `MANIFEST` / 版本线表 /
 快照），改完依次跑 `check-plugins.sh`、`plugin-versions.py --check --doc-check`、
 `cargo test -p nous-server`。别用 `--write-doc` 图省事 —— 它会顺手改写其它插件那几行。
+
+## 2026-11-28 · 插件合进 `main` 漏 `MANIFEST`：端点能打、注册表里没有
 
 **症状**：插件合进 `main` 之后，它的端点 `curl` 得到 200、数据全对，但 `/v1/_routes` 里
 一条都找不到，`/v1/capabilities` 的模块清单里也没有它；桌面端启动日志反复报

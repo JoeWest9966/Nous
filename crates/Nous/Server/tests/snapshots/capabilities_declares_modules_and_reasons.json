@@ -205,7 +205,7 @@
     },
     {
       "name": "Trigger_Core",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,

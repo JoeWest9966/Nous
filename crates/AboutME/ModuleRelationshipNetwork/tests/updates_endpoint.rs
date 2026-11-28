@@ -24,7 +24,8 @@ const MANIFEST: &str = r#"{
   ]
 }"#;
 
-/// 假源的开关：0 = 正常回清单（带 ETag），1 = 回 500，2 = 带 `If-None-Match` 就回 304。
+/// 假源的开关：0 = 正常回清单（带 ETag），1 = 回 500，2 = 带 `If-None-Match` 就回 304，
+/// 3 = 回 404。
 #[derive(Default)]
 struct Fake {
     hits: AtomicUsize,
@@ -50,6 +51,7 @@ async fn fake_manifest(State(fake): State<Arc<Fake>>, headers: axum::http::Heade
     *fake.seen_etag.lock().unwrap() = seen.clone();
     match fake.mode.load(Ordering::SeqCst) {
         1 => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        3 => StatusCode::NOT_FOUND.into_response(),
         2 if seen.as_deref() == Some("\"manifest-v1\"") => StatusCode::NOT_MODIFIED.into_response(),
         _ => (
             [(
@@ -279,6 +281,25 @@ async fn stale_cache_survives_upstream_failure() {
         serde_json::json!("9.9.9"),
         "旧数据还在"
     );
+}
+
+/// 上游 404：同样是 **200** + `available:false`，不是 panic、不是 5xx。
+#[tokio::test]
+async fn upstream_404_is_200_and_unavailable() {
+    let _guard = serial().await;
+    let (url, fake) = fake_source(3).await;
+    let cfg = config(url);
+    let body =
+        aboutme_module_relationship_network::updates::handle_with(&cfg, &client(), true).await;
+    assert_eq!(body["available"], serde_json::json!(false));
+    assert_eq!(body["stale"], serde_json::json!(false));
+    assert_eq!(body["checkedAt"], Value::Null);
+    assert!(
+        body["error"].as_str().unwrap().contains("404"),
+        "错误文本要点出上游状态：{}",
+        body["error"]
+    );
+    assert_eq!(fake.hits(), 1);
 }
 
 /// 源根本连不上：`available:false` + 错误，不 panic、不挂住（3s 超时内返回）。

@@ -1,6 +1,6 @@
 name = "Trigger_Core"
 vendor = "Trigger"
-version = "0.2.0"     # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
+version = "0.3.0"     # 插件自己的版本（semver，独立演进；docs/plugins.md 规则 8）
                       # 0.1.0 → 0.2.0：换供应商（Nous → Trigger）+ 全名改 Trigger_Core（身份变更 = minor）
 layer = "app"         # 必须 == docs/plugins.md 的 layer 列
 crate = "trigger-core"
