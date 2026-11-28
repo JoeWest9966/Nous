@@ -65,6 +65,14 @@ async fn status_and_pending_use_the_unified_repo_route() {
     assert_eq!(body["root"], json!(root.to_string_lossy().into_owned()));
     assert!(body["head"].as_str().is_some_and(|h| h.len() == 40));
     assert_eq!(body["dirty"], json!(false));
+    // 没配 origin：`remote` 必须是 null，不是空串、不是缺失（客户端靠它决定画不画「打开」）。
+    assert_eq!(body["remote"], json!(null), "没配远端要回 null：{body}");
+
+    // 配上 origin 之后同一端点要如实给 URL（`remote_url()` 的出口）。
+    let origin = "https://github.com/JoeWest9966/Nous-skills.git";
+    git(&root, &["remote", "add", "origin", origin]);
+    let (_, body) = call(&app, "GET", "/v1/repos/skills/status", None).await;
+    assert_eq!(body["remote"], json!(origin), "配了 origin 要给 URL：{body}");
 
     std::fs::create_dir_all(root.join("unit")).unwrap();
     std::fs::write(root.join("unit/a.md"), "a").unwrap();
