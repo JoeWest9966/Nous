@@ -413,6 +413,10 @@ def check_manifest():
     bad = []
     if got.get('release') != want['release']:
         bad.append(f"release: 文件 {got.get('release')!r} ≠ 盘上 {want['release']!r}")
+    generated = got.get('generatedAt')
+    if not isinstance(generated, str) or not re.fullmatch(
+            r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', generated):
+        bad.append(f"generatedAt: 文件 {generated!r} 不是 ISO-8601 UTC（跑 --write-json）")
     got_modules = {item.get('name'): (item.get('crate'), item.get('version'))
                    for item in got.get('modules') or []}
     want_modules = {item['name']: (item['crate'], item['version'])
