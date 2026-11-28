@@ -22,6 +22,10 @@ Environment=NOUS_TOKEN_FILE=/etc/nous/token
 EnvironmentFile=-/etc/nous/providers.env
 # Desk 写的密钥落这里（引擎以 nous 用户跑，写不进 /etc）：后读的优先，Desk 改过就以它为准。
 EnvironmentFile=-/var/lib/nous/secrets/providers.env
+# /v1/modules/updates 的上游镜像（内网地址 / 自建清单），没配就用默认 GitHub raw。
+# j1900 直连 raw.githubusercontent.com 被重置，所以线上配 `NOUS_UPDATES_SOURCE` 指向一台可达的镜像。
+# 这个文件不在仓里（每台机器自己给）。
+EnvironmentFile=-/etc/nous/updates.env
 ExecStart=/opt/nous-app/current/nous-app
 # 78 = EX_CONFIG：拒绝启动（库比代码新 / 没 token / workdir 不可写 …）。
 # on-failure + PreventExitStatus=78 让「不想起」停在 failed，而不是每 3 秒拉一次。
