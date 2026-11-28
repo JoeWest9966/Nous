@@ -32,6 +32,36 @@ unit 里写这四个变量就会变成两份真相 —— 要换路径只在环�
 3. 判据顺序：`plugin-versions.py --check --doc-check` → `verify.sh` → `cargo test --workspace`，
    全绿再 `git tag -a vX.Y.Z`。
 
+### 第 2 条里「回退发行版号的那几个模块」是哪些
+
+规则 8 把 `plugin.toml` 的 `version` 与发行版号解绑之后，`capabilities.modules[].version`
+**大多数来自各自的 `plugin.toml`**，涨发行版号不用碰它们。但有一类模块**没有自己的清单**，
+版本只能取发行版号 —— `plugin_versions::version_of()` 找不到清单就回退 `RELEASE_VERSION`，
+并在回包里带 `versionSource: "release"` 如实说明（回退不静默，`Device` 那条
+`readme` 也照这个规矩带同一格）。
+
+**当前只有 `presets` 一个是这种**（`crates/Nous/Presets/` 不存在，`plugin.toml` 也没有；
+`meta.rs` 的 MANIFEST 里 `crate_name: "—"`）。所以涨版本时：
+
+- `server.version` → 跟着涨（就是发行版号）。
+- `modules[]` 里**带 `versionSource: "release"` 的那些** → 跟着涨，**其它一律不动**。
+- 判别方法（别靠记）：
+
+  ```sh
+  python3 - <<'EOF'
+  import json
+  d = json.load(open('crates/Nous/Server/tests/snapshots/capabilities_declares_modules_and_reasons.json'))
+  print([m['name'] for m in d['modules'] if m.get('versionSource') == 'release'])
+  EOF
+  ```
+
+  输出的名字就是要跟发行版号一起涨的那几个；今天跑出来是 `['presets']`。
+
+- 什么时候这条会变：给 `presets` 补上 `plugin.toml`（或别的模块丢了自己的清单），
+  上面那条命令的输出就会变 —— **以命令输出为准，不以这段文字为准**。
+  `plugin_versions::version_problems()` 会在构建期把「清单在但版本读不出来」的模块点名，
+  对应的单测 `every_manifest_that_exists_has_a_usable_version` 会红。
+
 ## 0 · 一次性准备（人做，脚本不代劳）
 
 j1900（`root` 登录一次）：

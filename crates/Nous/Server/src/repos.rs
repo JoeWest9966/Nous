@@ -4,41 +4,16 @@
 //! 自带 controller）。这个文件只剩「进程启动时怎么把仓库打开」这一件事，
 //! 属于宿主装配，不是插件职责 —— 插件拿到的永远是句柄（`Host::repo`）。
 //!
-//! [`repo_error`] 还留在这儿：它只剩 `trigger_projects.rs` 一个调用方，而那个
-//! 文件正在 `feat/triggers-plugin` 里搬到 `trigger-core`。等那票落地后它连同
-//! 调用点一起收进 `nous_repo::Refusal`，这里就彻底空了。
+//! **这里不再有任何错误翻译。** 最后一份 `repo_error` 是给
+//! `server/src/trigger_projects.rs` 用的，那份文件已整份搬进
+//! `trigger-core`（`crates/Trigger/Core/src/projects.rs`），它在那儿有自己的
+//! 一行翻译（`nous_repo::Refusal::from_repo` → `HttpRefusal`）。语义唯一真相是
+//! `nous_repo::Refusal`，`ServerError` 这一侧不需要第二份表。
 
 use std::path::Path;
 use std::sync::Arc;
 
-use nous_repo::{Repo, RepoError};
-use serde_json::json;
-
-use crate::error::ServerError;
-
-/// 把私库错误映射成 wire 的 `{error}`；409 额外带磁盘当前正文（票面要求）。
-pub(crate) fn repo_error(error: RepoError) -> ServerError {
-    match error {
-        RepoError::BadRequest(m) | RepoError::InvalidPath(m) => ServerError::BadRequest(m),
-        RepoError::Validation { field, problem } => ServerError::Validation { field, problem },
-        RepoError::NotFound(m) => ServerError::NotFound(m),
-        RepoError::Busy(m) => ServerError::Conflict(m),
-        RepoError::Locked(m) => ServerError::Locked(m),
-        RepoError::Conflict { message, current, etag } => {
-            let mut value = json!({ "error": message });
-            if let Some(content) = current {
-                value["content"] = json!(String::from_utf8_lossy(&content).into_owned());
-            }
-            if let Some(etag) = etag {
-                value["etag"] = json!(etag);
-            }
-            // 用统一的 409 响应，但把字段带出去。
-            ServerError::Conflict(serde_json::to_string(&value).unwrap())
-        }
-        RepoError::Io(m) => ServerError::Internal(m),
-        RepoError::LockPoisoned => ServerError::Internal("私库写锁中毒".into()),
-    }
-}
+use nous_repo::Repo;
 
 /// 生产装配：从 `nous_env` 的六条路径解析（不另读环境变量）。
 pub fn from_env() -> std::collections::BTreeMap<String, Arc<Repo>> {
@@ -49,7 +24,6 @@ pub fn from_env() -> std::collections::BTreeMap<String, Arc<Repo>> {
         ("prompts", nous_env::PROMPTS.resolve()),
         ("extend", nous_env::EXTEND.resolve()),
         ("triggers", nous_env::TRIGGERS.resolve()),
-
         ("elements", nous_env::ELEMENTS.resolve()),
     ] {
         if let Ok(repo) = Repo::open(&path) {
