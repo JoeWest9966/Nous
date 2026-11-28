@@ -2,7 +2,7 @@
   "contract": 1,
   "server": {
     "name": "nous",
-    "version": "0.1.41"
+    "version": "0.1.42"
   },
   "modules": [
     {
@@ -94,7 +94,7 @@
     },
     {
       "name": "presets",
-      "version": "0.1.41",
+      "version": "0.1.42",
       "kind": "编译期",
       "layer": "app",
       "required": false,

@@ -16,7 +16,7 @@
 //! ## 形状（`wire.md`）
 //!
 //! ```json
-//! { "generatedFor": "0.1.41",
+//! { "generatedFor": "0.1.42",
 //!   "nodes": ["Device", "…"],
 //!   "edges": [ { "from": "Device", "to": "routes", "via": "nous-routes" } ],
 //!   "unmapped": ["nous-fixture"] }
