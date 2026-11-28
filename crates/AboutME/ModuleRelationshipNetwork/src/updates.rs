@@ -141,6 +141,8 @@ fn client() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(FETCH_TIMEOUT)
+            // GitHub API 对空 UA 的请求一律 403；默认 UA 得带一个，自报家门（不携密钥）。
+            .user_agent(concat!("nous-app/", env!("CARGO_PKG_VERSION")))
             .build()
             .unwrap_or_default()
     })
