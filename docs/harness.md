@@ -406,7 +406,7 @@ op 就发一帧" → 0 帧负向红。
 | `nous-repo` | `nous-env` `nous-routes` | 私库层：六套私库的文件读写、git 发布，以及 `/v1/repos/*` 三十条端点（自带 handler + `Host` trait）。`Refusal`（`RepoError → 状态码` 的唯一翻译）也在这里 —— 它拥有 `RepoError`，翻译自己家的错误方向永远是对的 |
 | `nous-prompts` | `nous-env` `nous-repo` `nous-routes` | 模板插件：`PROMPT.md` + `nous.json` + `settings.json` 只读扫描与纯 `render()`，自带 6 条 `/v1/prompts*`（含 `GET /v1/prompts` 只读投影） |
 | `nous-extend` | `nous-durable` `nous-ext-sdk` `nous-repo` `nous-routes` | 扩展插件：一个扩展一个进程 + 帧协议 + 熔断 + 热重载，自带 15 条 `/v1/extensions*`（管理面 9 条 + 编辑页 4 条走 `nous_repo::entries`）；git 只在 `nous-repo` 里 spawn |
-| `trigger-core` | `nous-store` `nous-durable` `nous-sessions` `nous-ai` `nous-dispatcher` `nous-repo` `nous-tools` `nous-routes` | 触发器插件：定义面（点火六步 + 观测读口 + 调度健康，11 条）+ 工程面（盘上的 cargo 项目与发布，13 条）；git 只在 `nous-repo`、起进程只走 `nous-tools` |
+| `trigger-core` | `nous-store` `nous-durable` `nous-sessions` `nous-ai` `nous-dispatcher` `nous-repo` `nous-tools` `nous-routes` | 触发器插件：定义面（点火六步 + 观测读口 + 调度健康，11 条）+ 工程面（盘上的 cargo 项目与发布 + 排序，15 条）；git 只在 `nous-repo`、起进程只走 `nous-tools` |
 | `aboutme-module-relationship-network` | `nous-routes` | 模块关系网插件：`plugin.toml [requires]` 的只读投影（构建期静态表）+ `GET /v1/modules/graph`。不依赖任何插件，否则图会污染自己 |
 
 **这张表不是许可证**：它只回答「这条边有没有人签字」，不替代判据 2（内核层不许依赖应用层）

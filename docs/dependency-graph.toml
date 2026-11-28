@@ -60,7 +60,7 @@ nous-server = [
   "nous-env-ssh",
   # #81 扩展管理面（create/duplicate/install/类别词表/usage）
   "library-extend",
-  # #57/#58/#73/#80 触发器：定义面 + 工程面（24 条 /v1/triggers* 与 /v1/trigger-projects*）
+  # #57/#58/#73/#80 触发器：定义面 + 工程面（26 条 /v1/triggers* 与 /v1/trigger-projects*，含 order）
   "trigger-core",
   # #72 prompts 的目录只读投影 + #71/#83 skills（解析层 + 自带 6 条端点）
   "nous-prompts", "library-skill",

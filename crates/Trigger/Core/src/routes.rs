@@ -1,4 +1,4 @@
-//! 本插件自己的 24 条端点：`/v1/triggers*`（11）与 `/v1/trigger-projects*`（13）。
+//! 本插件自己的 26 条端点：`/v1/triggers*`（11）与 `/v1/trigger-projects*`（15）。
 //!
 //! handler 住在插件里（Magento 2 那种「模块自带 controller」）。插件不认识
 //! `server` 的 `AppState`，只声明它需要什么（[`Host`]），由宿主实现并注入。
@@ -53,7 +53,7 @@ impl<T: Host + ?Sized> Host for Arc<T> {
     }
 }
 
-/// 这 24 条端点的声明（`server` 只做遍历 → mount → 收集）。
+/// 这 26 条端点的声明（`server` 只做遍历 → mount → 收集）。
 ///
 /// 两个面各有一个同名 handler：`catalog::list` 是库里的行，`projects::list` 是盘上的
 /// 目录。路径不同、语义不同，只是英文撞名 —— 靠模块前缀分开，不靠改名。
@@ -129,6 +129,12 @@ where
         nous_routes::Route::new("POST", "/v1/trigger-projects/category", MODULE, || {
             post(projects::set_category::<H>)
         }),
+        nous_routes::Route::new("GET", "/v1/trigger-projects/order", MODULE, || {
+            get(projects::get_order::<H>)
+        }),
+        nous_routes::Route::new("PUT", "/v1/trigger-projects/order", MODULE, || {
+            put(projects::put_order::<H>)
+        }),
         nous_routes::Route::new("POST", "/v1/trigger-projects/sync", MODULE, || {
             post(projects::sync::<H>)
         }),
@@ -157,10 +163,10 @@ mod tests {
         routes::<Arc<NoHost>>()
     }
 
-    /// 24 条不多不少：搬走的账面数字就是 24，少一条 = 有条端点凭空消失。
+    /// 26 条不多不少：11 条定义面 + 15 条工程面（含 `/order`），少一条 = 有条端点凭空消失。
     #[test]
-    fn declares_exactly_twenty_four_endpoints() {
-        assert_eq!(table().len(), 24);
+    fn declares_exactly_twenty_six_endpoints() {
+        assert_eq!(table().len(), 26);
     }
 
     /// 归属只有一个模块名（规则 12），且是 URL 之外的另一套写法。
@@ -173,7 +179,7 @@ mod tests {
     }
 
     /// 同 path + 同 method 声明两次会让 axum 在 mount 时 panic（`pitfalls.md`）：
-    /// 24 条声明必须两两不同。这条判据不看代码，只看表。
+    /// 26 条声明必须两两不同。这条判据不看代码，只看表。
     #[test]
     fn no_duplicate_method_and_path() {
         let mut seen = std::collections::BTreeSet::new();
