@@ -1826,3 +1826,40 @@ release 要十几分钟；开发机 32 核同一件事是分钟级。所以 CI �
 不动；② 5 份不够回滚就改大保留数或改按天保留；③ 如果自动那份从此没人取（大家都走快通道），
 把 `push: branches: [main]` 从工作流里删掉，只留 `workflow_dispatch`，`publish-ci.sh` 一行不用改；
 ④ 如果开发机不可用，退路是自动那份 —— 这也是保留 CI 那条线的主要理由。
+
+## 2026-12-02 · 模块版本对照：**扩关系网插件 + 一次请求拿全 + 不做比较**
+
+**决定**：`AboutME_ModuleRelationshipNetwork` 加第二条端点 `GET /v1/modules/updates`，把
+「这个产物里各模块的版本」与「仓库 `main` 上各模块的版本」并排放出去。Desk 的插件页据此增益
+「有没有新版」。
+
+五条具体选择：
+
+1. **扩老插件，不新建。** 它已经在 `build.rs` 里扫过每份 `plugin.toml`，握着「模块全名 ↔ 包名」
+   这份唯一对应关系；新建插件就得再拉一份模块清单 = 第二个真相。
+2. **`current` 走编译期内嵌。** `build.rs` 顺手把 `version` 也抄进静态表（`PLUGIN_VERSIONS`）。
+   这条端点要回答「**这个二进制装着什么**」，运行期读盘会得到「盘上此刻有什么」——
+   `j1900` 只跑产物、源码不在，两个问题的答案本来就会分叉。
+3. **`latest` 走一份生成物清单，一次请求。** 仓库根 `plugin-versions.json`
+   （`scripts/plugin-versions.py --write-json`，`verify.sh` 0e 段用 `--json-check` 钉住不漂）。
+   端点只拉这一个文件。**不做 per-module GitHub API**：31 个模块 = 31 次请求，未认证 60 次/小时/IP，
+   进一次设置页就把预算打满，私有仓还要 PAT。
+4. **内核不做 semver 比较。** 回包里没有 `outdated` 这类状态位，只有 `current` / `latest` /
+   `currentSource` / `missing` / `onlyInManifest`。比较是展示层纯函数（预发布、build metadata、
+   非 semver 字符串都要处理）；同一件事两个算法迟早分叉。
+5. **上游失败永远 200。** `available` / `stale` / `error` 三个字段说清楚，5xx 会被客户端当成
+   「端点坏了」而整块消失。`available:false` 明确不等于「全都是最新」。
+
+**`currentSource: "release"` 这件事单列**：模块 `plugin.toml` 没写（或写错）版本时，`current: null`
++ `currentSource:"release"`。现有 `/v1/capabilities` 对这种情况回落成发行版号并标 `versionSource`；
+版本对照里**不许**照着回落 —— 拿发行版号跟模块清单比，会把「某个模块落后」说成「引擎落后」，
+那是假结论。
+
+**为什么不是 Desk 直连 GitHub**：客户端会多出第二个网络目的地、第二个 token、第二条失败面，
+而「一个地址、一个 token」是这套架构最值钱的约束。同理也不让 Desk 建 module→repo 映射表。
+
+**反悔点**：① 要把 `latest` 定义成「最新 release tag」，只换 `NOUS_UPDATES_SOURCE` 与解析层，
+回包形状不动，但要同步改 `wire.md` 那一节的语义；② 仓库挪到私有托管 / 需要鉴权，用
+`NOUS_UPDATES_TOKEN`，形状仍不变；③ 如果模块数涨到几百，`modules` 一次给全仍远小于 1MB，
+不必分页；④ 如果哪天要在客户端做「一键升级」，那是另一条链（需要写盘 / 重启），
+本端点不承担。

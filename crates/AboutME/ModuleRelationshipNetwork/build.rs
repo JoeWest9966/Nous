@@ -26,20 +26,28 @@ fn main() {
 ///
 /// - `pub const RELEASE: &str` —— 发行版号（workspace 的 `version`），图的「生成为哪一版」。
 /// - `pub const PLUGIN_CATALOG: &[(&str, &str, &[&str])] = &[(模块全名, 包名, &[requires 的包名])]`。
+/// - `pub const PLUGIN_VERSIONS: &[(&str, &str)] = &[(模块全名, 自己声明的版本)]`
+///   —— `GET /v1/modules/updates` 的 `current`。**空串 = 这份清单没写版本**（不许拿
+///   发行版号顶上：那会让「模块落后」变成「引擎落后」）。
 ///
 /// `cargo:rerun-if-changed` 盯住**每一份** plugin.toml 与两层目录（新增 / 删除插件时目录
 /// mtime 会变）：少了这一条，改了 `[requires]` 不重编 = 图上还是旧的边，那是假绿。
 fn emit_plugin_catalog() {
-    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let root = manifest_dir
         .ancestors()
         .find(|dir| dir.join("docs/plugins.md").is_file())
         .expect("找不到仓库根（docs/plugins.md 的上级）")
         .to_path_buf();
-    println!("cargo:rerun-if-changed={}", root.join("Cargo.toml").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("Cargo.toml").display()
+    );
     let crates = root.join("crates");
 
     let mut entries: Vec<(String, String, Vec<String>)> = Vec::new();
+    let mut versions: Vec<(String, String)> = Vec::new();
     for vendor in read_dirs(&crates) {
         println!("cargo:rerun-if-changed={}", vendor.display());
         for module in read_dirs(&vendor) {
@@ -63,26 +71,33 @@ fn emit_plugin_catalog() {
                     .unwrap_or_default()
             });
             let package = read_field(&text, "crate").unwrap_or_else(|| name.clone());
+            // 清单自己声明的版本（规则 8）。没写 / 不是 `X.Y.Z` 就留空：调用方据此说
+            // 「没有可比的自报版本」，而不是拿发行版号冒充。
+            let version = read_field(&text, "version")
+                .filter(|value| is_semver(value))
+                .unwrap_or_default();
+            versions.push((name.clone(), version));
             entries.push((name, package, read_requires(&text)));
         }
     }
     entries.sort();
+    versions.sort();
 
     let mut out = String::from(
         "// 由 crates/AboutME/ModuleRelationshipNetwork/build.rs 生成 —— 别手改。\n\
-         // 来源：crates/<vendor>/<module>/plugin.toml 的 name / crate / [requires]。\n",
+         // 来源：crates/<vendor>/<module>/plugin.toml 的 name / crate / version / [requires]。\n",
     );
     let release = read_workspace_version(&root.join("Cargo.toml")).unwrap_or_default();
     writeln!(out, "pub const RELEASE: &str = {release:?};\n").unwrap();
+    out.push_str("pub const PLUGIN_VERSIONS: &[(&str, &str)] = &[\n");
+    for (name, version) in &versions {
+        writeln!(out, "    ({name:?}, {version:?}),").unwrap();
+    }
+    out.push_str("];\n\n");
     out.push_str("pub const PLUGIN_CATALOG: &[(&str, &str, &[&str])] = &[\n");
     for (name, package, requires) in &entries {
         let list: Vec<String> = requires.iter().map(|dep| format!("{dep:?}")).collect();
-        writeln!(
-            out,
-            "    ({name:?}, {package:?}, &[{}]),",
-            list.join(", ")
-        )
-        .unwrap();
+        writeln!(out, "    ({name:?}, {package:?}, &[{}]),", list.join(", ")).unwrap();
     }
     out.push_str("];\n");
 
@@ -103,11 +118,24 @@ fn read_dirs(dir: &Path) -> Vec<PathBuf> {
     dirs
 }
 
+/// `X.Y.Z`（只认三段数字，与 `scripts/check-plugins.sh` 的 semver 闸同一口径）。
+fn is_semver(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// 读一个字符串字段（`vendor = "data"`）。注释、行尾空白都不影响。
 fn read_field(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|line| {
         let line = line.split('#').next().unwrap_or("").trim();
-        let value = line.strip_prefix(key)?.trim_start().strip_prefix('=')?.trim();
+        let value = line
+            .strip_prefix(key)?
+            .trim_start()
+            .strip_prefix('=')?
+            .trim();
         let value = value.strip_prefix('"')?.strip_suffix('"')?;
         (!value.is_empty()).then(|| value.to_string())
     })

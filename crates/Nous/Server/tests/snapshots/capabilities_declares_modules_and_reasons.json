@@ -205,7 +205,7 @@
     },
     {
       "name": "Trigger_Core",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "kind": "编译期",
       "layer": "app",
       "required": false,
@@ -261,6 +261,21 @@
         "GET /v1/stats/conversation/:id",
         "GET /v1/stats/cost",
         "GET /v1/stats/health"
+      ]
+    },
+    {
+      "name": "AboutME_ModuleRelationshipNetwork",
+      "version": "0.2.0",
+      "kind": "编译期",
+      "layer": "app",
+      "required": false,
+      "crate": "`aboutme-module-relationship-network`",
+      "vendor": "AboutME",
+      "description": "原料是各插件 `plugin.toml` 的 `[requires]`（`scripts/check-plugins.sh` 与 `cargo metadata` 双向逐条比对），构建期由 `build.rs` 抄成静态表内嵌 —— 图与产物同一份、启动零 IO；只表达 crate 边：「A 干活得靠 B」这种语义依赖内核里没有机器可读来源，缺的就不在图上，被依赖却没有对应模块的包名进 `unmapped`（不静默丢弃）",
+      "enabled": true,
+      "endpoints": [
+        "GET /v1/modules/graph",
+        "GET /v1/modules/updates"
       ]
     },
     {

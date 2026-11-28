@@ -114,6 +114,15 @@ else
 	bad "版本线考古不一致（上面逐条指名）：改了插件就得按规则 8 自己涨，别手改文档表"
 fi
 
+# 0e. 上游清单（`plugin-versions.json`）：引擎 `GET /v1/modules/updates` 靠它说「仓库里有哪版」。
+#     生成物不许漂 —— 改了 plugin.toml 的 version 就得重跑 `plugin-versions.py --write-json`。
+step "0e. 上游清单（plugin-versions.py --json-check）"
+if python3 scripts/plugin-versions.py --json-check; then
+	ok "plugin-versions.json == 盘上各 plugin.toml 的 name / version"
+else
+	bad "plugin-versions.json 与盘上的 plugin.toml 不一致（跑 python3 scripts/plugin-versions.py --write-json）"
+fi
+
 # 1. 单元测试 + 一致性套件
 if [ "$WHAT" = all ] || [ "$WHAT" = unit ]; then
 	step "1. cargo test --workspace（含改写自 pi testing 的一致性套件）"

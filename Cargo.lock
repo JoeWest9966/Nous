@@ -8,7 +8,10 @@ version = "0.1.41"
 dependencies = [
  "axum",
  "nous-routes",
+ "reqwest",
+ "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tower",
 ]

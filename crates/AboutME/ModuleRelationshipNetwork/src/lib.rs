@@ -26,10 +26,14 @@
 //! - `via` 是被用到的**包名**：Desk 想显示「因为用了 `nous-routes`」时有据可查。
 //! - `unmapped` 是「被依赖、但没有对应模块」的包名（例如只给 `dev` 层用的夹具）。
 //!   **不静默丢弃**：丢一条边却不说，图就会在没人察觉的地方变得不完整。
+//!
+//! 第二条端点是 `GET /v1/modules/updates`（[`updates`]）：当前版本 vs 仓库最新版本。
+//! 图的原料（`build.rs` 的扫描）与它共用同一份清单，所以两边的模块名不会分叉。
 
 include!(concat!(env!("OUT_DIR"), "/plugin_catalog.rs"));
 
 pub mod routes;
+pub mod updates;
 
 use std::collections::BTreeMap;
 
@@ -124,7 +128,10 @@ mod tests {
             assert!(nodes.contains(from), "边起点不在 nodes 里：{from}");
             assert!(nodes.contains(to), "边终点不在 nodes 里：{to}");
             assert_ne!(from, to, "自环：{from} → {to}（via {via}）");
-            assert!(seen.insert((from, to, via)), "重复的边：{from} → {to} via {via}");
+            assert!(
+                seen.insert((from, to, via)),
+                "重复的边：{from} → {to} via {via}"
+            );
         }
     }
 
@@ -189,6 +196,74 @@ mod tests {
         }
     }
 
+    /// `PLUGIN_VERSIONS` 与 `PLUGIN_CATALOG` 是同一遍扫描的两个投影，名字集合必须一样：
+    /// 哪一边漏一个，`/v1/modules/updates` 就会「这个模块没有当前版本」或反之。
+    #[test]
+    fn version_table_and_catalog_agree_on_names() {
+        let catalog: BTreeSet<&str> = PLUGIN_CATALOG.iter().map(|(name, _, _)| *name).collect();
+        let versions: BTreeSet<&str> = PLUGIN_VERSIONS.iter().map(|(name, _)| *name).collect();
+        assert_eq!(catalog, versions, "两张表的模块集合必须一致");
+    }
+
+    /// 自己的模块版本必须是清单里那份 `X.Y.Z`（不是发行版号）。
+    #[test]
+    fn own_version_comes_from_the_manifest() {
+        let (_, version) = PLUGIN_VERSIONS
+            .iter()
+            .find(|(name, _)| *name == MODULE)
+            .expect("自己在表里");
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("plugin.toml");
+        let text = std::fs::read_to_string(manifest).expect("读 plugin.toml");
+        let declared = field(&text, "version").expect("plugin.toml 里没有 version");
+        assert_eq!(*version, declared, "build.rs 抄错了版本");
+        assert_ne!(*version, RELEASE, "插件版本必须独立于发行版号（规则 8）");
+    }
+
+    fn field(text: &str, key: &str) -> Option<String> {
+        text.lines().find_map(|line| {
+            let line = line.split('#').next().unwrap_or("").trim();
+            let rest = line.strip_prefix(key)?.trim_start();
+            let value = rest.strip_prefix('=')?.trim().trim_matches('"');
+            (!value.is_empty()).then(|| value.to_string())
+        })
+    }
+
+    /// 每个模块的 `current` 都来自它自己的 `plugin.toml`，不是发行版号。
+    /// 逐份清单现读一遍：`build.rs` 漏扫一个字段，这里就会指名。
+    #[test]
+    fn every_version_comes_from_its_own_manifest() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../crates");
+        let mut checked = 0;
+        for vendor in std::fs::read_dir(&root).expect("读 crates/") {
+            let vendor = vendor.expect("vendor 目录").path();
+            if !vendor.is_dir() {
+                continue;
+            }
+            for module in std::fs::read_dir(&vendor).expect("读 vendor 目录") {
+                let module = module.expect("module 目录").path();
+                let manifest = module.join("plugin.toml");
+                if !manifest.is_file() {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&manifest)
+                    .unwrap_or_else(|error| panic!("读 {}：{error}", manifest.display()));
+                let name = field(&text, "name").expect("plugin.toml 里没有 name");
+                let declared = field(&text, "version").expect("plugin.toml 里没有 version");
+                let (_, actual) = PLUGIN_VERSIONS
+                    .iter()
+                    .find(|(module, _)| *module == name)
+                    .unwrap_or_else(|| panic!("{name} 不在 PLUGIN_VERSIONS 里"));
+                assert_eq!(
+                    *actual, declared,
+                    "{name} 的版本被 build.rs 抄错了（{}）",
+                    manifest.display()
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 20, "只读到 {checked} 份 plugin.toml，扫描坏了");
+    }
+
     /// `generatedFor` 是**发行版号**（workspace 的 `version`）——Desk 靠它判「图是哪个版本生的」。
     ///
     /// 与仓库根 `Cargo.toml` 现读一遍比对：本插件的 `plugin.toml` 独立涨版时，这里也不该漂。
@@ -221,6 +296,9 @@ mod tests {
                 }
             }
         }
-        assert_eq!(release, expected, "generatedFor 必须是 workspace 的发行版号");
+        assert_eq!(
+            release, expected,
+            "generatedFor 必须是 workspace 的发行版号"
+        );
     }
 }
