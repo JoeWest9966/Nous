@@ -1,8 +1,8 @@
 {
   "self": null,
   "origin": null,
-  "node": "0.1.42",
-  "version": "0.1.42",
+  "node": "0.1.43",
+  "version": "0.1.43",
   "build": "00000000",
   "target": "test-target",
   "startedAt": 0,
