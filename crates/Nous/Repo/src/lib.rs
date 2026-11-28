@@ -16,8 +16,9 @@ mod variants;
 mod views;
 
 pub use entries::{
-    check_name, check_path, create_entry, list_entry_files, publish_entry, read_text,
-    require_entry, write_text, EntryFile, Published, Skeleton, MAX_FILES, MAX_NAME, RESERVED,
+    check_name, check_path, create_entry, duplicate_entry, list_entry_files, publish_entry,
+    read_text, require_entry, write_text, Duplicate, EntryFile, Published, Skeleton, MAX_FILES,
+    MAX_NAME, RESERVED,
 };
 pub use error::{Refusal, RepoError, Result};
 pub use git::materialize_head_dir;

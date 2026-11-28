@@ -1,6 +1,6 @@
 name = "Skill"
 vendor = "Library"
-version = "0.4.0"  # 全名 / capability / vendor / 目录 / 包名改名（规则 8：capability 改名 = minor）
+version = "0.5.0"  # 全名 / capability / vendor / 目录 / 包名改名（规则 8：capability 改名 = minor）
 layer = "app"
 crate = "library-skill"
 

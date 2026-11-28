@@ -1,13 +1,13 @@
-//! 本插件自己的端点：`/v1/skills` 那 6 条。
+//! 本插件自己的端点：`/v1/skills` 那 7 条。
 //!
 //! handler 住在插件里（Magento 2 那种「模块自带 controller」）。插件不认识
 //! `server` 的 `AppState`，只声明它需要什么（[`Host`]），由宿主实现并注入。
 //!
-//! 六条端点分两半，接缝也不同：
+//! 七条端点分两半，接缝也不同：
 //!
 //! - `GET /v1/skills` 是**只读投影**：盘上真相由 `library_skill::scan` 解析，
 //!   这里只把 `PathBuf` 转字符串、`Option` 转 `null`。
-//! - 另外五条是**编辑页的管理面**（`files` / `file` / `create` / `publish`）：
+//! - 另外六条是**编辑页的管理面**（`files` / `file` / `create` / `publish`）：
 //!   盘面规矩（名字校验、递归清单、骨架落盘、发布）在 `nous_repo::entries`，
 //!   这里只做 HTTP ↔ 那层的翻译。**不 spawn git、不另建锁** ——
 //!   `nous-repo` 是唯一的 git 进程调用面。
@@ -118,6 +118,13 @@ pub struct CreateBody {
     pub description: String,
     #[serde(default)]
     pub category: Vec<String>,
+}
+
+/// 复制：`{name, to}` —— 把 `name` 那条整目录复制成 `to`。
+#[derive(Debug, Deserialize)]
+pub struct DuplicateBody {
+    pub name: String,
+    pub to: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -259,6 +266,20 @@ async fn create<H: Host>(
     ))
 }
 
+/// `POST /v1/skills/duplicate`：整目录复制一条技能（`name` → `to`），改名字，**不提交**。
+async fn duplicate<H: Host>(
+    State(host): State<H>,
+    Json(body): Json<DuplicateBody>,
+) -> std::result::Result<(StatusCode, Json<Value>), HttpRefusal> {
+    let repo = repo(&host)?;
+    let dup = nous_repo::duplicate_entry(&repo, &body.name, &body.to, Some("SKILL.md"))
+        .map_err(http)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::to_value(dup).unwrap_or(Value::Null)),
+    ))
+}
+
 /// `POST /v1/skills/publish`：把私库里 dirty 的路径提交（并尝试 push）。
 /// body 可以省；`message` 空着就用旧面板那句默认文案。
 async fn publish<H: Host>(
@@ -289,6 +310,7 @@ where
         nous_routes::Route::new("PUT", "/v1/skills/file", MODULE, || put(save::<H>)),
         nous_routes::Route::new("POST", "/v1/skills/create", MODULE, || post(create::<H>)),
         nous_routes::Route::new("POST", "/v1/skills/publish", MODULE, || post(publish::<H>)),
+        nous_routes::Route::new("POST", "/v1/skills/duplicate", MODULE, || post(duplicate::<H>)),
     ]
 }
 
@@ -316,7 +338,7 @@ mod tests {
 
     /// 声明逐字：路径写错、漏一条、方法错，这一条立刻红。
     #[test]
-    fn declares_all_six_endpoints_verbatim() {
+    fn declares_all_seven_endpoints_verbatim() {
         assert_eq!(
             declared(),
             vec![
@@ -326,6 +348,7 @@ mod tests {
                 "PUT /v1/skills/file",
                 "POST /v1/skills/create",
                 "POST /v1/skills/publish",
+                "POST /v1/skills/duplicate",
             ]
         );
     }
