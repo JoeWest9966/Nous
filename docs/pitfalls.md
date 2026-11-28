@@ -511,3 +511,17 @@ rsync 把源目录**名字**也带过去：内容成了 `/tmp/nous-docs/docs/plu
 **怎么防**：改全名前先按这五处列清单（`plugin.toml` / `MODULE` / `MANIFEST` / 版本线表 /
 快照），改完依次跑 `check-plugins.sh`、`plugin-versions.py --check --doc-check`、
 `cargo test -p nous-server`。别用 `--write-doc` 图省事 —— 它会顺手改写其它插件那几行。
+
+**症状**：插件合进 `main` 之后，它的端点 `curl` 得到 200、数据全对，但 `/v1/_routes` 里
+一条都找不到，`/v1/capabilities` 的模块清单里也没有它；桌面端启动日志反复报
+「路由漂移：客户端认得但引擎没有：GET v1/modules/graph」。
+
+**根因**：注册表是「`meta::ROUTES` ∪ 各插件 `routes()` 声明，**再按 `MANIFEST` 过滤**」。
+往 `routes()` 加端点、往 `docs/plugins.md` 加行，但漏了 `crates/Nous/Server/src/meta.rs`
+的 `MANIFEST` → 声明被整块滤掉（`line_enabled` 找不到这个模块 = 没开）。二进制里能打、
+注册表里不存在，两边长期不一致。
+
+**怎么防**：加插件时三件一起改（`plugin.toml` / `docs/plugins.md` 行 / `MANIFEST` 行）；
+判据已经有一条 —— `cargo test -p nous-server --test capabilities_manifest` 会逐列比对
+`MANIFEST` 与文档表，但**它只校验「写了的那几行」**，漏写一行不会红（行数断言是硬编码的）。
+所以新插件落地时，顺手把那条 `assert_eq!(manifest.len(), N)` 数一遍。
