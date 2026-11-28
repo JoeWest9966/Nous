@@ -91,6 +91,31 @@ pub struct ManifestModule {
     pub version: String,
 }
 
+/// GitHub contents API 的包壳：`{ ...元数据..., content: base64, encoding: "base64" }`。
+/// 拉到这种形状时先剥壳再按 [`Manifest`] 解（默认源走 raw.githubusercontent 时没这层）。
+#[derive(Debug, Clone, Default, Deserialize)]
+struct ContentsEnvelope {
+    #[serde(default)]
+    content: String,
+    #[serde(default)]
+    encoding: String,
+}
+
+impl ContentsEnvelope {
+    /// base64 内容剥出来；不是 base64 包壳（直接就是清单）时原样返回 `None`。
+    fn decoded_body(&self) -> Option<String> {
+        if self.encoding.trim().eq_ignore_ascii_case("base64") {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD
+                .decode(self.content.replace('\n', "").trim())
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+        } else {
+            None
+        }
+    }
+}
+
 /// 上游清单（`plugin-versions.json`）。`modules` 缺失 = 空表（不 panic、不猜）。
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Manifest {
@@ -277,7 +302,13 @@ async fn fetch(
         .text()
         .await
         .map_err(|_| "上游的清单没读完（连接断了）".to_string())?;
-    let manifest: Manifest = serde_json::from_str(&text)
+    // GitHub contents API 会把文件包成 `{content: base64, encoding: "base64"}`；
+    // 剥掉这层壳，剩下的才是清单本身。剥不开 / 不是这种形状就当清单原样解。
+    let body: String = serde_json::from_str::<ContentsEnvelope>(&text)
+        .ok()
+        .and_then(|envelope| envelope.decoded_body())
+        .unwrap_or(text);
+    let manifest: Manifest = serde_json::from_str(&body)
         .map_err(|_| "上游回的不是清单形状（JSON 解析不了）".to_string())?;
     Ok(Fetched::Body(manifest, etag))
 }
@@ -638,6 +669,24 @@ mod tests {
 
     /// 清单形状：`modules` 缺失 = 空表；未知字段不挡解析。
     #[test]
+    /// GitHub contents API 的 base64 包壳：剥出来是清单原文；不是包壳时原样返回。
+    #[test]
+    fn github_contents_envelope_is_unwrapped() {
+        use base64::Engine as _;
+        let body = r#"{"release":"0.1.42","modules":[{"name":"Device","crate":"nous-device","version":"0.11.0"}]}"#;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(body);
+        let envelope: ContentsEnvelope = serde_json::from_str(
+            &format!(r#"{{"name":"plugin-versions.json","content":"{encoded}","encoding":"base64"}}"#),
+        )
+        .expect("包壳形状能解");
+        assert_eq!(envelope.decoded_body().expect("能剩出来"), body);
+
+        // encoding 不是 base64：不许猜，剥不开。
+        let plain: ContentsEnvelope =
+            serde_json::from_str(r#"{"content":"x","encoding":"utf-8"}"#).unwrap();
+        assert_eq!(plain.decoded_body(), None);
+    }
+
     fn manifest_tolerates_missing_and_unknown_fields() {
         let empty: Manifest = serde_json::from_str(r#"{"release":"0.1.0"}"#).unwrap();
         assert!(empty.modules.is_empty());

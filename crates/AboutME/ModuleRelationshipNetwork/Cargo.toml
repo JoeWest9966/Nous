@@ -12,6 +12,8 @@ nous-routes = { workspace = true }
 # `GET /v1/modules/updates` 要一次外网往返（3s 超时、6h 缓存）。app 层允许 IO；
 # 这里只用 reqwest 的 rustls 客户端，不碰 tokio 的 net/time 特性。
 reqwest = { workspace = true }
+# GitHub contents API 的回包把文件包在 `content`（base64）里，剥壳用。
+base64 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
