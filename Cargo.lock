@@ -4,9 +4,10 @@ version = 4
 
 [[package]]
 name = "aboutme-module-relationship-network"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "nous-routes",
  "reqwest",
  "serde",
@@ -285,7 +286,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "data-archive"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "axum",
@@ -298,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "data-data-manager"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-chord",
@@ -367,7 +368,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "element-core"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-env",
@@ -381,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "element-models"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "element-core",
@@ -1144,7 +1145,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "library-extend"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "libc",
@@ -1159,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "library-skill"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-env",
@@ -1357,7 +1358,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ai"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1381,7 +1382,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ai-types"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "futures",
  "serde",
@@ -1392,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "nous-chord"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "rusqlite",
  "serde_json",
@@ -1402,7 +1403,7 @@ dependencies = [
 
 [[package]]
 name = "nous-combos"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "axum",
@@ -1417,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "nous-device"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-routes",
@@ -1429,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "nous-dispatcher"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "nous-chord",
@@ -1443,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "nous-durable"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "nous-ai",
@@ -1458,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "nous-env"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "axum",
@@ -1472,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "nous-env-ssh"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1485,7 +1486,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ext-probe"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "libc",
@@ -1502,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "nous-ext-sdk"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "serde",
  "serde_json",
@@ -1510,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "nous-fixture"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "nous-durable",
  "serde_json",
@@ -1518,7 +1519,7 @@ dependencies = [
 
 [[package]]
 name = "nous-presets-admin"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-device",
@@ -1534,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "nous-prompts"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-env",
@@ -1549,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "nous-repo"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-env",
@@ -1561,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "nous-routes"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "serde_json",
@@ -1571,7 +1572,7 @@ dependencies = [
 
 [[package]]
 name = "nous-runtime"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "indexmap 2.14.2",
@@ -1586,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "nous-server"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "aboutme-module-relationship-network",
  "async-trait",
@@ -1629,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "nous-sessions"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "axum",
@@ -1649,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "nous-store"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "rusqlite",
  "serde",
@@ -1659,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "nous-telemetry"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "serde",
@@ -1669,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "nous-tools"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1701,7 +1702,7 @@ dependencies = [
 
 [[package]]
 name = "nous-wire"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "serde",
  "serde_json",
@@ -2659,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "trigger-core"
-version = "0.1.41"
+version = "0.1.42"
 dependencies = [
  "axum",
  "nous-ai",
